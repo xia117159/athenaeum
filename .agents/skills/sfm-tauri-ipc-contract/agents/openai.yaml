@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM Tauri IPC Contract"
+  short_description: "Change Tauri commands, DTOs, and events without contract drift."
+  default_prompt: "Update the SimpleFileManager Tauri IPC contract safely."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM TDD Bugfix"
+  short_description: "Fix SimpleFileManager bugs with root-cause analysis and TDD."
+  default_prompt: "Fix this SimpleFileManager bug using the repo TDD workflow."

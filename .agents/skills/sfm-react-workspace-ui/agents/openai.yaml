@@ -1,0 +1,3 @@
+display_name: SFM React Workspace UI
+short_description: Build workspace UI with existing state.
+default_prompt: Change the SimpleFileManager workspace UI using existing patterns.

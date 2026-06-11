@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM Rust FS Ops"
+  short_description: "Implement local and remote file operations safely in Rust."
+  default_prompt: "Implement this SimpleFileManager file operation safely."

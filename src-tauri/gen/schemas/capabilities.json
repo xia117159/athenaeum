@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability for the main and settings windows","local":true,"windows":["main","settings"],"permissions":["core:default","default","core:webview:allow-create-webview-window","core:window:allow-close","core:window:allow-show","core:window:allow-set-focus"]}}

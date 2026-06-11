@@ -1,0 +1,57 @@
+[package]
+name = "simplefilemanager"
+version = "0.1.0"
+description = "SimpleFileManager Windows file manager built with Tauri v2"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[package.metadata]
+
+[lib]
+name = "simple_file_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[dependencies]
+anyhow = "1.0.101"
+base64 = "0.22.1"
+chrono = { version = "0.4.43", features = ["serde"] }
+dirs = "6.0.0"
+encoding_rs = "0.8.35"
+regex = "1.12.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+ssh2 = { version = "0.9.5", features = ["vendored-openssl"] }
+tauri = { version = "2.10.2", features = [] }
+thiserror = "1.0.69"
+tokio = { version = "1.49.0", features = ["fs", "macros", "process", "rt-multi-thread", "sync"] }
+toml = "0.9.12"
+uuid = { version = "1.21.0", features = ["serde", "v4"] }
+walkdir = "2.5.0"
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security_Credentials",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Controls",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Com"
+] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security_Credentials",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Controls",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Com"
+] }

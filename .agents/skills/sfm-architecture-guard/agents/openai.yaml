@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM Architecture Guard"
+  short_description: "Plan and execute cross-module architecture changes safely."
+  default_prompt: "Perform this SimpleFileManager architecture change with guardrails."

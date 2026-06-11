@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM Windows Desktop Visual Design"
+  short_description: "Improve SimpleFileManager with Windows desktop visual design."
+  default_prompt: "Improve the SimpleFileManager UI with Windows desktop visual design rules."

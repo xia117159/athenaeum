@@ -1,0 +1,334 @@
+[default]
+description = "Allows SimpleFileManager workspace commands required by the main desktop window."
+permissions = [
+  "allow-initialize-workspace",
+  "allow-list-directory",
+  "allow-get-tree-children",
+  "allow-resolve-system-icon",
+  "allow-copy-entries",
+  "allow-move-entries",
+  "allow-delete-entries",
+  "allow-rename-entry",
+  "allow-create-directory",
+  "allow-create-file",
+  "allow-start-file-operation",
+  "allow-list-file-operation-tasks",
+  "allow-cancel-file-operation",
+  "allow-resolve-file-operation-conflict",
+  "allow-list-operation-history",
+  "allow-undo-latest-operation",
+  "allow-undo-operation",
+  "allow-start-search",
+  "allow-cancel-search",
+  "allow-get-settings-snapshot",
+  "allow-save-bookmark",
+  "allow-delete-bookmark",
+  "allow-save-hotlist-entry",
+  "allow-delete-hotlist-entry",
+  "allow-save-color-rule",
+  "allow-delete-color-rule",
+  "allow-save-tag-definition",
+  "allow-delete-tag-definition",
+  "allow-save-shortcuts",
+  "allow-save-details-row-height",
+  "allow-save-settings-model",
+  "allow-save-ui-layout",
+  "allow-save-ui-theme",
+  "allow-save-navigation-item",
+  "allow-delete-navigation-item",
+  "allow-reorder-navigation-items",
+  "allow-mark-navigation-item-opened",
+  "allow-resolve-navigation-targets",
+  "allow-open-path-with-system-default",
+  "allow-list-remote-profiles",
+  "allow-save-remote-profile",
+  "allow-delete-remote-profile",
+  "allow-test-remote-profile",
+  "allow-get-remote-host-key",
+  "allow-trust-remote-host-key",
+  "allow-list-remote-directory",
+  "allow-create-remote-directory",
+  "allow-delete-remote-entries",
+  "allow-rename-remote-entry",
+  "allow-upload-remote-files",
+  "allow-download-remote-entries",
+  "allow-copy-remote-entries",
+  "allow-move-remote-entries",
+  "allow-transfer-remote-entries",
+  "allow-show-native-context-menu"
+]
+
+[[permission]]
+identifier = "allow-initialize-workspace"
+description = "Allows loading the initial workspace bootstrap from the local machine."
+commands.allow = ["initialize_workspace"]
+
+[[permission]]
+identifier = "allow-list-directory"
+description = "Allows listing local directories."
+commands.allow = ["list_directory"]
+
+[[permission]]
+identifier = "allow-get-tree-children"
+description = "Allows loading local directory tree children."
+commands.allow = ["get_tree_children"]
+
+[[permission]]
+identifier = "allow-resolve-system-icon"
+description = "Allows resolving Windows shell icons for displayed entries."
+commands.allow = ["resolve_system_icon"]
+
+[[permission]]
+identifier = "allow-copy-entries"
+description = "Allows copying local file system entries."
+commands.allow = ["copy_entries"]
+
+[[permission]]
+identifier = "allow-move-entries"
+description = "Allows moving local file system entries."
+commands.allow = ["move_entries"]
+
+[[permission]]
+identifier = "allow-delete-entries"
+description = "Allows deleting local file system entries."
+commands.allow = ["delete_entries"]
+
+[[permission]]
+identifier = "allow-rename-entry"
+description = "Allows renaming local file system entries."
+commands.allow = ["rename_entry"]
+
+[[permission]]
+identifier = "allow-create-directory"
+description = "Allows creating local directories."
+commands.allow = ["create_directory"]
+
+[[permission]]
+identifier = "allow-create-file"
+description = "Allows creating local files."
+commands.allow = ["create_file"]
+
+[[permission]]
+identifier = "allow-start-file-operation"
+description = "Allows starting file operation tasks."
+commands.allow = ["start_file_operation"]
+
+[[permission]]
+identifier = "allow-list-file-operation-tasks"
+description = "Allows listing file operation task snapshots."
+commands.allow = ["list_file_operation_tasks"]
+
+[[permission]]
+identifier = "allow-cancel-file-operation"
+description = "Allows cancelling file operation tasks."
+commands.allow = ["cancel_file_operation"]
+
+[[permission]]
+identifier = "allow-resolve-file-operation-conflict"
+description = "Allows resolving file operation conflicts."
+commands.allow = ["resolve_file_operation_conflict"]
+
+[[permission]]
+identifier = "allow-list-operation-history"
+description = "Allows listing file operation history."
+commands.allow = ["list_operation_history"]
+
+[[permission]]
+identifier = "allow-undo-latest-operation"
+description = "Allows undoing the latest undoable file operation."
+commands.allow = ["undo_latest_operation"]
+
+[[permission]]
+identifier = "allow-undo-operation"
+description = "Allows undoing a selected file operation history record."
+commands.allow = ["undo_operation"]
+
+[[permission]]
+identifier = "allow-start-search"
+description = "Allows starting workspace search."
+commands.allow = ["start_search"]
+
+[[permission]]
+identifier = "allow-cancel-search"
+description = "Allows cancelling workspace search."
+commands.allow = ["cancel_search"]
+
+[[permission]]
+identifier = "allow-get-settings-snapshot"
+description = "Allows reading workspace settings."
+commands.allow = ["get_settings_snapshot"]
+
+[[permission]]
+identifier = "allow-save-bookmark"
+description = "Allows saving workspace bookmarks."
+commands.allow = ["save_bookmark"]
+
+[[permission]]
+identifier = "allow-delete-bookmark"
+description = "Allows deleting workspace bookmarks."
+commands.allow = ["delete_bookmark"]
+
+[[permission]]
+identifier = "allow-save-hotlist-entry"
+description = "Allows saving directory hotlist entries."
+commands.allow = ["save_hotlist_entry"]
+
+[[permission]]
+identifier = "allow-delete-hotlist-entry"
+description = "Allows deleting directory hotlist entries."
+commands.allow = ["delete_hotlist_entry"]
+
+[[permission]]
+identifier = "allow-save-color-rule"
+description = "Allows saving color rules."
+commands.allow = ["save_color_rule"]
+
+[[permission]]
+identifier = "allow-delete-color-rule"
+description = "Allows deleting color rules."
+commands.allow = ["delete_color_rule"]
+
+[[permission]]
+identifier = "allow-save-tag-definition"
+description = "Allows saving tag definitions."
+commands.allow = ["save_tag_definition"]
+
+[[permission]]
+identifier = "allow-delete-tag-definition"
+description = "Allows deleting tag definitions."
+commands.allow = ["delete_tag_definition"]
+
+[[permission]]
+identifier = "allow-save-shortcuts"
+description = "Allows saving shortcut bindings."
+commands.allow = ["save_shortcuts"]
+
+[[permission]]
+identifier = "allow-save-details-row-height"
+description = "Allows saving the details row height."
+commands.allow = ["save_details_row_height"]
+
+[[permission]]
+identifier = "allow-save-settings-model"
+description = "Allows saving the settings model in one confirmed update."
+commands.allow = ["save_settings_model"]
+
+[[permission]]
+identifier = "allow-save-ui-layout"
+description = "Allows saving workspace layout."
+commands.allow = ["save_ui_layout"]
+
+[[permission]]
+identifier = "allow-save-ui-theme"
+description = "Allows saving workspace theme settings."
+commands.allow = ["save_ui_theme"]
+
+[[permission]]
+identifier = "allow-save-navigation-item"
+description = "Allows saving navigation page shortcut entries."
+commands.allow = ["save_navigation_item"]
+
+[[permission]]
+identifier = "allow-delete-navigation-item"
+description = "Allows removing navigation page shortcut entries without touching the file system."
+commands.allow = ["delete_navigation_item"]
+
+[[permission]]
+identifier = "allow-reorder-navigation-items"
+description = "Allows reordering navigation page shortcut entries."
+commands.allow = ["reorder_navigation_items"]
+
+[[permission]]
+identifier = "allow-mark-navigation-item-opened"
+description = "Allows updating the last opened timestamp for navigation page shortcut entries."
+commands.allow = ["mark_navigation_item_opened"]
+
+[[permission]]
+identifier = "allow-resolve-navigation-targets"
+description = "Allows checking navigation target file system status."
+commands.allow = ["resolve_navigation_targets"]
+
+[[permission]]
+identifier = "allow-open-path-with-system-default"
+description = "Allows opening a local navigation target with the Windows default application."
+commands.allow = ["open_path_with_system_default"]
+
+[[permission]]
+identifier = "allow-list-remote-profiles"
+description = "Allows listing remote connection profiles."
+commands.allow = ["list_remote_profiles"]
+
+[[permission]]
+identifier = "allow-save-remote-profile"
+description = "Allows saving remote connection profiles."
+commands.allow = ["save_remote_profile"]
+
+[[permission]]
+identifier = "allow-delete-remote-profile"
+description = "Allows deleting remote connection profiles."
+commands.allow = ["delete_remote_profile"]
+
+[[permission]]
+identifier = "allow-test-remote-profile"
+description = "Allows testing remote connection profiles."
+commands.allow = ["test_remote_profile"]
+
+[[permission]]
+identifier = "allow-get-remote-host-key"
+description = "Allows reading an SFTP host key before user trust confirmation."
+commands.allow = ["get_remote_host_key"]
+
+[[permission]]
+identifier = "allow-trust-remote-host-key"
+description = "Allows saving a user-confirmed SFTP host key to known_hosts."
+commands.allow = ["trust_remote_host_key"]
+
+[[permission]]
+identifier = "allow-list-remote-directory"
+description = "Allows listing remote directories."
+commands.allow = ["list_remote_directory"]
+
+[[permission]]
+identifier = "allow-create-remote-directory"
+description = "Allows creating remote directories."
+commands.allow = ["create_remote_directory"]
+
+[[permission]]
+identifier = "allow-delete-remote-entries"
+description = "Allows deleting remote entries."
+commands.allow = ["delete_remote_entries"]
+
+[[permission]]
+identifier = "allow-rename-remote-entry"
+description = "Allows renaming remote entries."
+commands.allow = ["rename_remote_entry"]
+
+[[permission]]
+identifier = "allow-upload-remote-files"
+description = "Allows uploading local files to remote profiles."
+commands.allow = ["upload_remote_files"]
+
+[[permission]]
+identifier = "allow-download-remote-entries"
+description = "Allows downloading remote entries."
+commands.allow = ["download_remote_entries"]
+
+[[permission]]
+identifier = "allow-copy-remote-entries"
+description = "Allows copying remote entries."
+commands.allow = ["copy_remote_entries"]
+
+[[permission]]
+identifier = "allow-move-remote-entries"
+description = "Allows moving remote entries."
+commands.allow = ["move_remote_entries"]
+
+[[permission]]
+identifier = "allow-transfer-remote-entries"
+description = "Allows transferring entries between remote profiles."
+commands.allow = ["transfer_remote_entries"]
+
+[[permission]]
+identifier = "allow-show-native-context-menu"
+description = "Allows the workspace to open the Windows native context menu for local selected paths."
+commands.allow = ["show_native_context_menu"]

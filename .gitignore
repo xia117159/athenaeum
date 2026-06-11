@@ -1,0 +1,36 @@
+# Node / frontend
+node_modules/
+dist/
+.npm-cache/
+
+# Test / build artifacts
+.build-ts/
+.test-build/
+coverage/
+*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/target-codex/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment overrides
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local agent / tool metadata
+.claude/
+.codex/

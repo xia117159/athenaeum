@@ -1,0 +1,41 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  color: #1f2328;
+  --app-bg: #f3f3f3;
+  --chrome-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --border: #d6dde6;
+  --border-strong: #bcc8d6;
+  --accent: #0f6cbd;
+  --accent-soft: rgba(15, 108, 189, 0.12);
+  --shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+  --text: #1f2328;
+  --text-muted: #5f6b7a;
+  --success: #107c10;
+  --warning: #9a6700;
+  --danger: #c42b1c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+}
+
+#root {
+  display: flex;
+}
+
+body {
+  background: var(--app-bg);
+  overflow: hidden;
+}
