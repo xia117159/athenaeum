@@ -109,6 +109,7 @@ export function WorkspaceView() {
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
   const menuRootRef = useRef<HTMLDivElement | null>(null);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
   const recentPaths = isActiveNavigationTab ? [] : getUniqueRecentPaths(activeTab.history, activeTab.snapshot.location.path);
   const navigationTabOpen = Object.values(state.panels).some((panel) => panel.tabs.some((tab) => tab.kind === "navigation"));
 
@@ -130,6 +131,10 @@ export function WorkspaceView() {
 
       if (addressBarRef.current && !addressBarRef.current.contains(event.target)) {
         setAddressHistoryOpen(false);
+        // 点击地址栏外部时，让输入框失去焦点
+        if (addressInputRef.current && document.activeElement === addressInputRef.current) {
+          addressInputRef.current.blur();
+        }
       }
     };
 
@@ -395,6 +400,7 @@ export function WorkspaceView() {
       <section className="workspace-addressbar" ref={addressBarRef}>
         <form className="address-bar" onSubmit={handleAddressSubmit}>
           <input
+            ref={addressInputRef}
             type="text"
             value={isActiveNavigationTab ? "导航" : activeTab.addressDraft}
             readOnly={isActiveNavigationTab}

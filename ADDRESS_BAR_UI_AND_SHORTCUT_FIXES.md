@@ -5,9 +5,10 @@
 
 ## 修改概述
 
-本次优化主要包括两个方面：
+本次优化主要包括三个方面：
 1. **地址栏 UI 简化**：删除"路径"标签和"转到"按钮，采用 Windows UI 最佳实践
 2. **快捷键冲突修复**：修复地址栏输入框获得焦点时的快捷键行为
+3. **焦点管理优化**：点击地址栏外部时自动失去焦点
 
 ---
 
@@ -246,6 +247,66 @@ const handleWindowKeyDown = (event: KeyboardEvent) => {
 
 ---
 
+## 3. 焦点管理优化
+
+### 问题描述
+
+地址栏输入框获得焦点后，鼠标点击文件列表空白区域时，输入框不会失去焦点。
+
+### 修复方案
+
+在 `WorkspaceView.tsx` 的全局 `pointerdown` 监听器中添加焦点管理逻辑：
+
+```typescript
+// 新增地址栏输入框 ref
+const addressInputRef = useRef<HTMLInputElement | null>(null);
+
+useEffect(() => {
+  const handlePointerDown = (event: PointerEvent) => {
+    if (!(event.target instanceof Node)) {
+      return;
+    }
+
+    if (menuRootRef.current && !menuRootRef.current.contains(event.target)) {
+      setOpenMenuId(null);
+    }
+
+    if (addressBarRef.current && !addressBarRef.current.contains(event.target)) {
+      setAddressHistoryOpen(false);
+      // 点击地址栏外部时，让输入框失去焦点
+      if (addressInputRef.current && document.activeElement === addressInputRef.current) {
+        addressInputRef.current.blur();
+      }
+    }
+  };
+
+  window.addEventListener("pointerdown", handlePointerDown);
+  return () => {
+    window.removeEventListener("pointerdown", handlePointerDown);
+  };
+}, []);
+```
+
+**绑定 ref 到输入框**：
+```tsx
+<input
+  ref={addressInputRef}
+  type="text"
+  /* ... */
+/>
+```
+
+### 行为说明
+
+- ✅ 点击地址栏输入框 → 输入框获得焦点
+- ✅ 点击地址栏下拉按钮 → 输入框保持焦点（因为按钮在 `addressBarRef` 内）
+- ✅ 点击地址栏外任意位置 → 输入框失去焦点
+- ✅ 点击文件列表 → 输入框失去焦点
+- ✅ 点击文件列表空白区域 → 输入框失去焦点
+- ✅ 点击工具栏按钮 → 输入框失去焦点
+
+---
+
 ## 验证结果
 
 ### 构建验证
@@ -270,6 +331,14 @@ const handleWindowKeyDown = (event: KeyboardEvent) => {
 - [ ] 按 Enter 键提交地址正常工作
 - [ ] 历史记录下拉面板位置正确（全宽）
 
+#### 焦点管理
+- [ ] 点击输入框 → 输入框获得焦点
+- [ ] 点击下拉按钮 → 输入框保持焦点
+- [ ] 点击地址栏外任意位置 → 输入框失去焦点
+- [ ] 点击文件列表 → 输入框失去焦点
+- [ ] 点击文件列表空白区域 → 输入框失去焦点
+- [ ] 点击工具栏按钮 → 输入框失去焦点
+
 #### 快捷键修复
 - [ ] **地址栏获得焦点时**，`Ctrl+A` 全选输入框文字（不触发文件列表全选）
 - [ ] **地址栏获得焦点时**，`Ctrl+F` 打开程序搜索面板（不打开浏览器搜索）
@@ -289,8 +358,10 @@ const handleWindowKeyDown = (event: KeyboardEvent) => {
 1. **src/features/workspace/WorkspaceView.tsx**
    - 删除 `address-bar__prefix` 元素
    - 删除提交按钮
+   - 新增 `addressInputRef` 引用地址栏输入框
    - 新增 `handleAddressInputKeyDown` 函数
-   - 在输入框上绑定 `onKeyDown` 处理器
+   - 在输入框上绑定 `onKeyDown` 处理器和 `ref`
+   - 优化 `handlePointerDown`，添加点击外部时失去焦点的逻辑
 
 2. **src/features/workspace/workspace.css**
    - 简化 `.address-bar` 网格布局（2 列）
@@ -368,11 +439,12 @@ const handleWindowKeyDown = (event: KeyboardEvent) => {
 
 1. ✅ **删除地址栏冗余元素**：移除"路径"标签和"转到"按钮
 2. ✅ **采用 Windows UI 最佳实践**：输入框和下拉按钮融合
-3. ✅ **修复 Ctrl+A 快捷键冲突**：输入框焦点时全选文字，而非文件
-4. ✅ **修复 Ctrl+F 快捷键冲突**：输入框焦点时打开程序搜索，而非浏览器搜索
-5. ✅ **全面保护剪贴板快捷键**：Ctrl+C/V/X/Z/Y 在输入框中保持原生行为
-6. ✅ **统一可编辑元素检查逻辑**：支持 input、textarea、select、contentEditable
-7. ✅ **所有测试通过**：构建和单元测试全部成功
+3. ✅ **优化焦点管理**：点击地址栏外部时自动失去焦点
+4. ✅ **修复 Ctrl+A 快捷键冲突**：输入框焦点时全选文字，而非文件
+5. ✅ **修复 Ctrl+F 快捷键冲突**：输入框焦点时打开程序搜索，而非浏览器搜索
+6. ✅ **全面保护剪贴板快捷键**：Ctrl+C/V/X/Z/Y 在输入框中保持原生行为
+7. ✅ **统一可编辑元素检查逻辑**：支持 input、textarea、select、contentEditable
+8. ✅ **所有测试通过**：构建和单元测试全部成功
 
 ### 质量提升
 
