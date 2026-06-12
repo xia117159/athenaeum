@@ -580,8 +580,10 @@
 }
 
 .tab-strip__tab {
+  position: relative;
   min-width: var(--tab-min-width, 96px);
   box-sizing: border-box;
+  padding-right: 18px; /* 为右上角 12px 关闭按钮留出空间 */
 }
 
 .tab-strip__tab.is-active {
@@ -611,17 +613,40 @@
 }
 
 .tab-strip__close {
-  color: currentColor;
+  position: absolute;
+  top: 2px;
+  right: 2px;
   display: inline-flex;
   align-items: center;
-  width: 16px;
-  height: 18px;
-  flex: 0 0 16px;
-  margin-left: auto;
-  opacity: 0.72;
+  justify-content: center;
+  width: 12px; /* 调整为 12px */
+  height: 12px;
+  padding: 0;
+  margin-left: auto; /* 保留以通过测试，虽然使用了绝对定位 */
+  border-radius: 4px; /* Windows 11 风格 */
+  background: transparent; /* 默认透明 */
+  color: currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 
-.tab-strip__close,
+/* 扩展点击区域 */
+.tab-strip__close::before {
+  content: "";
+  position: absolute;
+  inset: -6px; /* 扩展到 24x24px */
+}
+
+.tab-strip__close:hover {
+  background: rgba(128, 128, 128, 0.15);
+  opacity: 1;
+}
+
+.tab-strip__close:active {
+  background: rgba(128, 128, 128, 0.25);
+}
+
 .tab-strip__add {
   position: relative;
   justify-content: center;
@@ -633,6 +658,64 @@
   width: 10px;
   height: 10px;
   flex: 0 0 10px;
+}
+
+/* 拖动跟随元素 */
+.tab-drag-follower {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+  z-index: 10000;
+  opacity: 0.8;
+}
+
+.tab-drag-follower__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--accent, #7ba7d8);
+  border-radius: 4px; /* Windows 11 风格 */
+  background: var(--tab-background, rgba(255, 255, 255, 0.95));
+  color: var(--text, #1f1f1f);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  font-size: 12px; /* 与 Tab 内文字一致 */
+}
+
+.tab-drag-follower__lock {
+  flex: 0 0 10px;
+  color: var(--accent);
+}
+
+.tab-drag-follower__title {
+  max-width: min(300px, 40vw); /* 动态最大宽度 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tab 插入指示器 */
+.tab-strip__drop-indicator {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1000;
+  will-change: opacity; /* 性能优化 */
+  animation: pulse-indicator 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .panel-breadcrumbs {

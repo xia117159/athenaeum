@@ -103,7 +103,7 @@ assertTest("directory tree and details list use desktop file-manager density", (
   assertDeclaration(getCssBlock(".panel-listing"), "display", "grid");
   assertDeclaration(getCssBlock(".panel-listing"), "grid-template-rows", "minmax\\(0, 1fr\\)");
   assertDeclaration(getCssBlock(".panel-listing"), "height", "100%");
-  assertDeclaration(getCssBlock(".file-listing__scroll"), "height", "100%");
+  assertDeclaration(getCssBlock(".file-listing__scroll"), "flex", "1"); // 使用 flex 布局占据剩余空间
   assertDeclaration(getCssBlock(".file-listing__header"), "min-height", "24px");
   assertDeclaration(getCssBlock(".file-listing__body"), "box-sizing", "border-box");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "gap", "0");
