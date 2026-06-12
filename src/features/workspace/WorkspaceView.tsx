@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -712,6 +712,29 @@ function PanelSurface({
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
 
+  // Memoize selection callbacks to prevent useEffect re-registration in FileListing
+  const handleSelectMultiple = useCallback(
+    (entryIds: string[]) => {
+      actions.selectMultipleEntries(panel.id, activeTab.id, entryIds);
+    },
+    [actions, panel.id, activeTab.id]
+  );
+
+  const handleSelectAll = useCallback(() => {
+    actions.selectAllEntries(panel.id, activeTab.id);
+  }, [actions, panel.id, activeTab.id]);
+
+  const handleSelectRange = useCallback(
+    (fromId: string, toId: string) => {
+      actions.selectEntryRange(panel.id, activeTab.id, fromId, toId);
+    },
+    [actions, panel.id, activeTab.id]
+  );
+
+  const handleClearSelection = useCallback(() => {
+    actions.clearSelection(panel.id, activeTab.id);
+  }, [actions, panel.id, activeTab.id]);
+
   return (
     <section
       className={`panel-surface${isFocused ? " is-focused" : ""}`}
@@ -784,6 +807,10 @@ function PanelSurface({
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
             onSelect={(entry, multi) => actions.selectEntry(panel.id, activeTab.id, entry.id, multi)}
+            onSelectMultiple={handleSelectMultiple}
+            onSelectAll={handleSelectAll}
+            onSelectRange={handleSelectRange}
+            onClearSelection={handleClearSelection}
             onOpen={(entry) => actions.openEntry(panel.id, entry)}
             detailsRowHeight={detailsRowHeight}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}

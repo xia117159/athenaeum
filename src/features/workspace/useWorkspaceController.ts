@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useEffectEvent, useReducer, useRef } from "react";
+import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
 import { createMockWorkspaceBootstrap, getParentLocationPath, nextGeneratedTabId, normalizeLocationPath } from "./mockData";
 import { createRemoteUri, resolveRemotePath } from "./remoteUri";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
@@ -8,6 +8,7 @@ import { isDirectoryTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./work
 import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
 import { cloneColumns } from "./workspaceMappers";
+import { devLog } from "./devLog";
 import type { OperationConflictResolution, OperationPathRef } from "../../app/types";
 import type {
   ColumnId,
@@ -2106,9 +2107,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     undoLatestOperation
   ]);
 
-  return {
-    state,
-    actions: {
+  const actions = useMemo(
+    () => ({
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         dispatch({ type: "layoutModeSet", payload: layoutMode }),
       setSplitRatio: (key: keyof WorkspaceState["layoutRatios"], value: number) =>
@@ -2162,6 +2162,22 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),
+      selectMultipleEntries: (panelId: PanelId, tabId: string, entryIds: string[]) => {
+        devLog("[useWorkspaceController] selectMultipleEntries called with:", entryIds);
+        dispatch({ type: "entrySelectionSet", payload: { panelId, tabId, entryIds } });
+      },
+      selectAllEntries: (panelId: PanelId, tabId: string) => {
+        devLog("[useWorkspaceController] selectAllEntries called for panelId:", panelId, "tabId:", tabId);
+        dispatch({ type: "allEntriesSelected", payload: { panelId, tabId } });
+      },
+      selectEntryRange: (panelId: PanelId, tabId: string, fromEntryId: string, toEntryId: string) => {
+        devLog("[useWorkspaceController] selectEntryRange called from:", fromEntryId, "to:", toEntryId);
+        dispatch({ type: "entryRangeSelected", payload: { panelId, tabId, fromEntryId, toEntryId } });
+      },
+      clearSelection: (panelId: PanelId, tabId: string) => {
+        devLog("[useWorkspaceController] clearSelection called for panelId:", panelId, "tabId:", tabId);
+        dispatch({ type: "entrySelectionCleared", payload: { panelId, tabId } });
+      },
       sortEntries: (panelId: PanelId, tabId: string, columnId: ColumnId) =>
         dispatch({ type: "tabSortChanged", payload: { panelId, tabId, columnId } }),
       setTabViewMode: (panelId: PanelId, tabId: string, viewMode: TabViewMode) =>
@@ -2283,6 +2299,54 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       openNativeContextMenu: (payload: NativeContextMenuRequest) => void openNativeContextMenu(payload),
       closeContextMenu: () => dispatch({ type: "contextMenuSet", payload: undefined }),
       dismissNotification: (id: string) => dispatch({ type: "notificationDismissed", payload: { id } })
-    }
+    }),
+    [
+      addCurrentFolderToNavigation,
+      addSelectedEntriesToNavigation,
+      applySettingsModel,
+      cancelOperation,
+      closeTabGuarded,
+      commitInlineEdit,
+      commitNavigation,
+      copySelection,
+      createFile,
+      createFolder,
+      deleteNavigationItems,
+      deleteRemoteProfile,
+      deleteSelection,
+      dispatch,
+      dropEntries,
+      handleOpenNewTab,
+      moveTabGuarded,
+      navigateBreadcrumbPath,
+      navigateHistoryByDelta,
+      navigateUpKeepingForwardHistory,
+      openNavigationItem,
+      openNavigationItemParent,
+      openNavigationNativeContextMenu,
+      openNativeContextMenu,
+      openTreeNode,
+      pasteIntoPanel,
+      pushNotification,
+      refreshNavigationTargets,
+      refreshPanel,
+      reconnectTab,
+      renameSelection,
+      reorderNavigationItem,
+      runSearch,
+      saveNavigationItem,
+      saveRemoteProfile,
+      state,
+      stopSearch,
+      testRemoteProfile,
+      undoLatestOperation,
+      undoOperation,
+      workspaceGateway
+    ]
+  );
+
+  return {
+    state,
+    actions
   };
 }

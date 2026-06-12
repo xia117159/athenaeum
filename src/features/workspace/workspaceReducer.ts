@@ -27,6 +27,7 @@ import type {
 } from "./types";
 import { normalizeLocationPath } from "./mockData";
 import { cloneColumns, normalizeSettingsModel, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceMappers";
+import { devLog } from "./devLog";
 import {
   createNavigationTab,
   isDirectoryLikeTab,
@@ -72,6 +73,10 @@ export type WorkspaceAction =
   | { type: "tabReconnectRequired"; payload: { panelId: PanelId; tabId: string; path: string; profileId?: string; message?: string } }
   | { type: "tabReconnectStarted"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionChanged"; payload: { panelId: PanelId; tabId: string; entryId: string; multi: boolean } }
+  | { type: "entrySelectionSet"; payload: { panelId: PanelId; tabId: string; entryIds: string[] } }
+  | { type: "entryRangeSelected"; payload: { panelId: PanelId; tabId: string; fromEntryId: string; toEntryId: string } }
+  | { type: "allEntriesSelected"; payload: { panelId: PanelId; tabId: string } }
+  | { type: "entrySelectionCleared"; payload: { panelId: PanelId; tabId: string } }
   | { type: "tabSortChanged"; payload: { panelId: PanelId; tabId: string; columnId: ColumnId } }
   | { type: "tabViewModeSet"; payload: { panelId: PanelId; tabId: string; viewMode: TabViewMode } }
   | { type: "inlineEditStarted"; payload: { panelId: PanelId; tabId: string; edit: InlineEditState } }
@@ -876,6 +881,20 @@ function selectEntries(selectedEntryIds: string[], entryId: string, multi: boole
     : [...selectedEntryIds, entryId];
 }
 
+function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntryId: string): string[] {
+  const fromIndex = entries.findIndex((entry) => entry.id === fromEntryId);
+  const toIndex = entries.findIndex((entry) => entry.id === toEntryId);
+
+  if (fromIndex === -1 || toIndex === -1) {
+    return [];
+  }
+
+  const startIndex = Math.min(fromIndex, toIndex);
+  const endIndex = Math.max(fromIndex, toIndex);
+
+  return entries.slice(startIndex, endIndex + 1).map((entry) => entry.id);
+}
+
 function clearActiveTabSelectionForPanel(panel: PanelState): PanelState {
   return updateTab(panel, panel.activeTabId, (tab) =>
     tab.selectedEntryIds.length === 0
@@ -1390,6 +1409,74 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : {
                   ...tab,
                   selectedEntryIds: selectEntries(tab.selectedEntryIds, action.payload.entryId, action.payload.multi)
+                }
+          )
+      );
+
+    case "entrySelectionSet":
+      devLog("[workspaceReducer] entrySelectionSet:", action.payload);
+      return updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: action.payload.entryIds
+                }
+          )
+      );
+
+    case "entryRangeSelected":
+      devLog("[workspaceReducer] entryRangeSelected:", action.payload);
+      return updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: selectEntryRange(
+                    tab.snapshot.entries,
+                    action.payload.fromEntryId,
+                    action.payload.toEntryId
+                  )
+                }
+          )
+      );
+
+    case "allEntriesSelected":
+      devLog("[workspaceReducer] allEntriesSelected:", action.payload);
+      return updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id)
+                }
+          )
+      );
+
+    case "entrySelectionCleared":
+      devLog("[workspaceReducer] entrySelectionCleared:", action.payload);
+      return updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: []
                 }
           )
       );

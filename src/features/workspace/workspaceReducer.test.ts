@@ -294,6 +294,97 @@ assertTest("workspaceReducer clears the previously focused panel selection when 
   assert.deepEqual(getActiveTab(focusedNext.panels["panel-2"]).selectedEntryIds, []);
 });
 
+assertTest("workspaceReducer selects all entries with allEntriesSelected action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const allEntryIds = activeTab.snapshot.entries.map((entry) => entry.id);
+
+  const selected = workspaceReducer(state, {
+    type: "allEntriesSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, allEntryIds);
+  assert.ok(getActiveTab(selected.panels["panel-1"]).selectedEntryIds.length > 0);
+});
+
+assertTest("workspaceReducer clears all selection with entrySelectionCleared action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionChanged",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryId: activeTab.snapshot.entries[0].id,
+      multi: false
+    }
+  } as WorkspaceAction);
+
+  const cleared = workspaceReducer(selected, {
+    type: "entrySelectionCleared",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(cleared.panels["panel-1"]).selectedEntryIds, []);
+});
+
+assertTest("workspaceReducer selects range of entries with entryRangeSelected action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const fromEntry = entries[0];
+  const toEntry = entries[2];
+
+  const selected = workspaceReducer(state, {
+    type: "entryRangeSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      fromEntryId: fromEntry.id,
+      toEntryId: toEntry.id
+    }
+  } as WorkspaceAction);
+
+  const selectedIds = getActiveTab(selected.panels["panel-1"]).selectedEntryIds;
+  assert.deepEqual(selectedIds, [entries[0].id, entries[1].id, entries[2].id]);
+});
+
+assertTest("workspaceReducer sets specific entry ids with entrySelectionSet action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const targetIds = [entries[0].id, entries[2].id];
+
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryIds: targetIds
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, targetIds);
+});
+
 assertTest("workspaceReducer moves focus to the first visible panel when current one gets hidden", () => {
     const state = {
       ...createState(),

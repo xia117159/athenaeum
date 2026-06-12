@@ -723,8 +723,8 @@
 .file-listing {
   --file-icon-size: 16px;
   --details-row-height: 24px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -735,7 +735,7 @@
 
 .file-listing__scroll {
   min-height: 0;
-  height: 100%;
+  flex: 1;
   overflow: auto;
 }
 
@@ -809,6 +809,7 @@
   display: grid;
   align-content: start;
   min-height: 100%;
+  height: 100%; /* 确保填充满整个 scroll 容器 */
   box-sizing: border-box;
   padding: 6px;
   gap: 6px;

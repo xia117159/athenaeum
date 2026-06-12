@@ -18,6 +18,7 @@ import {
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
+import { devLog, devWarn } from "./devLog";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -52,6 +53,14 @@ type ActiveEntryPointerDrag = {
   startY: number;
   paths: string[];
   dragging: boolean;
+};
+
+type MarqueeSelection = {
+  active: boolean;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
 };
 
 type EntryPointerDropTarget = {
@@ -360,6 +369,10 @@ export function FileListingShell({
   inlineEdit,
   onSort,
   onSelect,
+  onSelectMultiple,
+  onSelectAll,
+  onSelectRange,
+  onClearSelection,
   onOpen,
   detailsRowHeight,
   onOpenContextMenu,
@@ -382,6 +395,10 @@ export function FileListingShell({
   inlineEdit?: InlineEditState;
   onSort: (columnId: ColumnId) => void;
   onSelect: (entry: EntryViewModel, multi: boolean) => void;
+  onSelectMultiple?: (entryIds: string[]) => void;
+  onSelectAll?: () => void;
+  onSelectRange?: (fromEntryId: string, toEntryId: string) => void;
+  onClearSelection?: () => void;
   onOpen: (entry: EntryViewModel) => void;
   detailsRowHeight: number;
   onOpenContextMenu: (payload: ContextMenuState) => void;
@@ -427,6 +444,15 @@ export function FileListingShell({
   const suppressNextEntryClickRef = useRef<string | null>(null);
   const inlineIconSpec = getInlineIconSpec(viewMode);
   const compactIconSpec = getInlineIconSpec("list");
+  const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0
+  });
+  const lastClickedEntryIdRef = useRef<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     suppressNextInlineBlurRef.current = false;
@@ -449,6 +475,28 @@ export function FileListingShell({
     },
     []
   );
+
+  // 键盘快捷键处理
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl+A / Cmd+A: 全选
+      if ((event.ctrlKey || event.metaKey) && event.key === "a") {
+        devLog("[FileListing] Ctrl+A detected, onSelectAll:", onSelectAll);
+        event.preventDefault();
+        if (onSelectAll) {
+          devLog("[FileListing] Calling onSelectAll");
+          onSelectAll();
+        } else {
+          devWarn("[FileListing] onSelectAll is undefined");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onSelectAll]);
 
   const gridStyle = {
     gridTemplateColumns: visibleColumns.map((column) => column.width).join(" "),
@@ -701,6 +749,22 @@ export function FileListingShell({
           event.stopPropagation();
           return;
         }
+
+        // Shift + Click: 范围选择
+        if (event.shiftKey && lastClickedEntryIdRef.current) {
+          devLog("[FileListing] Shift+Click detected, from:", lastClickedEntryIdRef.current, "to:", entry.id, "onSelectRange:", onSelectRange);
+          event.preventDefault();
+          event.stopPropagation();
+          if (onSelectRange) {
+            devLog("[FileListing] Calling onSelectRange");
+            onSelectRange(lastClickedEntryIdRef.current, entry.id);
+          } else {
+            devWarn("[FileListing] onSelectRange is undefined");
+          }
+          return;
+        }
+
+        lastClickedEntryIdRef.current = entry.id;
         onSelect(entry, event.ctrlKey || event.metaKey);
       },
       onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => {
@@ -1038,6 +1102,139 @@ export function FileListingShell({
     clearDropState();
   };
 
+  const handleListingMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+
+    devLog("[FileListing] handleListingMouseDown triggered", {
+      button: event.button,
+      targetTagName: target.tagName,
+      targetClassName: target.className,
+      closestEntryPath: target.closest("[data-entry-path]"),
+      closestInlineEdit: target.closest(".inline-edit-input"),
+      isScrollContainer: target.classList.contains("file-listing__scroll"),
+      isBodyContainer: target.classList.contains("file-listing__body")
+    });
+
+    // 只处理左键，并且不是在列表项上
+    if (event.button !== 0) {
+      devLog("[FileListing] Ignoring non-left button");
+      return;
+    }
+
+    // 排除点击在具体文件项或输入框上的情况
+    if (target.closest("[data-entry-path]") || target.closest(".inline-edit-input")) {
+      devLog("[FileListing] Ignoring click on entry or input");
+      return;
+    }
+
+    // 允许点击在 scroll 容器、body 容器或空白区域
+    // 不排除 file-listing__body，让它的空白区域也能触发框选
+    const isScrollContainer = target.classList.contains("file-listing__scroll");
+    const isBodyContainer = target.classList.contains("file-listing__body");
+    const isValidTarget = isScrollContainer || isBodyContainer ||
+                          target.closest(".file-listing__scroll") !== null;
+
+    if (!isValidTarget) {
+      devLog("[FileListing] Target is not valid for marquee selection");
+      return;
+    }
+
+    devLog("[FileListing] Mouse down on blank area, onClearSelection:", onClearSelection, "selectedEntryIds:", selectedEntryIds);
+
+    // 清除选择
+    if (onClearSelection && selectedEntryIds.length > 0) {
+      devLog("[FileListing] Calling onClearSelection");
+      onClearSelection();
+    }
+
+    // 开始框选
+    devLog("[FileListing] Starting marquee selection, onSelectMultiple:", onSelectMultiple);
+    event.preventDefault();
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      devWarn("[FileListing] scrollContainer is null");
+      return;
+    }
+
+    const rect = scrollContainer.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+
+    setMarqueeSelection({
+      active: true,
+      startX,
+      startY,
+      currentX: startX,
+      currentY: startY
+    });
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      setMarqueeSelection({
+        active: true,
+        startX,
+        startY,
+        currentX: moveEvent.clientX,
+        currentY: moveEvent.clientY
+      });
+
+      // 计算框选矩形
+      const marqueeRect = {
+        left: Math.min(startX, moveEvent.clientX),
+        top: Math.min(startY, moveEvent.clientY),
+        right: Math.max(startX, moveEvent.clientX),
+        bottom: Math.max(startY, moveEvent.clientY)
+      };
+
+      // 找出与框选区域相交的条目
+      const selectedIds: string[] = [];
+      const entryElements = scrollContainer.querySelectorAll("[data-entry-path]");
+
+      entryElements.forEach((element) => {
+        const entryRect = element.getBoundingClientRect();
+        const intersects =
+          marqueeRect.left < entryRect.right &&
+          marqueeRect.right > entryRect.left &&
+          marqueeRect.top < entryRect.bottom &&
+          marqueeRect.bottom > entryRect.top;
+
+        if (intersects) {
+          const entryPath = (element as HTMLElement).dataset.entryPath;
+          const entry = sortedEntries.find((e) => e.path === entryPath);
+          if (entry && !entry.inlineCreate) {
+            selectedIds.push(entry.id);
+          }
+        }
+      });
+
+      // 更新选择
+      if (selectedIds.length > 0) {
+        devLog("[FileListing] Marquee selected IDs:", selectedIds);
+        if (onSelectMultiple) {
+          devLog("[FileListing] Calling onSelectMultiple with", selectedIds.length, "items");
+          onSelectMultiple(selectedIds);
+        } else {
+          devWarn("[FileListing] onSelectMultiple is undefined");
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      setMarqueeSelection({
+        active: false,
+        startX: 0,
+        startY: 0,
+        currentX: 0,
+        currentY: 0
+      });
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
   const handleColumnResizeStart = (column: ColumnDefinition, event: ReactMouseEvent<HTMLSpanElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1095,6 +1292,7 @@ export function FileListingShell({
       ) : null}
 
       <div
+        ref={scrollContainerRef}
         className={`file-listing__scroll${isListingDropTarget ? " is-drop-target" : ""}`}
         data-panel-id={panelId}
         data-entry-drop-kind="listing"
@@ -1104,8 +1302,27 @@ export function FileListingShell({
         onDragOver={handleListingDragOver}
         onDragLeave={handleListingDragLeave}
         onDrop={handleListingDrop}
+        onMouseDown={handleListingMouseDown}
       >
         <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
+
+        {/* 框选矩形 */}
+        {marqueeSelection.active && (
+          <div
+            className="file-listing__marquee"
+            style={{
+              position: "fixed",
+              left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
+              top: Math.min(marqueeSelection.startY, marqueeSelection.currentY),
+              width: Math.abs(marqueeSelection.currentX - marqueeSelection.startX),
+              height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY),
+              border: "1px solid #0078d4",
+              backgroundColor: "rgba(0, 120, 212, 0.1)",
+              pointerEvents: "none",
+              zIndex: 1000
+            }}
+          />
+        )}
       </div>
     </div>
   );
