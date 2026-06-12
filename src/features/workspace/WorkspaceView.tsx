@@ -163,6 +163,42 @@ export function WorkspaceView() {
     setOpenMenuId(null);
   };
 
+  const handleAddressInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const isCtrl = event.ctrlKey || event.metaKey;
+
+    // 当地址栏输入框获得焦点时，处理特定快捷键
+    if (isCtrl) {
+      const key = event.key.toLowerCase();
+
+      // Ctrl+A: 全选输入框文字（浏览器原生行为，阻止冒泡到全局处理器）
+      if (key === 'a') {
+        event.stopPropagation();
+        // 让浏览器原生处理全选，不需要 preventDefault
+        return;
+      }
+
+      // Ctrl+F: 打开程序搜索面板（阻止浏览器默认搜索）
+      if (key === 'f') {
+        event.preventDefault();
+        event.stopPropagation();
+        actions.toggleSearch(true);
+        return;
+      }
+
+      // Ctrl+C/X/V: 剪贴板操作（浏览器原生行为，阻止冒泡到全局处理器）
+      if (['c', 'x', 'v'].includes(key)) {
+        event.stopPropagation();
+        return;
+      }
+
+      // Ctrl+Z/Y: 撤销/重做（浏览器原生行为，阻止冒泡）
+      if (['z', 'y'].includes(key)) {
+        event.stopPropagation();
+        return;
+      }
+    }
+  };
+
   const handleAddressSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isActiveNavigationTab) {
@@ -358,12 +394,12 @@ export function WorkspaceView() {
 
       <section className="workspace-addressbar" ref={addressBarRef}>
         <form className="address-bar" onSubmit={handleAddressSubmit}>
-          <span className="address-bar__prefix">路径</span>
           <input
             type="text"
             value={isActiveNavigationTab ? "导航" : activeTab.addressDraft}
             readOnly={isActiveNavigationTab}
             onChange={(event) => actions.updateAddressDraft(state.activePanelId, activeTab.id, event.target.value)}
+            onKeyDown={handleAddressInputKeyDown}
             onFocus={() => setAddressHistoryOpen(false)}
             aria-label="当前路径"
           />
@@ -374,9 +410,6 @@ export function WorkspaceView() {
             onClick={() => setAddressHistoryOpen((open) => !open)}
           >
             ▾
-          </button>
-          <button type="submit" className="toolbar-button toolbar-button--flat" disabled={isActiveNavigationTab}>
-            转到
           </button>
 
           {addressHistoryOpen && recentPaths.length > 0 ? (

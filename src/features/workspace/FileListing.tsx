@@ -479,8 +479,14 @@ export function FileListingShell({
   // 键盘快捷键处理
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl+A / Cmd+A: 全选
-      if ((event.ctrlKey || event.metaKey) && event.key === "a") {
+      // 检查焦点是否在可编辑元素上
+      const target = event.target;
+      const isEditable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
+
+      // Ctrl+A / Cmd+A: 全选（仅在非可编辑元素时生效）
+      if ((event.ctrlKey || event.metaKey) && event.key === "a" && !isEditable) {
         devLog("[FileListing] Ctrl+A detected, onSelectAll:", onSelectAll);
         event.preventDefault();
         if (onSelectAll) {
