@@ -1080,6 +1080,16 @@ body.is-entry-pointer-dragging * {
   user-select: text;
 }
 
+.file-listing--details .file-row.is-inline-editing .entry-name {
+  width: 100%;
+}
+
+.file-listing--details .file-row.is-inline-editing .inline-edit-input {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+}
+
 .file-card--icon .inline-edit-input {
   width: 100%;
   max-width: 180px;

@@ -474,6 +474,10 @@ function getOperationRefreshPaths(task: OperationTaskSnapshot, profiles: RemoteC
   return Array.from(new Set([...roots, ...resultParents].map((path) => normalizeLocationPath(path))));
 }
 
+function waitForMilliseconds(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 export function getParentPathForRefresh(path: string): string | null {
   const normalized = normalizeLocationPath(path);
   if (!isRemotePath(normalized)) {
@@ -513,6 +517,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const activeSearchRef = useRef<{ requestId: number; searchId: string } | null>(null);
   const searchHistoryHydratedRef = useRef(false);
   const refreshedOperationTasksRef = useRef<Set<string>>(new Set());
+  const pendingInlineRefreshPathsRef = useRef<Map<string, Set<string>>>(new Map());
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
     colorRules: false,
@@ -1024,14 +1029,40 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     );
   });
 
+  const addPendingInlineRefreshPath = (taskId: string, path: string) => {
+    const normalizedPath = normalizeLocationPath(path);
+    const paths = pendingInlineRefreshPathsRef.current.get(taskId) ?? new Set<string>();
+    paths.add(normalizedPath);
+    pendingInlineRefreshPathsRef.current.set(taskId, paths);
+  };
+
+  const consumePendingInlineRefreshPaths = (taskId: string) => {
+    const paths = pendingInlineRefreshPathsRef.current.get(taskId);
+    if (!paths) {
+      return [];
+    }
+
+    pendingInlineRefreshPathsRef.current.delete(taskId);
+    return [...paths];
+  };
+
   const projectOperationTask = useEffectEvent(async (task: OperationTaskSnapshot) => {
     dispatch({ type: "operationTaskEventReceived", payload: task });
-    if (!isTerminalOperationTask(task) || refreshedOperationTasksRef.current.has(task.taskId)) {
+    if (!isTerminalOperationTask(task)) {
       return;
     }
 
-    refreshedOperationTasksRef.current.add(task.taskId);
-    const refreshPaths = getOperationRefreshPaths(task, state.remoteProfiles);
+    const alreadyRefreshed = refreshedOperationTasksRef.current.has(task.taskId);
+    const pendingInlineRefreshPaths = consumePendingInlineRefreshPaths(task.taskId);
+    if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0) {
+      return;
+    }
+
+    if (!alreadyRefreshed) {
+      refreshedOperationTasksRef.current.add(task.taskId);
+    }
+    const operationRefreshPaths = alreadyRefreshed ? [] : getOperationRefreshPaths(task, state.remoteProfiles);
+    const refreshPaths = Array.from(new Set([...operationRefreshPaths, ...pendingInlineRefreshPaths]));
     if (refreshPaths.length > 0) {
       await refreshPanelsForPaths(refreshPaths);
     }
@@ -1048,6 +1079,40 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     await projectOperationTask(task);
+  });
+
+  const pollInlineOperationRefresh = useEffectEvent(async (taskId: string) => {
+    for (const delay of [120, 240, 480, 800, 1200, 1600]) {
+      if (!pendingInlineRefreshPathsRef.current.has(taskId)) {
+        return;
+      }
+
+      await waitForMilliseconds(delay);
+      try {
+        const snapshot = await workspaceGateway.listOperationTasks();
+        const task = snapshot.tasks.find((item) => item.taskId === taskId);
+        if (task && isTerminalOperationTask(task)) {
+          await projectOperationTask(task);
+          return;
+        }
+      } catch (error) {
+        devLog("[useWorkspaceController] inline operation polling failed", error);
+        return;
+      }
+    }
+  });
+
+  const refreshInlineEditParentAfterResult = useEffectEvent(async (task: OperationTaskSnapshot | void, parentPath: string) => {
+    if (!task) {
+      await refreshPanelsForPaths([parentPath]);
+      return;
+    }
+
+    addPendingInlineRefreshPath(task.taskId, parentPath);
+    await projectOperationResult(task);
+    if (!isTerminalOperationTask(task) && pendingInlineRefreshPathsRef.current.has(task.taskId)) {
+      void pollInlineOperationRefresh(task.taskId);
+    }
   });
 
   useEffect(() => {
@@ -1917,6 +1982,21 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
   });
 
+  const commitActiveInlineEdits = useEffectEvent(async () => {
+    const edits = Object.values(state.panels).flatMap((panel) =>
+      panel.tabs
+        .filter((tab) => !isNavigationTab(tab) && tab.inlineEdit)
+        .map((tab) => ({
+          panelId: panel.id,
+          tabId: tab.id
+        }))
+    );
+
+    for (const edit of edits) {
+      await commitInlineEdit(edit.panelId, edit.tabId);
+    }
+  });
+
   const commitInlineEdit = useEffectEvent(async (panelId: PanelId, tabId: string, value?: string) => {
     const tab = findTab(state, panelId, tabId);
     const edit = tab?.inlineEdit;
@@ -1938,10 +2018,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId
         });
         dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
-        await projectOperationResult(task);
-        if (!task) {
-          await refreshPanelsForPaths([edit.parentPath]);
-        }
+        await refreshInlineEditParentAfterResult(task, edit.parentPath);
         return;
       }
 
@@ -1952,10 +2029,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId
         });
         dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
-        await projectOperationResult(task);
-        if (!task) {
-          await refreshPanelsForPaths([edit.parentPath]);
-        }
+        await refreshInlineEditParentAfterResult(task, edit.parentPath);
         return;
       }
 
@@ -1966,10 +2040,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId
         });
         dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
-        await projectOperationResult(task);
-        if (!task) {
-          await refreshPanelsForPaths([edit.parentPath]);
-        }
+        await refreshInlineEditParentAfterResult(task, edit.parentPath);
         return;
       }
     } catch (error) {
@@ -2423,6 +2494,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       createFile: (panelId: PanelId) => void createFile(panelId),
       updateInlineEdit: (panelId: PanelId, tabId: string, value: string) => updateInlineEdit(panelId, tabId, value),
       commitInlineEdit: (panelId: PanelId, tabId: string, value?: string) => void commitInlineEdit(panelId, tabId, value),
+      commitActiveInlineEdits: () => void commitActiveInlineEdits(),
       cancelInlineEdit: (panelId: PanelId, tabId: string) => cancelInlineEdit(panelId, tabId),
       refreshPanel: (panelId: PanelId) => void refreshPanel(panelId),
       reconnectTab: (panelId: PanelId, tabId: string) => reconnectTab(panelId, tabId),
@@ -2444,6 +2516,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       applySettingsModel,
       cancelOperation,
       closeTabGuarded,
+      commitActiveInlineEdits,
       commitInlineEdit,
       commitNavigation,
       copySelection,

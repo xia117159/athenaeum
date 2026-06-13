@@ -65,6 +65,9 @@ function createTestGateway(
     loadBootstrap?: () => WorkspaceBootstrap | Promise<WorkspaceBootstrap>;
     loadTreeChildren?: (path: string) => DirectoryNode[] | Promise<DirectoryNode[]>;
     getItemProperties?: WorkspaceGateway["getItemProperties"];
+    renameEntry?: WorkspaceGateway["renameEntry"];
+    listOperationTasks?: WorkspaceGateway["listOperationTasks"];
+    listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
   } = {}
 ): WorkspaceGateway {
   const emptyFavorites = { bookmarks: [], hotlist: [] };
@@ -155,12 +158,18 @@ function createTestGateway(
       interactions.savedSettingsModels?.push(model);
     },
     async listOperationTasks() {
+      if (overrides.listOperationTasks) {
+        return overrides.listOperationTasks();
+      }
       return { tasks: [], taskSequence: 0 };
     },
     async listOperationHistory() {
       return { records: [], historySequence: 0 };
     },
-    async listenOperationTasks() {
+    async listenOperationTasks(handler) {
+      if (overrides.listenOperationTasks) {
+        return overrides.listenOperationTasks(handler);
+      }
       return () => undefined;
     },
     async listenOperationConflicts() {
@@ -229,6 +238,9 @@ function createTestGateway(
       interactions.deleteCalls.push({ paths: [...paths] });
     },
     async renameEntry(source, newName) {
+      if (overrides.renameEntry) {
+        return overrides.renameEntry(source, newName);
+      }
       interactions.renameCalls.push({ source, newName });
     },
     async createDirectory(parent, name) {
@@ -2014,6 +2026,324 @@ export const completion = (async () => {
           await flushEffects();
         });
         inlineContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController commits inactive tab inline edits from a workspace-level outside click", async () => {
+      const inactiveInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let inactiveController: ReturnType<typeof useWorkspaceController> | undefined;
+      const inactiveBootstrap = createMockWorkspaceBootstrap("tauri");
+      const editingTab = createTabState("D:\\Projects\\Atlas", "inactive-editing-tab", {
+        selectedEntryIds: ["D:\\Projects\\Atlas:sprint-plan.md"]
+      });
+      const activeTab = createTabState("D:\\Projects\\Atlas\\src", "inactive-active-tab");
+      inactiveBootstrap.layoutMode = "single";
+      inactiveBootstrap.panels["panel-1"] = {
+        ...inactiveBootstrap.panels["panel-1"],
+        tabs: [editingTab, activeTab],
+        activeTabId: editingTab.id
+      };
+      const inactiveGateway = createTestGateway(() => undefined, inactiveInteractions, {
+        loadBootstrap: () => inactiveBootstrap
+      });
+
+      function InactiveHarness() {
+        inactiveController = useWorkspaceController(inactiveGateway);
+        return React.createElement("div", null, inactiveController.state.status);
+      }
+
+      const inactiveContainer = document.createElement("div");
+      document.body.appendChild(inactiveContainer);
+      const inactiveRoot = ReactDOM.createRoot(inactiveContainer);
+
+      try {
+        await act(async () => {
+          inactiveRoot.render(React.createElement(InactiveHarness));
+          await flushEffects();
+        });
+        await waitFor(() => inactiveController?.state.status === "ready", "inactive controller did not bootstrap");
+
+        await act(async () => {
+          inactiveController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+        await waitFor(
+          () => inactiveController?.state.panels["panel-1"].tabs[0].inlineEdit?.mode === "rename",
+          "rename edit was not started on the first tab"
+        );
+
+        await act(async () => {
+          inactiveController?.actions.updateInlineEdit("panel-1", editingTab.id, "sprint-plan-final.md");
+          inactiveController?.actions.activateTab("panel-1", activeTab.id);
+          await flushEffects();
+        });
+
+        await act(async () => {
+          inactiveController?.actions.commitActiveInlineEdits();
+          await flushEffects();
+        });
+
+        await waitFor(() => inactiveInteractions.renameCalls.length === 1, "inactive inline rename was not committed");
+        assert.deepEqual(inactiveInteractions.renameCalls, [
+          {
+            source: "D:\\Projects\\Atlas\\sprint-plan.md",
+            newName: "sprint-plan-final.md"
+          }
+        ]);
+        await waitFor(
+          () => inactiveInteractions.resolvedPaths.includes("D:\\Projects\\Atlas"),
+          "inactive inline rename did not refresh the source directory"
+        );
+      } finally {
+        await act(async () => {
+          inactiveRoot.unmount();
+          await flushEffects();
+        });
+        inactiveContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes the source directory after a completed inline rename", async () => {
+      const refreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let refreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const refreshPath = "sftp://deploy@edge-01/releases";
+      const refreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      refreshBootstrap.layoutMode = "single";
+      refreshBootstrap.panels["panel-1"] = {
+        ...refreshBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(refreshPath, "rename-refresh-tab", {
+            selectedEntryIds: [`${refreshPath}:manifest.yml`]
+          })
+        ],
+        activeTabId: "rename-refresh-tab"
+      };
+      const refreshGateway = createTestGateway(() => undefined, refreshInteractions, {
+        loadBootstrap: () => refreshBootstrap,
+        renameEntry: async (source, newName) => {
+          refreshInteractions.renameCalls.push({ source, newName });
+          const now = "2026-06-10T08:00:00Z";
+          return {
+            taskId: "rename-refresh-task",
+            requestId: "request-rename-refresh-task",
+            kind: "rename",
+            label: "Rename manifest.yml",
+            status: "succeeded",
+            createdAt: now,
+            startedAt: now,
+            finishedAt: now,
+            totalEntries: 1,
+            completedEntries: 1,
+            failedEntries: 0,
+            totalBytes: null,
+            completedBytes: null,
+            currentPath: null,
+            message: null,
+            cancelable: false,
+            undoable: true,
+            affectedRoots: [],
+            entryResults: [],
+            sequence: 1,
+            updatedAt: now
+          } satisfies OperationTaskSnapshot;
+        }
+      });
+
+      function RefreshHarness() {
+        refreshController = useWorkspaceController(refreshGateway);
+        return React.createElement("div", null, refreshController.state.status);
+      }
+
+      const refreshContainer = document.createElement("div");
+      document.body.appendChild(refreshContainer);
+      const refreshRoot = ReactDOM.createRoot(refreshContainer);
+
+      try {
+        await act(async () => {
+          refreshRoot.render(React.createElement(RefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => refreshController?.state.status === "ready", "refresh controller did not bootstrap");
+
+        await act(async () => {
+          refreshController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+
+        await act(async () => {
+          refreshController?.actions.updateInlineEdit("panel-1", "rename-refresh-tab", "manifest-final.yml");
+          refreshController?.actions.commitInlineEdit("panel-1", "rename-refresh-tab", "manifest-final.yml");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => refreshInteractions.resolvedPaths.includes(refreshPath),
+          "completed inline rename did not refresh the source directory"
+        );
+        assert.deepEqual(refreshInteractions.renameCalls, [
+          {
+            source: `${refreshPath}/manifest.yml`,
+            newName: "manifest-final.yml"
+          }
+        ]);
+      } finally {
+        await act(async () => {
+          refreshRoot.unmount();
+          await flushEffects();
+        });
+        refreshContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes inline rename parent after the background task finishes", async () => {
+      const taskInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let taskController: ReturnType<typeof useWorkspaceController> | undefined;
+      let taskListener: Parameters<WorkspaceGateway["listenOperationTasks"]>[0] | undefined;
+      let currentTask: OperationTaskSnapshot;
+      const taskPath = "sftp://deploy@edge-01/releases";
+      const taskNow = "2026-06-10T08:00:00Z";
+      const baseTask: OperationTaskSnapshot = {
+        taskId: "rename-background-task",
+        requestId: "request-rename-background-task",
+        kind: "rename",
+        label: "Rename manifest.yml",
+        status: "running",
+        createdAt: taskNow,
+        startedAt: taskNow,
+        finishedAt: null,
+        totalEntries: 1,
+        completedEntries: 0,
+        failedEntries: 0,
+        totalBytes: null,
+        completedBytes: null,
+        currentPath: null,
+        message: null,
+        cancelable: true,
+        undoable: false,
+        affectedRoots: [],
+        entryResults: [],
+        sequence: 1,
+        updatedAt: taskNow
+      };
+      currentTask = baseTask;
+      const taskBootstrap = createMockWorkspaceBootstrap("tauri");
+      taskBootstrap.layoutMode = "single";
+      taskBootstrap.panels["panel-1"] = {
+        ...taskBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(taskPath, "rename-background-tab", {
+            selectedEntryIds: [`${taskPath}:manifest.yml`]
+          })
+        ],
+        activeTabId: "rename-background-tab"
+      };
+      const taskGateway = createTestGateway(() => undefined, taskInteractions, {
+        loadBootstrap: () => taskBootstrap,
+        renameEntry: async (source, newName) => {
+          taskInteractions.renameCalls.push({ source, newName });
+          return currentTask;
+        },
+        listOperationTasks: async () => ({ tasks: [currentTask], taskSequence: currentTask.sequence }),
+        listenOperationTasks: async (handler) => {
+          taskListener = handler;
+          return () => undefined;
+        }
+      });
+
+      function TaskHarness() {
+        taskController = useWorkspaceController(taskGateway);
+        return React.createElement("div", null, taskController.state.status);
+      }
+
+      const taskContainer = document.createElement("div");
+      document.body.appendChild(taskContainer);
+      const taskRoot = ReactDOM.createRoot(taskContainer);
+
+      try {
+        await act(async () => {
+          taskRoot.render(React.createElement(TaskHarness));
+          await flushEffects();
+        });
+        await waitFor(() => taskController?.state.status === "ready", "task controller did not bootstrap");
+        await waitFor(() => Boolean(taskListener), "operation task listener was not registered");
+
+        await act(async () => {
+          taskController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+
+        await act(async () => {
+          taskController?.actions.updateInlineEdit("panel-1", "rename-background-tab", "manifest-final.yml");
+          taskController?.actions.commitInlineEdit("panel-1", "rename-background-tab", "manifest-final.yml");
+          await flushEffects();
+        });
+
+        assert.equal(taskInteractions.resolvedPaths.includes(taskPath), false);
+
+        currentTask = {
+          ...baseTask,
+          status: "succeeded",
+          finishedAt: "2026-06-10T08:00:01Z",
+          completedEntries: 1,
+          cancelable: false,
+          undoable: true,
+          sequence: 2,
+          updatedAt: "2026-06-10T08:00:01Z"
+        };
+
+        await act(async () => {
+          taskListener?.({
+            taskId: currentTask.taskId,
+            sequence: currentTask.sequence,
+            updatedAt: currentTask.updatedAt,
+            snapshot: currentTask
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => taskInteractions.resolvedPaths.includes(taskPath),
+          "background inline rename completion did not refresh the source directory"
+        );
+      } finally {
+        await act(async () => {
+          taskRoot.unmount();
+          await flushEffects();
+        });
+        taskContainer.remove();
       }
     });
 

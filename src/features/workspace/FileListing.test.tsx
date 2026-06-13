@@ -278,6 +278,7 @@ export const completion = (async () => {
   const resolvedIconRequests: SystemIconRequest[] = [];
   const inlineChanges: string[] = [];
   const inlineCommits: string[] = [];
+  const inlineCommitValues: Array<string | undefined> = [];
   const inlineCancels: string[] = [];
 
   setSystemIconResolverForTests(async (request) => {
@@ -331,8 +332,9 @@ export const completion = (async () => {
         onInlineEditChange: (value) => {
           inlineChanges.push(value);
         },
-        onInlineEditCommit: () => {
+        onInlineEditCommit: (value) => {
           inlineCommits.push("commit");
+          inlineCommitValues.push(value);
         },
         onInlineEditCancel: () => {
           inlineCancels.push("cancel");
@@ -1061,6 +1063,63 @@ export const completion = (async () => {
 
       assert.deepEqual(inlineCommits, ["commit"]);
       assert.deepEqual(inlineCancels, []);
+    });
+
+    await assertTest("FileListingShell commits an active rename when blank listing space is clicked", async () => {
+      inlineChanges.length = 0;
+      inlineCommits.length = 0;
+      inlineCommitValues.length = 0;
+      inlineCancels.length = 0;
+
+      await act(async () => {
+        render("details", {
+          mode: "rename",
+          value: "report.txt",
+          kind: "file",
+          parentPath: "D:\\",
+          entryId: "file-source",
+          originalName: "report.txt",
+          originalPath: "D:\\report.txt"
+        });
+        await flushEffects();
+      });
+
+      const input = container.querySelector(".inline-edit-input") as HTMLInputElement | null;
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(input);
+      assert.ok(scroll);
+
+      await act(async () => {
+        setInputValue(input, "report-final.txt");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        scroll.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            clientX: 180,
+            clientY: 96
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.deepEqual(inlineCommits, ["commit"]);
+      assert.deepEqual(inlineCommitValues, ["report-final.txt"]);
+      assert.deepEqual(inlineCancels, []);
+      assert.equal(container.querySelector(".file-listing__marquee"), null);
+    });
+
+    await assertTest("workspace details rename input fills the available name column width", async () => {
+      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      assert.match(
+        css,
+        /\.file-listing--details\s+\.file-row\.is-inline-editing\s+\.entry-name\s*\{[^}]*width:\s*100%;/s
+      );
+      assert.match(
+        css,
+        /\.file-listing--details\s+\.file-row\.is-inline-editing\s+\.inline-edit-input\s*\{[^}]*max-width:\s*none;/s
+      );
     });
   } finally {
     await act(async () => {

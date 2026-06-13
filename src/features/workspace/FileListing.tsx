@@ -612,6 +612,19 @@ export function FileListingShell({
     onInlineEditCommit(inlineInputRef.current?.value);
   };
 
+  const commitInlineEditFromOutsidePointer = (target: HTMLElement) => {
+    if (!inlineEdit || target.closest(".inline-edit-input")) {
+      return false;
+    }
+
+    suppressNextInlineBlurRef.current = true;
+    window.setTimeout(() => {
+      suppressNextInlineBlurRef.current = false;
+    }, 0);
+    onInlineEditCommit(inlineInputRef.current?.value);
+    return true;
+  };
+
   const renderInlineEditInput = () => (
     <input
       ref={inlineInputRef}
@@ -1135,6 +1148,10 @@ export function FileListingShell({
     // 只处理左键，并且不是在列表项上
     if (event.button !== 0) {
       devLog("[FileListing] Ignoring non-left button");
+      return;
+    }
+
+    if (commitInlineEditFromOutsidePointer(target)) {
       return;
     }
 

@@ -136,13 +136,19 @@ export function WorkspaceView() {
           addressInputRef.current.blur();
         }
       }
+      if (event.target instanceof Element && !event.target.closest(".inline-edit-input")) {
+        const owningListing = event.target.closest(".file-listing");
+        if (!owningListing?.querySelector(".inline-edit-input")) {
+          actions.commitActiveInlineEdits();
+        }
+      }
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, []);
+  }, [actions]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
