@@ -37,6 +37,17 @@ const ICON_VIEW_MODES: TabViewMode[] = ["extra-large-icons", "large-icons", "med
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function clampClientPointToRect(clientX: number, clientY: number, rect: DOMRect) {
+  return {
+    x: clamp(clientX, rect.left, rect.right),
+    y: clamp(clientY, rect.top, rect.bottom)
+  };
+}
+
 type DropModifierState = {
   ctrlKey: boolean;
   metaKey: boolean;
@@ -1163,8 +1174,9 @@ export function FileListingShell({
     }
 
     const rect = scrollContainer.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
+    const startPoint = clampClientPointToRect(event.clientX, event.clientY, rect);
+    const startX = startPoint.x;
+    const startY = startPoint.y;
 
     setMarqueeSelection({
       active: true,
@@ -1176,20 +1188,27 @@ export function FileListingShell({
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       moveEvent.preventDefault();
+      const movePoint = clampClientPointToRect(
+        moveEvent.clientX,
+        moveEvent.clientY,
+        scrollContainer.getBoundingClientRect()
+      );
+      const currentX = movePoint.x;
+      const currentY = movePoint.y;
       setMarqueeSelection({
         active: true,
         startX,
         startY,
-        currentX: moveEvent.clientX,
-        currentY: moveEvent.clientY
+        currentX,
+        currentY
       });
 
       // 计算框选矩形
       const marqueeRect = {
-        left: Math.min(startX, moveEvent.clientX),
-        top: Math.min(startY, moveEvent.clientY),
-        right: Math.max(startX, moveEvent.clientX),
-        bottom: Math.max(startY, moveEvent.clientY)
+        left: Math.min(startX, currentX),
+        top: Math.min(startY, currentY),
+        right: Math.max(startX, currentX),
+        bottom: Math.max(startY, currentY)
       };
 
       // 找出与框选区域相交的条目
@@ -1324,6 +1343,7 @@ export function FileListingShell({
               height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY),
               border: "1px solid #0078d4",
               backgroundColor: "rgba(0, 120, 212, 0.1)",
+              boxSizing: "border-box",
               pointerEvents: "none",
               zIndex: 1000
             }}

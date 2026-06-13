@@ -689,6 +689,61 @@ export const completion = (async () => {
       assert.equal((listing as HTMLElement).style.getPropertyValue("--details-row-height"), "42px");
     });
 
+    await assertTest("FileListingShell keeps the marquee rectangle inside the listing content region", async () => {
+      await act(async () => {
+        render("details", undefined, "panel-1", []);
+        await flushEffects();
+      });
+
+      const scroll = container.querySelector(".file-listing__scroll") as HTMLElement | null;
+      assert.ok(scroll);
+      scroll.getBoundingClientRect = () =>
+        ({
+          width: 400,
+          height: 200,
+          top: 40,
+          right: 500,
+          bottom: 240,
+          left: 100,
+          x: 100,
+          y: 40,
+          toJSON: () => ({})
+        }) as DOMRect;
+
+      await act(async () => {
+        scroll.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            clientX: 420,
+            clientY: 200
+          })
+        );
+        window.dispatchEvent(
+          new MouseEvent("mousemove", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 20,
+            clientY: 10
+          })
+        );
+        await flushEffects();
+      });
+
+      const marquee = container.querySelector(".file-listing__marquee") as HTMLElement | null;
+      assert.ok(marquee);
+      assert.equal(marquee.style.left, "100px");
+      assert.equal(marquee.style.top, "40px");
+      assert.equal(marquee.style.width, "320px");
+      assert.equal(marquee.style.height, "160px");
+
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+    });
+
     await assertTest("FileListingShell defaults cross-panel drops to copy and allows Shift to force move", async () => {
       await act(async () => {
         render("details", undefined, "panel-2");
