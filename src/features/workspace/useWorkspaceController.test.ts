@@ -59,10 +59,12 @@ function createTestGateway(
     hostKeyLookups?: string[];
     trustedHostKeys?: Array<{ profileId: string; keyBase64: string }>;
     cancelSearchIds?: string[];
+    propertyCalls?: Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>;
   },
   overrides: {
     loadBootstrap?: () => WorkspaceBootstrap | Promise<WorkspaceBootstrap>;
     loadTreeChildren?: (path: string) => DirectoryNode[] | Promise<DirectoryNode[]>;
+    getItemProperties?: WorkspaceGateway["getItemProperties"];
   } = {}
 ): WorkspaceGateway {
   const emptyFavorites = { bookmarks: [], hotlist: [] };
@@ -109,6 +111,37 @@ function createTestGateway(
     },
     async cancelSearch(searchId: string) {
       interactions.cancelSearchIds?.push(searchId);
+    },
+    async getItemProperties(requestId: string, path: string, includeDirectorySize = false) {
+      interactions.propertyCalls?.push({ requestId, path, includeDirectorySize });
+      if (overrides.getItemProperties) {
+        return overrides.getItemProperties(requestId, path, includeDirectorySize);
+      }
+      return {
+        requestId,
+        target: {
+          kind: "local" as const,
+          path
+        },
+        displayPath: path,
+        actualPath: path,
+        parentPath: "D:\\Projects\\Atlas",
+        name: path.split("\\").pop() ?? path,
+        extension: ".txt",
+        kind: "file" as const,
+        sizeBytes: 1024,
+        allocatedBytes: null,
+        createdAt: null,
+        modifiedAt: "2026-06-10T08:00:00Z",
+        accessedAt: null,
+        isHidden: false,
+        isReadOnly: false,
+        isSymlink: false,
+        directorySizeState: {
+          state: "notApplicable" as const
+        },
+        fieldStates: []
+      };
     },
     async saveSession() {},
     async saveLayout() {},
@@ -341,6 +374,7 @@ function findTreeNode(nodes: DirectoryNode[], path: string): DirectoryNode | und
 function createEntry(parentPath: string, name: string, kind: EntryViewModel["kind"] = "file"): EntryViewModel {
   const separator = parentPath.startsWith("ftp://") || parentPath.startsWith("sftp://") ? "/" : "\\";
   const path = parentPath.endsWith(separator) ? `${parentPath}${name}` : `${parentPath}${separator}${name}`;
+  const sizeBytes = kind === "folder" ? null : 1024;
   return {
     id: `${parentPath}:${name}`,
     name,
@@ -348,6 +382,7 @@ function createEntry(parentPath: string, name: string, kind: EntryViewModel["kin
     path,
     parentPath,
     sizeLabel: kind === "folder" ? "--" : "1 KB",
+    sizeBytes,
     modifiedLabel: "2026-04-21 10:00",
     extension: kind === "folder" ? "" : name.includes(".") ? `.${name.split(".").pop()}` : "",
     attributes: kind === "folder" ? ["D"] : ["A"],
@@ -377,7 +412,8 @@ export const completion = (async () => {
     treeLoadPaths: [] as string[],
     savedDetailsRowHeights: [] as number[],
     nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
-    systemOpens: [] as string[]
+    systemOpens: [] as string[],
+    propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
   };
 
   const gateway = createTestGateway(() => {
@@ -436,6 +472,258 @@ export const completion = (async () => {
 
       await waitFor(() => interactions.systemOpens.includes(file.path), "file entry was not opened through the system default app");
       assert.deepEqual(interactions.systemOpens, [file.path]);
+    });
+
+    await assertTest("useWorkspaceController loads properties for the current folder and selected item", async () => {
+      interactions.propertyCalls.length = 0;
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+      assert.ok(selectedEntry);
+
+      await act(async () => {
+        latestController?.actions.setInformationPanelExpanded(true);
+        latestController?.actions.selectInformationPanelTab("properties");
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.propertyCalls.length >= 1, "current folder properties were not requested");
+      assert.deepEqual(interactions.propertyCalls.at(-1), {
+        requestId: "properties-1",
+        path: activeTab.snapshot.location.path,
+        includeDirectorySize: false
+      });
+
+      await act(async () => {
+        latestController?.actions.selectEntry("panel-1", activeTab.id, selectedEntry.id, false);
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => interactions.propertyCalls.some((call) => call.path === selectedEntry.path),
+        "selected item properties were not requested"
+      );
+      assert.equal(latestController?.state.informationPanel.properties.status, "ready");
+      assert.equal(latestController?.state.informationPanel.properties.item?.actualPath, selectedEntry.path);
+    });
+
+    await assertTest("useWorkspaceController creates multi-selection properties summary without per-entry IPC", async () => {
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      const selectableEntries = activeTab.snapshot.entries.slice(0, 2);
+      assert.equal(selectableEntries.length, 2);
+      interactions.propertyCalls.length = 0;
+
+      await act(async () => {
+        latestController?.actions.selectMultipleEntries(
+          "panel-1",
+          activeTab.id,
+          selectableEntries.map((entry) => entry.id)
+        );
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => latestController?.state.informationPanel.properties.summary?.count === 2,
+        "multi-selection properties summary was not created"
+      );
+      assert.deepEqual(interactions.propertyCalls, []);
+      assert.equal(latestController?.state.informationPanel.properties.summary?.knownSizeBytes, selectableEntries.reduce((sum, entry) => sum + (entry.sizeBytes ?? 0), 0));
+    });
+
+    await assertTest("useWorkspaceController sets common extension only when every selected entry is a file with that extension", async () => {
+      const extensionInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
+      };
+      const extensionBootstrap = createMockWorkspaceBootstrap("tauri");
+      const extensionPanel = extensionBootstrap.panels["panel-1"];
+      const extensionTab = getActiveTab(extensionPanel);
+      const parentPath = extensionTab.snapshot.location.path;
+      const txtFile = createEntry(parentPath, "report.txt");
+      const secondTxtFile = createEntry(parentPath, "notes.txt");
+      const noExtensionFile = createEntry(parentPath, "README");
+      const folder = createEntry(parentPath, "src", "folder");
+      extensionPanel.tabs = extensionPanel.tabs.map((tab) =>
+        tab.id === extensionTab.id
+          ? {
+              ...tab,
+              snapshot: {
+                ...tab.snapshot,
+                entries: [txtFile, secondTxtFile, noExtensionFile, folder]
+              }
+            }
+          : tab
+      );
+
+      let extensionController: ReturnType<typeof useWorkspaceController> | undefined;
+      const extensionGateway = createTestGateway(() => undefined, extensionInteractions, {
+        loadBootstrap: () => extensionBootstrap
+      });
+
+      function ExtensionHarness() {
+        extensionController = useWorkspaceController(extensionGateway);
+        return React.createElement("div", null, extensionController.state.status);
+      }
+
+      const extensionContainer = document.createElement("div");
+      document.body.appendChild(extensionContainer);
+      const extensionRoot = ReactDOM.createRoot(extensionContainer);
+
+      async function selectForSummary(ids: string[]) {
+        await act(async () => {
+          extensionController?.actions.setInformationPanelExpanded(true);
+          extensionController?.actions.selectInformationPanelTab("properties");
+          extensionController?.actions.selectMultipleEntries("panel-1", extensionTab.id, ids);
+          await flushEffects();
+        });
+        await waitFor(
+          () => extensionController?.state.informationPanel.properties.summary?.selectionKey === ids.join("|"),
+          "multi-selection extension summary was not updated"
+        );
+        return extensionController!.state.informationPanel.properties.summary;
+      }
+
+      try {
+        await act(async () => {
+          extensionRoot.render(React.createElement(ExtensionHarness));
+          await flushEffects();
+        });
+        await waitFor(() => extensionController?.state.status === "ready", "extension controller did not bootstrap");
+
+        assert.equal((await selectForSummary([txtFile.id, folder.id]))?.commonExtension, undefined);
+        assert.equal((await selectForSummary([txtFile.id, noExtensionFile.id]))?.commonExtension, undefined);
+        assert.equal((await selectForSummary([txtFile.id, secondTxtFile.id]))?.commonExtension, ".txt");
+        assert.deepEqual(extensionInteractions.propertyCalls, []);
+      } finally {
+        await act(async () => {
+          extensionRoot.unmount();
+          await flushEffects();
+        });
+        extensionContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController ignores a deferred properties result after selection changes", async () => {
+      const raceInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
+      };
+      type DeferredPropertyRequest = {
+        requestId: string;
+        path: string;
+        resolve: (path: string) => void;
+      };
+      const pendingRequests: DeferredPropertyRequest[] = [];
+      const createPropertyItem = (requestId: string, path: string) => ({
+        requestId,
+        target: {
+          kind: "local" as const,
+          path
+        },
+        displayPath: path,
+        actualPath: path,
+        parentPath: "D:\\Projects\\Atlas",
+        name: path.split("\\").pop() ?? path,
+        extension: ".txt",
+        kind: "file" as const,
+        sizeBytes: 1024,
+        allocatedBytes: null,
+        createdAt: null,
+        modifiedAt: "2026-06-10T08:00:00Z",
+        accessedAt: null,
+        isHidden: false,
+        isReadOnly: false,
+        isSymlink: false,
+        directorySizeState: {
+          state: "notApplicable" as const
+        },
+        fieldStates: []
+      });
+
+      let raceController: ReturnType<typeof useWorkspaceController> | undefined;
+      const raceGateway = createTestGateway(() => undefined, raceInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        getItemProperties: (requestId, path) =>
+          new Promise((resolve) => {
+            pendingRequests.push({
+              requestId,
+              path,
+              resolve: (resolvedPath: string) => resolve(createPropertyItem(requestId, resolvedPath))
+            });
+          })
+      });
+
+      function RaceHarness() {
+        raceController = useWorkspaceController(raceGateway);
+        return React.createElement("div", null, raceController.state.status);
+      }
+
+      const raceContainer = document.createElement("div");
+      document.body.appendChild(raceContainer);
+      const raceRoot = ReactDOM.createRoot(raceContainer);
+
+      try {
+        await act(async () => {
+          raceRoot.render(React.createElement(RaceHarness));
+          await flushEffects();
+        });
+        await waitFor(() => raceController?.state.status === "ready", "race controller did not bootstrap");
+
+        const activeTab = getActiveTab(raceController!.state.panels["panel-1"]);
+        const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+        assert.ok(selectedEntry);
+
+        await act(async () => {
+          raceController?.actions.setInformationPanelExpanded(true);
+          raceController?.actions.selectInformationPanelTab("properties");
+          await flushEffects();
+        });
+        await waitFor(() => pendingRequests.length >= 1, "initial properties request did not start");
+        const folderRequest = pendingRequests[0];
+
+        await act(async () => {
+          raceController?.actions.selectEntry("panel-1", activeTab.id, selectedEntry.id, false);
+          folderRequest.resolve(folderRequest.path);
+          await flushEffects();
+        });
+
+        assert.notEqual(raceController?.state.informationPanel.properties.item?.actualPath, folderRequest.path);
+
+        await waitFor(() => pendingRequests.some((request) => request.path === selectedEntry.path), "selected properties request did not start");
+        const selectedRequest = pendingRequests.find((request) => request.path === selectedEntry.path);
+        assert.ok(selectedRequest);
+        await act(async () => {
+          selectedRequest.resolve(selectedEntry.path);
+          await flushEffects();
+        });
+        await waitFor(
+          () => raceController?.state.informationPanel.properties.item?.actualPath === selectedEntry.path,
+          "selected properties result was not stored"
+        );
+      } finally {
+        await act(async () => {
+          raceRoot.unmount();
+          await flushEffects();
+        });
+        raceContainer.remove();
+      }
     });
 
     await assertTest("useWorkspaceController opens new tabs with unique ids and isolated editable state", async () => {

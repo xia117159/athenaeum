@@ -39,6 +39,14 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value: () => undefined
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value: () => undefined
+  });
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator
@@ -80,7 +88,6 @@ function createEntry(name: string, sizeLabel: string, kind: EntryViewModel["kind
 }
 
 const searchState: WorkspaceState["search"] = {
-  open: true,
   loading: false,
   filterText: "report",
   query: {
@@ -124,18 +131,44 @@ export const completion = (async () => {
   const filterUpdates: string[] = [];
   const selectedHistory: number[] = [];
   const deletedHistory: number[] = [];
+  const selectedInformationTabs: WorkspaceState["informationPanel"]["activeTab"][] = [];
+  const openedHistory: boolean[] = [];
   let runCount = 0;
   let stopCount = 0;
   let closeCount = 0;
 
-  const createPanelProps = (search: WorkspaceState["search"] = searchState) => ({
+  const createPanelProps = (
+    search: WorkspaceState["search"] = searchState,
+    informationPanelOverrides: Partial<WorkspaceState["informationPanel"]> = {}
+  ) => ({
+    informationPanel: {
+      expanded: true,
+      activeTab: "search",
+      properties: {
+        status: "idle"
+      },
+      ...informationPanelOverrides
+    } satisfies WorkspaceState["informationPanel"],
     search,
+    operations: {
+      tasksOpen: false,
+      tasks: [],
+      taskSequence: 0,
+      history: [],
+      historySequence: 0
+    } satisfies WorkspaceState["operations"],
     activeEntries: [createEntry("report.txt", "2 KB"), createEntry("src", "--", "folder")],
     selectedEntries: [createEntry("report.txt", "2 KB")],
-    onToggle: (open: boolean) => {
-      if (!open) {
+    onToggleExpanded: (expanded: boolean) => {
+      if (!expanded) {
         closeCount += 1;
       }
+    },
+    onSelectInformationTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) => {
+      selectedInformationTabs.push(tab);
+    },
+    onOpenHistory: () => {
+      openedHistory.push(true);
     },
     onRunSearch: () => {
       runCount += 1;
@@ -157,7 +190,10 @@ export const completion = (async () => {
     },
     onDeleteHistory: (index: number) => {
       deletedHistory.push(index);
-    }
+    },
+    onCancelTask: () => undefined,
+    onUndoLatest: () => undefined,
+    onUndoRecord: () => undefined
   });
 
   try {
@@ -336,18 +372,434 @@ export const completion = (async () => {
       assert.deepEqual(queryUpdates.at(-1), { recursive: true });
     });
 
-    await assertTest("workspace information panel styles define three internal content-search zones", async () => {
+    await assertTest("WorkspaceInformationPanel keeps the summary bar while collapsed", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: false,
+              activeTab: "properties"
+            })
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.ok(container.querySelector(".information-panel.is-collapsed"));
+      assert.ok(container.querySelector(".information-panel__summary"));
+      assert.equal(container.querySelector(".information-panel__content-shell"), null);
+      assert.equal(container.querySelector<HTMLInputElement>(".information-panel__filter input")?.value, "report");
+      assert.equal(container.querySelector<HTMLButtonElement>(".operation-summary-button")?.nextElementSibling?.className, "information-panel__collapse-toggle");
+    });
+
+    await assertTest("WorkspaceInformationPanel places the summary bar above expanded panel content", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties"
+            })
+          })
+        );
+        await flushEffects();
+      });
+
+      const panel = container.querySelector(".information-panel");
+      assert.ok(panel);
+      const directChildren = Array.from(panel.children);
+      assert.equal(directChildren[0]?.classList.contains("information-panel__summary"), true);
+      assert.equal(directChildren[1]?.classList.contains("information-panel__content-shell"), true);
+    });
+
+    await assertTest("WorkspaceInformationPanel renders top tabs and keeps keyboard focus on the selected tab", async () => {
+      let activeTab: WorkspaceState["informationPanel"]["activeTab"] = "properties";
+      const renderWithActiveTab = async () => {
+        await act(async () => {
+          root.render(
+            React.createElement(WorkspaceInformationPanel, {
+              ...createPanelProps(searchState, {
+                expanded: true,
+                activeTab
+              }),
+              onSelectInformationTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) => {
+                selectedInformationTabs.push(tab);
+                activeTab = tab;
+                void renderWithActiveTab();
+              }
+            })
+          );
+          await flushEffects();
+        });
+      };
+
+      await renderWithActiveTab();
+      const tabs = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".information-panel__top-tab"));
+      assert.deepEqual(tabs().map((tab) => tab.textContent?.trim()), ["属性", "查找", "操作历史"]);
+
+      tabs()[0].focus();
+      await act(async () => {
+        tabs()[0].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        await flushEffects();
+      });
+      assert.equal(document.activeElement, tabs()[1]);
+      assert.equal(tabs()[1].getAttribute("aria-selected"), "true");
+
+      await act(async () => {
+        tabs()[1].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        await flushEffects();
+      });
+      assert.equal(document.activeElement, tabs()[2]);
+      assert.equal(tabs()[2].getAttribute("aria-selected"), "true");
+
+      await act(async () => {
+        tabs()[2].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+        await flushEffects();
+      });
+      assert.equal(document.activeElement, tabs()[0]);
+      assert.equal(tabs()[0].getAttribute("aria-selected"), "true");
+      assert.deepEqual(selectedInformationTabs.slice(-3), ["search", "history", "properties"]);
+    });
+
+    await assertTest("WorkspaceInformationPanel opens operation history from the summary button and renders history tab content", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "history"
+            }),
+            operations: {
+              tasksOpen: false,
+              tasks: [
+                {
+                  taskId: "task-running",
+                  requestId: "request-running",
+                  kind: "copy",
+                  label: "复制项目",
+                  status: "running",
+                  createdAt: "2026-06-10T08:00:00.000Z",
+                  startedAt: "2026-06-10T08:00:00.000Z",
+                  finishedAt: null,
+                  totalEntries: 3,
+                  completedEntries: 1,
+                  failedEntries: 0,
+                  totalBytes: null,
+                  completedBytes: null,
+                  currentPath: "D:\\Workspace\\report.txt",
+                  message: null,
+                  cancelable: true,
+                  undoable: false,
+                  affectedRoots: [{ kind: "local", path: "D:\\Workspace" }],
+                  entryResults: [],
+                  sequence: 1,
+                  updatedAt: "2026-06-10T08:00:00.000Z"
+                }
+              ],
+              taskSequence: 1,
+              history: [],
+              historySequence: 0
+            }
+          })
+        );
+        await flushEffects();
+      });
+
+      const historyButton = container.querySelector<HTMLButtonElement>(".operation-summary-button");
+      assert.ok(historyButton);
+      assert.equal(historyButton.getAttribute("aria-label"), "打开操作历史");
+      await act(async () => {
+        historyButton.click();
+        await flushEffects();
+      });
+
+      assert.equal(openedHistory.length > 0, true);
+      assert.ok(container.querySelector(".operation-history-panel"));
+      assert.equal(container.textContent?.includes("进行中"), true);
+      assert.equal(container.textContent?.includes("操作历史"), true);
+    });
+
+    await assertTest("WorkspaceInformationPanel shows loading and failed properties states without successful fallback rows", async () => {
+      const selectedFile = { ...createEntry("report.txt", "2 KB"), sizeBytes: 2048 };
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "loading",
+                requestId: "properties-loading",
+                targetKey: `single:${selectedFile.path}`
+              }
+            }),
+            selectedEntries: [selectedFile]
+          })
+        );
+        await flushEffects();
+      });
+
+      let panel = container.querySelector(".properties-panel");
+      assert.ok(panel);
+      assert.equal(panel.textContent?.includes("正在读取属性"), true);
+      assert.equal(panel.textContent?.includes("2 KB"), false);
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "failed",
+                requestId: "properties-failed",
+                targetKey: `single:${selectedFile.path}`,
+                errorMessage: "远程凭据无效"
+              }
+            }),
+            selectedEntries: [selectedFile]
+          })
+        );
+        await flushEffects();
+      });
+
+      panel = container.querySelector(".properties-panel");
+      assert.ok(panel);
+      assert.equal(panel.textContent?.includes("无法读取属性"), true);
+      assert.equal(panel.textContent?.includes("远程凭据无效"), true);
+      assert.equal(panel.textContent?.includes("2 KB"), false);
+    });
+
+    await assertTest("WorkspaceInformationPanel shows current-folder property failures when nothing is selected", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "failed",
+                requestId: "properties-folder-failed",
+                targetKey: "single:D:\\Workspace",
+                errorMessage: "没有访问权限"
+              }
+            }),
+            selectedEntries: []
+          })
+        );
+        await flushEffects();
+      });
+
+      const panel = container.querySelector(".properties-panel");
+      assert.ok(panel);
+      assert.equal(panel.textContent?.includes("无法读取属性"), true);
+      assert.equal(panel.textContent?.includes("没有访问权限"), true);
+      assert.equal(panel.textContent?.includes("当前文件夹"), false);
+    });
+
+    await assertTest("WorkspaceInformationPanel renders directory size state instead of treating null directory size as unavailable", async () => {
+      const folderEntry = { ...createEntry("src", "--", "folder"), sizeBytes: null };
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "ready",
+                item: {
+                  requestId: "properties-folder",
+                  target: { kind: "local", path: folderEntry.path },
+                  displayPath: folderEntry.path,
+                  actualPath: folderEntry.path,
+                  parentPath: folderEntry.parentPath,
+                  name: folderEntry.name,
+                  extension: null,
+                  kind: "folder",
+                  sizeBytes: null,
+                  allocatedBytes: null,
+                  createdAt: null,
+                  modifiedAt: null,
+                  accessedAt: null,
+                  isHidden: false,
+                  isReadOnly: false,
+                  isSymlink: false,
+                  directorySizeState: {
+                    state: "notComputed"
+                  },
+                  fieldStates: [],
+                  errorMessage: null
+                }
+              }
+            }),
+            selectedEntries: [folderEntry]
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.equal(container.textContent?.includes("未计算"), true);
+    });
+
+    await assertTest("WorkspaceInformationPanel keeps zero-byte file size distinct from unavailable size", async () => {
+      const zeroFile = { ...createEntry("empty.txt", "0 B"), sizeBytes: 0 };
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "ready",
+                item: {
+                  requestId: "properties-empty",
+                  target: { kind: "local", path: zeroFile.path },
+                  displayPath: zeroFile.path,
+                  actualPath: zeroFile.path,
+                  parentPath: zeroFile.parentPath,
+                  name: zeroFile.name,
+                  extension: ".txt",
+                  kind: "file",
+                  sizeBytes: 0,
+                  allocatedBytes: null,
+                  createdAt: null,
+                  modifiedAt: null,
+                  accessedAt: null,
+                  isHidden: false,
+                  isReadOnly: false,
+                  isSymlink: false,
+                  directorySizeState: {
+                    state: "notApplicable"
+                  },
+                  fieldStates: [],
+                  errorMessage: null
+                }
+              }
+            }),
+            selectedEntries: [zeroFile]
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.equal(container.textContent?.includes("0 B"), true);
+    });
+
+    await assertTest("WorkspaceInformationPanel uses the multi-selection summary common extension", async () => {
+      const txtFile = { ...createEntry("report.txt", "2 KB"), extension: ".txt", sizeBytes: 2048 };
+      const folderEntry = { ...createEntry("src", "--", "folder"), extension: "", sizeBytes: null };
+      const noExtensionFile = { ...createEntry("README", "1 KB"), extension: "", sizeBytes: 1024 };
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "ready",
+                summary: {
+                  selectionKey: `${txtFile.id}|${folderEntry.id}`,
+                  count: 2,
+                  knownSizeBytes: 2048,
+                  unknownSizeCount: 1,
+                  directoryCount: 1,
+                  commonParentPath: "D:\\Workspace",
+                  commonExtension: undefined,
+                  fieldStates: []
+                }
+              }
+            }),
+            selectedEntries: [txtFile, folderEntry]
+          })
+        );
+        await flushEffects();
+      });
+
+      let rows = Array.from(container.querySelectorAll(".properties-panel__row"));
+      assert.equal(rows[2]?.textContent?.includes(".txt"), false);
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "ready",
+                summary: {
+                  selectionKey: `${txtFile.id}|${noExtensionFile.id}`,
+                  count: 2,
+                  knownSizeBytes: 3072,
+                  unknownSizeCount: 0,
+                  directoryCount: 0,
+                  commonParentPath: "D:\\Workspace",
+                  commonExtension: undefined,
+                  fieldStates: []
+                }
+              }
+            }),
+            selectedEntries: [txtFile, noExtensionFile]
+          })
+        );
+        await flushEffects();
+      });
+
+      rows = Array.from(container.querySelectorAll(".properties-panel__row"));
+      assert.equal(rows[2]?.textContent?.includes(".txt"), false);
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceInformationPanel, {
+            ...createPanelProps(searchState, {
+              expanded: true,
+              activeTab: "properties",
+              properties: {
+                status: "ready",
+                summary: {
+                  selectionKey: "txt-files",
+                  count: 2,
+                  knownSizeBytes: 4096,
+                  unknownSizeCount: 0,
+                  directoryCount: 0,
+                  commonParentPath: "D:\\Workspace",
+                  commonExtension: ".txt",
+                  fieldStates: []
+                }
+              }
+            }),
+            selectedEntries: [txtFile, { ...txtFile, id: "notes", name: "notes.txt", path: "D:\\Workspace\\notes.txt" }]
+          })
+        );
+        await flushEffects();
+      });
+
+      rows = Array.from(container.querySelectorAll(".properties-panel__row"));
+      assert.equal(rows[2]?.textContent?.includes(".txt"), true);
+    });
+
+    await assertTest("workspace information panel styles define the shell, tabs, and compact summary bar", async () => {
       const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      assert.equal(css.includes(".workspace-main__right--with-summary"), true);
+      assert.equal(css.includes(".information-panel__content-shell"), true);
+      assert.equal(css.includes(".information-panel__top-tabs"), true);
+      assert.equal(css.includes(".information-panel__top-tab"), true);
       assert.equal(css.includes(".information-panel__content-search"), true);
       assert.equal(css.includes(".information-panel__content-editor"), true);
       assert.equal(css.includes(".information-panel__content-label"), true);
       assert.equal(css.includes(".information-panel__extension-filter"), true);
       assert.equal(css.includes(".information-panel__actions"), true);
       assert.equal(css.includes("grid-auto-rows: max-content;"), true);
-      assert.equal(css.includes(".information-panel__actions {\n  display: grid;\n  grid-template-rows: none;"), true);
+      assert.equal(css.includes("grid-template-rows: none;"), true);
       assert.equal(css.includes(".information-panel__actions {\n  display: grid;\n  grid-template-rows: auto auto auto auto minmax(0, 1fr);"), false);
+      assert.equal(css.includes(".properties-panel__grid"), true);
+      assert.equal(css.includes(".operation-history-panel"), true);
+      assert.equal(css.includes("max-height: 30px;"), true);
       assert.equal(css.includes("gap: 3px;"), true);
       assert.equal(css.includes("min-height: 18px;"), true);
+      assert.equal(css.includes("grid-template-columns: minmax(128px, 260px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;"), true);
+      assert.equal(css.includes("width: 24px;"), true);
+      assert.equal(css.includes("height: 24px;"), true);
       assert.equal(css.includes(".information-panel__history"), true);
       assert.equal(css.includes(".information-panel__scope"), false);
       assert.equal(css.includes(".workspace-main__content--with-info"), false);

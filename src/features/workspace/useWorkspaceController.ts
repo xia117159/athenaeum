@@ -17,6 +17,7 @@ import type {
   DirectoryNode,
   DirectorySnapshot,
   EntryViewModel,
+  MultiSelectionPropertiesSummary,
   NativeContextMenuRequest,
   NavigationItem,
   NavigationItemUpsertRequest,
@@ -220,6 +221,49 @@ function getSelectedEntries(state: WorkspaceState, panelId: PanelId) {
     return [];
   }
   return tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
+}
+
+function createSelectionKey(entries: EntryViewModel[]) {
+  return entries.map((entry) => entry.id).join("|");
+}
+
+function createMultiSelectionSummary(entries: EntryViewModel[]): MultiSelectionPropertiesSummary {
+  const parentPaths = new Set(entries.map((entry) => entry.parentPath));
+  const kinds = new Set(entries.map((entry) => entry.kind));
+  const commonExtension =
+    entries.length > 0 && entries.every((entry) => entry.kind === "file" && Boolean(entry.extension))
+      ? (() => {
+          const extensions = new Set(entries.map((entry) => entry.extension));
+          return extensions.size === 1 ? [...extensions][0] : undefined;
+        })()
+      : undefined;
+  const directoryCount = entries.filter((entry) => entry.kind === "folder").length;
+  const knownSizeBytes = entries.reduce(
+    (sum, entry) => sum + (typeof entry.sizeBytes === "number" ? entry.sizeBytes : 0),
+    0
+  );
+  const unknownSizeCount = entries.filter((entry) => typeof entry.sizeBytes !== "number").length;
+
+  return {
+    selectionKey: createSelectionKey(entries),
+    count: entries.length,
+    knownSizeBytes,
+    unknownSizeCount,
+    directoryCount,
+    commonParentPath: parentPaths.size === 1 ? [...parentPaths][0] : undefined,
+    commonKind: kinds.size === 1 ? [...kinds][0] : undefined,
+    commonExtension,
+    fieldStates:
+      directoryCount > 0
+        ? [
+            {
+              field: "directorySize",
+              state: "notComputed",
+              message: "多选目录大小未计算"
+            }
+          ]
+        : []
+  };
 }
 
 function getActiveDirectoryTab(state: WorkspaceState, panelId: PanelId) {
@@ -465,6 +509,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
   const nextNavigationRequestIdRef = useRef(0);
   const nextSearchRequestIdRef = useRef(0);
+  const nextPropertiesRequestIdRef = useRef(0);
   const activeSearchRef = useRef<{ requestId: number; searchId: string } | null>(null);
   const searchHistoryHydratedRef = useRef(false);
   const refreshedOperationTasksRef = useRef<Set<string>>(new Set());
@@ -512,6 +557,21 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     current.detailsRowHeight !== next.detailsRowHeight ||
     !hasSameJsonShape(current.theme, next.theme);
 
+  const propertiesPanel = state.panels[state.activePanelId];
+  const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
+  const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab)
+    ? propertiesWorkspaceTab.selectedEntryIds.join("|")
+    : "";
+  const propertiesEffectKey = [
+    state.status,
+    state.informationPanel.expanded ? "expanded" : "collapsed",
+    state.informationPanel.activeTab,
+    state.activePanelId,
+    propertiesWorkspaceTab.id,
+    propertiesWorkspaceTab.snapshot.location.path,
+    propertiesSelectedIds
+  ].join("::");
+
   useEffect(() => {
     let disposed = false;
 
@@ -542,6 +602,79 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "content", history: readSearchHistory("content") } });
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "name", history: readSearchHistory("name") } });
   }, []);
+
+  useEffect(() => {
+    if (
+      state.status !== "ready" ||
+      !state.informationPanel.expanded ||
+      state.informationPanel.activeTab !== "properties"
+    ) {
+      return;
+    }
+
+    const activePanel = state.panels[state.activePanelId];
+    const activeTab = getActiveTab(activePanel);
+    if (!isDirectoryTab(activeTab)) {
+      dispatch({ type: "propertiesCleared" });
+      return;
+    }
+
+    const selectedEntries = activeTab.snapshot.entries.filter((entry) => activeTab.selectedEntryIds.includes(entry.id));
+    if (selectedEntries.length > 1) {
+      dispatch({
+        type: "propertiesSummaryReady",
+        payload: {
+          targetKey: `multi:${createSelectionKey(selectedEntries)}`,
+          summary: createMultiSelectionSummary(selectedEntries)
+        }
+      });
+      return;
+    }
+
+    const targetPath = selectedEntries[0]?.path ?? activeTab.snapshot.location.path;
+    const targetKey = `single:${targetPath}`;
+    const requestId = `properties-${++nextPropertiesRequestIdRef.current}`;
+    let disposed = false;
+
+    dispatch({
+      type: "propertiesRequestStarted",
+      payload: {
+        requestId,
+        targetKey
+      }
+    });
+
+    void workspaceGateway
+      .getItemProperties(requestId, targetPath, false)
+      .then((item) => {
+        if (!disposed) {
+          dispatch({
+            type: "propertiesRequestSucceeded",
+            payload: {
+              requestId,
+              targetKey,
+              item
+            }
+          });
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          dispatch({
+            type: "propertiesRequestFailed",
+            payload: {
+              requestId,
+              targetKey,
+              errorMessage: getErrorMessage(error, "无法读取属性。")
+            }
+          });
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [propertiesEffectKey, workspaceGateway]);
 
   useEffect(() => {
     if (state.status !== "ready" || state.source !== "tauri") {
@@ -2236,6 +2369,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       addCurrentFolderToNavigation: (folder?: NavigationFolderInput) => void addCurrentFolderToNavigation(folder),
       addSelectedEntriesToNavigation: (panelId: PanelId, entries?: EntryViewModel[]) =>
         void addSelectedEntriesToNavigation(panelId, entries),
+      setInformationPanelExpanded: (expanded: boolean) =>
+        dispatch({ type: "informationPanelExpandedSet", payload: expanded }),
+      selectInformationPanelTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) =>
+        dispatch({ type: "informationPanelTabChanged", payload: tab }),
+      openOperationHistory: () => dispatch({ type: "informationPanelHistoryRequested" }),
       toggleSearch: (open?: boolean) => dispatch({ type: "searchToggled", payload: open }),
       selectSearchTab: (tab: WorkspaceState["search"]["activeTab"]) =>
         dispatch({ type: "searchTabChanged", payload: tab }),

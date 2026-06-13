@@ -83,6 +83,107 @@ pub struct DirectoryListing {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum ItemPropertyField {
+  Name,
+  Extension,
+  Kind,
+  ParentPath,
+  SizeBytes,
+  AllocatedBytes,
+  CreatedAt,
+  ModifiedAt,
+  AccessedAt,
+  Attributes,
+  DirectorySize
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ItemPropertyFieldAvailability {
+  Available,
+  NotAvailable,
+  Unsupported,
+  PermissionDenied,
+  ReadFailed,
+  NotComputed,
+  Computing
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemPropertyFieldState {
+  pub field: ItemPropertyField,
+  pub state: ItemPropertyFieldAvailability,
+  pub message: Option<String>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DirectorySizeAvailability {
+  NotApplicable,
+  NotComputed,
+  Computing,
+  Available,
+  Failed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectorySizeState {
+  pub state: DirectorySizeAvailability,
+  pub size_bytes: Option<u64>,
+  pub message: Option<String>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ItemPropertiesTarget {
+  Local {
+    path: String
+  },
+  Remote {
+    protocol: LocationKind,
+    profile_id: String,
+    remote_path: String,
+    display_path: String
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemPropertiesRequest {
+  pub request_id: String,
+  pub target: ItemPropertiesTarget,
+  #[serde(default)]
+  pub include_directory_size: bool
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemProperties {
+  pub request_id: String,
+  pub target: ItemPropertiesTarget,
+  pub display_path: String,
+  pub actual_path: String,
+  pub parent_path: Option<String>,
+  pub name: String,
+  pub extension: Option<String>,
+  pub kind: EntryKind,
+  pub size_bytes: Option<u64>,
+  pub allocated_bytes: Option<u64>,
+  pub created_at: Option<DateTime<Utc>>,
+  pub modified_at: Option<DateTime<Utc>>,
+  pub accessed_at: Option<DateTime<Utc>>,
+  pub is_hidden: bool,
+  pub is_read_only: bool,
+  pub is_symlink: bool,
+  pub directory_size_state: DirectorySizeState,
+  pub field_states: Vec<ItemPropertyFieldState>,
+  pub error_message: Option<String>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TreeNode {
   pub path: String,
   pub name: String,

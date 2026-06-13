@@ -89,24 +89,40 @@ function getRemoteRootPath(path: string) {
   });
 }
 
+function parseMockSizeLabel(sizeLabel: string) {
+  const match = /^([\d.]+)\s*(B|KB|MB|GB|TB)$/i.exec(sizeLabel.trim());
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const unit = match[2].toUpperCase();
+  const multiplier = unit === "B" ? 1 : unit === "KB" ? 1024 : unit === "MB" ? 1024 ** 2 : unit === "GB" ? 1024 ** 3 : 1024 ** 4;
+  return Math.round(value * multiplier);
+}
+
 function createFileEntry(
   parentPath: string,
   name: string,
   options: Partial<
     Pick<
       EntryViewModel,
-      "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "tags" | "description" | "contentText"
+      "sizeBytes" | "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "tags" | "description" | "contentText"
     >
   > = {}
 ): EntryViewModel {
   const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
+  const sizeLabel = options.sizeLabel ?? "24 KB";
   return {
     id: `${parentPath}:${name}`,
     name,
     kind: "file",
     path: joinLocationPath(parentPath, name),
     parentPath,
-    sizeLabel: options.sizeLabel ?? "24 KB",
+    sizeBytes: options.sizeBytes ?? parseMockSizeLabel(sizeLabel),
+    sizeLabel,
     modifiedLabel: options.modifiedLabel ?? "2026-04-18 09:24",
     extension,
     attributes: options.attributes ?? ["A"],
@@ -130,6 +146,7 @@ function createFolderEntry(
     kind: "folder",
     path,
     parentPath,
+    sizeBytes: null,
     sizeLabel: "--",
     modifiedLabel: "2026-04-18 08:12",
     extension: "",
@@ -1077,6 +1094,13 @@ export function createMockWorkspaceBootstrap(source: WorkspaceBootstrap["source"
       quadRightSecondary: 0.54,
       tree: 0.28,
       search: 0.28
+    },
+    informationPanel: {
+      expanded: false,
+      activeTab: "properties",
+      properties: {
+        status: "idle"
+      }
     },
     panels: {
       "panel-1": createPanelState(

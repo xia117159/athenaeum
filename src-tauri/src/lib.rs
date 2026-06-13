@@ -23,7 +23,7 @@ use commands::{
     save_settings_model, save_ui_layout, save_ui_theme
   },
   workspace::{
-    get_tree_children, initialize_workspace, list_directory, open_path_with_system_default,
+    get_item_properties, get_tree_children, initialize_workspace, list_directory, open_path_with_system_default,
     resolve_navigation_targets, resolve_system_icon, show_native_context_menu
   }
 };
@@ -45,6 +45,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       initialize_workspace,
       list_directory,
+      get_item_properties,
       get_tree_children,
       resolve_system_icon,
       copy_entries,

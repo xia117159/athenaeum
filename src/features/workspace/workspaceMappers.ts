@@ -15,6 +15,7 @@ import type {
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  InformationPanelState,
   LayoutRatios,
   NavigationItem,
   PanelId,
@@ -151,6 +152,13 @@ export const DEFAULT_LAYOUT_RATIOS: LayoutRatios = {
   quadRightSecondary: 0.54,
   tree: 0.28,
   search: 0.28
+};
+export const DEFAULT_INFORMATION_PANEL: InformationPanelState = {
+  expanded: false,
+  activeTab: "properties",
+  properties: {
+    status: "idle"
+  }
 };
 export const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
 
@@ -447,6 +455,7 @@ function mapEntryViewModel(
     kind: entry.kind === "directory" ? "folder" : "file",
     path: resolvedPath,
     parentPath: currentPath,
+    sizeBytes: entry.kind === "directory" ? null : entry.size ?? null,
     sizeLabel: entry.kind === "directory" ? "--" : formatFileSize(entry.size),
     modifiedLabel: formatModifiedLabel(entry.modifiedAt),
     extension,
@@ -752,6 +761,7 @@ export function mapWorkspaceBootstrap(bootstrap: BackendWorkspaceBootstrap): Wor
     source: "tauri",
     layoutMode: bootstrap.settings.layout.layoutMode,
     layoutRatios: mapLayoutRatios(bootstrap.settings.layout),
+    informationPanel: { ...DEFAULT_INFORMATION_PANEL },
     panels,
     activePanelId: "panel-1",
     directoryTree: mapDirectoryTree(bootstrap.drives, bootstrap.settings.remoteProfiles),

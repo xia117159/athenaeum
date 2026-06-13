@@ -2,7 +2,7 @@ import type { RemoteProfile as BackendRemoteProfile } from "../../app/types";
 import { createRemoteRootUri } from "./remoteUri";
 import { resolveWorkspaceDirectory } from "./workspaceDirectoryGateway";
 import type { PersistedTab, PersistedWorkspaceSession } from "./workspaceSessionStore";
-import { normalizeLayoutRatios } from "./workspaceSessionStore";
+import { normalizeLayoutRatios, normalizePersistedInformationPanel } from "./workspaceSessionStore";
 import {
   createPanelState,
   createTabFromSnapshot,
@@ -258,6 +258,10 @@ export async function mergeBootstrapWithSession(
     ...base,
     layoutMode: session.layoutMode,
     layoutRatios: normalizeLayoutRatios(session.layoutRatios),
+    informationPanel: {
+      ...base.informationPanel,
+      ...normalizePersistedInformationPanel(session.informationPanel)
+    },
     activePanelId,
     panels: dedupedPanels,
     settingsModel: normalizeSettingsModel(session.settingsModel)

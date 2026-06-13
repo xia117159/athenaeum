@@ -60,6 +60,7 @@ export interface EntryViewModel {
   kind: EntryKind;
   path: string;
   parentPath: string;
+  sizeBytes?: number | null;
   sizeLabel: string;
   modifiedLabel: string;
   extension: string;
@@ -276,6 +277,104 @@ export interface OperationWorkspaceState {
   conflictDialog?: OperationConflictDialogState;
 }
 
+export type InformationPanelTab = "properties" | "search" | "history";
+
+export type ItemPropertyField =
+  | "name"
+  | "extension"
+  | "kind"
+  | "parentPath"
+  | "sizeBytes"
+  | "allocatedBytes"
+  | "createdAt"
+  | "modifiedAt"
+  | "accessedAt"
+  | "attributes"
+  | "directorySize";
+
+export type ItemPropertyFieldAvailability =
+  | "available"
+  | "notAvailable"
+  | "unsupported"
+  | "permissionDenied"
+  | "readFailed"
+  | "notComputed"
+  | "computing";
+
+export interface ItemPropertyFieldState {
+  field: ItemPropertyField;
+  state: ItemPropertyFieldAvailability;
+  message?: string;
+}
+
+export interface DirectorySizeState {
+  state: "notApplicable" | "notComputed" | "computing" | "available" | "failed";
+  sizeBytes?: number | null;
+  message?: string;
+}
+
+export type ItemPropertiesTarget =
+  | {
+      kind: "local";
+      path: string;
+    }
+  | {
+      kind: "remote";
+      protocol: Exclude<LocationKind, "local" | "virtual">;
+      profileId: string;
+      remotePath: string;
+      displayPath: string;
+    };
+
+export interface ItemProperties {
+  requestId: string;
+  target: ItemPropertiesTarget;
+  displayPath: string;
+  actualPath: string;
+  parentPath?: string | null;
+  name: string;
+  extension?: string | null;
+  kind: EntryKind;
+  sizeBytes?: number | null;
+  allocatedBytes?: number | null;
+  createdAt?: string | null;
+  modifiedAt?: string | null;
+  accessedAt?: string | null;
+  isHidden: boolean;
+  isReadOnly: boolean;
+  isSymlink: boolean;
+  directorySizeState: DirectorySizeState;
+  fieldStates: ItemPropertyFieldState[];
+  errorMessage?: string | null;
+}
+
+export interface MultiSelectionPropertiesSummary {
+  selectionKey: string;
+  count: number;
+  knownSizeBytes: number;
+  unknownSizeCount: number;
+  directoryCount: number;
+  commonParentPath?: string;
+  commonKind?: EntryKind;
+  commonExtension?: string;
+  fieldStates: ItemPropertyFieldState[];
+}
+
+export interface PropertiesPanelState {
+  requestId?: string;
+  targetKey?: string;
+  status: "idle" | "loading" | "ready" | "failed";
+  item?: ItemProperties;
+  summary?: MultiSelectionPropertiesSummary;
+  errorMessage?: string;
+}
+
+export interface InformationPanelState {
+  expanded: boolean;
+  activeTab: InformationPanelTab;
+  properties: PropertiesPanelState;
+}
+
 export interface NativeContextMenuRequest {
   panelId: PanelId;
   tabId: string;
@@ -303,7 +402,6 @@ export interface RemoteConnectionProfile {
 }
 
 export interface SearchState {
-  open: boolean;
   loading: boolean;
   filterText: string;
   activeTab: SearchTabId;
@@ -384,6 +482,7 @@ export interface WorkspaceBootstrap {
   source: DataSource;
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
+  informationPanel: InformationPanelState;
   panels: Record<PanelId, PanelState>;
   activePanelId: PanelId;
   directoryTree: DirectoryNode[];
@@ -407,6 +506,7 @@ export interface WorkspaceState {
   navigation: NavigationState;
   remoteProfiles: RemoteConnectionProfile[];
   search: SearchState;
+  informationPanel: InformationPanelState;
   settings: SettingsSurfaceState;
   clipboard?: ClipboardState;
   notifications: NotificationItem[];

@@ -3,8 +3,11 @@ use std::{path::Path, sync::Arc};
 use tauri::{State, Window};
 
 use crate::{
-  domain::models::{NavigationTargetInfo, SystemIconBitmap, SystemIconRequest, WorkspaceBootstrap},
-  services::{fs_service, icon_service, windows_shell, AppState}
+  domain::models::{
+    ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget, NavigationTargetInfo, SystemIconBitmap,
+    SystemIconRequest, WorkspaceBootstrap
+  },
+  services::{fs_service, icon_service, remote_service, windows_shell, AppState}
 };
 
 #[tauri::command]
@@ -40,6 +43,49 @@ pub fn list_directory(path: String, state: State<'_, Arc<AppState>>) -> Result<c
 #[tauri::command]
 pub fn get_tree_children(path: String) -> Result<Vec<crate::domain::models::TreeNode>, String> {
   fs_service::get_tree_children(Path::new(&path)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn get_item_properties(
+  request: ItemPropertiesRequest,
+  state: State<'_, Arc<AppState>>
+) -> Result<ItemProperties, String> {
+  match request.target.clone() {
+    ItemPropertiesTarget::Local { path } => {
+      let request_for_service = request.clone();
+      tauri::async_runtime::spawn_blocking(move || {
+        fs_service::get_item_properties(&request_for_service, Path::new(&path)).map_err(|error| error.to_string())
+      })
+      .await
+      .map_err(|error| format!("item properties task failed: {error}"))?
+    }
+    ItemPropertiesTarget::Remote {
+      protocol,
+      profile_id,
+      remote_path,
+      display_path
+    } => {
+      let profile = state
+        .metadata
+        .read()
+        .expect("metadata lock poisoned")
+        .remote_profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+        .ok_or_else(|| format!("remote profile not found: {profile_id}"))?;
+      if profile.protocol != protocol {
+        return Err(format!("remote profile protocol does not match: {profile_id}"));
+      }
+      let request_for_service = request.clone();
+      tauri::async_runtime::spawn_blocking(move || {
+        remote_service::get_item_properties(&request_for_service, &profile, None, &remote_path, &display_path)
+          .map_err(|error| error.to_string())
+      })
+      .await
+      .map_err(|error| format!("remote item properties task failed: {error}"))?
+    }
+  }
 }
 
 #[tauri::command]

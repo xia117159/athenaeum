@@ -19,7 +19,7 @@ import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
-import { OperationConflictDialog, OperationSummaryButton, OperationTaskCenter } from "./OperationTaskCenter";
+import { OperationConflictDialog } from "./OperationTaskCenter";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { WorkspaceTreeBranch } from "./WorkspaceTreeBranch";
 import { openSettingsWindow } from "./settingsWindow";
@@ -392,9 +392,6 @@ export function WorkspaceView() {
           </button>
         </div>
 
-        <div className="workspace-toolbar__history">
-          <OperationSummaryButton operations={state.operations} onOpen={() => actions.setOperationTasksOpen(true)} />
-        </div>
       </section>
 
       <section className="workspace-addressbar" ref={addressBarRef}>
@@ -487,14 +484,6 @@ export function WorkspaceView() {
         />
       ) : null}
 
-      <OperationTaskCenter
-        operations={state.operations}
-        onOpenChange={actions.setOperationTasksOpen}
-        onCancelTask={actions.cancelOperation}
-        onUndoLatest={actions.undoLatestOperation}
-        onUndoRecord={actions.undoOperation}
-      />
-
       <OperationConflictDialog
         dialog={state.operations.conflictDialog}
         onUpdate={actions.updateOperationConflictDialog}
@@ -564,8 +553,36 @@ function WorkspaceRightContent({
 }) {
   const panels = <PanelLayout state={state} actions={actions} activeFilterText={activeFilterText} />;
 
-  if (!state.search.open) {
-    return <div className="workspace-main__right">{panels}</div>;
+  const informationPanel = (
+    <WorkspaceInformationPanel
+      informationPanel={state.informationPanel}
+      search={state.search}
+      operations={state.operations}
+      activeEntries={activeEntries}
+      selectedEntries={selectedEntries}
+      onToggleExpanded={actions.setInformationPanelExpanded}
+      onSelectInformationTab={actions.selectInformationPanelTab}
+      onOpenHistory={actions.openOperationHistory}
+      onRunSearch={() => actions.runSearch()}
+      onStopSearch={() => actions.stopSearch()}
+      onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
+      onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
+      onUpdateFilter={(value) => actions.updateSearchFilter(value)}
+      onSelectHistory={(index) => actions.selectSearchHistory(index)}
+      onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
+      onCancelTask={actions.cancelOperation}
+      onUndoLatest={actions.undoLatestOperation}
+      onUndoRecord={actions.undoOperation}
+    />
+  );
+
+  if (!state.informationPanel.expanded) {
+    return (
+      <div className="workspace-main__right workspace-main__right--with-summary">
+        {panels}
+        {informationPanel}
+      </div>
+    );
   }
 
   return (
@@ -582,19 +599,7 @@ function WorkspaceRightContent({
         className="workspace-main__right-split"
       >
         {panels}
-        <WorkspaceInformationPanel
-          search={state.search}
-          activeEntries={activeEntries}
-          selectedEntries={selectedEntries}
-          onToggle={(open) => actions.toggleSearch(open)}
-          onRunSearch={() => actions.runSearch()}
-          onStopSearch={() => actions.stopSearch()}
-          onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
-          onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
-          onUpdateFilter={(value) => actions.updateSearchFilter(value)}
-          onSelectHistory={(index) => actions.selectSearchHistory(index)}
-          onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
-        />
+        {informationPanel}
       </ResizableSplit>
     </div>
   );

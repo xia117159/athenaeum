@@ -17,9 +17,10 @@ use sha2::{Digest, Sha256};
 use ssh2::{CheckResult, FileStat, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session, Sftp};
 
 use crate::domain::models::{
-  EntryDecoration, EntryKind, EntryViewModel, LocationDescriptor, LocationKind, RemoteAdapterKind, RemoteAuthKind,
-  RemoteHostKeyInfo, RemoteHostKeyTrustState, RemoteProfile, RemoteProfileUpsertRequest, RemoteTestResult,
-  RemoteTrustHostKeyRequest
+  DirectorySizeAvailability, DirectorySizeState, EntryDecoration, EntryKind, EntryViewModel, ItemProperties,
+  ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability, ItemPropertyFieldState,
+  LocationDescriptor, LocationKind, RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteHostKeyTrustState,
+  RemoteProfile, RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest
 };
 
 pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
@@ -150,6 +151,306 @@ pub fn list_directory(profile: &RemoteProfile, password: Option<&str>, path: Opt
     validate_remote_path_within_root(&profile, path)?;
   }
   select_adapter(&profile).list_directory(&profile, password, path)
+}
+
+pub fn get_item_properties(
+  request: &ItemPropertiesRequest,
+  profile: &RemoteProfile,
+  password: Option<&str>,
+  remote_path: &str,
+  display_path: &str
+) -> Result<ItemProperties> {
+  let profile = normalize_profile(profile.clone());
+  validate_profile(&profile)?;
+  validate_remote_path_within_root(&profile, remote_path)?;
+
+  match profile.protocol.clone() {
+    LocationKind::Sftp => get_sftp_item_properties(request, &profile, password, remote_path, display_path),
+    LocationKind::Ftp => get_ftp_item_properties(request, &profile, password, remote_path, display_path),
+    LocationKind::Local => bail!("remote item properties require ftp or sftp profile")
+  }
+}
+
+fn remote_extension_with_dot(remote_path: &str, is_directory: bool) -> Option<String> {
+  if is_directory {
+    return None;
+  }
+  let name = remote_file_name(remote_path)?;
+  let (_, extension) = split_remote_file_name(&name);
+  extension.map(|value| format!(".{value}"))
+}
+
+fn remote_target(profile: &RemoteProfile, remote_path: &str, display_path: &str) -> ItemPropertiesTarget {
+  ItemPropertiesTarget::Remote {
+    protocol: profile.protocol.clone(),
+    profile_id: profile.id.clone(),
+    remote_path: normalize_remote_path(remote_path),
+    display_path: display_path.to_string()
+  }
+}
+
+fn field_state(field: ItemPropertyField, state: ItemPropertyFieldAvailability, message: impl Into<String>) -> ItemPropertyFieldState {
+  ItemPropertyFieldState {
+    field,
+    state,
+    message: Some(message.into())
+  }
+}
+
+fn remote_directory_size_state(is_directory: bool) -> DirectorySizeState {
+  if is_directory {
+    DirectorySizeState {
+      state: DirectorySizeAvailability::NotComputed,
+      size_bytes: None,
+      message: Some("Remote directory size is not computed".into())
+    }
+  } else {
+    DirectorySizeState {
+      state: DirectorySizeAvailability::NotApplicable,
+      size_bytes: None,
+      message: None
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FtpPropertyLookup {
+  ProfileRoot,
+  ParentDirectory(String)
+}
+
+fn ftp_property_lookup_path(profile: &RemoteProfile, remote_path: &str) -> FtpPropertyLookup {
+  let remote_path = normalize_remote_path(remote_path);
+  if remote_path == normalize_remote_path(&profile.root_path) {
+    return FtpPropertyLookup::ProfileRoot;
+  }
+
+  FtpPropertyLookup::ParentDirectory(remote_parent_path(&remote_path).unwrap_or_else(|| profile.root_path.clone()))
+}
+
+fn base_ftp_field_states() -> Vec<ItemPropertyFieldState> {
+  vec![
+    field_state(
+      ItemPropertyField::AllocatedBytes,
+      ItemPropertyFieldAvailability::Unsupported,
+      "FTP does not provide allocated size"
+    ),
+    field_state(
+      ItemPropertyField::CreatedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "FTP does not provide created date"
+    ),
+    field_state(
+      ItemPropertyField::AccessedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "FTP does not provide accessed date"
+    )
+  ]
+}
+
+fn ftp_profile_root_properties(
+  request: &ItemPropertiesRequest,
+  profile: &RemoteProfile,
+  remote_path: &str,
+  display_path: &str
+) -> ItemProperties {
+  let remote_path = normalize_remote_path(remote_path);
+  let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
+  let mut field_states = base_ftp_field_states();
+  field_states.push(field_state(
+    ItemPropertyField::ModifiedAt,
+    ItemPropertyFieldAvailability::Unsupported,
+    "FTP server did not provide modified date"
+  ));
+  field_states.push(field_state(
+    ItemPropertyField::DirectorySize,
+    ItemPropertyFieldAvailability::NotComputed,
+    "Remote directory size is not computed"
+  ));
+  field_states.push(field_state(
+    ItemPropertyField::Attributes,
+    ItemPropertyFieldAvailability::Unsupported,
+    "FTP server did not provide root directory attributes"
+  ));
+
+  ItemProperties {
+    request_id: request.request_id.clone(),
+    target: remote_target(profile, &remote_path, display_path),
+    display_path: display_path.to_string(),
+    actual_path: remote_path.clone(),
+    parent_path: remote_parent_path(&remote_path),
+    name,
+    extension: None,
+    kind: EntryKind::Directory,
+    size_bytes: None,
+    allocated_bytes: None,
+    created_at: None,
+    modified_at: None,
+    accessed_at: None,
+    is_hidden: remote_file_name(&remote_path)
+      .map(|value| value.starts_with('.'))
+      .unwrap_or(false),
+    is_read_only: false,
+    is_symlink: false,
+    directory_size_state: remote_directory_size_state(true),
+    field_states,
+    error_message: None
+  }
+}
+
+fn get_sftp_item_properties(
+  request: &ItemPropertiesRequest,
+  profile: &RemoteProfile,
+  password: Option<&str>,
+  remote_path: &str,
+  display_path: &str
+) -> Result<ItemProperties> {
+  let remote_path = normalize_remote_path(remote_path);
+  let (_, sftp) = connect_sftp(profile, password)?;
+  let stat = sftp
+    .lstat(Path::new(&remote_path))
+    .with_context(|| format!("failed to stat remote path {remote_path}"))?;
+  let is_directory = stat.is_dir();
+  let modified_at = stat
+    .mtime
+    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
+  let accessed_at = stat
+    .atime
+    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
+  let mut field_states = vec![
+    field_state(
+      ItemPropertyField::AllocatedBytes,
+      ItemPropertyFieldAvailability::Unsupported,
+      "SFTP does not provide allocated size"
+    ),
+    field_state(
+      ItemPropertyField::CreatedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "SFTP does not provide created date"
+    )
+  ];
+
+  if modified_at.is_none() {
+    field_states.push(field_state(
+      ItemPropertyField::ModifiedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "SFTP server did not provide modified date"
+    ));
+  }
+  if accessed_at.is_none() {
+    field_states.push(field_state(
+      ItemPropertyField::AccessedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "SFTP server did not provide accessed date"
+    ));
+  }
+  if is_directory {
+    field_states.push(field_state(
+      ItemPropertyField::DirectorySize,
+      ItemPropertyFieldAvailability::NotComputed,
+      "Remote directory size is not computed"
+    ));
+  }
+  if !is_directory && stat.size.is_none() {
+    field_states.push(field_state(
+      ItemPropertyField::SizeBytes,
+      ItemPropertyFieldAvailability::Unsupported,
+      "SFTP server did not provide size"
+    ));
+  }
+
+  Ok(ItemProperties {
+    request_id: request.request_id.clone(),
+    target: remote_target(profile, &remote_path, display_path),
+    display_path: display_path.to_string(),
+    actual_path: remote_path.clone(),
+    parent_path: remote_parent_path(&remote_path),
+    name: remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone()),
+    extension: remote_extension_with_dot(&remote_path, is_directory),
+    kind: if is_directory { EntryKind::Directory } else { EntryKind::File },
+    size_bytes: (!is_directory).then_some(stat.size).flatten(),
+    allocated_bytes: None,
+    created_at: None,
+    modified_at,
+    accessed_at,
+    is_hidden: remote_file_name(&remote_path)
+      .map(|value| value.starts_with('.'))
+      .unwrap_or(false),
+    is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
+    is_symlink: stat.file_type().is_symlink(),
+    directory_size_state: remote_directory_size_state(is_directory),
+    field_states,
+    error_message: None
+  })
+}
+
+fn get_ftp_item_properties(
+  request: &ItemPropertiesRequest,
+  profile: &RemoteProfile,
+  password: Option<&str>,
+  remote_path: &str,
+  display_path: &str
+) -> Result<ItemProperties> {
+  let remote_path = normalize_remote_path(remote_path);
+  let parent = match ftp_property_lookup_path(profile, &remote_path) {
+    FtpPropertyLookup::ProfileRoot => {
+      list_directory(profile, password, Some(&remote_path))?;
+      return Ok(ftp_profile_root_properties(request, profile, &remote_path, display_path));
+    }
+    FtpPropertyLookup::ParentDirectory(parent) => parent
+  };
+  let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
+  let entry = list_directory(profile, password, Some(&parent))?
+    .into_iter()
+    .find(|entry| normalize_remote_path(&entry.path) == remote_path || entry.name == name)
+    .ok_or_else(|| anyhow!("remote path not found: {remote_path}"))?;
+  let kind = entry.kind.clone();
+  let is_directory = kind == EntryKind::Directory;
+  let mut field_states = base_ftp_field_states();
+
+  if entry.modified_at.is_none() {
+    field_states.push(field_state(
+      ItemPropertyField::ModifiedAt,
+      ItemPropertyFieldAvailability::Unsupported,
+      "FTP server did not provide modified date"
+    ));
+  }
+  if !is_directory && entry.size.is_none() {
+    field_states.push(field_state(
+      ItemPropertyField::SizeBytes,
+      ItemPropertyFieldAvailability::Unsupported,
+      "FTP server did not provide size"
+    ));
+  }
+  if is_directory {
+    field_states.push(field_state(
+      ItemPropertyField::DirectorySize,
+      ItemPropertyFieldAvailability::NotComputed,
+      "Remote directory size is not computed"
+    ));
+  }
+
+  Ok(ItemProperties {
+    request_id: request.request_id.clone(),
+    target: remote_target(profile, &remote_path, display_path),
+    display_path: display_path.to_string(),
+    actual_path: remote_path.clone(),
+    parent_path: Some(parent),
+    name,
+    extension: remote_extension_with_dot(&remote_path, is_directory),
+    kind,
+    size_bytes: entry.size,
+    allocated_bytes: None,
+    created_at: None,
+    modified_at: entry.modified_at,
+    accessed_at: None,
+    is_hidden: entry.is_hidden,
+    is_read_only: entry.is_read_only,
+    is_symlink: entry.is_symlink,
+    directory_size_state: remote_directory_size_state(is_directory),
+    field_states,
+    error_message: None
+  })
 }
 
 pub fn create_directory(profile: &RemoteProfile, password: Option<&str>, parent: &str, name: &str) -> Result<String> {
@@ -1075,1107 +1376,1355 @@ fn verify_sftp_host_key(session: &Session, profile: &RemoteProfile) -> Result<()
 }
 
 fn known_hosts_path() -> Result<PathBuf> {
-  Ok(
-    dirs::home_dir()
-      .map(|home| home.join(".ssh").join("known_hosts"))
-      .context("failed to locate home directory for known_hosts")?
-  )
+    Ok(dirs::home_dir()
+        .map(|home| home.join(".ssh").join("known_hosts"))
+        .context("failed to locate home directory for known_hosts")?)
 }
 
 fn known_hosts_host(profile: &RemoteProfile) -> String {
-  let default_port = match profile.protocol {
-    LocationKind::Sftp => 22,
-    LocationKind::Ftp => 21,
-    LocationKind::Local => 0
-  };
-  if profile.port == default_port {
-    profile.host.clone()
-  } else {
-    format!("[{}]:{}", profile.host, profile.port)
-  }
+    let default_port = match profile.protocol {
+        LocationKind::Sftp => 22,
+        LocationKind::Ftp => 21,
+        LocationKind::Local => 0,
+    };
+    if profile.port == default_port {
+        profile.host.clone()
+    } else {
+        format!("[{}]:{}", profile.host, profile.port)
+    }
 }
 
 fn host_key_algorithm(key_type: HostKeyType) -> &'static str {
-  match key_type {
-    HostKeyType::Rsa => "ssh-rsa",
-    HostKeyType::Dss => "ssh-dss",
-    HostKeyType::Ecdsa256 => "ecdsa-sha2-nistp256",
-    HostKeyType::Ecdsa384 => "ecdsa-sha2-nistp384",
-    HostKeyType::Ecdsa521 => "ecdsa-sha2-nistp521",
-    HostKeyType::Ed25519 => "ssh-ed25519",
-    HostKeyType::Unknown => "unknown"
-  }
+    match key_type {
+        HostKeyType::Rsa => "ssh-rsa",
+        HostKeyType::Dss => "ssh-dss",
+        HostKeyType::Ecdsa256 => "ecdsa-sha2-nistp256",
+        HostKeyType::Ecdsa384 => "ecdsa-sha2-nistp384",
+        HostKeyType::Ecdsa521 => "ecdsa-sha2-nistp521",
+        HostKeyType::Ed25519 => "ssh-ed25519",
+        HostKeyType::Unknown => "unknown",
+    }
 }
 
 fn host_key_type_from_algorithm(algorithm: &str) -> Option<HostKeyType> {
-  match algorithm {
-    "ssh-rsa" => Some(HostKeyType::Rsa),
-    "ssh-dss" => Some(HostKeyType::Dss),
-    "ecdsa-sha2-nistp256" => Some(HostKeyType::Ecdsa256),
-    "ecdsa-sha2-nistp384" => Some(HostKeyType::Ecdsa384),
-    "ecdsa-sha2-nistp521" => Some(HostKeyType::Ecdsa521),
-    "ssh-ed25519" => Some(HostKeyType::Ed25519),
-    _ => None
-  }
+    match algorithm {
+        "ssh-rsa" => Some(HostKeyType::Rsa),
+        "ssh-dss" => Some(HostKeyType::Dss),
+        "ecdsa-sha2-nistp256" => Some(HostKeyType::Ecdsa256),
+        "ecdsa-sha2-nistp384" => Some(HostKeyType::Ecdsa384),
+        "ecdsa-sha2-nistp521" => Some(HostKeyType::Ecdsa521),
+        "ssh-ed25519" => Some(HostKeyType::Ed25519),
+        _ => None,
+    }
 }
 
 fn host_key_fingerprint_sha256(key: &[u8]) -> String {
-  let digest = Sha256::digest(key);
-  format!("SHA256:{}", STANDARD_NO_PAD.encode(digest))
+    let digest = Sha256::digest(key);
+    format!("SHA256:{}", STANDARD_NO_PAD.encode(digest))
 }
 
-fn host_key_trust_state(session: &Session, profile: &RemoteProfile, key: &[u8]) -> Result<RemoteHostKeyTrustState> {
-  let path = known_hosts_path()?;
-  if !path.exists() {
-    return Ok(RemoteHostKeyTrustState::Unknown);
-  }
+fn host_key_trust_state(
+    session: &Session,
+    profile: &RemoteProfile,
+    key: &[u8],
+) -> Result<RemoteHostKeyTrustState> {
+    let path = known_hosts_path()?;
+    if !path.exists() {
+        return Ok(RemoteHostKeyTrustState::Unknown);
+    }
 
-  let mut known_hosts = session.known_hosts().context("failed to initialize known_hosts checker")?;
-  known_hosts
-    .read_file(&path, KnownHostFileKind::OpenSSH)
-    .with_context(|| format!("failed to read {}", path.display()))?;
-
-  Ok(match known_hosts.check_port(&profile.host, profile.port, key) {
-    CheckResult::Match => RemoteHostKeyTrustState::Trusted,
-    CheckResult::Mismatch => RemoteHostKeyTrustState::Mismatch,
-    CheckResult::NotFound | CheckResult::Failure => RemoteHostKeyTrustState::Unknown
-  })
-}
-
-fn create_remote_host_key_info(profile: &RemoteProfile, session: &Session) -> Result<RemoteHostKeyInfo> {
-  let (key, key_type) = session.host_key().context("SFTP server did not provide a host key")?;
-  let algorithm = host_key_algorithm(key_type).to_string();
-  if algorithm == "unknown" {
-    bail!("SFTP server provided an unsupported host key type");
-  }
-
-  let key_base64 = STANDARD.encode(key);
-  let known_hosts_entry = format!("{} {} {}", known_hosts_host(profile), algorithm, key_base64);
-  Ok(RemoteHostKeyInfo {
-    profile_id: profile.id.clone(),
-    host: profile.host.clone(),
-    port: profile.port,
-    algorithm,
-    fingerprint_sha256: host_key_fingerprint_sha256(key),
-    key_base64,
-    known_hosts_entry,
-    trust_state: host_key_trust_state(session, profile, key)?
-  })
-}
-
-fn write_known_host_entry(profile: &RemoteProfile, key: &[u8], key_type: HostKeyType) -> Result<()> {
-  let path = known_hosts_path()?;
-  if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-  }
-
-  let session = connect_ssh_session(profile)?;
-  let (current_key, current_key_type) = session.host_key().context("SFTP server did not provide a host key")?;
-  if current_key != key || !matches_host_key_type(current_key_type, key_type) {
-    bail!("SFTP host key changed before it could be trusted");
-  }
-
-  let mut known_hosts = session.known_hosts().context("failed to initialize known_hosts writer")?;
-  if path.exists() {
+    let mut known_hosts = session
+        .known_hosts()
+        .context("failed to initialize known_hosts checker")?;
     known_hosts
-      .read_file(&path, KnownHostFileKind::OpenSSH)
-      .with_context(|| format!("failed to read {}", path.display()))?;
-  }
+        .read_file(&path, KnownHostFileKind::OpenSSH)
+        .with_context(|| format!("failed to read {}", path.display()))?;
 
-  known_hosts
-    .add(
-      &known_hosts_host(profile),
-      key,
-      &format!("SimpleFileManager {}", profile.name),
-      KnownHostKeyFormat::from(key_type)
+    Ok(
+        match known_hosts.check_port(&profile.host, profile.port, key) {
+            CheckResult::Match => RemoteHostKeyTrustState::Trusted,
+            CheckResult::Mismatch => RemoteHostKeyTrustState::Mismatch,
+            CheckResult::NotFound | CheckResult::Failure => RemoteHostKeyTrustState::Unknown,
+        },
     )
-    .context("failed to add SFTP host key to known_hosts")?;
-  known_hosts
-    .write_file(&path, KnownHostFileKind::OpenSSH)
-    .with_context(|| format!("failed to write {}", path.display()))?;
-  Ok(())
+}
+
+fn create_remote_host_key_info(
+    profile: &RemoteProfile,
+    session: &Session,
+) -> Result<RemoteHostKeyInfo> {
+    let (key, key_type) = session
+        .host_key()
+        .context("SFTP server did not provide a host key")?;
+    let algorithm = host_key_algorithm(key_type).to_string();
+    if algorithm == "unknown" {
+        bail!("SFTP server provided an unsupported host key type");
+    }
+
+    let key_base64 = STANDARD.encode(key);
+    let known_hosts_entry = format!("{} {} {}", known_hosts_host(profile), algorithm, key_base64);
+    Ok(RemoteHostKeyInfo {
+        profile_id: profile.id.clone(),
+        host: profile.host.clone(),
+        port: profile.port,
+        algorithm,
+        fingerprint_sha256: host_key_fingerprint_sha256(key),
+        key_base64,
+        known_hosts_entry,
+        trust_state: host_key_trust_state(session, profile, key)?,
+    })
+}
+
+fn write_known_host_entry(
+    profile: &RemoteProfile,
+    key: &[u8],
+    key_type: HostKeyType,
+) -> Result<()> {
+    let path = known_hosts_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let session = connect_ssh_session(profile)?;
+    let (current_key, current_key_type) = session
+        .host_key()
+        .context("SFTP server did not provide a host key")?;
+    if current_key != key || !matches_host_key_type(current_key_type, key_type) {
+        bail!("SFTP host key changed before it could be trusted");
+    }
+
+    let mut known_hosts = session
+        .known_hosts()
+        .context("failed to initialize known_hosts writer")?;
+    if path.exists() {
+        known_hosts
+            .read_file(&path, KnownHostFileKind::OpenSSH)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+    }
+
+    known_hosts
+        .add(
+            &known_hosts_host(profile),
+            key,
+            &format!("SimpleFileManager {}", profile.name),
+            KnownHostKeyFormat::from(key_type),
+        )
+        .context("failed to add SFTP host key to known_hosts")?;
+    known_hosts
+        .write_file(&path, KnownHostFileKind::OpenSSH)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
 }
 
 fn matches_host_key_type(left: HostKeyType, right: HostKeyType) -> bool {
-  host_key_algorithm(left) == host_key_algorithm(right)
+    host_key_algorithm(left) == host_key_algorithm(right)
 }
 
 fn build_url(profile: &RemoteProfile, path: Option<&str>) -> String {
-  let scheme = match profile.protocol {
-    LocationKind::Ftp => "ftp",
-    LocationKind::Sftp => "sftp",
-    LocationKind::Local => "file"
-  };
-  let remote_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
-  let suffix = encode_remote_url_path(&remote_path);
-  if suffix.is_empty() {
-    format!("{scheme}://{}:{}/", profile.host, profile.port)
-  } else {
-    format!("{scheme}://{}:{}/{}", profile.host, profile.port, suffix)
-  }
+    let scheme = match profile.protocol {
+        LocationKind::Ftp => "ftp",
+        LocationKind::Sftp => "sftp",
+        LocationKind::Local => "file",
+    };
+    let remote_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
+    let suffix = encode_remote_url_path(&remote_path);
+    if suffix.is_empty() {
+        format!("{scheme}://{}:{}/", profile.host, profile.port)
+    } else {
+        format!("{scheme}://{}:{}/{}", profile.host, profile.port, suffix)
+    }
 }
 
 fn encode_remote_url_path(path: &str) -> String {
-  normalize_remote_path(path)
-    .trim_start_matches('/')
-    .split('/')
-    .filter(|segment| !segment.is_empty())
-    .map(percent_encode_path_segment)
-    .collect::<Vec<_>>()
-    .join("/")
+    normalize_remote_path(path)
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(percent_encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn percent_encode_path_segment(segment: &str) -> String {
-  let mut encoded = String::new();
-  for byte in segment.as_bytes() {
-    match *byte {
-      b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => encoded.push(*byte as char),
-      value => encoded.push_str(&format!("%{value:02X}"))
+    let mut encoded = String::new();
+    for byte in segment.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(*byte as char)
+            }
+            value => encoded.push_str(&format!("%{value:02X}")),
+        }
     }
-  }
-  encoded
+    encoded
 }
 
 fn normalize_remote_path(path: &str) -> String {
-  let normalized = path
-    .trim()
-    .replace('\\', "/")
-    .split('/')
-    .filter(|segment| !segment.is_empty())
-    .collect::<Vec<_>>()
-    .join("/");
-  if normalized.is_empty() {
-    "/".to_string()
-  } else {
-    format!("/{normalized}")
-  }
+    let normalized = path
+        .trim()
+        .replace('\\', "/")
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{normalized}")
+    }
 }
 
 fn validate_remote_entry_name(name: &str) -> Result<()> {
-  let candidate = name.trim();
-  if candidate.is_empty() {
-    bail!("remote entry name cannot be empty");
-  }
-  if candidate == "." || candidate == ".." {
-    bail!("remote entry name must not be a dot segment");
-  }
-  if candidate.contains('/') || candidate.contains('\\') {
-    bail!("remote entry name must not include path separators");
-  }
-  if candidate.chars().any(|character| character.is_control()) {
-    bail!("remote entry name must not include control characters");
-  }
-  Ok(())
+    let candidate = name.trim();
+    if candidate.is_empty() {
+        bail!("remote entry name cannot be empty");
+    }
+    if candidate == "." || candidate == ".." {
+        bail!("remote entry name must not be a dot segment");
+    }
+    if candidate.contains('/') || candidate.contains('\\') {
+        bail!("remote entry name must not include path separators");
+    }
+    if candidate.chars().any(|character| character.is_control()) {
+        bail!("remote entry name must not include control characters");
+    }
+    Ok(())
 }
 
 fn validate_remote_path(path: &str) -> Result<()> {
-  if path.chars().any(|character| character.is_control()) {
-    bail!("remote path must not include control characters");
-  }
-
-  for segment in path.replace('\\', "/").split('/').filter(|segment| !segment.is_empty()) {
-    if segment == "." || segment == ".." {
-      bail!("remote path must not include dot segments");
+    if path.chars().any(|character| character.is_control()) {
+        bail!("remote path must not include control characters");
     }
-  }
 
-  Ok(())
+    for segment in path
+        .replace('\\', "/")
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+    {
+        if segment == "." || segment == ".." {
+            bail!("remote path must not include dot segments");
+        }
+    }
+
+    Ok(())
 }
 
 fn remote_path_is_within_root(profile: &RemoteProfile, path: &str) -> bool {
-  let root = normalize_remote_path(&profile.root_path);
-  let path = normalize_remote_path(path);
-  root == "/" || path == root || path.starts_with(&format!("{}/", root.trim_end_matches('/')))
+    let root = normalize_remote_path(&profile.root_path);
+    let path = normalize_remote_path(path);
+    root == "/" || path == root || path.starts_with(&format!("{}/", root.trim_end_matches('/')))
 }
 
 fn validate_remote_path_within_root(profile: &RemoteProfile, path: &str) -> Result<()> {
-  validate_remote_path(path)?;
-  if !remote_path_is_within_root(profile, path) {
-    bail!("remote path must be within the profile root");
-  }
-  Ok(())
+    validate_remote_path(path)?;
+    if !remote_path_is_within_root(profile, path) {
+        bail!("remote path must be within the profile root");
+    }
+    Ok(())
 }
 
 fn validate_remote_operation_source(profile: &RemoteProfile, path: &str) -> Result<()> {
-  validate_remote_path_within_root(profile, path)?;
-  let normalized = normalize_remote_path(path);
-  if normalized == normalize_remote_path(&profile.root_path) {
-    bail!("remote profile root cannot be used as a file operation source");
-  }
-  Ok(())
+    validate_remote_path_within_root(profile, path)?;
+    let normalized = normalize_remote_path(path);
+    if normalized == normalize_remote_path(&profile.root_path) {
+        bail!("remote profile root cannot be used as a file operation source");
+    }
+    Ok(())
 }
 
 fn remote_parent_path(path: &str) -> Option<String> {
-  let normalized = normalize_remote_path(path);
-  if normalized == "/" {
-    return None;
-  }
-  let trimmed = normalized.trim_end_matches('/');
-  let index = trimmed.rfind('/')?;
-  if index == 0 {
-    Some("/".to_string())
-  } else {
-    Some(trimmed[..index].to_string())
-  }
+    let normalized = normalize_remote_path(path);
+    if normalized == "/" {
+        return None;
+    }
+    let trimmed = normalized.trim_end_matches('/');
+    let index = trimmed.rfind('/')?;
+    if index == 0 {
+        Some("/".to_string())
+    } else {
+        Some(trimmed[..index].to_string())
+    }
 }
 
 fn remote_file_name(path: &str) -> Option<String> {
-  normalize_remote_path(path)
-    .trim_end_matches('/')
-    .rsplit('/')
-    .next()
-    .map(ToOwned::to_owned)
-    .filter(|value| !value.is_empty())
+    normalize_remote_path(path)
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.is_empty())
 }
 
 fn available_remote_conflict_path<F>(destination: &str, exists: F) -> String
 where
-  F: Fn(&str) -> bool
+    F: Fn(&str) -> bool,
 {
-  let destination = normalize_remote_path(destination);
-  if !exists(&destination) {
-    return destination;
-  }
-
-  let parent = remote_parent_path(&destination).unwrap_or_else(|| "/".to_string());
-  let file_name = remote_file_name(&destination).unwrap_or_else(|| "item".to_string());
-  let (stem, extension) = split_remote_file_name(&file_name);
-  for index in 1.. {
-    let candidate_name = match extension {
-      Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
-      _ => format!("{stem} ({index})")
-    };
-    let candidate = join_remote_path(&parent, &candidate_name);
-    if !exists(&candidate) {
-      return candidate;
+    let destination = normalize_remote_path(destination);
+    if !exists(&destination) {
+        return destination;
     }
-  }
 
-  unreachable!("conflict index iteration is unbounded")
+    let parent = remote_parent_path(&destination).unwrap_or_else(|| "/".to_string());
+    let file_name = remote_file_name(&destination).unwrap_or_else(|| "item".to_string());
+    let (stem, extension) = split_remote_file_name(&file_name);
+    for index in 1.. {
+        let candidate_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate = join_remote_path(&parent, &candidate_name);
+        if !exists(&candidate) {
+            return candidate;
+        }
+    }
+
+    unreachable!("conflict index iteration is unbounded")
 }
 
 fn split_remote_file_name(file_name: &str) -> (&str, Option<&str>) {
-  match file_name.rsplit_once('.') {
-    Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
-    _ => (file_name, None)
-  }
+    match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+        _ => (file_name, None),
+    }
 }
 
 fn available_sftp_conflict_path(sftp: &Sftp, destination: &str) -> String {
-  available_remote_conflict_path(destination, |candidate| sftp.lstat(Path::new(candidate)).is_ok())
+    available_remote_conflict_path(destination, |candidate| {
+        sftp.lstat(Path::new(candidate)).is_ok()
+    })
 }
 
 fn available_local_conflict_path(destination: &Path) -> PathBuf {
-  if !destination.exists() {
-    return destination.to_path_buf();
-  }
-
-  let parent = destination.parent().unwrap_or_else(|| Path::new(""));
-  let stem = destination
-    .file_stem()
-    .and_then(|value| value.to_str())
-    .or_else(|| destination.file_name().and_then(|value| value.to_str()))
-    .unwrap_or("item");
-  let extension = destination.extension().and_then(|value| value.to_str());
-  for index in 1.. {
-    let file_name = match extension {
-      Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
-      _ => format!("{stem} ({index})")
-    };
-    let candidate = parent.join(file_name);
-    if !candidate.exists() {
-      return candidate;
+    if !destination.exists() {
+        return destination.to_path_buf();
     }
-  }
 
-  unreachable!("conflict index iteration is unbounded")
+    let parent = destination.parent().unwrap_or_else(|| Path::new(""));
+    let stem = destination
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .or_else(|| destination.file_name().and_then(|value| value.to_str()))
+        .unwrap_or("item");
+    let extension = destination.extension().and_then(|value| value.to_str());
+    for index in 1.. {
+        let file_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("conflict index iteration is unbounded")
 }
 
 fn create_remote_transfer_temp_dir() -> Result<PathBuf> {
-  let nanos = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default()
-    .as_nanos();
-  let path = env::temp_dir().join(format!("sfm-remote-transfer-{}-{nanos}", std::process::id()));
-  fs::create_dir_all(&path).with_context(|| format!("failed to create remote transfer temp directory {}", path.display()))?;
-  Ok(path)
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = env::temp_dir().join(format!(
+        "sfm-remote-transfer-{}-{nanos}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).with_context(|| {
+        format!(
+            "failed to create remote transfer temp directory {}",
+            path.display()
+        )
+    })?;
+    Ok(path)
 }
 
-fn parse_listing_entries(profile: &RemoteProfile, path: Option<&str>, stdout: &[u8]) -> Vec<EntryViewModel> {
-  let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
-  String::from_utf8_lossy(stdout)
-    .lines()
-    .filter(|line| !line.trim().is_empty())
-    .map(|line| {
-      let trimmed = line.trim();
-      let is_directory = trimmed.ends_with('/');
-      let name = trimmed.trim_end_matches('/').to_string();
-      let remote_path = join_remote_path(&base_path, &name);
+fn parse_listing_entries(
+    profile: &RemoteProfile,
+    path: Option<&str>,
+    stdout: &[u8],
+) -> Vec<EntryViewModel> {
+    let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let trimmed = line.trim();
+            let is_directory = trimmed.ends_with('/');
+            let name = trimmed.trim_end_matches('/').to_string();
+            let remote_path = join_remote_path(&base_path, &name);
 
-      EntryViewModel {
-        path: remote_path.clone(),
-        name,
-        extension: (!is_directory)
-          .then(|| remote_path.rsplit('.').next().unwrap_or_default().to_string())
-          .filter(|value| !value.is_empty() && value != &remote_path),
-        kind: if is_directory { EntryKind::Directory } else { EntryKind::File },
-        size: None,
-        modified_at: None,
-        is_hidden: false,
-        is_read_only: false,
-        is_symlink: false,
-        location: LocationDescriptor {
-          kind: profile.protocol.clone(),
-          path: remote_path,
-          connection_id: Some(profile.id.clone())
-        },
-        decoration: EntryDecoration::default()
-      }
-    })
-    .collect()
+            EntryViewModel {
+                path: remote_path.clone(),
+                name,
+                extension: (!is_directory)
+                    .then(|| {
+                        remote_path
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                    .filter(|value| !value.is_empty() && value != &remote_path),
+                kind: if is_directory {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                },
+                size: None,
+                modified_at: None,
+                is_hidden: false,
+                is_read_only: false,
+                is_symlink: false,
+                location: LocationDescriptor {
+                    kind: profile.protocol.clone(),
+                    path: remote_path,
+                    connection_id: Some(profile.id.clone()),
+                },
+                decoration: EntryDecoration::default(),
+            }
+        })
+        .collect()
 }
 
-fn parse_sftp_entries(profile: &RemoteProfile, base_path: &str, entries: Vec<(PathBuf, ssh2::FileStat)>) -> Vec<EntryViewModel> {
-  let mut mapped = entries
-    .into_iter()
-    .filter_map(|(path, stat)| {
-      let name = path.file_name().and_then(|value| value.to_str())?.to_string();
-      if name == "." || name == ".." {
-        return None;
-      }
-      let remote_path = join_remote_path(base_path, &name);
-      let is_directory = stat.is_dir();
-      let modified_at = stat
-        .mtime
-        .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
-      Some(EntryViewModel {
-        path: remote_path.clone(),
-        name,
-        extension: (!is_directory)
-          .then(|| remote_path.rsplit('.').next().unwrap_or_default().to_string())
-          .filter(|value| !value.is_empty() && value != &remote_path),
-        kind: if is_directory { EntryKind::Directory } else { EntryKind::File },
-        size: (!is_directory).then_some(stat.size).flatten(),
-        modified_at,
-        is_hidden: remote_file_name(&remote_path)
-          .map(|value| value.starts_with('.'))
-          .unwrap_or(false),
-        is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
-        is_symlink: stat.file_type().is_symlink(),
-        location: LocationDescriptor {
-          kind: profile.protocol.clone(),
-          path: remote_path,
-          connection_id: Some(profile.id.clone())
-        },
-        decoration: EntryDecoration::default()
-      })
-    })
-    .collect::<Vec<_>>();
+fn parse_sftp_entries(
+    profile: &RemoteProfile,
+    base_path: &str,
+    entries: Vec<(PathBuf, ssh2::FileStat)>,
+) -> Vec<EntryViewModel> {
+    let mut mapped = entries
+        .into_iter()
+        .filter_map(|(path, stat)| {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())?
+                .to_string();
+            if name == "." || name == ".." {
+                return None;
+            }
+            let remote_path = join_remote_path(base_path, &name);
+            let is_directory = stat.is_dir();
+            let modified_at = stat
+                .mtime
+                .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
+            Some(EntryViewModel {
+                path: remote_path.clone(),
+                name,
+                extension: (!is_directory)
+                    .then(|| {
+                        remote_path
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                    .filter(|value| !value.is_empty() && value != &remote_path),
+                kind: if is_directory {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                },
+                size: (!is_directory).then_some(stat.size).flatten(),
+                modified_at,
+                is_hidden: remote_file_name(&remote_path)
+                    .map(|value| value.starts_with('.'))
+                    .unwrap_or(false),
+                is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
+                is_symlink: stat.file_type().is_symlink(),
+                location: LocationDescriptor {
+                    kind: profile.protocol.clone(),
+                    path: remote_path,
+                    connection_id: Some(profile.id.clone()),
+                },
+                decoration: EntryDecoration::default(),
+            })
+        })
+        .collect::<Vec<_>>();
 
-  mapped.sort_by(|left, right| match (&left.kind, &right.kind) {
-    (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Less,
-    (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Greater,
-    _ => left.name.to_lowercase().cmp(&right.name.to_lowercase())
-  });
-  mapped
+    mapped.sort_by(|left, right| match (&left.kind, &right.kind) {
+        (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Less,
+        (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Greater,
+        _ => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
+    });
+    mapped
 }
 
 fn upload_file_to_sftp(sftp: &Sftp, local_source: &Path, remote_target: &str) -> Result<()> {
-  let mut local_file = fs::File::open(local_source)
-    .with_context(|| format!("failed to open local file {}", local_source.display()))?;
-  let mut remote_file = sftp
-    .create(Path::new(remote_target))
-    .with_context(|| format!("failed to create remote file {remote_target}"))?;
-  io::copy(&mut local_file, &mut remote_file).with_context(|| {
-    format!(
-      "failed to upload {} to {remote_target}",
-      local_source.display()
-    )
-  })?;
-  Ok(())
+    let mut local_file = fs::File::open(local_source)
+        .with_context(|| format!("failed to open local file {}", local_source.display()))?;
+    let mut remote_file = sftp
+        .create(Path::new(remote_target))
+        .with_context(|| format!("failed to create remote file {remote_target}"))?;
+    io::copy(&mut local_file, &mut remote_file).with_context(|| {
+        format!(
+            "failed to upload {} to {remote_target}",
+            local_source.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn download_file_from_sftp(sftp: &Sftp, remote_source: &str, local_target: &Path) -> Result<()> {
-  if let Some(parent) = local_target.parent() {
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-  }
-  let mut remote_file = sftp
-    .open(Path::new(remote_source))
-    .with_context(|| format!("failed to open remote file {remote_source}"))?;
-  let mut local_file = fs::File::create(local_target)
-    .with_context(|| format!("failed to create local file {}", local_target.display()))?;
-  io::copy(&mut remote_file, &mut local_file).with_context(|| {
-    format!(
-      "failed to download {remote_source} to {}",
-      local_target.display()
-    )
-  })?;
-  Ok(())
+    if let Some(parent) = local_target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let mut remote_file = sftp
+        .open(Path::new(remote_source))
+        .with_context(|| format!("failed to open remote file {remote_source}"))?;
+    let mut local_file = fs::File::create(local_target)
+        .with_context(|| format!("failed to create local file {}", local_target.display()))?;
+    io::copy(&mut remote_file, &mut local_file).with_context(|| {
+        format!(
+            "failed to download {remote_source} to {}",
+            local_target.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn upload_path_to_sftp(sftp: &Sftp, local_source: &Path, remote_target: &str) -> Result<()> {
-  let metadata = fs::symlink_metadata(local_source)
-    .with_context(|| format!("failed to stat local path {}", local_source.display()))?;
-  ensure_local_path_is_not_symlink(&metadata, local_source, "upload")?;
-  if metadata.is_dir() && !metadata.file_type().is_symlink() {
-    sftp
-      .mkdir(Path::new(remote_target), 0o755)
-      .with_context(|| format!("failed to create remote directory {remote_target}"))?;
-    for entry in fs::read_dir(local_source).with_context(|| format!("failed to read {}", local_source.display()))? {
-      let entry = entry.context("failed to read recursive local directory entry")?;
-      let child_name = entry
-        .file_name()
-        .to_str()
-        .ok_or_else(|| anyhow!("local path contains a non-Unicode file name: {}", entry.path().display()))?
-        .to_string();
-      validate_remote_entry_name(&child_name)?;
-      let child_remote_target = join_remote_path(remote_target, &child_name);
-      upload_path_to_sftp(sftp, &entry.path(), &child_remote_target)?;
+    let metadata = fs::symlink_metadata(local_source)
+        .with_context(|| format!("failed to stat local path {}", local_source.display()))?;
+    ensure_local_path_is_not_symlink(&metadata, local_source, "upload")?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        sftp.mkdir(Path::new(remote_target), 0o755)
+            .with_context(|| format!("failed to create remote directory {remote_target}"))?;
+        for entry in fs::read_dir(local_source)
+            .with_context(|| format!("failed to read {}", local_source.display()))?
+        {
+            let entry = entry.context("failed to read recursive local directory entry")?;
+            let child_name = entry
+                .file_name()
+                .to_str()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "local path contains a non-Unicode file name: {}",
+                        entry.path().display()
+                    )
+                })?
+                .to_string();
+            validate_remote_entry_name(&child_name)?;
+            let child_remote_target = join_remote_path(remote_target, &child_name);
+            upload_path_to_sftp(sftp, &entry.path(), &child_remote_target)?;
+        }
+    } else {
+        upload_file_to_sftp(sftp, local_source, remote_target)?;
     }
-  } else {
-    upload_file_to_sftp(sftp, local_source, remote_target)?;
-  }
-  Ok(())
+    Ok(())
 }
 
-fn download_path_from_sftp(sftp: &Sftp, remote_source: &str, stat: &FileStat, local_target: &Path) -> Result<()> {
-  ensure_remote_stat_is_not_symlink(stat, remote_source, "download")?;
-  if stat.is_dir() {
-    fs::create_dir_all(local_target)
-      .with_context(|| format!("failed to create local directory {}", local_target.display()))?;
-    for (child_path, child_stat) in sftp
-      .readdir(Path::new(remote_source))
-      .with_context(|| format!("failed to read remote directory {remote_source}"))?
-    {
-      let name = child_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("remote path contains a non-Unicode file name under {remote_source}"))?
-        .to_string();
-      if name == "." || name == ".." {
-        continue;
-      }
-      validate_remote_entry_name(&name)?;
-      let child_remote_source = join_remote_path(remote_source, &name);
-      let child_local_target = local_target.join(name);
-      download_path_from_sftp(sftp, &child_remote_source, &child_stat, &child_local_target)?;
+fn download_path_from_sftp(
+    sftp: &Sftp,
+    remote_source: &str,
+    stat: &FileStat,
+    local_target: &Path,
+) -> Result<()> {
+    ensure_remote_stat_is_not_symlink(stat, remote_source, "download")?;
+    if stat.is_dir() {
+        fs::create_dir_all(local_target).with_context(|| {
+            format!(
+                "failed to create local directory {}",
+                local_target.display()
+            )
+        })?;
+        for (child_path, child_stat) in sftp
+            .readdir(Path::new(remote_source))
+            .with_context(|| format!("failed to read remote directory {remote_source}"))?
+        {
+            let name = child_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    anyhow!("remote path contains a non-Unicode file name under {remote_source}")
+                })?
+                .to_string();
+            if name == "." || name == ".." {
+                continue;
+            }
+            validate_remote_entry_name(&name)?;
+            let child_remote_source = join_remote_path(remote_source, &name);
+            let child_local_target = local_target.join(name);
+            download_path_from_sftp(sftp, &child_remote_source, &child_stat, &child_local_target)?;
+        }
+    } else {
+        download_file_from_sftp(sftp, remote_source, local_target)?;
     }
-  } else {
-    download_file_from_sftp(sftp, remote_source, local_target)?;
-  }
-  Ok(())
+    Ok(())
 }
 
 fn copy_sftp_file(sftp: &Sftp, remote_source: &str, remote_target: &str) -> Result<()> {
-  let mut source_file = sftp
-    .open(Path::new(remote_source))
-    .with_context(|| format!("failed to open remote file {remote_source}"))?;
-  let mut target_file = sftp
-    .create(Path::new(remote_target))
-    .with_context(|| format!("failed to create remote file {remote_target}"))?;
-  io::copy(&mut source_file, &mut target_file)
-    .with_context(|| format!("failed to copy remote file {remote_source} to {remote_target}"))?;
-  Ok(())
+    let mut source_file = sftp
+        .open(Path::new(remote_source))
+        .with_context(|| format!("failed to open remote file {remote_source}"))?;
+    let mut target_file = sftp
+        .create(Path::new(remote_target))
+        .with_context(|| format!("failed to create remote file {remote_target}"))?;
+    io::copy(&mut source_file, &mut target_file).with_context(|| {
+        format!("failed to copy remote file {remote_source} to {remote_target}")
+    })?;
+    Ok(())
 }
 
-fn copy_sftp_path(sftp: &Sftp, remote_source: &str, stat: &FileStat, remote_target: &str) -> Result<()> {
-  ensure_remote_stat_is_not_symlink(stat, remote_source, "copy")?;
-  if stat.is_dir() {
-    sftp
-      .mkdir(Path::new(remote_target), 0o755)
-      .with_context(|| format!("failed to create remote directory {remote_target}"))?;
-    for (child_path, child_stat) in sftp
-      .readdir(Path::new(remote_source))
-      .with_context(|| format!("failed to read remote directory {remote_source}"))?
-    {
-      let name = child_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("remote path contains a non-Unicode file name under {remote_source}"))?
-        .to_string();
-      if name == "." || name == ".." {
-        continue;
-      }
-      validate_remote_entry_name(&name)?;
-      let child_source = join_remote_path(remote_source, &name);
-      let child_target = join_remote_path(remote_target, &name);
-      copy_sftp_path(sftp, &child_source, &child_stat, &child_target)?;
+fn copy_sftp_path(
+    sftp: &Sftp,
+    remote_source: &str,
+    stat: &FileStat,
+    remote_target: &str,
+) -> Result<()> {
+    ensure_remote_stat_is_not_symlink(stat, remote_source, "copy")?;
+    if stat.is_dir() {
+        sftp.mkdir(Path::new(remote_target), 0o755)
+            .with_context(|| format!("failed to create remote directory {remote_target}"))?;
+        for (child_path, child_stat) in sftp
+            .readdir(Path::new(remote_source))
+            .with_context(|| format!("failed to read remote directory {remote_source}"))?
+        {
+            let name = child_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    anyhow!("remote path contains a non-Unicode file name under {remote_source}")
+                })?
+                .to_string();
+            if name == "." || name == ".." {
+                continue;
+            }
+            validate_remote_entry_name(&name)?;
+            let child_source = join_remote_path(remote_source, &name);
+            let child_target = join_remote_path(remote_target, &name);
+            copy_sftp_path(sftp, &child_source, &child_stat, &child_target)?;
+        }
+    } else {
+        copy_sftp_file(sftp, remote_source, remote_target)?;
     }
-  } else {
-    copy_sftp_file(sftp, remote_source, remote_target)?;
-  }
-  Ok(())
+    Ok(())
 }
 
 fn remove_sftp_directory_recursively(sftp: &Sftp, remote_source: &str) -> Result<()> {
-  for (child_path, child_stat) in sftp
-    .readdir(Path::new(remote_source))
-    .with_context(|| format!("failed to read remote directory {remote_source}"))?
-  {
-    let name = child_path
-      .file_name()
-      .and_then(|value| value.to_str())
-      .ok_or_else(|| anyhow!("remote path contains a non-Unicode file name under {remote_source}"))?
-      .to_string();
-    if name == "." || name == ".." {
-      continue;
+    for (child_path, child_stat) in sftp
+        .readdir(Path::new(remote_source))
+        .with_context(|| format!("failed to read remote directory {remote_source}"))?
+    {
+        let name = child_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| {
+                anyhow!("remote path contains a non-Unicode file name under {remote_source}")
+            })?
+            .to_string();
+        if name == "." || name == ".." {
+            continue;
+        }
+        validate_remote_entry_name(&name)?;
+        let child_source = join_remote_path(remote_source, &name);
+        if child_stat.is_dir() {
+            remove_sftp_directory_recursively(sftp, &child_source)?;
+        } else {
+            sftp.unlink(Path::new(&child_source))
+                .with_context(|| format!("failed to delete remote file {child_source}"))?;
+        }
     }
-    validate_remote_entry_name(&name)?;
-    let child_source = join_remote_path(remote_source, &name);
-    if child_stat.is_dir() {
-      remove_sftp_directory_recursively(sftp, &child_source)?;
-    } else {
-      sftp
-        .unlink(Path::new(&child_source))
-        .with_context(|| format!("failed to delete remote file {child_source}"))?;
-    }
-  }
-  sftp
-    .rmdir(Path::new(remote_source))
-    .with_context(|| format!("failed to delete remote directory {remote_source}"))?;
-  Ok(())
+    sftp.rmdir(Path::new(remote_source))
+        .with_context(|| format!("failed to delete remote directory {remote_source}"))?;
+    Ok(())
 }
 
-fn ensure_local_path_is_not_symlink(metadata: &fs::Metadata, path: &Path, operation: &str) -> Result<()> {
-  if metadata.file_type().is_symlink() {
-    bail!(
-      "local symbolic link {operation} is not supported: {}",
-      path.display()
-    );
-  }
-  Ok(())
+fn ensure_local_path_is_not_symlink(
+    metadata: &fs::Metadata,
+    path: &Path,
+    operation: &str,
+) -> Result<()> {
+    if metadata.file_type().is_symlink() {
+        bail!(
+            "local symbolic link {operation} is not supported: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn ensure_remote_stat_is_not_symlink(stat: &FileStat, path: &str, operation: &str) -> Result<()> {
-  if stat.file_type().is_symlink() {
-    bail!("remote symbolic link {operation} is not supported: {path}");
-  }
-  Ok(())
+    if stat.file_type().is_symlink() {
+        bail!("remote symbolic link {operation} is not supported: {path}");
+    }
+    Ok(())
 }
 
 fn ensure_remote_not_inside_source(source: &str, destination: &str) -> Result<()> {
-  let source = normalize_remote_path(source);
-  let destination = normalize_remote_path(destination);
-  if destination == source || destination.starts_with(&format!("{}/", source.trim_end_matches('/'))) {
-    bail!("remote destination must not be inside the source path");
-  }
-  Ok(())
+    let source = normalize_remote_path(source);
+    let destination = normalize_remote_path(destination);
+    if destination == source
+        || destination.starts_with(&format!("{}/", source.trim_end_matches('/')))
+    {
+        bail!("remote destination must not be inside the source path");
+    }
+    Ok(())
 }
 
 fn join_remote_path(base_path: &str, name: &str) -> String {
-  if base_path == "/" {
-    format!("/{}", name.trim_start_matches('/'))
-  } else {
-    format!("{}/{}", base_path.trim_end_matches('/'), name.trim_start_matches('/'))
-  }
+    if base_path == "/" {
+        format!("/{}", name.trim_start_matches('/'))
+    } else {
+        format!(
+            "{}/{}",
+            base_path.trim_end_matches('/'),
+            name.trim_start_matches('/')
+        )
+    }
 }
 
 fn stderr_message(output: &Output, fallback: &str) -> String {
-  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-  if stderr.is_empty() {
-    fallback.to_string()
-  } else {
-    stderr
-  }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        fallback.to_string()
+    } else {
+        stderr
+    }
 }
 
 fn collect_probe_details(output: &Output) -> Vec<String> {
-  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-  if stderr.is_empty() {
-    Vec::new()
-  } else {
-    vec![stderr]
-  }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Vec::new()
+    } else {
+        vec![stderr]
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::{
-    available_remote_conflict_path, build_url, copy_entries, create_directory, delete_entries, download_entries,
-    credential_target_for_profile, encode_remote_url_path, ensure_remote_not_inside_source, ensure_remote_stat_is_not_symlink,
-    host_key_algorithm, host_key_fingerprint_sha256, host_key_type_from_algorithm, join_remote_path, known_hosts_host,
-    list_directory, move_entries, normalize_profile, normalize_remote_path, parse_curl_listing_child_paths,
-    parse_listing_entries, parse_sftp_entries, preferred_curl_executable, prepare_profile_for_save, remote_file_name,
-    remote_parent_path, remote_path_is_within_root, rename_entry, select_adapter, test_profile, transfer_entries, upload_files, validate_profile,
-    validate_remote_entry_name, validate_remote_path, validate_remote_path_within_root
-  };
-  use std::{env, fs, path::PathBuf};
+    use super::{
+        available_remote_conflict_path, build_url, copy_entries, create_directory,
+        credential_target_for_profile, delete_entries, download_entries, encode_remote_url_path,
+        ensure_remote_not_inside_source, ensure_remote_stat_is_not_symlink, ftp_profile_root_properties,
+        ftp_property_lookup_path, host_key_algorithm, host_key_fingerprint_sha256, host_key_type_from_algorithm, join_remote_path,
+        known_hosts_host, list_directory, move_entries, normalize_profile, normalize_remote_path,
+        parse_curl_listing_child_paths, parse_listing_entries, parse_sftp_entries, FtpPropertyLookup,
+        preferred_curl_executable, prepare_profile_for_save, remote_file_name, remote_parent_path,
+        remote_path_is_within_root, rename_entry, select_adapter, test_profile, transfer_entries,
+        upload_files, validate_profile, validate_remote_entry_name, validate_remote_path,
+        validate_remote_path_within_root,
+    };
+    use std::{env, fs, path::PathBuf};
 
-  use ssh2::{FileStat, HostKeyType};
-  use uuid::Uuid;
+    use ssh2::{FileStat, HostKeyType};
+    use uuid::Uuid;
 
-  use crate::domain::models::{
-    EntryKind, LocationKind, RemoteAdapterKind, RemoteAuthKind, RemoteProfile, RemoteProfileUpsertRequest
-  };
-
-  fn sample_profile() -> RemoteProfile {
-    RemoteProfile {
-      id: "remote-1".into(),
-      name: "Demo".into(),
-      protocol: LocationKind::Sftp,
-      host: "example.com".into(),
-      port: 22,
-      username: "user".into(),
-      root_path: "/".into(),
-      auth_kind: RemoteAuthKind::Password,
-      private_key_path: None,
-      passive_mode: true,
-      ignore_host_key: false,
-      connect_timeout_secs: 10,
-      command_timeout_secs: 20,
-      credential_target: None
-    }
-  }
-
-  #[test]
-  fn rejects_local_protocol_for_remote_profile() {
-    let mut profile = sample_profile();
-    profile.protocol = LocationKind::Local;
-    assert!(validate_profile(&profile).is_err());
-  }
-
-  #[test]
-  fn rejects_key_file_for_ftp() {
-    let mut profile = sample_profile();
-    profile.protocol = LocationKind::Ftp;
-    profile.auth_kind = RemoteAuthKind::KeyFile;
-    profile.private_key_path = Some("id_ed25519".into());
-    assert!(validate_profile(&profile).is_err());
-  }
-
-  #[test]
-  fn normalizes_profile_defaults_and_paths() {
-    let mut profile = sample_profile();
-    profile.id = " remote-1 ".into();
-    profile.name = " Demo ".into();
-    profile.host = " example.com ".into();
-    profile.username = " user ".into();
-    profile.root_path = "folder\\inner".into();
-    profile.connect_timeout_secs = 0;
-    profile.command_timeout_secs = 0;
-
-    let normalized = normalize_profile(profile);
-    assert_eq!(normalized.id, "remote-1");
-    assert_eq!(normalized.name, "Demo");
-    assert_eq!(normalized.host, "example.com");
-    assert_eq!(normalized.username, "user");
-    assert_eq!(normalized.root_path, "/folder/inner");
-    assert_eq!(normalized.connect_timeout_secs, 10);
-    assert_eq!(normalized.command_timeout_secs, 20);
-  }
-
-  #[test]
-  fn formats_known_hosts_target_for_default_and_non_default_sftp_ports() {
-    let mut profile = sample_profile();
-    profile.host = "192.168.1.12".into();
-    profile.port = 22;
-    assert_eq!(known_hosts_host(&profile), "192.168.1.12");
-
-    profile.port = 6666;
-    assert_eq!(known_hosts_host(&profile), "[192.168.1.12]:6666");
-  }
-
-  #[test]
-  fn formats_host_key_algorithms_and_sha256_fingerprints() {
-    assert_eq!(host_key_algorithm(HostKeyType::Ed25519), "ssh-ed25519");
-    assert_eq!(host_key_algorithm(HostKeyType::Ecdsa256), "ecdsa-sha2-nistp256");
-    let parsed_key_type = host_key_type_from_algorithm("ssh-ed25519").expect("ed25519 key type should parse");
-    assert_eq!(host_key_algorithm(parsed_key_type), "ssh-ed25519");
-    assert!(host_key_type_from_algorithm("unknown").is_none());
-    assert_eq!(host_key_fingerprint_sha256(b"demo-key"), "SHA256:xIoB9J/Q8sxAS8PLvIDpFFej1Bu0KaaVJD3kxheUFVw");
-  }
-
-  #[test]
-  fn parses_directory_listing_output() {
-    let entries = parse_listing_entries(&sample_profile(), Some("/"), b"logs/\nreport.txt\n");
-    assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].path, "/logs");
-    assert_eq!(entries[1].path, "/report.txt");
-  }
-
-  #[test]
-  fn supports_key_file_prepare_without_secret() {
-    let mut profile = sample_profile();
-    profile.auth_kind = RemoteAuthKind::KeyFile;
-    profile.private_key_path = Some("id_ed25519".into());
-
-    let profile = prepare_profile_for_save(
-      RemoteProfileUpsertRequest {
-        profile,
-        password: None
-      },
-      None
-    )
-    .expect("profile should prepare");
-
-    assert_eq!(profile.auth_kind, RemoteAuthKind::KeyFile);
-    assert_eq!(profile.private_key_path.as_deref(), Some("id_ed25519"));
-    assert_eq!(profile.credential_target, None);
-  }
-
-  #[test]
-  fn prepare_profile_for_save_ignores_client_credential_target() {
-    let mut profile = sample_profile();
-    profile.credential_target = Some("attacker-controlled-target".into());
-
-    let prepared = prepare_profile_for_save(
-      RemoteProfileUpsertRequest {
-        profile,
-        password: None
-      },
-      Some("SimpleFileManager.Remote.remote-1")
-    )
-    .expect("profile should prepare");
-
-    assert_eq!(
-      prepared.credential_target.as_deref(),
-      Some("SimpleFileManager.Remote.remote-1")
-    );
-    assert_eq!(credential_target_for_profile(" remote-2 "), "SimpleFileManager.Remote.remote-2");
-  }
-
-  #[test]
-  fn selects_sftp_adapter_without_curl_dependency() {
-    let mut profile = sample_profile();
-    profile.auth_kind = RemoteAuthKind::KeyFile;
-    profile.private_key_path = Some("id_ed25519".into());
-    assert_eq!(select_adapter(&profile).kind(), RemoteAdapterKind::Sftp);
-  }
-
-  #[test]
-  fn selects_curl_adapter_for_ftp_when_available() {
-    if preferred_curl_executable().is_none() {
-      return;
-    }
-
-    let mut profile = sample_profile();
-    profile.protocol = LocationKind::Ftp;
-    profile.port = 21;
-    assert_eq!(select_adapter(&profile).kind(), RemoteAdapterKind::Curl);
-  }
-
-  #[test]
-  fn normalizes_remote_paths() {
-    assert_eq!(normalize_remote_path("folder\\inner"), "/folder/inner");
-    assert_eq!(join_remote_path("/", "child"), "/child");
-    assert_eq!(join_remote_path("/folder", "child"), "/folder/child");
-  }
-
-  #[test]
-  fn builds_encoded_remote_urls_for_curl() {
-    let mut profile = sample_profile();
-    profile.protocol = LocationKind::Ftp;
-    profile.host = "ftp.example.test".into();
-    profile.port = 2121;
-    assert_eq!(encode_remote_url_path("/folder/report 100%.txt"), "folder/report%20100%25.txt");
-    assert_eq!(build_url(&profile, Some("/folder/# release/报告.txt")), "ftp://ftp.example.test:2121/folder/%23%20release/%E6%8A%A5%E5%91%8A.txt");
-    assert_eq!(build_url(&profile, Some("/")), "ftp://ftp.example.test:2121/");
-  }
-
-  #[test]
-  fn parses_curl_listing_children_under_base_path() {
-    assert_eq!(
-      parse_curl_listing_child_paths("/folder", b"child.txt\nnested/\n/absolute/path.txt\n.\n..\n"),
-      vec![
-        "/folder/child.txt".to_string(),
-        "/folder/nested".to_string(),
-        "/absolute/path.txt".to_string()
-      ]
-    );
-  }
-
-  #[test]
-  fn resolves_remote_parent_names_and_conflicts() {
-    assert_eq!(remote_parent_path("/folder/report.txt").as_deref(), Some("/folder"));
-    assert_eq!(remote_parent_path("/report.txt").as_deref(), Some("/"));
-    assert_eq!(remote_parent_path("/"), None);
-    assert_eq!(remote_file_name("/folder/report.txt").as_deref(), Some("report.txt"));
-
-    let existing = ["/folder/report.txt", "/folder/report (1).txt"];
-    let available = available_remote_conflict_path("/folder/report.txt", |candidate| existing.contains(&candidate));
-    assert_eq!(available, "/folder/report (2).txt");
-
-    let existing = ["/folder/README"];
-    let available = available_remote_conflict_path("/folder/README", |candidate| existing.contains(&candidate));
-    assert_eq!(available, "/folder/README (1)");
-  }
-
-  #[test]
-  fn rejects_unsafe_remote_names_and_paths() {
-    assert!(validate_remote_entry_name(".").is_err());
-    assert!(validate_remote_entry_name("..").is_err());
-    assert!(validate_remote_entry_name("folder/name").is_err());
-    assert!(validate_remote_entry_name("bad\nname").is_err());
-    assert!(validate_remote_path("/safe/path").is_ok());
-    assert!(validate_remote_path("/safe/../path").is_err());
-    assert!(validate_remote_path("/bad\rpath").is_err());
-    assert!(super::validate_remote_operation_source(&sample_profile(), "/").is_err());
-  }
-
-  #[test]
-  fn rejects_remote_paths_outside_profile_root() {
-    let mut profile = sample_profile();
-    profile.root_path = "/home/cheng/root".into();
-
-    assert!(remote_path_is_within_root(&profile, "/home/cheng/root"));
-    assert!(remote_path_is_within_root(&profile, "/home/cheng/root/file.txt"));
-    assert!(!remote_path_is_within_root(&profile, "/home/cheng/root2/file.txt"));
-    assert!(!remote_path_is_within_root(&profile, "/etc/passwd"));
-    assert!(validate_remote_path_within_root(&profile, "/home/cheng/root/child").is_ok());
-    assert!(validate_remote_path_within_root(&profile, "/home/cheng/root2/child").is_err());
-  }
-
-  #[test]
-  fn rejects_remote_transfer_sources_outside_source_profile_root_before_connecting() {
-    let mut source = sample_profile();
-    source.root_path = "/home/cheng/root".into();
-    let mut destination = sample_profile();
-    destination.id = "remote-2".into();
-    destination.host = "destination.invalid".into();
-    destination.root_path = "/inbox".into();
-
-    let result = transfer_entries(
-      &source,
-      Some("unused"),
-      &destination,
-      Some("unused"),
-      &["/etc/passwd".into()],
-      "/inbox",
-      false
-    );
-
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("remote path must be within the profile root"));
-  }
-
-  #[test]
-  fn rejects_remote_transfer_destinations_outside_destination_profile_root_before_connecting() {
-    let mut source = sample_profile();
-    source.root_path = "/home/cheng/root".into();
-    let mut destination = sample_profile();
-    destination.id = "remote-2".into();
-    destination.host = "destination.invalid".into();
-    destination.root_path = "/inbox".into();
-
-    let result = transfer_entries(
-      &source,
-      Some("unused"),
-      &destination,
-      Some("unused"),
-      &["/home/cheng/root/report.txt".into()],
-      "/outside",
-      true
-    );
-
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("remote path must be within the profile root"));
-  }
-
-  #[test]
-  fn rejects_file_operations_targeting_profile_root() {
-    let mut profile = sample_profile();
-    profile.root_path = "/home/cheng/root".into();
-
-    assert!(super::validate_remote_operation_source(&profile, "/home/cheng/root/file.txt").is_ok());
-    assert!(super::validate_remote_operation_source(&profile, "/home/cheng/root").is_err());
-    assert!(super::validate_remote_operation_source(&profile, "/home/cheng/root2/file.txt").is_err());
-  }
-
-  #[test]
-  fn rejects_sftp_symlink_transfer_sources() {
-    let symlink = FileStat {
-      size: Some(5),
-      uid: None,
-      gid: None,
-      perm: Some(0o120777),
-      atime: None,
-      mtime: None
+    use crate::domain::models::{
+        DirectorySizeAvailability, EntryKind, ItemPropertiesRequest, ItemPropertiesTarget,
+        ItemPropertyField, ItemPropertyFieldAvailability, LocationKind, RemoteAdapterKind, RemoteAuthKind,
+        RemoteProfile, RemoteProfileUpsertRequest,
     };
 
-    assert!(ensure_remote_stat_is_not_symlink(&symlink, "/root/link", "download").is_err());
-  }
+    fn sample_profile() -> RemoteProfile {
+        RemoteProfile {
+            id: "remote-1".into(),
+            name: "Demo".into(),
+            protocol: LocationKind::Sftp,
+            host: "example.com".into(),
+            port: 22,
+            username: "user".into(),
+            root_path: "/".into(),
+            auth_kind: RemoteAuthKind::Password,
+            private_key_path: None,
+            passive_mode: true,
+            ignore_host_key: false,
+            connect_timeout_secs: 10,
+            command_timeout_secs: 20,
+            credential_target: None,
+        }
+    }
 
-  #[test]
-  fn rejects_remote_destination_inside_source() {
-    assert!(ensure_remote_not_inside_source("/folder", "/folder-copy").is_ok());
-    assert!(ensure_remote_not_inside_source("/folder", "/other/folder").is_ok());
-    assert!(ensure_remote_not_inside_source("/folder", "/folder").is_err());
-    assert!(ensure_remote_not_inside_source("/folder", "/folder/child").is_err());
-  }
+    #[test]
+    fn rejects_local_protocol_for_remote_profile() {
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Local;
+        assert!(validate_profile(&profile).is_err());
+    }
 
-  #[test]
-  fn parses_sftp_entries_with_metadata() {
-    let profile = sample_profile();
-    let entries = parse_sftp_entries(
-      &profile,
-      "/base",
-      vec![
-        (
-          PathBuf::from("zeta.txt"),
-          FileStat {
-            size: Some(12),
-            uid: None,
-            gid: None,
-            perm: Some(0o100444),
-            atime: None,
-            mtime: Some(1_700_000_000)
-          }
-        ),
-        (
-          PathBuf::from(".config"),
-          FileStat {
-            size: None,
-            uid: None,
-            gid: None,
-            perm: Some(0o040755),
-            atime: None,
-            mtime: None
-          }
-        ),
-        (
-          PathBuf::from("link"),
-          FileStat {
+    #[test]
+    fn rejects_key_file_for_ftp() {
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Ftp;
+        profile.auth_kind = RemoteAuthKind::KeyFile;
+        profile.private_key_path = Some("id_ed25519".into());
+        assert!(validate_profile(&profile).is_err());
+    }
+
+    #[test]
+    fn normalizes_profile_defaults_and_paths() {
+        let mut profile = sample_profile();
+        profile.id = " remote-1 ".into();
+        profile.name = " Demo ".into();
+        profile.host = " example.com ".into();
+        profile.username = " user ".into();
+        profile.root_path = "folder\\inner".into();
+        profile.connect_timeout_secs = 0;
+        profile.command_timeout_secs = 0;
+
+        let normalized = normalize_profile(profile);
+        assert_eq!(normalized.id, "remote-1");
+        assert_eq!(normalized.name, "Demo");
+        assert_eq!(normalized.host, "example.com");
+        assert_eq!(normalized.username, "user");
+        assert_eq!(normalized.root_path, "/folder/inner");
+        assert_eq!(normalized.connect_timeout_secs, 10);
+        assert_eq!(normalized.command_timeout_secs, 20);
+    }
+
+    #[test]
+    fn formats_known_hosts_target_for_default_and_non_default_sftp_ports() {
+        let mut profile = sample_profile();
+        profile.host = "192.168.1.12".into();
+        profile.port = 22;
+        assert_eq!(known_hosts_host(&profile), "192.168.1.12");
+
+        profile.port = 6666;
+        assert_eq!(known_hosts_host(&profile), "[192.168.1.12]:6666");
+    }
+
+    #[test]
+    fn formats_host_key_algorithms_and_sha256_fingerprints() {
+        assert_eq!(host_key_algorithm(HostKeyType::Ed25519), "ssh-ed25519");
+        assert_eq!(
+            host_key_algorithm(HostKeyType::Ecdsa256),
+            "ecdsa-sha2-nistp256"
+        );
+        let parsed_key_type =
+            host_key_type_from_algorithm("ssh-ed25519").expect("ed25519 key type should parse");
+        assert_eq!(host_key_algorithm(parsed_key_type), "ssh-ed25519");
+        assert!(host_key_type_from_algorithm("unknown").is_none());
+        assert_eq!(
+            host_key_fingerprint_sha256(b"demo-key"),
+            "SHA256:xIoB9J/Q8sxAS8PLvIDpFFej1Bu0KaaVJD3kxheUFVw"
+        );
+    }
+
+    #[test]
+    fn parses_directory_listing_output() {
+        let entries = parse_listing_entries(&sample_profile(), Some("/"), b"logs/\nreport.txt\n");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "/logs");
+        assert_eq!(entries[1].path, "/report.txt");
+    }
+
+    #[test]
+    fn supports_key_file_prepare_without_secret() {
+        let mut profile = sample_profile();
+        profile.auth_kind = RemoteAuthKind::KeyFile;
+        profile.private_key_path = Some("id_ed25519".into());
+
+        let profile = prepare_profile_for_save(
+            RemoteProfileUpsertRequest {
+                profile,
+                password: None,
+            },
+            None,
+        )
+        .expect("profile should prepare");
+
+        assert_eq!(profile.auth_kind, RemoteAuthKind::KeyFile);
+        assert_eq!(profile.private_key_path.as_deref(), Some("id_ed25519"));
+        assert_eq!(profile.credential_target, None);
+    }
+
+    #[test]
+    fn prepare_profile_for_save_ignores_client_credential_target() {
+        let mut profile = sample_profile();
+        profile.credential_target = Some("attacker-controlled-target".into());
+
+        let prepared = prepare_profile_for_save(
+            RemoteProfileUpsertRequest {
+                profile,
+                password: None,
+            },
+            Some("SimpleFileManager.Remote.remote-1"),
+        )
+        .expect("profile should prepare");
+
+        assert_eq!(
+            prepared.credential_target.as_deref(),
+            Some("SimpleFileManager.Remote.remote-1")
+        );
+        assert_eq!(
+            credential_target_for_profile(" remote-2 "),
+            "SimpleFileManager.Remote.remote-2"
+        );
+    }
+
+    #[test]
+    fn selects_sftp_adapter_without_curl_dependency() {
+        let mut profile = sample_profile();
+        profile.auth_kind = RemoteAuthKind::KeyFile;
+        profile.private_key_path = Some("id_ed25519".into());
+        assert_eq!(select_adapter(&profile).kind(), RemoteAdapterKind::Sftp);
+    }
+
+    #[test]
+    fn selects_curl_adapter_for_ftp_when_available() {
+        if preferred_curl_executable().is_none() {
+            return;
+        }
+
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Ftp;
+        profile.port = 21;
+        assert_eq!(select_adapter(&profile).kind(), RemoteAdapterKind::Curl);
+    }
+
+    #[test]
+    fn normalizes_remote_paths() {
+        assert_eq!(normalize_remote_path("folder\\inner"), "/folder/inner");
+        assert_eq!(join_remote_path("/", "child"), "/child");
+        assert_eq!(join_remote_path("/folder", "child"), "/folder/child");
+    }
+
+    #[test]
+    fn ftp_properties_look_up_profile_roots_without_parent_directory_access() {
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Ftp;
+        profile.root_path = "/".into();
+
+        assert_eq!(ftp_property_lookup_path(&profile, "/"), FtpPropertyLookup::ProfileRoot);
+        assert_eq!(
+            ftp_property_lookup_path(&profile, "/report.txt"),
+            FtpPropertyLookup::ParentDirectory("/".into())
+        );
+
+        profile.root_path = "/releases".into();
+        assert_eq!(
+            ftp_property_lookup_path(&profile, "/releases"),
+            FtpPropertyLookup::ProfileRoot
+        );
+        assert_eq!(
+            ftp_property_lookup_path(&profile, "/releases/atlas.zip"),
+            FtpPropertyLookup::ParentDirectory("/releases".into())
+        );
+    }
+
+    #[test]
+    fn ftp_profile_root_properties_return_directory_metadata_with_missing_field_states() {
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Ftp;
+        profile.root_path = "/releases".into();
+        let request = ItemPropertiesRequest {
+            request_id: "properties-root".into(),
+            target: ItemPropertiesTarget::Remote {
+                protocol: LocationKind::Ftp,
+                profile_id: profile.id.clone(),
+                remote_path: "/releases".into(),
+                display_path: "ftp://user@example.com/releases".into(),
+            },
+            include_directory_size: false,
+        };
+
+        let properties = ftp_profile_root_properties(
+            &request,
+            &profile,
+            "/releases",
+            "ftp://user@example.com/releases",
+        );
+
+        assert_eq!(properties.request_id, "properties-root");
+        assert_eq!(properties.kind, EntryKind::Directory);
+        assert_eq!(properties.actual_path, "/releases");
+        assert_eq!(properties.parent_path.as_deref(), Some("/"));
+        assert_eq!(properties.name, "releases");
+        assert_eq!(properties.size_bytes, None);
+        assert_eq!(properties.modified_at, None);
+        assert_eq!(
+            properties.directory_size_state.state,
+            DirectorySizeAvailability::NotComputed
+        );
+        assert!(properties.field_states.iter().any(|field| {
+            field.field == ItemPropertyField::DirectorySize
+                && field.state == ItemPropertyFieldAvailability::NotComputed
+        }));
+        assert!(properties.field_states.iter().any(|field| {
+            field.field == ItemPropertyField::ModifiedAt
+                && field.state == ItemPropertyFieldAvailability::Unsupported
+        }));
+    }
+
+    #[test]
+    fn builds_encoded_remote_urls_for_curl() {
+        let mut profile = sample_profile();
+        profile.protocol = LocationKind::Ftp;
+        profile.host = "ftp.example.test".into();
+        profile.port = 2121;
+        assert_eq!(
+            encode_remote_url_path("/folder/report 100%.txt"),
+            "folder/report%20100%25.txt"
+        );
+        assert_eq!(
+            build_url(&profile, Some("/folder/# release/报告.txt")),
+            "ftp://ftp.example.test:2121/folder/%23%20release/%E6%8A%A5%E5%91%8A.txt"
+        );
+        assert_eq!(
+            build_url(&profile, Some("/")),
+            "ftp://ftp.example.test:2121/"
+        );
+    }
+
+    #[test]
+    fn parses_curl_listing_children_under_base_path() {
+        assert_eq!(
+            parse_curl_listing_child_paths(
+                "/folder",
+                b"child.txt\nnested/\n/absolute/path.txt\n.\n..\n"
+            ),
+            vec![
+                "/folder/child.txt".to_string(),
+                "/folder/nested".to_string(),
+                "/absolute/path.txt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_remote_parent_names_and_conflicts() {
+        assert_eq!(
+            remote_parent_path("/folder/report.txt").as_deref(),
+            Some("/folder")
+        );
+        assert_eq!(remote_parent_path("/report.txt").as_deref(), Some("/"));
+        assert_eq!(remote_parent_path("/"), None);
+        assert_eq!(
+            remote_file_name("/folder/report.txt").as_deref(),
+            Some("report.txt")
+        );
+
+        let existing = ["/folder/report.txt", "/folder/report (1).txt"];
+        let available = available_remote_conflict_path("/folder/report.txt", |candidate| {
+            existing.contains(&candidate)
+        });
+        assert_eq!(available, "/folder/report (2).txt");
+
+        let existing = ["/folder/README"];
+        let available = available_remote_conflict_path("/folder/README", |candidate| {
+            existing.contains(&candidate)
+        });
+        assert_eq!(available, "/folder/README (1)");
+    }
+
+    #[test]
+    fn rejects_unsafe_remote_names_and_paths() {
+        assert!(validate_remote_entry_name(".").is_err());
+        assert!(validate_remote_entry_name("..").is_err());
+        assert!(validate_remote_entry_name("folder/name").is_err());
+        assert!(validate_remote_entry_name("bad\nname").is_err());
+        assert!(validate_remote_path("/safe/path").is_ok());
+        assert!(validate_remote_path("/safe/../path").is_err());
+        assert!(validate_remote_path("/bad\rpath").is_err());
+        assert!(super::validate_remote_operation_source(&sample_profile(), "/").is_err());
+    }
+
+    #[test]
+    fn rejects_remote_paths_outside_profile_root() {
+        let mut profile = sample_profile();
+        profile.root_path = "/home/cheng/root".into();
+
+        assert!(remote_path_is_within_root(&profile, "/home/cheng/root"));
+        assert!(remote_path_is_within_root(
+            &profile,
+            "/home/cheng/root/file.txt"
+        ));
+        assert!(!remote_path_is_within_root(
+            &profile,
+            "/home/cheng/root2/file.txt"
+        ));
+        assert!(!remote_path_is_within_root(&profile, "/etc/passwd"));
+        assert!(validate_remote_path_within_root(&profile, "/home/cheng/root/child").is_ok());
+        assert!(validate_remote_path_within_root(&profile, "/home/cheng/root2/child").is_err());
+    }
+
+    #[test]
+    fn rejects_remote_transfer_sources_outside_source_profile_root_before_connecting() {
+        let mut source = sample_profile();
+        source.root_path = "/home/cheng/root".into();
+        let mut destination = sample_profile();
+        destination.id = "remote-2".into();
+        destination.host = "destination.invalid".into();
+        destination.root_path = "/inbox".into();
+
+        let result = transfer_entries(
+            &source,
+            Some("unused"),
+            &destination,
+            Some("unused"),
+            &["/etc/passwd".into()],
+            "/inbox",
+            false,
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("remote path must be within the profile root"));
+    }
+
+    #[test]
+    fn rejects_remote_transfer_destinations_outside_destination_profile_root_before_connecting() {
+        let mut source = sample_profile();
+        source.root_path = "/home/cheng/root".into();
+        let mut destination = sample_profile();
+        destination.id = "remote-2".into();
+        destination.host = "destination.invalid".into();
+        destination.root_path = "/inbox".into();
+
+        let result = transfer_entries(
+            &source,
+            Some("unused"),
+            &destination,
+            Some("unused"),
+            &["/home/cheng/root/report.txt".into()],
+            "/outside",
+            true,
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("remote path must be within the profile root"));
+    }
+
+    #[test]
+    fn rejects_file_operations_targeting_profile_root() {
+        let mut profile = sample_profile();
+        profile.root_path = "/home/cheng/root".into();
+
+        assert!(
+            super::validate_remote_operation_source(&profile, "/home/cheng/root/file.txt").is_ok()
+        );
+        assert!(super::validate_remote_operation_source(&profile, "/home/cheng/root").is_err());
+        assert!(
+            super::validate_remote_operation_source(&profile, "/home/cheng/root2/file.txt")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_sftp_symlink_transfer_sources() {
+        let symlink = FileStat {
             size: Some(5),
             uid: None,
             gid: None,
             perm: Some(0o120777),
             atime: None,
-            mtime: None
-          }
-        )
-      ]
-    );
+            mtime: None,
+        };
 
-    assert_eq!(entries.len(), 3);
-    assert_eq!(entries[0].name, ".config");
-    assert_eq!(entries[0].kind, EntryKind::Directory);
-    assert!(entries[0].is_hidden);
-    assert_eq!(entries[1].name, "link");
-    assert!(entries[1].is_symlink);
-    assert_eq!(entries[2].name, "zeta.txt");
-    assert_eq!(entries[2].kind, EntryKind::File);
-    assert_eq!(entries[2].size, Some(12));
-    assert!(entries[2].is_read_only);
-    assert!(entries[2].modified_at.is_some());
-  }
-
-  #[test]
-  #[ignore = "requires a reachable SFTP server and SFM_SFTP_PASSWORD"]
-  fn sftp_password_profile_round_trips_files_and_directories() -> anyhow::Result<()> {
-    let password = env::var("SFM_SFTP_PASSWORD").expect("SFM_SFTP_PASSWORD must be set");
-    let root_path = env::var("SFM_SFTP_ROOT").unwrap_or_else(|_| "/home/cheng".to_string());
-    let name = format!("sfm-it-{}", Uuid::new_v4());
-    let profile = RemoteProfile {
-      id: "sftp-it".into(),
-      name: "SFTP Integration".into(),
-      protocol: LocationKind::Sftp,
-      host: env::var("SFM_SFTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
-      port: env::var("SFM_SFTP_PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(6666),
-      username: env::var("SFM_SFTP_USERNAME").unwrap_or_else(|_| "cheng".to_string()),
-      root_path: root_path.clone(),
-      auth_kind: RemoteAuthKind::Password,
-      private_key_path: None,
-      passive_mode: true,
-      ignore_host_key: true,
-      connect_timeout_secs: 10,
-      command_timeout_secs: 20,
-      credential_target: None
-    };
-
-    let remote_root = join_remote_path(&root_path, &name);
-    let remote_archive = join_remote_path(&remote_root, "archive");
-    let local_root = env::temp_dir().join(format!("sfm-sftp-it-{}", Uuid::new_v4()));
-    let local_upload_dir = local_root.join("local-dir");
-    let local_download_dir = local_root.join("download");
-
-    struct Cleanup<'a> {
-      profile: &'a RemoteProfile,
-      password: &'a str,
-      remote_root: String,
-      local_root: PathBuf
+        assert!(ensure_remote_stat_is_not_symlink(&symlink, "/root/link", "download").is_err());
     }
 
-    impl Drop for Cleanup<'_> {
-      fn drop(&mut self) {
-        let _ = delete_entries(self.profile, Some(self.password), &[self.remote_root.clone()]);
-        let _ = fs::remove_dir_all(&self.local_root);
-      }
+    #[test]
+    fn rejects_remote_destination_inside_source() {
+        assert!(ensure_remote_not_inside_source("/folder", "/folder-copy").is_ok());
+        assert!(ensure_remote_not_inside_source("/folder", "/other/folder").is_ok());
+        assert!(ensure_remote_not_inside_source("/folder", "/folder").is_err());
+        assert!(ensure_remote_not_inside_source("/folder", "/folder/child").is_err());
     }
 
-    let _cleanup = Cleanup {
-      profile: &profile,
-      password: &password,
-      remote_root: remote_root.clone(),
-      local_root: local_root.clone()
-    };
+    #[test]
+    fn parses_sftp_entries_with_metadata() {
+        let profile = sample_profile();
+        let entries = parse_sftp_entries(
+            &profile,
+            "/base",
+            vec![
+                (
+                    PathBuf::from("zeta.txt"),
+                    FileStat {
+                        size: Some(12),
+                        uid: None,
+                        gid: None,
+                        perm: Some(0o100444),
+                        atime: None,
+                        mtime: Some(1_700_000_000),
+                    },
+                ),
+                (
+                    PathBuf::from(".config"),
+                    FileStat {
+                        size: None,
+                        uid: None,
+                        gid: None,
+                        perm: Some(0o040755),
+                        atime: None,
+                        mtime: None,
+                    },
+                ),
+                (
+                    PathBuf::from("link"),
+                    FileStat {
+                        size: Some(5),
+                        uid: None,
+                        gid: None,
+                        perm: Some(0o120777),
+                        atime: None,
+                        mtime: None,
+                    },
+                ),
+            ],
+        );
 
-    fs::create_dir_all(&local_upload_dir)?;
-    fs::write(local_root.join("local.txt"), "uploaded file")?;
-    fs::write(local_upload_dir.join("nested.txt"), "uploaded directory file")?;
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, ".config");
+        assert_eq!(entries[0].kind, EntryKind::Directory);
+        assert!(entries[0].is_hidden);
+        assert_eq!(entries[1].name, "link");
+        assert!(entries[1].is_symlink);
+        assert_eq!(entries[2].name, "zeta.txt");
+        assert_eq!(entries[2].kind, EntryKind::File);
+        assert_eq!(entries[2].size, Some(12));
+        assert!(entries[2].is_read_only);
+        assert!(entries[2].modified_at.is_some());
+    }
 
-    let probe = test_profile(&profile, Some(&password))?;
-    assert!(probe.success, "SFTP probe failed: {}", probe.message);
+    #[test]
+    #[ignore = "requires a reachable SFTP server and SFM_SFTP_PASSWORD"]
+    fn sftp_password_profile_round_trips_files_and_directories() -> anyhow::Result<()> {
+        let password = env::var("SFM_SFTP_PASSWORD").expect("SFM_SFTP_PASSWORD must be set");
+        let root_path = env::var("SFM_SFTP_ROOT").unwrap_or_else(|_| "/home/cheng".to_string());
+        let name = format!("sfm-it-{}", Uuid::new_v4());
+        let profile = RemoteProfile {
+            id: "sftp-it".into(),
+            name: "SFTP Integration".into(),
+            protocol: LocationKind::Sftp,
+            host: env::var("SFM_SFTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            port: env::var("SFM_SFTP_PORT")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(6666),
+            username: env::var("SFM_SFTP_USERNAME").unwrap_or_else(|_| "cheng".to_string()),
+            root_path: root_path.clone(),
+            auth_kind: RemoteAuthKind::Password,
+            private_key_path: None,
+            passive_mode: true,
+            ignore_host_key: true,
+            connect_timeout_secs: 10,
+            command_timeout_secs: 20,
+            credential_target: None,
+        };
 
-    assert_eq!(create_directory(&profile, Some(&password), &root_path, &name)?, remote_root);
-    assert_eq!(
-      create_directory(&profile, Some(&password), &remote_root, "archive")?,
-      remote_archive
-    );
+        let remote_root = join_remote_path(&root_path, &name);
+        let remote_archive = join_remote_path(&remote_root, "archive");
+        let local_root = env::temp_dir().join(format!("sfm-sftp-it-{}", Uuid::new_v4()));
+        let local_upload_dir = local_root.join("local-dir");
+        let local_download_dir = local_root.join("download");
 
-    let uploaded = upload_files(
-      &profile,
-      Some(&password),
-      &[
-        local_root.join("local.txt").to_string_lossy().into_owned(),
-        local_upload_dir.to_string_lossy().into_owned(),
-      ],
-      &remote_root
-    )?;
-    assert!(uploaded.contains(&join_remote_path(&remote_root, "local.txt")));
-    assert!(uploaded.contains(&join_remote_path(&remote_root, "local-dir")));
+        struct Cleanup<'a> {
+            profile: &'a RemoteProfile,
+            password: &'a str,
+            remote_root: String,
+            local_root: PathBuf,
+        }
 
-    let renamed = rename_entry(
-      &profile,
-      Some(&password),
-      &join_remote_path(&remote_root, "local.txt"),
-      "renamed.txt"
-    )?;
-    assert_eq!(renamed, join_remote_path(&remote_root, "renamed.txt"));
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = delete_entries(
+                    self.profile,
+                    Some(self.password),
+                    &[self.remote_root.clone()],
+                );
+                let _ = fs::remove_dir_all(&self.local_root);
+            }
+        }
 
-    let copied = copy_entries(
-      &profile,
-      Some(&password),
-      &[join_remote_path(&remote_root, "local-dir")],
-      &remote_root
-    )?;
-    assert_eq!(copied, vec![join_remote_path(&remote_root, "local-dir (1)")]);
+        let _cleanup = Cleanup {
+            profile: &profile,
+            password: &password,
+            remote_root: remote_root.clone(),
+            local_root: local_root.clone(),
+        };
 
-    let moved = move_entries(
-      &profile,
-      Some(&password),
-      &[join_remote_path(&remote_root, "renamed.txt")],
-      &remote_archive
-    )?;
-    assert_eq!(moved, vec![join_remote_path(&remote_archive, "renamed.txt")]);
+        fs::create_dir_all(&local_upload_dir)?;
+        fs::write(local_root.join("local.txt"), "uploaded file")?;
+        fs::write(
+            local_upload_dir.join("nested.txt"),
+            "uploaded directory file",
+        )?;
 
-    let downloaded = download_entries(
-      &profile,
-      Some(&password),
-      &[remote_root.clone()],
-      &local_download_dir.to_string_lossy()
-    )?;
-    assert_eq!(downloaded.len(), 1);
-    assert!(PathBuf::from(&downloaded[0]).join("archive").join("renamed.txt").exists());
-    assert!(PathBuf::from(&downloaded[0]).join("local-dir").join("nested.txt").exists());
-    assert!(PathBuf::from(&downloaded[0]).join("local-dir (1)").join("nested.txt").exists());
+        let probe = test_profile(&profile, Some(&password))?;
+        assert!(probe.success, "SFTP probe failed: {}", probe.message);
 
-    delete_entries(&profile, Some(&password), &[remote_root.clone()])?;
-    let parent_entries = list_directory(&profile, Some(&password), Some(&root_path))?;
-    assert!(!parent_entries.iter().any(|entry| entry.name == name));
+        assert_eq!(
+            create_directory(&profile, Some(&password), &root_path, &name)?,
+            remote_root
+        );
+        assert_eq!(
+            create_directory(&profile, Some(&password), &remote_root, "archive")?,
+            remote_archive
+        );
 
-    Ok(())
-  }
+        let uploaded = upload_files(
+            &profile,
+            Some(&password),
+            &[
+                local_root.join("local.txt").to_string_lossy().into_owned(),
+                local_upload_dir.to_string_lossy().into_owned(),
+            ],
+            &remote_root,
+        )?;
+        assert!(uploaded.contains(&join_remote_path(&remote_root, "local.txt")));
+        assert!(uploaded.contains(&join_remote_path(&remote_root, "local-dir")));
+
+        let renamed = rename_entry(
+            &profile,
+            Some(&password),
+            &join_remote_path(&remote_root, "local.txt"),
+            "renamed.txt",
+        )?;
+        assert_eq!(renamed, join_remote_path(&remote_root, "renamed.txt"));
+
+        let copied = copy_entries(
+            &profile,
+            Some(&password),
+            &[join_remote_path(&remote_root, "local-dir")],
+            &remote_root,
+        )?;
+        assert_eq!(
+            copied,
+            vec![join_remote_path(&remote_root, "local-dir (1)")]
+        );
+
+        let moved = move_entries(
+            &profile,
+            Some(&password),
+            &[join_remote_path(&remote_root, "renamed.txt")],
+            &remote_archive,
+        )?;
+        assert_eq!(
+            moved,
+            vec![join_remote_path(&remote_archive, "renamed.txt")]
+        );
+
+        let downloaded = download_entries(
+            &profile,
+            Some(&password),
+            &[remote_root.clone()],
+            &local_download_dir.to_string_lossy(),
+        )?;
+        assert_eq!(downloaded.len(), 1);
+        assert!(PathBuf::from(&downloaded[0])
+            .join("archive")
+            .join("renamed.txt")
+            .exists());
+        assert!(PathBuf::from(&downloaded[0])
+            .join("local-dir")
+            .join("nested.txt")
+            .exists());
+        assert!(PathBuf::from(&downloaded[0])
+            .join("local-dir (1)")
+            .join("nested.txt")
+            .exists());
+
+        delete_entries(&profile, Some(&password), &[remote_root.clone()])?;
+        let parent_entries = list_directory(&profile, Some(&password), Some(&root_path))?;
+        assert!(!parent_entries.iter().any(|entry| entry.name == name));
+
+        Ok(())
+    }
 }

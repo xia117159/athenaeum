@@ -3,6 +3,7 @@ description = "Allows SimpleFileManager workspace commands required by the main 
 permissions = [
   "allow-initialize-workspace",
   "allow-list-directory",
+  "allow-get-item-properties",
   "allow-get-tree-children",
   "allow-resolve-system-icon",
   "allow-copy-entries",
@@ -67,6 +68,11 @@ commands.allow = ["initialize_workspace"]
 identifier = "allow-list-directory"
 description = "Allows listing local directories."
 commands.allow = ["list_directory"]
+
+[[permission]]
+identifier = "allow-get-item-properties"
+description = "Allows reading local and remote item properties for the workspace information panel."
+commands.allow = ["get_item_properties"]
 
 [[permission]]
 identifier = "allow-get-tree-children"

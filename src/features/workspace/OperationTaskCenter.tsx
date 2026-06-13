@@ -28,6 +28,11 @@ type OperationConflictDialogProps = {
   onCancelTask: (taskId: string) => void;
 };
 
+type OperationHistoryPanelContentProps = Pick<
+  OperationTaskCenterProps,
+  "operations" | "onCancelTask" | "onUndoLatest" | "onUndoRecord"
+>;
+
 const RUNNING_STATUSES = new Set<OperationTaskSnapshot["status"]>(["queued", "scanning", "running", "cancelling"]);
 const TERMINAL_STATUSES = new Set<OperationTaskSnapshot["status"]>(["succeeded", "failed", "partialSucceeded", "cancelled"]);
 const FOCUSABLE_SELECTOR = [
@@ -208,12 +213,6 @@ export function OperationTaskCenter({
     return null;
   }
 
-  const runningTasks = operations.tasks.filter((task) => RUNNING_STATUSES.has(task.status));
-  const waitingTasks = operations.tasks.filter((task) => task.status === "waitingConflict");
-  const failedTasks = operations.tasks.filter((task) => task.status === "failed" || task.status === "partialSucceeded");
-  const completedTasks = operations.tasks.filter((task) => TERMINAL_STATUSES.has(task.status)).slice(0, 8);
-  const historyRecords = operations.history.slice(0, 10);
-
   return (
     <aside className="operation-center" aria-label="文件操作任务中心">
       <header className="operation-center__header">
@@ -227,6 +226,42 @@ export function OperationTaskCenter({
           </button>
           <button type="button" className="toolbar-button toolbar-button--icon" title="关闭操作中心" aria-label="关闭操作中心" onClick={() => onOpenChange(false)}>
             <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+
+      <OperationHistoryPanelContent
+        operations={operations}
+        onCancelTask={onCancelTask}
+        onUndoLatest={onUndoLatest}
+        onUndoRecord={onUndoRecord}
+      />
+    </aside>
+  );
+}
+
+export function OperationHistoryPanelContent({
+  operations,
+  onCancelTask,
+  onUndoLatest,
+  onUndoRecord
+}: OperationHistoryPanelContentProps) {
+  const runningTasks = operations.tasks.filter((task) => RUNNING_STATUSES.has(task.status));
+  const waitingTasks = operations.tasks.filter((task) => task.status === "waitingConflict");
+  const failedTasks = operations.tasks.filter((task) => task.status === "failed" || task.status === "partialSucceeded");
+  const completedTasks = operations.tasks.filter((task) => TERMINAL_STATUSES.has(task.status)).slice(0, 8);
+  const historyRecords = operations.history.slice(0, 10);
+
+  return (
+    <div className="operation-history-panel" aria-label="操作历史">
+      <header className="operation-history-panel__header">
+        <div>
+          <strong>文件操作</strong>
+          <span>{operations.tasks.length} 个任务，{operations.history.length} 条历史记录</span>
+        </div>
+        <div className="operation-history-panel__actions">
+          <button type="button" className="toolbar-button toolbar-button--icon" title="撤销最近操作" aria-label="撤销最近操作" onClick={onUndoLatest}>
+            <RotateCcw size={14} aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -258,7 +293,7 @@ export function OperationTaskCenter({
           ))}
         </OperationSection>
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -453,18 +488,15 @@ export function OperationSummaryButton({
   const runningCount = operations.tasks.filter((task) => RUNNING_STATUSES.has(task.status)).length;
   const waitingCount = operations.tasks.filter((task) => task.status === "waitingConflict").length;
   const failedCount = operations.tasks.filter((task) => task.status === "failed" || task.status === "partialSucceeded").length;
-  const latestActive = operations.tasks.find((task) => RUNNING_STATUSES.has(task.status) || task.status === "waitingConflict");
-
   return (
     <button
       type="button"
       className={`toolbar-button operation-summary-button${failedCount > 0 ? " has-errors" : ""}${waitingCount > 0 ? " has-waiting" : ""}`}
-      title="打开文件操作中心"
-      aria-label="打开文件操作中心"
+      title="打开操作历史"
+      aria-label="打开操作历史"
       onClick={onOpen}
     >
       {runningCount > 0 ? <Play size={14} aria-hidden="true" /> : waitingCount > 0 ? <AlertTriangle size={14} aria-hidden="true" /> : <History size={14} aria-hidden="true" />}
-      <span>{latestActive ? taskStatusLabel(latestActive) : "操作历史"}</span>
       {runningCount + waitingCount + failedCount > 0 ? <strong>{runningCount + waitingCount + failedCount}</strong> : null}
     </button>
   );

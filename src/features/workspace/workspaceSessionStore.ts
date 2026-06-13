@@ -1,6 +1,15 @@
 import { normalizeLocationPath } from "./mockData";
 import { DEFAULT_LAYOUT_RATIOS, PANEL_IDS } from "./workspaceMappers";
-import type { ColumnDefinition, LayoutRatios, PanelId, PanelLayoutMode, SettingsModel, TabState, WorkspaceState } from "./types";
+import type {
+  ColumnDefinition,
+  InformationPanelTab,
+  LayoutRatios,
+  PanelId,
+  PanelLayoutMode,
+  SettingsModel,
+  TabState,
+  WorkspaceState
+} from "./types";
 import { isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export const WORKSPACE_SESSION_STORAGE_KEY = "SimpleFileManager.workspace.session.v1";
@@ -30,9 +39,15 @@ export type PersistedLayoutRatios = Partial<LayoutRatios> & {
   secondary?: number;
 };
 
+export type PersistedInformationPanel = {
+  expanded: boolean;
+  activeTab: InformationPanelTab;
+};
+
 export type PersistedWorkspaceSession = {
   layoutMode: PanelLayoutMode;
   layoutRatios: PersistedLayoutRatios;
+  informationPanel?: PersistedInformationPanel;
   activePanelId: PanelId;
   panels: Record<PanelId, PersistedPanel>;
   settingsModel: SettingsModel;
@@ -62,7 +77,11 @@ export function readPersistedSession(storage: WorkspaceStorage | null | undefine
     if (!raw) {
       return null;
     }
-    return JSON.parse(raw) as PersistedWorkspaceSession;
+    const parsed = JSON.parse(raw) as PersistedWorkspaceSession;
+    return {
+      ...parsed,
+      informationPanel: normalizePersistedInformationPanel(parsed.informationPanel)
+    };
   } catch {
     return null;
   }
@@ -93,6 +112,22 @@ export function normalizeLayoutRatios(layoutRatios?: PersistedLayoutRatios | nul
     quadRightSecondary: layoutRatios?.quadRightSecondary ?? legacySecondary ?? DEFAULT_LAYOUT_RATIOS.quadRightSecondary,
     tree: layoutRatios?.tree ?? DEFAULT_LAYOUT_RATIOS.tree,
     search: layoutRatios?.search ?? DEFAULT_LAYOUT_RATIOS.search
+  };
+}
+
+export function normalizePersistedInformationPanel(
+  informationPanel?: Partial<PersistedInformationPanel> | null
+): PersistedInformationPanel {
+  const activeTab =
+    informationPanel?.activeTab === "properties" ||
+    informationPanel?.activeTab === "search" ||
+    informationPanel?.activeTab === "history"
+      ? informationPanel.activeTab
+      : "properties";
+
+  return {
+    expanded: informationPanel?.expanded === true,
+    activeTab
   };
 }
 
@@ -156,6 +191,10 @@ export function toPersistedSession(state: WorkspaceState): PersistedWorkspaceSes
   return {
     layoutMode: state.layoutMode,
     layoutRatios: state.layoutRatios,
+    informationPanel: {
+      expanded: state.informationPanel.expanded,
+      activeTab: state.informationPanel.activeTab
+    },
     activePanelId: state.activePanelId,
     panels: Object.fromEntries(
       PANEL_IDS.map((panelId) => [panelId, toPersistedPanel(state, panelId)])

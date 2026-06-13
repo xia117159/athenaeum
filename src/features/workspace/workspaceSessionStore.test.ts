@@ -85,7 +85,6 @@ function createWorkspaceState(): WorkspaceState {
     },
     remoteProfiles: bootstrap.remoteProfiles,
     search: {
-      open: false,
       loading: false,
       filterText: "",
       query: {
@@ -112,6 +111,13 @@ function createWorkspaceState(): WorkspaceState {
         matchedEntries: 0,
         cancelled: false,
         statusText: "就绪"
+      }
+    },
+    informationPanel: {
+      expanded: true,
+      activeTab: "history",
+      properties: {
+        status: "idle"
       }
     },
     settings: {
@@ -222,6 +228,15 @@ assertTest("toPersistedSession skips transient search results tabs", () => {
   assert.equal(session.panels["panel-1"].activeTabId, sourceTab.id);
 });
 
+assertTest("toPersistedSession stores the bottom information panel state", () => {
+  const session = toPersistedSession(createWorkspaceState());
+
+  assert.deepEqual(session.informationPanel, {
+    expanded: true,
+    activeTab: "history"
+  });
+});
+
 assertTest("toPersistedSession keeps a navigation tab as a virtual session tab", () => {
   const state = createWorkspaceState();
   const navigationTab = createNavigationTab("navigation-tab");
@@ -248,6 +263,21 @@ assertTest("toPersistedSession keeps a navigation tab as a virtual session tab",
 assertTest("readPersistedSession returns null for unavailable or malformed storage", () => {
   assert.equal(readPersistedSession(undefined), null);
   assert.equal(readPersistedSession(createStorage({ [WORKSPACE_SESSION_STORAGE_KEY]: "{broken" })), null);
+});
+
+assertTest("readPersistedSession normalizes old sessions without informationPanel", () => {
+  const legacySession = toPersistedSession(createWorkspaceState());
+  delete legacySession.informationPanel;
+  const storage = createStorage({
+    [WORKSPACE_SESSION_STORAGE_KEY]: JSON.stringify(legacySession)
+  });
+
+  const restored = readPersistedSession(storage);
+
+  assert.deepEqual(restored?.informationPanel, {
+    expanded: false,
+    activeTab: "properties"
+  });
 });
 
 assertTest("writePersistedSession ignores storage failures", () => {

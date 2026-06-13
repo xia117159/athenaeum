@@ -1072,9 +1072,21 @@ assertTest("workspaceReducer stores inline edits per tab and clears them on snap
 });
 
 assertTest("createWorkspaceState initializes the docked information panel search defaults", () => {
-  const state = createState();
+  const bootstrap = {
+    ...createMockWorkspaceBootstrap(),
+    informationPanel: {
+      expanded: true,
+      activeTab: "history" as const,
+      properties: {
+        status: "idle" as const
+      }
+    }
+  };
+  const state = createWorkspaceState(bootstrap);
 
-  assert.equal(state.search.open, false);
+  assert.equal(state.informationPanel.expanded, true);
+  assert.equal(state.informationPanel.activeTab, "history");
+  assert.equal(state.informationPanel.properties.status, "idle");
   assert.equal(state.search.loading, false);
   assert.equal(state.search.filterText, "");
   assert.deepEqual(state.search.query, {
@@ -1124,7 +1136,8 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
     }
   } as WorkspaceAction);
 
-  assert.equal(progressed.search.open, true);
+  assert.equal(progressed.informationPanel.expanded, true);
+  assert.equal(progressed.informationPanel.activeTab, "search");
   assert.equal(progressed.search.loading, true);
   assert.equal(progressed.search.filterText, "atlas");
   assert.deepEqual(progressed.search.results, []);
@@ -1135,6 +1148,168 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
     cancelled: false,
     statusText: "已扫描 120 项，匹配 6 项"
   });
+});
+
+assertTest("workspaceReducer routes search and history entry points through informationPanel", () => {
+  const state = createState();
+  const searchOpened = workspaceReducer(state, {
+    type: "searchToggled",
+    payload: true
+  } as WorkspaceAction);
+  const collapsed = workspaceReducer(searchOpened, {
+    type: "informationPanelExpandedSet",
+    payload: false
+  } as WorkspaceAction);
+  const filtered = workspaceReducer(collapsed, {
+    type: "searchFilterChanged",
+    payload: "report"
+  } as WorkspaceAction);
+  const historyOpened = workspaceReducer(filtered, {
+    type: "informationPanelHistoryRequested"
+  } as WorkspaceAction);
+
+  assert.equal(searchOpened.informationPanel.expanded, true);
+  assert.equal(searchOpened.informationPanel.activeTab, "search");
+  assert.equal(collapsed.informationPanel.expanded, false);
+  assert.equal(filtered.informationPanel.expanded, false);
+  assert.equal(filtered.informationPanel.activeTab, "search");
+  assert.equal(historyOpened.informationPanel.expanded, true);
+  assert.equal(historyOpened.informationPanel.activeTab, "history");
+});
+
+assertTest("workspaceReducer ignores stale properties responses by request id and target key", () => {
+  const state = createState();
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-current",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md"
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(started, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-old",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md",
+      summary: {
+        selectionKey: "stale",
+        count: 2,
+        knownSizeBytes: 4096,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+  const current = workspaceReducer(stale, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-current",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md",
+      summary: {
+        selectionKey: "current",
+        count: 2,
+        knownSizeBytes: 8192,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(started.informationPanel.properties.status, "loading");
+  assert.equal(stale.informationPanel.properties.status, "loading");
+  assert.equal(current.informationPanel.properties.status, "ready");
+  assert.equal(current.informationPanel.properties.summary?.selectionKey, "current");
+});
+
+assertTest("workspaceReducer invalidates pending properties when the active selection target changes", () => {
+  const state = createState();
+  const panel = state.panels[state.activePanelId];
+  const activeTab = getActiveTab(panel);
+  const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+  assert.ok(selectedEntry);
+
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`
+    }
+  } as WorkspaceAction);
+  const selectionChanged = workspaceReducer(started, {
+    type: "entrySelectionChanged",
+    payload: {
+      panelId: state.activePanelId,
+      tabId: activeTab.id,
+      entryId: selectedEntry.id,
+      multi: false
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(selectionChanged, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`,
+      summary: {
+        selectionKey: "stale-folder",
+        count: 1,
+        knownSizeBytes: 1024,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(started.informationPanel.properties.status, "loading");
+  assert.equal(selectionChanged.informationPanel.properties.status, "idle");
+  assert.equal(selectionChanged.informationPanel.properties.targetKey, undefined);
+  assert.equal(stale.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.summary, undefined);
+});
+
+assertTest("workspaceReducer invalidates pending properties when the active tab snapshot changes", () => {
+  const state = createState();
+  const panel = state.panels[state.activePanelId];
+  const activeTab = getActiveTab(panel);
+  const nextSnapshot = resolveMockDirectory("D:\\Projects\\Atlas\\docs");
+
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`
+    }
+  } as WorkspaceAction);
+  const navigated = workspaceReducer(started, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: state.activePanelId,
+      tabId: activeTab.id,
+      snapshot: nextSnapshot,
+      pushHistory: true
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(navigated, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`,
+      summary: {
+        selectionKey: "stale-folder",
+        count: 1,
+        knownSizeBytes: 1024,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(navigated.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.summary, undefined);
 });
 
 assertTest("workspaceReducer stores content search history with newest unique items capped at twenty", () => {

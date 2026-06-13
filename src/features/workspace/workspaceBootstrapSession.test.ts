@@ -91,6 +91,44 @@ export const workspaceBootstrapSessionTests = (async () => {
     assert.equal(await mergeBootstrapWithSession(base, null, []), base);
   });
 
+  await assertAsyncTest("mergeBootstrapWithSession carries normalized information panel session state into bootstrap", async () => {
+    const base = createMockWorkspaceBootstrap("tauri");
+    const session = {
+      layoutMode: "single",
+      layoutRatios: {},
+      informationPanel: {
+        expanded: true,
+        activeTab: "search"
+      },
+      activePanelId: "panel-1",
+      panels: {
+        "panel-1": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-2": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-3": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-4": {
+          activeTabId: "missing",
+          tabs: []
+        }
+      },
+      settingsModel: base.settingsModel
+    } as PersistedWorkspaceSession;
+
+    const merged = await mergeBootstrapWithSession(base, session, []);
+
+    assert.equal(merged.informationPanel.expanded, true);
+    assert.equal(merged.informationPanel.activeTab, "search");
+    assert.equal(merged.informationPanel.properties.status, "idle");
+  });
+
   await assertAsyncTest("hydratePanels resolves unique seed paths into panel order", async () => {
     const base = createMockWorkspaceBootstrap("tauri");
     const resolvedPaths: string[] = [];

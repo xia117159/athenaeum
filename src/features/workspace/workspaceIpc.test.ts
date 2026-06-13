@@ -46,6 +46,7 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
   const requiredCommands = [
     "initialize_workspace",
     "list_directory",
+    "get_item_properties",
     "get_tree_children",
     "resolve_system_icon",
     "copy_entries",

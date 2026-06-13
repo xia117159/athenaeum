@@ -34,6 +34,81 @@ export interface DirectoryListing {
   canGoUp: boolean;
 }
 
+export type ItemPropertyField =
+  | "name"
+  | "extension"
+  | "kind"
+  | "parentPath"
+  | "sizeBytes"
+  | "allocatedBytes"
+  | "createdAt"
+  | "modifiedAt"
+  | "accessedAt"
+  | "attributes"
+  | "directorySize";
+
+export type ItemPropertyFieldAvailability =
+  | "available"
+  | "notAvailable"
+  | "unsupported"
+  | "permissionDenied"
+  | "readFailed"
+  | "notComputed"
+  | "computing";
+
+export interface ItemPropertyFieldState {
+  field: ItemPropertyField;
+  state: ItemPropertyFieldAvailability;
+  message?: string | null;
+}
+
+export interface DirectorySizeState {
+  state: "notApplicable" | "notComputed" | "computing" | "available" | "failed";
+  sizeBytes?: number | null;
+  message?: string | null;
+}
+
+export type ItemPropertiesTarget =
+  | {
+      kind: "local";
+      path: string;
+    }
+  | {
+      kind: "remote";
+      protocol: Exclude<LocationKind, "local">;
+      profileId: string;
+      remotePath: string;
+      displayPath: string;
+    };
+
+export interface ItemPropertiesRequest {
+  requestId: string;
+  target: ItemPropertiesTarget;
+  includeDirectorySize?: boolean;
+}
+
+export interface ItemProperties {
+  requestId: string;
+  target: ItemPropertiesTarget;
+  displayPath: string;
+  actualPath: string;
+  parentPath?: string | null;
+  name: string;
+  extension?: string | null;
+  kind: EntryKind;
+  sizeBytes?: number | null;
+  allocatedBytes?: number | null;
+  createdAt?: string | null;
+  modifiedAt?: string | null;
+  accessedAt?: string | null;
+  isHidden: boolean;
+  isReadOnly: boolean;
+  isSymlink: boolean;
+  directorySizeState: DirectorySizeState;
+  fieldStates: ItemPropertyFieldState[];
+  errorMessage?: string | null;
+}
+
 export interface TreeNode {
   path: string;
   name: string;

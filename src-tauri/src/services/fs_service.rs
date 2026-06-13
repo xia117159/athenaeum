@@ -7,12 +7,21 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
-  ColorRule, ColorRuleMode, ColorRuleTarget, DirectoryListing, DriveInfo, EntryDecoration, EntryKind, EntryViewModel,
-  LocationDescriptor, TreeNode
+  ColorRule, ColorRuleMode, ColorRuleTarget, DirectoryListing, DirectorySizeAvailability, DirectorySizeState, DriveInfo,
+  EntryDecoration, EntryKind, EntryViewModel, ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
+  ItemPropertyField, ItemPropertyFieldAvailability, ItemPropertyFieldState, LocationDescriptor, TreeNode
 };
 
 fn metadata_modified_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
   metadata.modified().ok().map(DateTime::<Utc>::from)
+}
+
+fn metadata_created_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
+  metadata.created().ok().map(DateTime::<Utc>::from)
+}
+
+fn metadata_accessed_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
+  metadata.accessed().ok().map(DateTime::<Utc>::from)
 }
 
 fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
@@ -44,6 +53,22 @@ fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
 
 fn is_symlink(metadata: &fs::Metadata) -> bool {
   metadata.file_type().is_symlink()
+}
+
+fn extension_with_dot(path: &Path) -> Option<String> {
+  path
+    .extension()
+    .and_then(|value| value.to_str())
+    .filter(|value| !value.is_empty())
+    .map(|value| format!(".{value}"))
+}
+
+fn unavailable(field: ItemPropertyField, state: ItemPropertyFieldAvailability, message: impl Into<String>) -> ItemPropertyFieldState {
+  ItemPropertyFieldState {
+    field,
+    state,
+    message: Some(message.into())
+  }
 }
 
 fn apply_color_rules(path: &Path, metadata: &fs::Metadata, rules: &[ColorRule]) -> Option<String> {
@@ -201,6 +226,102 @@ where
     entries,
     parent: canonical.parent().map(|parent| parent.to_string_lossy().into_owned()),
     can_go_up: canonical.parent().is_some()
+  })
+}
+
+pub fn get_item_properties(request: &ItemPropertiesRequest, path: &Path) -> Result<ItemProperties> {
+  let metadata = fs::symlink_metadata(path).with_context(|| format!("failed to get metadata for {}", path.display()))?;
+  let actual_path = if path.exists() {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+  } else {
+    path.to_path_buf()
+  };
+  let is_dir = metadata.is_dir();
+  let created_at = metadata_created_at(&metadata);
+  let modified_at = metadata_modified_at(&metadata);
+  let accessed_at = metadata_accessed_at(&metadata);
+  let mut field_states = Vec::new();
+
+  if created_at.is_none() {
+    field_states.push(unavailable(
+      ItemPropertyField::CreatedAt,
+      ItemPropertyFieldAvailability::ReadFailed,
+      "Created date is not available"
+    ));
+  }
+  if modified_at.is_none() {
+    field_states.push(unavailable(
+      ItemPropertyField::ModifiedAt,
+      ItemPropertyFieldAvailability::ReadFailed,
+      "Modified date is not available"
+    ));
+  }
+  if accessed_at.is_none() {
+    field_states.push(unavailable(
+      ItemPropertyField::AccessedAt,
+      ItemPropertyFieldAvailability::ReadFailed,
+      "Accessed date is not available"
+    ));
+  }
+
+  field_states.push(unavailable(
+    ItemPropertyField::AllocatedBytes,
+    ItemPropertyFieldAvailability::NotAvailable,
+    "Allocated size is not available on this platform"
+  ));
+
+  let directory_size_state = if is_dir {
+    DirectorySizeState {
+      state: DirectorySizeAvailability::NotComputed,
+      size_bytes: None,
+      message: Some(if request.include_directory_size {
+        "Directory size has not been computed".into()
+      } else {
+        "Directory size is not computed".into()
+      })
+    }
+  } else {
+    DirectorySizeState {
+      state: DirectorySizeAvailability::NotApplicable,
+      size_bytes: None,
+      message: None
+    }
+  };
+
+  if is_dir {
+    field_states.push(unavailable(
+      ItemPropertyField::DirectorySize,
+      ItemPropertyFieldAvailability::NotComputed,
+      "Directory size is not computed"
+    ));
+  }
+
+  Ok(ItemProperties {
+    request_id: request.request_id.clone(),
+    target: ItemPropertiesTarget::Local {
+      path: path.to_string_lossy().into_owned()
+    },
+    display_path: path.to_string_lossy().into_owned(),
+    actual_path: actual_path.to_string_lossy().into_owned(),
+    parent_path: actual_path.parent().map(|parent| parent.to_string_lossy().into_owned()),
+    name: actual_path
+      .file_name()
+      .and_then(|value| value.to_str())
+      .map(ToOwned::to_owned)
+      .unwrap_or_else(|| actual_path.to_string_lossy().into_owned()),
+    extension: (!is_dir).then(|| extension_with_dot(&actual_path)).flatten(),
+    kind: if is_dir { EntryKind::Directory } else { EntryKind::File },
+    size_bytes: (!is_dir).then_some(metadata.len()),
+    allocated_bytes: None,
+    created_at,
+    modified_at,
+    accessed_at,
+    is_hidden: is_hidden(&actual_path, Some(&metadata)),
+    is_read_only: metadata.permissions().readonly(),
+    is_symlink: is_symlink(&metadata),
+    directory_size_state,
+    field_states,
+    error_message: None
   })
 }
 
@@ -436,9 +557,12 @@ mod tests {
 
   use super::{
     apply_color_rules, available_conflict_path, copy_recursively, create_file, drive_infos_from_mask, list_directory,
-    move_entry, readable_drive_infos, rename_entry
+    get_item_properties, move_entry, readable_drive_infos, rename_entry
   };
-  use crate::domain::models::{ColorRule, ColorRuleMode, ColorRuleTarget, DriveInfo, EntryKind};
+  use crate::domain::models::{
+    ColorRule, ColorRuleMode, ColorRuleTarget, DirectorySizeAvailability, DriveInfo, EntryKind, ItemPropertiesRequest,
+    ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability
+  };
 
   fn unique_temp_path(label: &str) -> std::path::PathBuf {
     let unique = SystemTime::now()
@@ -527,6 +651,62 @@ mod tests {
     assert!(create_file(&root, "notes.txt").is_err());
     assert!(create_file(&root, "..").is_err());
     assert!(create_file(&root, "nested\\name.txt").is_err());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn get_item_properties_returns_local_file_metadata() {
+    let root = unique_temp_path("item-properties-file");
+    fs::create_dir_all(&root).expect("create root");
+    let file = root.join("notes.txt");
+    fs::write(&file, "hello").expect("write file");
+    let request = ItemPropertiesRequest {
+      request_id: "properties-1".into(),
+      target: ItemPropertiesTarget::Local {
+        path: file.to_string_lossy().into_owned()
+      },
+      include_directory_size: false
+    };
+
+    let properties = get_item_properties(&request, &file).expect("read properties");
+
+    assert_eq!(properties.request_id, "properties-1");
+    assert_eq!(properties.kind, EntryKind::File);
+    assert_eq!(properties.name, "notes.txt");
+    assert_eq!(properties.extension.as_deref(), Some(".txt"));
+    assert_eq!(properties.size_bytes, Some(5));
+    assert_eq!(properties.directory_size_state.state, DirectorySizeAvailability::NotApplicable);
+    assert!(properties
+      .field_states
+      .iter()
+      .any(|state| state.field == ItemPropertyField::AllocatedBytes && state.state == ItemPropertyFieldAvailability::NotAvailable));
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn get_item_properties_keeps_directory_size_uncomputed() {
+    let root = unique_temp_path("item-properties-directory");
+    fs::create_dir_all(root.join("child")).expect("create child directory");
+    let request = ItemPropertiesRequest {
+      request_id: "properties-2".into(),
+      target: ItemPropertiesTarget::Local {
+        path: root.to_string_lossy().into_owned()
+      },
+      include_directory_size: false
+    };
+
+    let properties = get_item_properties(&request, &root).expect("read properties");
+
+    assert_eq!(properties.kind, EntryKind::Directory);
+    assert_eq!(properties.size_bytes, None);
+    assert_eq!(properties.directory_size_state.state, DirectorySizeAvailability::NotComputed);
+    assert_eq!(properties.directory_size_state.size_bytes, None);
+    assert!(properties
+      .field_states
+      .iter()
+      .any(|state| state.field == ItemPropertyField::DirectorySize && state.state == ItemPropertyFieldAvailability::NotComputed));
 
     let _ = fs::remove_dir_all(root);
   }

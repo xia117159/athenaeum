@@ -71,6 +71,9 @@ import {
 import {
   mapWorkspaceBootstrap
 } from "./workspaceMappers";
+import {
+  getWorkspaceItemProperties
+} from "./workspacePropertiesGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationConflictRequest,
@@ -97,7 +100,8 @@ import type {
   SearchProgressState,
   SettingsModel,
   WorkspaceBootstrap,
-  WorkspaceState
+  WorkspaceState,
+  ItemProperties
 } from "./types";
 
 export interface WorkspaceGateway {
@@ -110,6 +114,7 @@ export interface WorkspaceGateway {
     options?: { searchId?: string; onProgress?: (progress: SearchProgressState) => void }
   ): Promise<WorkspaceState["search"]["results"]>;
   cancelSearch(searchId: string): Promise<void>;
+  getItemProperties(requestId: string, path: string, includeDirectorySize?: boolean): Promise<ItemProperties>;
   saveSession(state: WorkspaceState): Promise<void>;
   saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
@@ -246,6 +251,18 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       }
 
       await cancelWorkspaceSearch(searchId);
+    },
+
+    async getItemProperties(requestId, path, includeDirectorySize = false) {
+      const profiles = await listRemoteProfilesRequired();
+      return getWorkspaceItemProperties(
+        {
+          requestId,
+          path,
+          includeDirectorySize
+        },
+        profiles
+      );
     },
 
     async saveSession(state: WorkspaceState) {
