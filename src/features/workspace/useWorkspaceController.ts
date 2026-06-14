@@ -918,10 +918,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         pushNotification("warning", "导航页不能作为目录跳转目标。");
         return;
       }
-      if (targetTab?.locked && pushHistory && options.tabId === undefined) {
-        void handleOpenNewTab(panelId, path);
-        return;
-      }
       const requestKey = `${panelId}:${tabId}`;
       const requestId = nextNavigationRequestIdRef.current + 1;
       nextNavigationRequestIdRef.current = requestId;

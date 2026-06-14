@@ -575,7 +575,7 @@ assertTest("workspaceReducer closes other tabs while preserving locked tabs on r
   assert.deepEqual(closeAllOthers.panels["panel-1"].tabs.map((tab) => tab.id), [activeTab.id]);
 });
 
-assertTest("workspaceReducer renames tab titles and preserves the override across navigation", () => {
+assertTest("workspaceReducer renames tab titles only until the tab navigates to another folder", () => {
   const state = createState();
   const panel = state.panels["panel-1"];
   const tabId = panel.tabs[0].id;
@@ -589,8 +589,10 @@ assertTest("workspaceReducer renames tab titles and preserves the override acros
     payload: { panelId: "panel-1", tabId, snapshot, pushHistory: true }
   });
 
-  assert.equal(navigated.panels["panel-1"].tabs[0].title, "Work Root");
-  assert.equal(navigated.panels["panel-1"].tabs[0].titleOverride, "Work Root");
+  assert.equal(renamed.panels["panel-1"].tabs[0].title, "Work Root");
+  assert.equal(renamed.panels["panel-1"].tabs[0].titleOverride, "Work Root");
+  assert.equal(navigated.panels["panel-1"].tabs[0].title, "Downloads");
+  assert.equal(navigated.panels["panel-1"].tabs[0].titleOverride, undefined);
 });
 
 assertTest("workspaceReducer moves tabs within and across panels without moving the last source tab", () => {

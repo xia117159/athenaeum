@@ -499,6 +499,56 @@ export const completion = (async () => {
       assert.deepEqual(interactions.systemOpens, [file.path]);
     });
 
+    await assertTest("useWorkspaceController opens folder entries in place for locked directory tabs", async () => {
+      const panelId = "panel-1";
+      const panelBeforeLock = latestController!.state.panels[panelId];
+      const activeTab = getActiveTab(panelBeforeLock);
+      assert.equal(activeTab.kind, "directory");
+      assert.equal(activeTab.locked, undefined);
+
+      const lockedTabId = activeTab.id;
+      const originalPath = activeTab.snapshot.location.path;
+      const tabCountBefore = panelBeforeLock.tabs.length;
+      const childFolder = createEntry(originalPath, "LockedChild", "folder");
+
+      await act(async () => {
+        latestController?.actions.toggleTabLock(panelId, lockedTabId);
+        await flushEffects();
+      });
+      await waitFor(
+        () => latestController!.state.panels[panelId].tabs.find((tab) => tab.id === lockedTabId)?.locked === true,
+        "tab was not locked"
+      );
+
+      interactions.resolvedPaths.length = 0;
+      await act(async () => {
+        latestController?.actions.openEntry(panelId, childFolder);
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => getActiveTab(latestController!.state.panels[panelId]).snapshot.location.path === childFolder.path,
+        "locked tab did not navigate to the child folder"
+      );
+
+      const panelAfterOpen = latestController!.state.panels[panelId];
+      const activeAfterOpen = getActiveTab(panelAfterOpen);
+      assert.equal(activeAfterOpen.id, lockedTabId);
+      assert.equal(activeAfterOpen.locked, true);
+      assert.equal(panelAfterOpen.tabs.length, tabCountBefore);
+      assert.deepEqual(interactions.resolvedPaths, [childFolder.path]);
+
+      await act(async () => {
+        latestController?.actions.toggleTabLock(panelId, lockedTabId);
+        latestController?.actions.navigateToPath(panelId, originalPath, false);
+        await flushEffects();
+      });
+      await waitFor(
+        () => getActiveTab(latestController!.state.panels[panelId]).snapshot.location.path === originalPath,
+        "locked-tab navigation test did not restore the original path"
+      );
+    });
+
     await assertTest("useWorkspaceController loads properties for the current folder and selected item", async () => {
       interactions.propertyCalls.length = 0;
       const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);

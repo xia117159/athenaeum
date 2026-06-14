@@ -1443,7 +1443,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
             return {
               ...tab,
-              title: tab.titleOverride ?? action.payload.snapshot.location.label,
+              title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
+              titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
               snapshot: action.payload.snapshot,
               addressDraft: action.payload.snapshot.location.path,
