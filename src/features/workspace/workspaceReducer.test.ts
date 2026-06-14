@@ -1770,6 +1770,27 @@ assertTest("workspaceReducer stores a clamped details row height in settings", (
   assert.equal(nextState.settings.model.detailsRowHeight, 72);
 });
 
+assertTest("workspaceReducer normalizes legacy settings sections through one state boundary", () => {
+  const state = createState();
+
+  const themeSection = workspaceReducer(state, {
+    type: "settingsSectionSet",
+    payload: "theme"
+  } as unknown as WorkspaceAction);
+  const rulesSection = workspaceReducer(themeSection, {
+    type: "settingsModelApplied",
+    payload: { model: themeSection.settings.model, section: "rules" }
+  } as unknown as WorkspaceAction);
+  const unknownSection = workspaceReducer(rulesSection, {
+    type: "settingsSectionSet",
+    payload: "unknown"
+  } as unknown as WorkspaceAction);
+
+  assert.equal(themeSection.settings.section, "appearance");
+  assert.equal(rulesSection.settings.section, "file-list");
+  assert.equal(unknownSection.settings.section, "shortcuts");
+});
+
 assertTest("workspaceReducer stores a valid panel focus accent in theme settings", () => {
   const state = createState();
 

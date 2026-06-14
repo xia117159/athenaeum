@@ -19,6 +19,7 @@ import {
   normalizeTabMinWidth,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
+import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
 
 export function toBackendLayout(
   layoutMode: PanelLayoutMode,
@@ -38,7 +39,7 @@ export function toBackendShortcut(shortcut: SettingsModel["shortcuts"][number]):
   return {
     id: shortcut.id,
     action: shortcut.id,
-    accelerator: shortcut.binding,
+    accelerator: normalizeShortcutBindingForStorage(shortcut.binding),
     scope: shortcut.scope
   };
 }

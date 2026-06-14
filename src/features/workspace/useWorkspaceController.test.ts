@@ -2,6 +2,7 @@
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
+import { installLegacyInputEventPatch } from "./testDom";
 import { getParentPathForRefresh, useWorkspaceController } from "./useWorkspaceController";
 import { createNavigationTab, getActiveTab } from "./workspaceReducer";
 import type {
@@ -345,7 +346,9 @@ function installDomEnvironment() {
   globalThis.window = dom.window as typeof globalThis.window;
   globalThis.document = dom.window.document;
   globalThis.HTMLElement = dom.window.HTMLElement;
+  globalThis.HTMLInputElement = dom.window.HTMLInputElement;
   globalThis.Node = dom.window.Node;
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator
@@ -1595,6 +1598,85 @@ export const completion = (async () => {
           await flushEffects();
         });
         shortcutContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController ignores hard-coded history shortcuts from readOnly inputs", async () => {
+      const editableShortcutContainer = document.createElement("div");
+      document.body.appendChild(editableShortcutContainer);
+      const editableShortcutRoot = ReactDOM.createRoot(editableShortcutContainer);
+      const editableShortcutInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let editableShortcutController: ReturnType<typeof useWorkspaceController> | undefined;
+      const editableShortcutBootstrap = createMockWorkspaceBootstrap("tauri");
+      const baseActiveTab = editableShortcutBootstrap.panels["panel-1"].tabs[0];
+      const activeTabWithBackHistory: typeof baseActiveTab = {
+        ...baseActiveTab,
+        history: ["D:\\Projects", "D:\\Projects\\Atlas"],
+        historyIndex: 1
+      };
+      const editableShortcutGateway = createTestGateway(() => undefined, editableShortcutInteractions, {
+        loadBootstrap: () => ({
+          ...editableShortcutBootstrap,
+          activePanelId: "panel-1",
+          panels: {
+            ...editableShortcutBootstrap.panels,
+            "panel-1": {
+              ...editableShortcutBootstrap.panels["panel-1"],
+              tabs: [activeTabWithBackHistory, ...editableShortcutBootstrap.panels["panel-1"].tabs.slice(1)],
+              activeTabId: activeTabWithBackHistory.id
+            }
+          }
+        })
+      });
+
+      function EditableShortcutHarness() {
+        editableShortcutController = useWorkspaceController(editableShortcutGateway);
+        return React.createElement("div", null, editableShortcutController.state.status);
+      }
+
+      const readOnlyInput = document.createElement("input");
+      readOnlyInput.readOnly = true;
+      document.body.appendChild(readOnlyInput);
+
+      try {
+        await act(async () => {
+          editableShortcutRoot.render(React.createElement(EditableShortcutHarness));
+          await flushEffects();
+        });
+        await waitFor(() => editableShortcutController?.state.status === "ready", "editable shortcut controller did not bootstrap");
+
+        const event = new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          altKey: true,
+          bubbles: true,
+          cancelable: true
+        });
+        await act(async () => {
+          readOnlyInput.dispatchEvent(event);
+          await flushEffects();
+        });
+
+        assert.equal(event.defaultPrevented, false);
+        assert.deepEqual(editableShortcutInteractions.resolvedPaths, []);
+        assert.equal(getActiveTab(editableShortcutController!.state.panels["panel-1"]).snapshot.location.path, "D:\\Projects\\Atlas");
+      } finally {
+        await act(async () => {
+          editableShortcutRoot.unmount();
+          await flushEffects();
+        });
+        editableShortcutContainer.remove();
+        readOnlyInput.remove();
       }
     });
 

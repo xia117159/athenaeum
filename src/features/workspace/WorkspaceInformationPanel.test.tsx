@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
+import { installLegacyInputEventPatch } from "./testDom";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import type { EntryViewModel, WorkspaceState } from "./types";
 
@@ -39,14 +40,7 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
-  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator

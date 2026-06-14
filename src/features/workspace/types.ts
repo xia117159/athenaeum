@@ -10,7 +10,14 @@ import type {
 export type DataSource = "mock" | "tauri";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
-export type SettingsSection = "shortcuts" | "theme" | "rules" | "connections";
+export type SettingsSection =
+  | "shortcuts"
+  | "file-list"
+  | "menu-mouse"
+  | "appearance"
+  | "color-rules"
+  | "tag-rules"
+  | "connections";
 export type LocationKind = "local" | "ftp" | "sftp" | "virtual";
 export type EntryKind = "file" | "folder";
 export type ColumnId = "name" | "type" | "size" | "modified" | "tags" | "location";

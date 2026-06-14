@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { OperationConflictDialog, OperationHistoryPanelContent, OperationSummaryButton } from "./OperationTaskCenter";
+import { installLegacyInputEventPatch } from "./testDom";
 import type { OperationConflictDialogState, OperationHistoryRecord, OperationTaskSnapshot, OperationWorkspaceState } from "./types";
 
 const { JSDOM } = require("jsdom") as {
@@ -34,9 +35,11 @@ function installDomEnvironment() {
   globalThis.window = dom.window as typeof globalThis.window;
   globalThis.document = dom.window.document;
   globalThis.HTMLElement = dom.window.HTMLElement;
+  globalThis.HTMLInputElement = dom.window.HTMLInputElement;
   globalThis.Element = dom.window.Element;
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator

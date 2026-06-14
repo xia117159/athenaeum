@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import React, { act } from "react";
-import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap } from "./mockData";
 import { SettingsSurface } from "./SettingsSurface";
+import { installLegacyInputEventPatch, patchLegacyInputEventTarget } from "./testDom";
 import { createWorkspaceState } from "./workspaceReducer";
-import type { RemoteConnectionProfile, WorkspaceState } from "./types";
+import type { RemoteConnectionProfile, SettingsSection, WorkspaceState } from "./types";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -31,15 +30,18 @@ function assertTest(name: string, fn: () => Promise<void>) {
 }
 
 function installDomEnvironment() {
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+  const dom = new JSDOM("<!doctype html><html><body><button id=\"before\">before</button><div id=\"root\"></div><button id=\"after\">after</button></body></html>", {
     url: "http://localhost"
   });
 
   globalThis.window = dom.window as typeof globalThis.window;
   globalThis.document = dom.window.document;
   globalThis.HTMLElement = dom.window.HTMLElement;
+  globalThis.HTMLInputElement = dom.window.HTMLInputElement;
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
+  globalThis.KeyboardEvent = dom.window.KeyboardEvent;
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator
@@ -54,7 +56,7 @@ async function flushEffects() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function createSettingsState(section: WorkspaceState["settings"]["section"] = "shortcuts") {
+function createSettingsState(section: SettingsSection = "shortcuts") {
   const state = createWorkspaceState(createMockWorkspaceBootstrap("mock"));
   return {
     ...state,
@@ -83,8 +85,26 @@ function createProps(state: WorkspaceState) {
   };
 }
 
+function key(dom: ReturnType<typeof installDomEnvironment>, type: "keydown" | "keyup", init: KeyboardEventInit) {
+  return new dom.window.KeyboardEvent(type, {
+    bubbles: false,
+    cancelable: true,
+    ...init
+  });
+}
+
+function inputEvent(dom: ReturnType<typeof installDomEnvironment>, type: string) {
+  return new dom.window.Event(type, {
+    bubbles: true,
+    cancelable: true
+  });
+}
+
 export const completion = (async () => {
   const dom = installDomEnvironment();
+  const React = require("react") as typeof import("react");
+  const { act } = React;
+  const ReactDOM = require("react-dom/client") as typeof import("react-dom/client");
   const container = document.getElementById("root");
   if (!container) {
     throw new Error("test root container is missing");
@@ -93,167 +113,410 @@ export const completion = (async () => {
   const root = ReactDOM.createRoot(container);
 
   try {
-    await assertTest("SettingsSurface renders as a standalone settings window", async () => {
+    await assertTest("SettingsSurface renders a grouped left navigation and property page", async () => {
+      const selected: SettingsSection[] = [];
       await act(async () => {
-        root.render(React.createElement(SettingsSurface, createProps(createSettingsState("rules"))));
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("file-list")),
+            onSelectSection: (section: SettingsSection) => selected.push(section)
+          })
+        );
         await flushEffects();
       });
 
       const surface = container.querySelector(".settings-window");
       const nav = container.querySelector(".settings-window__nav");
       const content = container.querySelector(".settings-window__content");
-      const activeNavItem = container.querySelector(".settings-window__nav-item.is-active");
+      const navItems = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-section-id]"));
+      const activeNavItem = container.querySelector("[data-section-id='file-list'].is-active");
 
       assert.equal(container.querySelector(".settings-modal"), null);
       assert.ok(surface);
-      assert.equal(surface?.getAttribute("role"), null);
-      assert.equal(surface?.getAttribute("aria-modal"), null);
       assert.equal(surface?.getAttribute("aria-labelledby"), "settings-window-title");
       assert.ok(nav);
       assert.ok(content);
       assert.equal(nav?.contains(content), false);
-      assert.equal(activeNavItem?.textContent?.includes("规则与列"), true);
+      assert.equal(container.querySelectorAll(".settings-window__nav-group").length, 3);
+      assert.deepEqual(
+        navItems.map((item) => item.dataset.sectionId),
+        ["shortcuts", "file-list", "menu-mouse", "appearance", "color-rules", "tag-rules", "connections"]
+      );
+      assert.ok(activeNavItem);
+
+      await act(async () => {
+        navItems.find((item) => item.dataset.sectionId === "connections")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(selected, ["connections"]);
     });
 
-    await assertTest("workspace settings styles describe a standalone window instead of a modal", async () => {
+    await assertTest("workspace settings styles keep the settings navigation on the left at the 920px default width", async () => {
       const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
 
       assert.equal(css.includes(".settings-modal"), false);
       assert.equal(css.includes(".settings-dialog"), false);
       assert.equal(css.includes(".settings-window"), true);
-      assert.equal(css.includes(".settings-window__nav"), true);
-      assert.equal(css.includes(".settings-window-shell"), true);
+      assert.equal(css.includes(".settings-window__nav-group"), true);
+      assert.equal(css.includes("container-name: settings-content"), true);
+      assert.match(css, /@container\s+settings-content\s+\(max-width:\s*600px\)[\s\S]*?\.settings-page--connections\s+\.connections-editor[\s\S]*?grid-template-columns:\s*1fr;/);
+      assert.equal(/@media\s*\(max-width:\s*960px\)[\s\S]*?settings-window__nav/.test(css), false);
     });
 
-    await assertTest("SettingsSurface exposes theme settings for panel focus accent and tab minimum width", async () => {
-      const accentUpdates: string[] = [];
-      const tabMinWidthUpdates: number[] = [];
-      const state = createSettingsState("theme");
+    await assertTest("ShortcutCaptureInput captures Ctrl+Alt+P once and ignores text input paths", async () => {
+      const updates: string[] = [];
       await act(async () => {
         root.render(
           React.createElement(SettingsSurface, {
-            ...createProps(state),
-            onUpdatePanelFocusAccent: (color: string) => accentUpdates.push(color),
-            onUpdateTabMinWidth: (value: number) => tabMinWidthUpdates.push(value)
+            ...createProps(createSettingsState("shortcuts")),
+            onUpdateShortcut: (_id: string, binding: string) => updates.push(binding)
           })
         );
         await flushEffects();
       });
 
-      const accentInput = container.querySelector<HTMLInputElement>('input[type="color"][aria-label="面板焦点强调色"]');
-      const tabMinWidthInput = container.querySelector<HTMLInputElement>('input[type="number"][aria-label="Tab 选项卡最小宽度"]');
-      const activeNavItem = container.querySelector(".settings-window__nav-item.is-active");
-      assert.ok(accentInput);
-      assert.ok(tabMinWidthInput);
-      assert.equal(accentInput.value.toLowerCase(), state.settings.model.theme.panelFocusAccent);
-      assert.equal(tabMinWidthInput.value, String(state.settings.model.theme.tabMinWidth));
-      assert.equal(tabMinWidthInput.min, "1");
-      assert.equal(tabMinWidthInput.hasAttribute("max"), false);
-      assert.match(container.textContent ?? "", /Tab 选项卡最小宽度/u);
-      assert.match(container.textContent ?? "", /最低 1px/u);
-      assert.ok(activeNavItem);
+      const input = container.querySelector<HTMLInputElement>("input[data-shortcut-id='open-search']");
+      assert.ok(input);
+      patchLegacyInputEventTarget(input);
+      assert.equal(input.readOnly, true);
 
       await act(async () => {
-        accentInput.value = "#c02f7a";
-        accentInput.dispatchEvent(new Event("input", { bubbles: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "Control", ctrlKey: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "Alt", ctrlKey: true, altKey: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "p", ctrlKey: true, altKey: true }));
+        assert.equal(input!.value, "Ctrl+Alt+P");
+        input!.dispatchEvent(key(dom, "keyup", { key: "p", ctrlKey: true, altKey: true }));
+        input!.dispatchEvent(new dom.window.FocusEvent("blur", { bubbles: true }));
         await flushEffects();
       });
 
+      assert.deepEqual(updates, ["Ctrl+Alt+P"]);
+
+      await act(async () => {
+        input!.dispatchEvent(inputEvent(dom, "beforeinput"));
+        input!.value = "typed";
+        input!.dispatchEvent(inputEvent(dom, "input"));
+        input!.dispatchEvent(inputEvent(dom, "change"));
+        input!.dispatchEvent(inputEvent(dom, "paste"));
+        input!.dispatchEvent(inputEvent(dom, "dragover"));
+        input!.dispatchEvent(inputEvent(dom, "drop"));
+        input!.dispatchEvent(inputEvent(dom, "compositionstart"));
+        await flushEffects();
+      });
+
+      assert.deepEqual(updates, ["Ctrl+Alt+P"]);
+    });
+
+    await assertTest("ShortcutCaptureInput ignores capture events while disabled", async () => {
+      const updates: string[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("shortcuts")),
+            disabled: true,
+            onUpdateShortcut: (_id: string, binding: string) => updates.push(binding)
+          })
+        );
+        await flushEffects();
+      });
+
+      const input = container.querySelector<HTMLInputElement>("input[data-shortcut-id='open-search']");
+      assert.ok(input);
+      patchLegacyInputEventTarget(input);
+      assert.equal(input.disabled, true);
+
+      await act(async () => {
+        input!.dispatchEvent(new dom.window.FocusEvent("focus", { bubbles: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "Control", ctrlKey: true }));
+        input!.dispatchEvent(key(dom, "keyup", { key: "Control" }));
+        input!.dispatchEvent(inputEvent(dom, "paste"));
+        input!.dispatchEvent(inputEvent(dom, "drop"));
+        input!.dispatchEvent(inputEvent(dom, "compositionstart"));
+        await flushEffects();
+      });
+
+      assert.deepEqual(updates, []);
+    });
+
+    await assertTest("ShortcutCaptureInput lets Tab move focus after a capture is cancelled or committed", async () => {
+      const updates: string[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("shortcuts")),
+            onUpdateShortcut: (_id: string, binding: string) => updates.push(binding)
+          })
+        );
+        await flushEffects();
+      });
+
+      const input = container.querySelector<HTMLInputElement>("input[data-shortcut-id='drag-move']");
+      assert.ok(input);
+      patchLegacyInputEventTarget(input);
+
+      await act(async () => {
+        input!.dispatchEvent(key(dom, "keyup", { key: "Tab" }));
+        const escapeEvent = key(dom, "keydown", { key: "Escape" });
+        input!.dispatchEvent(escapeEvent);
+        const tabAfterCancel = key(dom, "keydown", { key: "Tab" });
+        input!.dispatchEvent(tabAfterCancel);
+        assert.equal(tabAfterCancel.defaultPrevented, false);
+
+        input!.dispatchEvent(new dom.window.FocusEvent("blur", { bubbles: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "Control", ctrlKey: true }));
+        input!.dispatchEvent(key(dom, "keyup", { key: "Control" }));
+        const tabAfterCommit = key(dom, "keydown", { key: "Tab" });
+        input!.dispatchEvent(tabAfterCommit);
+        assert.equal(tabAfterCommit.defaultPrevented, false);
+        await flushEffects();
+      });
+
+      assert.deepEqual(updates, ["Ctrl"]);
+    });
+
+    await assertTest("ShortcutCaptureInput cancels reserved system combinations on window blur", async () => {
+      const updates: string[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("shortcuts")),
+            onUpdateShortcut: (_id: string, binding: string) => updates.push(binding)
+          })
+        );
+        await flushEffects();
+      });
+
+      const input = container.querySelector<HTMLInputElement>("input[data-shortcut-id='refresh']");
+      assert.ok(input);
+      patchLegacyInputEventTarget(input);
+
+      await act(async () => {
+        input!.dispatchEvent(key(dom, "keydown", { key: "Alt", altKey: true }));
+        input!.dispatchEvent(key(dom, "keydown", { key: "F4", altKey: true }));
+        window.dispatchEvent(new dom.window.Event("blur"));
+        await flushEffects();
+      });
+
+      assert.deepEqual(updates, []);
+    });
+
+    await assertTest("ShortcutCaptureInput rejects reserved system combinations on keyup, Enter, and blur", async () => {
+      const updates: string[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("shortcuts")),
+            onUpdateShortcut: (_id: string, binding: string) => updates.push(binding)
+          })
+        );
+        await flushEffects();
+      });
+
+      const input = container.querySelector<HTMLInputElement>("input[data-shortcut-id='refresh']");
+      assert.ok(input);
+      patchLegacyInputEventTarget(input);
+      const originalValue = input.value;
+
+      await act(async () => {
+        input.dispatchEvent(key(dom, "keydown", { key: "Alt", altKey: true }));
+        assert.equal(input.value, "Alt");
+        input.dispatchEvent(key(dom, "keyup", { key: "Alt" }));
+        await flushEffects();
+      });
+      assert.deepEqual(updates, []);
+      assert.equal(input.value, originalValue);
+
+      await act(async () => {
+        input.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Alt", altKey: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Tab", altKey: true }));
+        input.dispatchEvent(key(dom, "keyup", { key: "Tab", altKey: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(updates, []);
+      assert.equal(input.value, originalValue);
+
+      await act(async () => {
+        input.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Alt", altKey: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "F4", altKey: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Enter", altKey: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(updates, []);
+      assert.equal(input.value, originalValue);
+
+      await act(async () => {
+        input.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Control", ctrlKey: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Alt", ctrlKey: true, altKey: true }));
+        input.dispatchEvent(key(dom, "keydown", { key: "Delete", ctrlKey: true, altKey: true }));
+        input.dispatchEvent(new dom.window.FocusEvent("blur", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(updates, []);
+      assert.equal(input.value, originalValue);
+    });
+
+    await assertTest("SettingsSurface exposes appearance, menu, file-list, color, and tag pages without per-shortcut cards", async () => {
+      const accentUpdates: string[] = [];
+      const rowHeightUpdates: number[] = [];
+      const menuUpdates: string[] = [];
+      const colorUpdates: string[] = [];
+
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("appearance")),
+            onUpdatePanelFocusAccent: (color: string) => accentUpdates.push(color),
+            onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value),
+            onUpdateContextMenuDefault: (value: "native" | "custom") => menuUpdates.push(value),
+            onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
+          })
+        );
+        await flushEffects();
+      });
+
+      const accentInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent']");
+      assert.ok(accentInput);
+      await act(async () => {
+        accentInput!.value = "#c02f7a";
+        accentInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushEffects();
+      });
       assert.deepEqual(accentUpdates, ["#c02f7a"]);
 
       await act(async () => {
-        tabMinWidthInput.value = "132";
-        tabMinWidthInput.dispatchEvent(new Event("input", { bubbles: true }));
-        await flushEffects();
-      });
-
-      assert.deepEqual(tabMinWidthUpdates, [132]);
-    });
-
-    await assertTest("SettingsSurface renders confirm and cancel actions", async () => {
-      const events: string[] = [];
-      await act(async () => {
         root.render(
           React.createElement(SettingsSurface, {
-            ...createProps(createSettingsState("theme")),
-            onConfirm: () => events.push("confirm"),
-            onCancel: () => events.push("cancel")
+            ...createProps(createSettingsState("file-list")),
+            onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value)
           })
         );
         await flushEffects();
       });
-
-      const confirmButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "确定");
-      const cancelButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "取消");
-
-      assert.ok(confirmButton);
-      assert.ok(cancelButton);
-
-      await act(async () => {
-        cancelButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-        confirmButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-        await flushEffects();
-      });
-
-      assert.deepEqual(events, ["cancel", "confirm"]);
-    });
-
-    await assertTest("SettingsSurface disables confirmation and inputs until settings are ready", async () => {
-      await act(async () => {
-        root.render(
-          React.createElement(SettingsSurface, {
-            ...createProps(createSettingsState("theme")),
-            disabled: true
-          })
-        );
-        await flushEffects();
-      });
-
-      const confirmButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "确定");
-      const cancelButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "取消");
-      const tabMinWidthInput = container.querySelector<HTMLInputElement>('input[type="number"][aria-label="Tab 选项卡最小宽度"]');
-
-      assert.equal(container.querySelector(".settings-window")?.getAttribute("aria-busy"), "true");
-      assert.equal(confirmButton?.disabled, true);
-      assert.equal(cancelButton?.disabled, false);
-      assert.equal(tabMinWidthInput?.disabled, true);
-    });
-
-    await assertTest("SettingsSurface exposes the default context menu setting under rules and columns", async () => {
-      const updates: string[] = [];
-      const state = createSettingsState("rules");
-      await act(async () => {
-        root.render(
-          React.createElement(SettingsSurface, {
-            ...createProps(state),
-            onUpdateContextMenuDefault: (value: "native" | "custom") => updates.push(value)
-          })
-        );
-        await flushEffects();
-      });
-
-      const toggle = container.querySelector<HTMLInputElement>('input[data-setting-id="default-context-menu-custom"]');
-      assert.ok(toggle);
-      assert.equal(toggle.checked, false);
-
-      await act(async () => {
-        toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-        await flushEffects();
-      });
-
-      assert.deepEqual(updates, ["custom"]);
-    });
-
-    await assertTest("SettingsSurface renders non-persisted tag and column settings as read-only text", async () => {
-      await act(async () => {
-        root.render(React.createElement(SettingsSurface, createProps(createSettingsState("rules"))));
-        await flushEffects();
-      });
-
-      assert.equal(container.querySelector('input[type="text"][aria-label$="的过滤条件"]'), null);
-      assert.equal(container.querySelector(".column-toggle input[type='checkbox']"), null);
-      assert.ok(container.querySelector(".settings-readonly-value"));
+      const rowHeightInput = container.querySelector<HTMLInputElement>("[data-setting-id='details-row-height']");
+      assert.ok(rowHeightInput);
+      rowHeightInput!.value = "32";
+      rowHeightInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      assert.deepEqual(rowHeightUpdates, [32]);
       assert.ok(container.querySelector(".column-toggle--readonly"));
+
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("menu-mouse")),
+            onUpdateContextMenuDefault: (value: "native" | "custom") => menuUpdates.push(value)
+          })
+        );
+        await flushEffects();
+      });
+      container.querySelector<HTMLButtonElement>("[data-context-menu-value='custom']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(menuUpdates, ["custom"]);
+
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(createSettingsState("color-rules")),
+            onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
+          })
+        );
+        await flushEffects();
+      });
+      const colorInput = container.querySelector<HTMLInputElement>("[data-color-rule-id]");
+      assert.ok(colorInput);
+      colorInput!.value = "#336699";
+      colorInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      assert.deepEqual(colorUpdates, ["#336699"]);
+
+      await act(async () => {
+        root.render(React.createElement(SettingsSurface, createProps(createSettingsState("tag-rules"))));
+        await flushEffects();
+      });
+      assert.ok(container.querySelector(".settings-readonly-value"));
+      assert.equal(container.querySelector(".settings-card input[data-shortcut-id]"), null);
+    });
+
+    await assertTest("SettingsSurface shows shortcut conflicts and blocks confirmation before save", async () => {
+      const events: string[] = [];
+      const state = createSettingsState("shortcuts");
+      const conflictState: WorkspaceState = {
+        ...state,
+        settings: {
+          ...state.settings,
+          model: {
+            ...state.settings.model,
+            shortcuts: state.settings.model.shortcuts.map((shortcut) =>
+              shortcut.id === "drag-move" || shortcut.id === "context-menu-toggle"
+                ? { ...shortcut, scope: "listing", binding: shortcut.id === "drag-move" ? " Shift " : "shift" }
+                : shortcut
+            )
+          }
+        }
+      };
+
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(conflictState),
+            onConfirm: () => events.push("confirm")
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.ok(container.querySelector(".shortcut-status--conflict"));
+      const confirmButton = container.querySelector<HTMLButtonElement>("[data-action='confirm-settings']");
+      assert.equal(confirmButton?.disabled, true);
+      assert.match(container.textContent ?? "", /冲突/u);
+      confirmButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(events, []);
+    });
+
+    await assertTest("SettingsSurface blocks confirm when the remote profile form has unstaged edits", async () => {
+      const events: string[] = [];
+      const state = createSettingsState("connections");
+      const profile: RemoteConnectionProfile = {
+        id: "remote-1",
+        name: "Deploy",
+        protocol: "sftp",
+        host: "edge.internal",
+        port: 22,
+        username: "deploy",
+        rootPath: "/srv",
+        authKind: "password",
+        passiveMode: true,
+        ignoreHostKey: false,
+        connectTimeoutSecs: 10,
+        commandTimeoutSecs: 20
+      };
+      const remoteState = {
+        ...state,
+        remoteProfiles: [profile]
+      };
+
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(remoteState),
+            onConfirm: () => events.push("confirm")
+          })
+        );
+        await flushEffects();
+      });
+
+      const nameInput = container.querySelector<HTMLInputElement>("[data-setting-id='remote-name']");
+      assert.ok(nameInput);
+      await act(async () => {
+        nameInput!.value = "Deploy updated";
+        nameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        container.querySelector<HTMLButtonElement>("[data-action='confirm-settings']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(events, []);
+      assert.match(container.textContent ?? "", /暂存/u);
     });
   } finally {
     await act(async () => {

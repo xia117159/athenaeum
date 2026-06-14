@@ -11,6 +11,7 @@ import {
   saveWorkspaceNavigationItem,
   saveWorkspaceRemoteProfile,
   saveWorkspaceSettingsModel,
+  saveWorkspaceShortcuts,
   saveWorkspaceTheme,
   reorderWorkspaceNavigationItems,
   trustWorkspaceRemoteHostKey
@@ -208,7 +209,7 @@ export const workspaceSettingsGatewayTests = (async () => {
           id: "navigate-up",
           action: "上一级",
           scope: "panel",
-          binding: "Alt+Up",
+          binding: " up + alt ",
           description: "打开当前文件夹的上一级。"
         }
       ],
@@ -261,6 +262,36 @@ export const workspaceSettingsGatewayTests = (async () => {
               tabMinWidth: 4096
             }
           }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("saveWorkspaceShortcuts normalizes legacy bindings through the same DTO boundary", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return createSettingsSnapshot() as T;
+    };
+
+    await saveWorkspaceShortcuts(
+      [
+        {
+          id: "open-search",
+          action: "open-search",
+          scope: "workspace",
+          binding: " alt + ctrl + p ",
+          description: "Open search"
+        }
+      ],
+      { invoke, runtimeHost }
+    );
+
+    assert.deepEqual(invocations, [
+      {
+        command: "save_shortcuts",
+        args: {
+          shortcuts: [{ id: "open-search", action: "open-search", accelerator: "Ctrl+Alt+P", scope: "workspace" }]
         }
       }
     ]);

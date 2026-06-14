@@ -47,14 +47,14 @@ assertTest("toBackendShortcut persists stable shortcut ids and accelerator bindi
     id: "copy",
     action: "Copy",
     scope: "listing",
-    binding: "Ctrl+C",
+    binding: " alt + ctrl + c ",
     description: "Copy selected entries"
   };
 
   assert.deepEqual(toBackendShortcut(shortcut), {
     id: "copy",
     action: "copy",
-    accelerator: "Ctrl+C",
+    accelerator: "Ctrl+Alt+C",
     scope: "listing"
   });
 });
@@ -111,7 +111,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
         id: "navigate-forward",
         action: "回到下一级",
         scope: "panel",
-        binding: "Alt+Right",
+        binding: " right + alt ",
         description: "回到历史中的下一级文件夹。"
       }
     ],

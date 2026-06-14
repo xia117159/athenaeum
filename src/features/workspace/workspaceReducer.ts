@@ -34,6 +34,7 @@ import { normalizeLocationPath } from "./mockData";
 import {
   cloneColumns,
   normalizeContextMenuDefault,
+  normalizeSettingsSection,
   normalizeSettingsModel,
   normalizeTabMinWidth,
   normalizeThemeAccentColor
@@ -2193,7 +2194,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         settings: {
           ...state.settings,
-          section: action.payload
+          section: normalizeSettingsSection(action.payload)
         }
       };
 
@@ -2286,7 +2287,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return {
           ...state,
           settings: {
-            section: action.payload.section ?? state.settings.section,
+            section: normalizeSettingsSection(action.payload.section ?? state.settings.section),
             model
           }
         };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { NavigationTabView } from "./NavigationTabView";
+import { installLegacyInputEventPatch } from "./testDom";
 import type { EntryViewModel, NavigationItem, NavigationState } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
@@ -40,14 +41,7 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
   globalThis.MouseEvent = dom.window.MouseEvent;
-  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator
@@ -235,6 +229,116 @@ export const completion = (async () => {
       assert.equal(Boolean(container.querySelector('.navigation-editor[aria-label="编辑导航项名称"]')), true);
       assert.equal(Boolean(container.querySelector('.navigation-editor[aria-label="编辑导航项"]')), false);
       assert.equal(bubbledKeydowns, 0);
+    });
+
+    await assertTest("NavigationTabView ignores navigation shortcuts from editable child inputs", async () => {
+      const calls: string[] = [];
+      const item: NavigationItem = {
+        id: "nav-report",
+        displayName: "Report",
+        description: "",
+        path: "C:\\Users\\Admin\\Documents\\report.txt",
+        targetKind: "file",
+        targetStatus: "ok",
+        sortOrder: 1,
+        createdAt: "2026-06-08T09:00:00Z",
+        updatedAt: "2026-06-08T09:00:00Z"
+      };
+      const actions = {
+        setNavigationFilter(value: string) {
+          calls.push(`filter:${value}`);
+        },
+        saveNavigationItem() {
+          calls.push("save");
+        },
+        openNavigationItem() {
+          calls.push("open");
+        },
+        openNavigationItemParent() {
+          calls.push("open-parent");
+        },
+        deleteNavigationItems() {
+          calls.push("delete");
+        },
+        reorderNavigationItem() {
+          calls.push("reorder");
+        },
+        setNavigationSelection() {
+          calls.push("select-all");
+        },
+        selectNavigationItem() {
+          calls.push("select");
+        },
+        refreshNavigationTargets() {
+          calls.push("refresh");
+        },
+        addCurrentFolderToNavigation() {
+          calls.push("add-current");
+        },
+        addSelectedEntriesToNavigation() {
+          calls.push("add-selected");
+        },
+        openNavigationNativeContextMenu() {
+          calls.push("native-menu");
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const dispatchEditableKey = async (target: HTMLInputElement, init: KeyboardEventInit) => {
+        const event = new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...init
+        });
+        await act(async () => {
+          target.dispatchEvent(event);
+          await flushEffects();
+        });
+        assert.equal(event.defaultPrevented, false, `${init.key ?? ""} should keep editable default behavior`);
+      };
+
+      const filterInput = container.querySelector<HTMLInputElement>(".navigation-tab__filter input");
+      assert.ok(filterInput);
+      for (const init of [
+        { key: "a", ctrlKey: true },
+        { key: "Delete" },
+        { key: "Enter" },
+        { key: "F2" }
+      ]) {
+        await dispatchEditableKey(filterInput, init);
+      }
+      assert.deepEqual(calls, []);
+      assert.equal(container.querySelector(".navigation-editor"), null);
+
+      await act(async () => {
+        container.querySelector(".navigation-tab")?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "F2" }));
+        await flushEffects();
+      });
+      const editorInput = container.querySelector<HTMLInputElement>(".navigation-editor input");
+      assert.ok(editorInput);
+      calls.length = 0;
+
+      for (const init of [
+        { key: "a", ctrlKey: true },
+        { key: "Delete" },
+        { key: "Enter" },
+        { key: "F2" }
+      ]) {
+        await dispatchEditableKey(editorInput, init);
+      }
+      assert.deepEqual(calls, []);
     });
   } finally {
     await act(async () => {

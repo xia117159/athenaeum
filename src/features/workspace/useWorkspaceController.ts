@@ -2400,7 +2400,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         return;
       }
 
-      if (event.altKey && event.key === "ArrowLeft") {
+      if (event.altKey && event.key === "ArrowLeft" && !editable) {
         event.preventDefault();
         const activeTab = getActiveTab(state.panels[state.activePanelId]);
         if (isNavigationTab(activeTab)) {

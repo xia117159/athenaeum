@@ -21,6 +21,7 @@ import type {
   PanelId,
   PanelState,
   RemoteConnectionProfile,
+  SettingsSection,
   SettingsModel,
   TabState,
   WorkspaceBootstrap
@@ -202,6 +203,25 @@ export function normalizeThemeAccentColor(value?: string | null) {
 
 export function normalizeContextMenuDefault(value?: string | null): SettingsModel["contextMenu"]["defaultMenu"] {
   return value === "custom" ? "custom" : "native";
+}
+
+export function normalizeSettingsSection(value?: string | null): SettingsSection {
+  switch (value) {
+    case "shortcuts":
+    case "file-list":
+    case "menu-mouse":
+    case "appearance":
+    case "color-rules":
+    case "tag-rules":
+    case "connections":
+      return value;
+    case "theme":
+      return "appearance";
+    case "rules":
+      return "file-list";
+    default:
+      return "shortcuts";
+  }
 }
 
 export function labelFromPath(path: string) {

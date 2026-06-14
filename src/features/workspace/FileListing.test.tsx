@@ -9,6 +9,7 @@ import {
   setSystemIconResolverForTests,
   type SystemIconRequest
 } from "./systemIconGateway";
+import { installLegacyInputEventPatch } from "./testDom";
 import type { ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
 
 const { JSDOM } = require("jsdom") as {
@@ -46,14 +47,7 @@ function installDomEnvironment() {
   globalThis.Event = dom.window.Event;
   globalThis.MouseEvent = dom.window.MouseEvent;
   globalThis.PointerEvent = dom.window.PointerEvent;
-  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
-    configurable: true,
-    value: () => undefined
-  });
+  installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: dom.window.navigator

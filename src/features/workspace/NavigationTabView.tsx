@@ -79,6 +79,13 @@ function createDraft(item?: NavigationItem | null): NavigationItemUpsertRequest 
   };
 }
 
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+}
+
 function getDroppedPaths(event: ReactDragEvent<HTMLElement>) {
   const text = event.dataTransfer?.getData("text/plain") ?? "";
   return text
@@ -172,6 +179,10 @@ export function NavigationTabView({
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isEditableKeyboardTarget(event.target)) {
+      return;
+    }
+
     if ((event.key === "ArrowDown" || event.key === "ArrowUp") && visibleItems.length > 0) {
       consumeKey(event);
       const currentIndex = primarySelected ? visibleItems.findIndex((item) => item.id === primarySelected.id) : -1;
