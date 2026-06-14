@@ -375,6 +375,27 @@ mod imp {
     Ok(resolved)
   }
 
+  fn validate_background_path(raw: String) -> Result<PathBuf> {
+    let info = resolve_navigation_target(&raw)?;
+    if info.target_status != NavigationTargetStatus::Ok || !info.is_local || !info.exists {
+      bail!(
+        "{}",
+        info
+          .message
+          .unwrap_or_else(|| "native background context menu only supports existing local directories".into())
+      );
+    }
+    if info.target_kind != NavigationTargetKind::Folder {
+      bail!("native background context menu requires an existing local directory");
+    }
+    info
+      .normalized_path
+      .as_deref()
+      .or(info.canonical_path.as_deref())
+      .map(PathBuf::from)
+      .ok_or_else(|| anyhow!("native background context menu requires an absolute local directory"))
+  }
+
   fn bind_shell_selection(paths: &[PathBuf]) -> Result<ShellSelection> {
     let mut parent_folder = None;
     let mut child_pidls = Vec::with_capacity(paths.len());
@@ -446,18 +467,7 @@ mod imp {
     (fallback_x, fallback_y)
   }
 
-  fn show_native_context_menu_inner(paths: Vec<String>, x: i32, y: i32, hwnd_raw: isize) -> Result<bool> {
-    let _com = ComGuard::init()?;
-    let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
-    let validated_paths = validate_paths(paths)?;
-    let selection = bind_shell_selection(&validated_paths)?;
-    let context_menu: IContextMenu = unsafe {
-      selection
-        .parent_folder
-        .GetUIObjectOf(hwnd, &selection.child_pidls, None)
-        .context("failed to bind shell selection to context menu")?
-    };
-
+  fn show_context_menu(context_menu: &IContextMenu, hwnd: HWND, x: i32, y: i32) -> Result<bool> {
     let popup = PopupMenu::create()?;
     unsafe {
       context_menu
@@ -497,8 +507,50 @@ mod imp {
       return Ok(did_native_menu_open(command_id, menu_last_error));
     }
 
-    let _ = invoke_command(&context_menu, hwnd, command_id);
+    let _ = invoke_command(context_menu, hwnd, command_id);
     Ok(true)
+  }
+
+  fn show_native_context_menu_inner(paths: Vec<String>, x: i32, y: i32, hwnd_raw: isize) -> Result<bool> {
+    let _com = ComGuard::init()?;
+    let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+    let validated_paths = validate_paths(paths)?;
+    let selection = bind_shell_selection(&validated_paths)?;
+    let context_menu: IContextMenu = unsafe {
+      selection
+        .parent_folder
+        .GetUIObjectOf(hwnd, &selection.child_pidls, None)
+        .context("failed to bind shell selection to context menu")?
+    };
+
+    show_context_menu(&context_menu, hwnd, x, y)
+  }
+
+  fn show_native_background_context_menu_inner(directory_path: String, x: i32, y: i32, hwnd_raw: isize) -> Result<bool> {
+    let _com = ComGuard::init()?;
+    let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+    let directory = validate_background_path(directory_path)?;
+    let absolute_pidl = OwnedPidl::parse(&directory)?;
+    let mut child_pidl = null_mut();
+    let parent_folder: IShellFolder = unsafe {
+      SHBindToParent(absolute_pidl.0.cast_const(), Some(&mut child_pidl))
+        .with_context(|| format!("failed to bind shell parent for {}", directory.display()))?
+    };
+    if child_pidl.is_null() {
+      bail!("failed to resolve shell directory item {}", directory.display());
+    }
+    let folder: IShellFolder = unsafe {
+      parent_folder
+        .BindToObject(child_pidl.cast_const(), None)
+        .with_context(|| format!("failed to bind shell folder {}", directory.display()))?
+    };
+    let context_menu: IContextMenu = unsafe {
+      folder
+        .CreateViewObject(hwnd)
+        .context("failed to bind shell folder background to context menu")?
+    };
+
+    show_context_menu(&context_menu, hwnd, x, y)
   }
 
   pub async fn show_native_context_menu<R: Runtime>(
@@ -522,6 +574,27 @@ mod imp {
       .map_err(|_| anyhow!("native context menu main-thread task was canceled"))?
   }
 
+  pub async fn show_native_background_context_menu<R: Runtime>(
+    directory_path: String,
+    x: i32,
+    y: i32,
+    window: &Window<R>
+  ) -> Result<bool> {
+    let hwnd = window.hwnd().context("failed to resolve Tauri window handle")?;
+    let hwnd_raw = hwnd.0 as isize;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+
+    window
+      .run_on_main_thread(move || {
+        let _ = sender.send(show_native_background_context_menu_inner(directory_path, x, y, hwnd_raw));
+      })
+      .context("failed to schedule native background context menu on the Tauri main thread")?;
+
+    receiver
+      .await
+      .map_err(|_| anyhow!("native background context menu main-thread task was canceled"))?
+  }
+
   #[cfg(test)]
   mod tests {
     use anyhow::Result;
@@ -529,8 +602,8 @@ mod imp {
     use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS};
 
     use super::{
-      did_native_menu_open, resolve_navigation_target, validate_paths, validate_shell_execute_result,
-      validate_system_default_open_path, NavigationOpenValidationError
+      did_native_menu_open, resolve_navigation_target, validate_background_path, validate_paths,
+      validate_shell_execute_result, validate_system_default_open_path, NavigationOpenValidationError
     };
 
     #[test]
@@ -557,6 +630,24 @@ mod imp {
     #[test]
     fn validate_paths_rejects_remote_inputs() {
       assert!(validate_paths(vec!["sftp://deploy@example/root".into()]).is_err());
+    }
+
+    #[test]
+    fn validate_background_path_accepts_existing_local_directories_only() -> Result<()> {
+      let temp = std::env::temp_dir().join(format!("simplefilemanager-background-menu-{}", uuid::Uuid::new_v4()));
+      std::fs::create_dir_all(&temp)?;
+      let file = temp.join("a.txt");
+      std::fs::write(&file, "a")?;
+
+      let directory = validate_background_path(temp.to_string_lossy().into_owned())?;
+      let file_result = validate_background_path(file.to_string_lossy().into_owned());
+      let remote_result = validate_background_path("sftp://deploy@example/root".into());
+
+      let _ = std::fs::remove_dir_all(&temp);
+      assert_eq!(directory.to_string_lossy().replace('/', "\\"), temp.to_string_lossy().replace('/', "\\"));
+      assert!(file_result.is_err());
+      assert!(remote_result.is_err());
+      Ok(())
     }
 
     #[test]
@@ -707,7 +798,8 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{
-  open_path_with_system_default, resolve_navigation_target, show_native_context_menu
+  open_path_with_system_default, resolve_navigation_target, show_native_background_context_menu,
+  show_native_context_menu
 };
 
 #[cfg(not(windows))]
@@ -718,6 +810,16 @@ pub async fn show_native_context_menu<R: tauri::Runtime>(
   _window: &tauri::Window<R>
 ) -> anyhow::Result<bool> {
   anyhow::bail!("native context menu is only supported on Windows")
+}
+
+#[cfg(not(windows))]
+pub async fn show_native_background_context_menu<R: tauri::Runtime>(
+  _directory_path: String,
+  _x: i32,
+  _y: i32,
+  _window: &tauri::Window<R>
+) -> anyhow::Result<bool> {
+  anyhow::bail!("native background context menu is only supported on Windows")
 }
 
 #[cfg(not(windows))]

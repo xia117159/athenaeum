@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { SettingsSurface } from "./SettingsSurface";
 import type { RemoteConnectionProfile, SettingsModel, SettingsSection, WorkspaceState } from "./types";
-import { normalizeDetailsRowHeight, normalizeSettingsModel, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceMappers";
+import {
+  normalizeContextMenuDefault,
+  normalizeDetailsRowHeight,
+  normalizeSettingsModel,
+  normalizeTabMinWidth,
+  normalizeThemeAccentColor
+} from "./workspaceMappers";
 import { useWorkspaceController } from "./useWorkspaceController";
 import "./workspace.css";
 
@@ -12,6 +18,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     tagRules: model.tagRules.map((rule) => ({ ...rule })),
     columns: model.columns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
+    contextMenu: { ...model.contextMenu },
     theme: { ...model.theme }
   };
 }
@@ -236,6 +243,15 @@ export function SettingsWindowView() {
           updateDraftModel((model) => ({
             ...model,
             detailsRowHeight: normalizeDetailsRowHeight(value)
+          }))
+        }
+        onUpdateContextMenuDefault={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            contextMenu: {
+              ...model.contextMenu,
+              defaultMenu: normalizeContextMenuDefault(value)
+            }
           }))
         }
         onSaveRemoteProfile={saveDraftRemoteProfile}

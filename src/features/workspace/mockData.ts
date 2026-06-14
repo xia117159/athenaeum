@@ -935,6 +935,13 @@ function createSettingsModel(): SettingsModel {
         description: "拖放文件或文件夹时执行移动而不是复制。"
       },
       {
+        id: "context-menu-toggle",
+        action: "右键菜单切换",
+        scope: "context-menu",
+        binding: "Shift",
+        description: "右键时临时切换 Windows 系统菜单与软件自定义菜单。"
+      },
+      {
         id: "create-folder",
         action: "新建文件夹",
         scope: "listing",
@@ -1018,6 +1025,9 @@ function createSettingsModel(): SettingsModel {
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
     detailsRowHeight: 24,
+    contextMenu: {
+      defaultMenu: "native"
+    },
     theme: {
       panelFocusAccent: "#0f6cbd",
       tabMinWidth: 96

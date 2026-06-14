@@ -524,7 +524,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     shortcuts: false,
     colorRules: false,
     detailsRowHeight: false,
-    theme: false
+    theme: false,
+    contextMenu: false
   });
 
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
@@ -536,7 +537,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       shortcuts: true,
       colorRules: true,
       detailsRowHeight: true,
-      theme: true
+      theme: true,
+      contextMenu: true
     };
   };
 
@@ -545,7 +547,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       shortcuts: false,
       colorRules: false,
       detailsRowHeight: false,
-      theme: false
+      theme: false,
+      contextMenu: false
     };
   };
 
@@ -554,7 +557,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       shortcuts: !hasSameJsonShape(current.shortcuts, next.shortcuts),
       colorRules: !hasSameJsonShape(current.colorRules, next.colorRules),
       detailsRowHeight: current.detailsRowHeight !== next.detailsRowHeight,
-      theme: !hasSameJsonShape(current.theme, next.theme)
+      theme: !hasSameJsonShape(current.theme, next.theme),
+      contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu)
     };
   };
 
@@ -562,7 +566,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.shortcuts, next.shortcuts) ||
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
-    !hasSameJsonShape(current.theme, next.theme);
+    !hasSameJsonShape(current.theme, next.theme) ||
+    !hasSameJsonShape(current.contextMenu, next.contextMenu);
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
@@ -750,6 +755,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     void workspaceGateway.saveTheme(state.settings.model.theme);
   }, [state.settings.model.theme, state.source]);
+
+  useEffect(() => {
+    if (state.source !== "tauri") {
+      return;
+    }
+    if (skipNextSettingsPersistenceRef.current.contextMenu) {
+      skipNextSettingsPersistenceRef.current.contextMenu = false;
+      return;
+    }
+    void workspaceGateway.saveSettingsModel(state.settings.model);
+  }, [state.settings.model.contextMenu, state.source]);
 
   useEffect(() => {
     if (!searchHistoryHydratedRef.current) {
@@ -2178,8 +2194,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const openNativeContextMenu = useEffectEvent(async (request: NativeContextMenuRequest) => {
     dispatch({ type: "contextMenuSet", payload: undefined });
-
-    if (request.paths.length === 0 || request.paths.some((path) => isRemotePath(path))) {
+    const target = request.target ?? "selection";
+    const fallbackScope = target === "background" ? "panel" : "selection";
+    const openFallbackMenu = () => {
       dispatch({
         type: "contextMenuSet",
         payload: {
@@ -2188,25 +2205,43 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           panelId: request.panelId,
           tabId: request.tabId,
           mode: "system-fallback",
-          scope: "selection"
+          scope: fallbackScope
         }
       });
+    };
+
+    if (target === "background") {
+      const directoryPath = request.directoryPath?.trim();
+      if (!directoryPath || isRemotePath(directoryPath)) {
+        openFallbackMenu();
+        return;
+      }
+
+      let opened = false;
+      try {
+        opened = await workspaceGateway.showNativeBackgroundContextMenu(directoryPath, request.screenX, request.screenY);
+      } catch {
+        opened = false;
+      }
+      if (!opened) {
+        openFallbackMenu();
+      }
       return;
     }
 
-    const opened = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY);
+    if (request.paths.length === 0 || request.paths.some((path) => isRemotePath(path))) {
+      openFallbackMenu();
+      return;
+    }
+
+    let opened = false;
+    try {
+      opened = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY);
+    } catch {
+      opened = false;
+    }
     if (!opened) {
-      dispatch({
-        type: "contextMenuSet",
-        payload: {
-          x: request.clientX,
-          y: request.clientY,
-          panelId: request.panelId,
-          tabId: request.tabId,
-          mode: "system-fallback",
-          scope: "selection"
-        }
-      });
+      openFallbackMenu();
     }
   });
 
@@ -2518,6 +2553,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       setColumnWidth: (panelId: PanelId, tabId: string, id: ColumnId, width: string) =>
         dispatch({ type: "columnWidthSet", payload: { panelId, tabId, id, width } }),
       setDetailsRowHeight: (value: number) => dispatch({ type: "detailsRowHeightSet", payload: { value } }),
+      setContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) =>
+        dispatch({ type: "contextMenuDefaultSet", payload: { value } }),
       setOperationTasksOpen: (open: boolean) => dispatch({ type: "operationTasksOpenSet", payload: open }),
       cancelOperation: (taskId: string) => void cancelOperation(taskId),
       undoLatestOperation: () => void undoLatestOperation(),

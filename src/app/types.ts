@@ -209,6 +209,10 @@ export interface UiTheme {
   tabMinWidth: number;
 }
 
+export interface ContextMenuSettings {
+  defaultMenu: "native" | "custom";
+}
+
 export interface ShortcutBinding {
   id: string;
   action: string;
@@ -274,6 +278,7 @@ export interface SettingsSnapshot {
   colorRules: ColorRule[];
   shortcuts: ShortcutBinding[];
   detailsRowHeight: number;
+  contextMenu?: ContextMenuSettings;
   theme?: UiTheme;
   layout: UiLayout;
   remoteProfiles: RemoteProfile[];
@@ -283,6 +288,7 @@ export interface SettingsModelUpdate {
   shortcuts: ShortcutBinding[];
   colorRules: ColorRule[];
   detailsRowHeight: number;
+  contextMenu: ContextMenuSettings;
   theme: UiTheme;
 }
 

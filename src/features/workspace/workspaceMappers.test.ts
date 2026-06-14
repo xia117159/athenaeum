@@ -146,6 +146,9 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
       ],
       shortcuts: [{ id: "shortcut-1", action: "Copy", accelerator: "Ctrl+C", scope: "workspace" }],
       detailsRowHeight: 44,
+      contextMenu: {
+        defaultMenu: "custom"
+      },
       theme: {
         panelFocusAccent: "#c02f7a",
         tabMinWidth: 128
@@ -184,8 +187,10 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "shortcut-1")?.binding, "Ctrl+C");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "open-search")?.binding, "Ctrl+F");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "drag-move")?.binding, "Shift");
+  assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "context-menu-toggle")?.binding, "Shift");
   assert.equal(bootstrap.settingsModel.colorRules[0].color, "#ff6600");
   assert.equal(bootstrap.settingsModel.detailsRowHeight, 44);
+  assert.equal(bootstrap.settingsModel.contextMenu.defaultMenu, "custom");
   assert.equal(bootstrap.settingsModel.theme.panelFocusAccent, "#c02f7a");
   assert.equal(bootstrap.settingsModel.theme.tabMinWidth, 128);
   assert.ok(bootstrap.panels["panel-1"].tabs[0]);

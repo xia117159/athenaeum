@@ -127,6 +127,9 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     tagRules: [],
     columns: [],
     detailsRowHeight: 46,
+    contextMenu: {
+      defaultMenu: "custom"
+    },
     theme: {
       panelFocusAccent: "invalid",
       tabMinWidth: 4096
@@ -147,6 +150,9 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       }
     ],
     detailsRowHeight: 46,
+    contextMenu: {
+      defaultMenu: "custom"
+    },
     theme: {
       panelFocusAccent: "#0f6cbd",
       tabMinWidth: 4096

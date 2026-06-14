@@ -14,7 +14,8 @@ export type SettingsSection = "shortcuts" | "theme" | "rules" | "connections";
 export type LocationKind = "local" | "ftp" | "sftp" | "virtual";
 export type EntryKind = "file" | "folder";
 export type ColumnId = "name" | "type" | "size" | "modified" | "tags" | "location";
-export type ShortcutScope = "workspace" | "panel" | "listing";
+export type ShortcutScope = "workspace" | "panel" | "listing" | "context-menu";
+export type ContextMenuDefault = "native" | "custom";
 export type RemoteAuthKind = "password" | "keyFile" | "anonymous";
 export type SortDirection = "asc" | "desc";
 export type RemoteConnectionState = "unknown" | "connecting" | "connected" | "error";
@@ -206,6 +207,10 @@ export interface ThemeSettings {
   tabMinWidth: number;
 }
 
+export interface ContextMenuSettings {
+  defaultMenu: ContextMenuDefault;
+}
+
 export interface SortState {
   columnId: ColumnId;
   direction: SortDirection;
@@ -217,6 +222,7 @@ export interface SettingsModel {
   tagRules: TagRule[];
   columns: ColumnDefinition[];
   detailsRowHeight: number;
+  contextMenu: ContextMenuSettings;
   theme: ThemeSettings;
 }
 
@@ -383,7 +389,9 @@ export interface InformationPanelState {
 export interface NativeContextMenuRequest {
   panelId: PanelId;
   tabId: string;
+  target?: "selection" | "background";
   paths: string[];
+  directoryPath?: string;
   clientX: number;
   clientY: number;
   screenX: number;

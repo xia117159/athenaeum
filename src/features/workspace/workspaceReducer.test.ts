@@ -1895,6 +1895,17 @@ assertTest("workspaceReducer stores the directory tree visibility flag", () => {
   assert.equal(shown.treeVisible, true);
 });
 
+assertTest("workspaceReducer stores the default context menu setting", () => {
+  const state = createState();
+
+  const nextState = workspaceReducer(state, {
+    type: "contextMenuDefaultSet",
+    payload: { value: "custom" }
+  } as WorkspaceAction);
+
+  assert.equal(nextState.settings.model.contextMenu.defaultMenu, "custom");
+});
+
 assertTest("workspaceReducer preserves local-only columns and tag filters when backend settings sync", () => {
   const state = workspaceReducer(
     workspaceReducer(createState(), {

@@ -22,6 +22,7 @@ import { devLog, devWarn } from "./devLog";
 import type {
   ColumnDefinition,
   ColumnId,
+  ContextMenuDefault,
   ContextMenuState,
   EntryViewModel,
   InlineEditState,
@@ -450,6 +451,8 @@ export function FileListingShell({
   onShowAllColumns,
   onDropEntries,
   entryDropMoveBinding = "Shift",
+  contextMenuDefault = "native",
+  contextMenuToggleBinding = "Shift",
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel
@@ -478,6 +481,8 @@ export function FileListingShell({
   onShowAllColumns?: (columnIds: ColumnId[]) => void;
   onDropEntries: (paths: string[], destination: string, operation: DropOperation) => void;
   entryDropMoveBinding?: string;
+  contextMenuDefault?: ContextMenuDefault;
+  contextMenuToggleBinding?: string;
   onInlineEditChange: (value: string) => void;
   onInlineEditCommit: (value?: string) => void;
   onInlineEditCancel: () => void;
@@ -732,6 +737,27 @@ export function FileListingShell({
   const renderEntryNameContent = (entry: ListingEntry) =>
     isInlineEditingEntry(entry) ? renderInlineEditInput() : <span>{entry.name}</span>;
 
+  const getRequestedContextMenu = (event: ReactMouseEvent<HTMLElement>): ContextMenuDefault => {
+    const shouldToggle = modifiersMatchShortcutBinding(event, contextMenuToggleBinding);
+    if (!shouldToggle) {
+      return contextMenuDefault;
+    }
+    return contextMenuDefault === "native" ? "custom" : "native";
+  };
+
+  const openCustomContextMenu = (event: ReactMouseEvent<HTMLElement>, scope: ContextMenuState["scope"]) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      panelId,
+      tabId,
+      mode: "custom",
+      scope
+    });
+  };
+
   const startEntryPointerDrag = (event: ReactPointerEvent<HTMLElement>, entry: ListingEntry) => {
     if (event.button !== 0 || isInlineEditingEntry(entry)) {
       return;
@@ -901,18 +927,31 @@ export function FileListingShell({
         }
         event.preventDefault();
         event.stopPropagation();
+        const requestedMenu = getRequestedContextMenu(event);
+        if (!selectedEntryIds.includes(entry.id)) {
+          onSelect(entry, false);
+        }
+        if (requestedMenu === "custom") {
+          onOpenContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            panelId,
+            tabId,
+            mode: "custom",
+            scope: "selection"
+          });
+          return;
+        }
         const nativeRequest: NativeContextMenuRequest = {
           panelId,
           tabId,
+          target: "selection",
           paths: getContextMenuPaths(entry),
           clientX: event.clientX,
           clientY: event.clientY,
           screenX: event.screenX,
           screenY: event.screenY
         };
-        if (!selectedEntryIds.includes(entry.id)) {
-          onSelect(entry, false);
-        }
         window.setTimeout(() => {
           onOpenNativeContextMenu(nativeRequest);
         }, 0);
@@ -1153,15 +1192,23 @@ export function FileListingShell({
   };
 
   const openBlankContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    if (getRequestedContextMenu(event) === "custom") {
+      openCustomContextMenu(event, "panel");
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
-    onOpenContextMenu({
-      x: event.clientX,
-      y: event.clientY,
+    onOpenNativeContextMenu({
       panelId,
       tabId,
-      mode: "custom",
-      scope: "panel"
+      target: "background",
+      paths: [],
+      directoryPath: currentPath,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      screenX: event.screenX,
+      screenY: event.screenY
     });
   };
 

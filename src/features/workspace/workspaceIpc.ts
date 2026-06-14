@@ -67,3 +67,27 @@ export async function showNativeContextMenu(
     return false;
   }
 }
+
+export async function showNativeBackgroundContextMenu(
+  directoryPath: string,
+  x: number,
+  y: number,
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return false;
+  }
+
+  try {
+    const opened = await invokeFn<boolean>("show_native_background_context_menu", {
+      directoryPath,
+      x: Math.round(x),
+      y: Math.round(y)
+    });
+    return opened;
+  } catch (error) {
+    console.warn("Falling back from show_native_background_context_menu", error);
+    return false;
+  }
+}

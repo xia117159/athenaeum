@@ -30,7 +30,13 @@ import type {
   WorkspaceState
 } from "./types";
 import { normalizeLocationPath } from "./mockData";
-import { cloneColumns, normalizeSettingsModel, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceMappers";
+import {
+  cloneColumns,
+  normalizeContextMenuDefault,
+  normalizeSettingsModel,
+  normalizeTabMinWidth,
+  normalizeThemeAccentColor
+} from "./workspaceMappers";
 import { devLog } from "./devLog";
 import {
   createNavigationTab,
@@ -141,6 +147,7 @@ export type WorkspaceAction =
   | { type: "columnsShown"; payload: { panelId?: PanelId; tabId?: string; ids?: ColumnId[] } }
   | { type: "columnWidthSet"; payload: { panelId: PanelId; tabId: string; id: ColumnId; width: string } }
   | { type: "detailsRowHeightSet"; payload: { value: number } }
+  | { type: "contextMenuDefaultSet"; payload: { value: SettingsModel["contextMenu"]["defaultMenu"] } }
   | { type: "themePanelFocusAccentSet"; payload: { color: string } }
   | { type: "themeTabMinWidthSet"; payload: { value: number } }
   | { type: "settingsModelApplied"; payload: { model: SettingsModel; section?: SettingsSection } }
@@ -2225,6 +2232,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "detailsRowHeightSet":
       return updateSettingsModel(state, "detailsRowHeight", () => normalizeDetailsRowHeight(action.payload.value));
+
+    case "contextMenuDefaultSet":
+      return updateSettingsModel(state, "contextMenu", (contextMenu) => ({
+        ...contextMenu,
+        defaultMenu: normalizeContextMenuDefault(action.payload.value)
+      }));
 
     case "themePanelFocusAccentSet":
       {

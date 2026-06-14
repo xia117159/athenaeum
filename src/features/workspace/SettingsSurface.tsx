@@ -9,6 +9,7 @@ export type SettingsSurfaceProps = {
   onUpdatePanelFocusAccent: (color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
+  onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
   onSaveRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void;
   onDeleteRemoteProfile: (id: string) => void;
   onTestRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void;
@@ -101,6 +102,8 @@ function getShortcutScopeLabel(scope: string) {
       return "面板";
     case "listing":
       return "列表";
+    case "context-menu":
+      return "右键菜单";
     default:
       return scope;
   }
@@ -131,6 +134,7 @@ export function SettingsSurface({
   onUpdatePanelFocusAccent,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
+  onUpdateContextMenuDefault,
   onSaveRemoteProfile,
   onDeleteRemoteProfile,
   onTestRemoteProfile,
@@ -248,6 +252,27 @@ export function SettingsSurface({
               />
             ) : (
               <div className="settings-list">
+                <section className="settings-group">
+                  <header>
+                    <strong>右键菜单</strong>
+                    <span>控制文件列表普通右键优先打开的菜单类型。</span>
+                  </header>
+                  <label className="settings-toggle-row">
+                    <input
+                      type="checkbox"
+                      data-setting-id="default-context-menu-custom"
+                      checked={settings.model.contextMenu.defaultMenu === "custom"}
+                      onChange={(event) => onUpdateContextMenuDefault(event.currentTarget.checked ? "custom" : "native")}
+                      disabled={controlsDisabled}
+                    />
+                    <span>
+                      <strong>默认打开软件自定义菜单</strong>
+                      <small>关闭时默认打开 Windows 系统菜单。</small>
+                    </span>
+                    <small>{settings.model.contextMenu.defaultMenu === "custom" ? "软件自定义" : "Windows 系统"}</small>
+                  </label>
+                </section>
+
                 <section className="settings-group">
                   <header>
                     <strong>颜色规则</strong>

@@ -402,6 +402,26 @@ fn default_tab_min_width() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum ContextMenuDefaultMenu {
+  Native,
+  Custom
+}
+
+impl Default for ContextMenuDefaultMenu {
+  fn default() -> Self {
+    Self::Native
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextMenuSettings {
+  #[serde(default)]
+  pub default_menu: ContextMenuDefaultMenu
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ShortcutBinding {
   pub id: String,
   pub action: String,
@@ -940,6 +960,8 @@ pub struct SettingsSnapshot {
   pub color_rules: Vec<ColorRule>,
   pub shortcuts: Vec<ShortcutBinding>,
   pub details_row_height: u16,
+  #[serde(default)]
+  pub context_menu: ContextMenuSettings,
   pub theme: UiTheme,
   pub layout: UiLayout,
   pub remote_profiles: Vec<RemoteProfile>
@@ -951,6 +973,8 @@ pub struct SettingsModelUpdate {
   pub shortcuts: Vec<ShortcutBinding>,
   pub color_rules: Vec<ColorRule>,
   pub details_row_height: u16,
+  #[serde(default)]
+  pub context_menu: ContextMenuSettings,
   pub theme: UiTheme
 }
 

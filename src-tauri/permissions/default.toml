@@ -56,6 +56,7 @@ permissions = [
   "allow-copy-remote-entries",
   "allow-move-remote-entries",
   "allow-transfer-remote-entries",
+  "allow-show-native-background-context-menu",
   "allow-show-native-context-menu"
 ]
 
@@ -338,3 +339,8 @@ commands.allow = ["transfer_remote_entries"]
 identifier = "allow-show-native-context-menu"
 description = "Allows the workspace to open the Windows native context menu for local selected paths."
 commands.allow = ["show_native_context_menu"]
+
+[[permission]]
+identifier = "allow-show-native-background-context-menu"
+description = "Allows the workspace to open the Windows native context menu for a local folder background."
+commands.allow = ["show_native_background_context_menu"]

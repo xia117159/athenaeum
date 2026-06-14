@@ -272,7 +272,15 @@ export const completion = (async () => {
   const root = ReactDOM.createRoot(container);
   const dropped: Array<{ paths: string[]; destination: string; operation: "copy" | "move" }> = [];
   const customMenus: Array<{ mode: string; scope: string }> = [];
-  const nativeMenus: Array<{ paths: string[]; clientX: number; clientY: number; screenX: number; screenY: number }> = [];
+  const nativeMenus: Array<{
+    target: NativeContextMenuRequest["target"];
+    paths: string[];
+    directoryPath?: string;
+    clientX: number;
+    clientY: number;
+    screenX: number;
+    screenY: number;
+  }> = [];
   const selectedEntries: Array<{ entryId: string; multi: boolean }> = [];
   const resizedColumns: Array<{ columnId: ColumnDefinition["id"]; width: string }> = [];
   const columnVisibilityChanges: Array<{ columnId: ColumnId; visible: boolean }> = [];
@@ -294,7 +302,9 @@ export const completion = (async () => {
     renderPanelId: PanelId = "panel-1",
     selectedIds: string[] = ["file-source"],
     entryDropMoveBinding = "Shift",
-    renderColumns: ColumnDefinition[] = columns
+    renderColumns: ColumnDefinition[] = columns,
+    contextMenuDefault: "native" | "custom" = "native",
+    contextMenuToggleBinding = "Shift"
   ) {
     root.render(
       React.createElement(FileListingShell, {
@@ -309,6 +319,8 @@ export const completion = (async () => {
         inlineEdit,
         detailsRowHeight: 42,
         entryDropMoveBinding,
+        contextMenuDefault,
+        contextMenuToggleBinding,
         onSort: () => undefined,
         onResizeColumn: (columnId, width) => {
           resizedColumns.push({ columnId, width });
@@ -328,7 +340,9 @@ export const completion = (async () => {
         },
         onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => {
           nativeMenus.push({
+            target: payload.target,
             paths: [...payload.paths],
+            directoryPath: payload.directoryPath,
             clientX: payload.clientX,
             clientY: payload.clientY,
             screenX: payload.screenX,
@@ -1011,7 +1025,7 @@ export const completion = (async () => {
       assert.deepEqual(resizedColumns, [{ columnId: "name", width: "280px" }]);
     });
 
-    await assertTest("FileListingShell opens the app context menu when blank space is right-clicked", async () => {
+    await assertTest("FileListingShell opens the native background context menu when blank space is right-clicked", async () => {
       customMenus.length = 0;
       nativeMenus.length = 0;
 
@@ -1029,6 +1043,47 @@ export const completion = (async () => {
             bubbles: true,
             cancelable: true,
             clientX: 48,
+            clientY: 64,
+            screenX: 148,
+            screenY: 164
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.deepEqual(nativeMenus, [
+        {
+          target: "background",
+          paths: [],
+          directoryPath: "D:\\",
+          clientX: 48,
+          clientY: 64,
+          screenX: 148,
+          screenY: 164
+        }
+      ]);
+      assert.deepEqual(customMenus, []);
+    });
+
+    await assertTest("FileListingShell opens the app context menu when the context-menu shortcut right-clicks blank space", async () => {
+      customMenus.length = 0;
+      nativeMenus.length = 0;
+
+      await act(async () => {
+        render("details");
+        await flushEffects();
+      });
+
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(scroll);
+
+      await act(async () => {
+        scroll.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            shiftKey: true,
+            clientX: 48,
             clientY: 64
           })
         );
@@ -1039,7 +1094,7 @@ export const completion = (async () => {
       assert.equal(nativeMenus.length, 0);
     });
 
-    await assertTest("FileListingShell opens the app context menu from blank icon-card padding", async () => {
+    await assertTest("FileListingShell opens the native background menu from blank icon-card padding", async () => {
       customMenus.length = 0;
       nativeMenus.length = 0;
 
@@ -1057,14 +1112,26 @@ export const completion = (async () => {
             bubbles: true,
             cancelable: true,
             clientX: 72,
-            clientY: 80
+            clientY: 80,
+            screenX: 172,
+            screenY: 180
           })
         );
         await flushEffects();
       });
 
-      assert.deepEqual(customMenus, [{ mode: "custom", scope: "panel" }]);
-      assert.equal(nativeMenus.length, 0);
+      assert.deepEqual(nativeMenus, [
+        {
+          target: "background",
+          paths: [],
+          directoryPath: "D:\\",
+          clientX: 72,
+          clientY: 80,
+          screenX: 172,
+          screenY: 180
+        }
+      ]);
+      assert.deepEqual(customMenus, []);
     });
 
     await assertTest("FileListingShell keeps multi-selection when right-clicking an already selected entry and opens the native menu", async () => {
@@ -1098,7 +1165,9 @@ export const completion = (async () => {
       assert.equal(selectedEntries.length, 0);
       assert.deepEqual(nativeMenus, [
         {
+          target: "selection",
           paths: ["D:\\report.txt"],
+          directoryPath: undefined,
           clientX: 24,
           clientY: 36,
           screenX: 320,
@@ -1139,7 +1208,9 @@ export const completion = (async () => {
       assert.deepEqual(selectedEntries, [{ entryId: "folder-target", multi: false }]);
       assert.deepEqual(nativeMenus, [
         {
+          target: "selection",
           paths: ["D:\\Archive"],
+          directoryPath: undefined,
           clientX: 20,
           clientY: 28,
           screenX: 420,
@@ -1147,6 +1218,81 @@ export const completion = (async () => {
         }
       ]);
       assert.equal(customMenus.length, 0);
+    });
+
+    await assertTest("FileListingShell opens the app selection menu when the context-menu shortcut right-clicks an entry", async () => {
+      customMenus.length = 0;
+      nativeMenus.length = 0;
+      selectedEntries.length = 0;
+
+      await act(async () => {
+        render("details");
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const selectedRow = rows[1];
+      assert.ok(selectedRow);
+
+      await act(async () => {
+        selectedRow.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            shiftKey: true,
+            clientX: 24,
+            clientY: 36,
+            screenX: 320,
+            screenY: 540
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.equal(selectedEntries.length, 0);
+      assert.deepEqual(customMenus, [{ mode: "custom", scope: "selection" }]);
+      assert.deepEqual(nativeMenus, []);
+    });
+
+    await assertTest("FileListingShell opens native menus with the shortcut when custom menus are the default", async () => {
+      customMenus.length = 0;
+      nativeMenus.length = 0;
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", columns, "custom", "Shift");
+        await flushEffects();
+      });
+
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(scroll);
+
+      await act(async () => {
+        scroll.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            shiftKey: true,
+            clientX: 48,
+            clientY: 64,
+            screenX: 148,
+            screenY: 164
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.deepEqual(nativeMenus, [
+        {
+          target: "background",
+          paths: [],
+          directoryPath: "D:\\",
+          clientX: 48,
+          clientY: 64,
+          screenX: 148,
+          screenY: 164
+        }
+      ]);
+      assert.deepEqual(customMenus, []);
     });
 
     await assertTest("FileListingShell renders create-folder inline edit as a focused list item and commits with Enter", async () => {

@@ -8,7 +8,8 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
   Bookmark, ColorRule, EntryTag, HotlistEntry, NavigationItem, NavigationItemUpsertRequest,
-  NavigationTargetStatus, RemoteProfile, SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme
+  ContextMenuSettings, NavigationTargetStatus, RemoteProfile, SettingsSnapshot, ShortcutBinding, TagDefinition,
+  UiLayout, UiTheme
 };
 use crate::services::windows_shell;
 
@@ -67,7 +68,13 @@ impl MetadataStore {
     Ok(())
   }
 
-  pub fn to_settings_snapshot(&self, layout: UiLayout, details_row_height: u16, theme: UiTheme) -> SettingsSnapshot {
+  pub fn to_settings_snapshot(
+    &self,
+    layout: UiLayout,
+    details_row_height: u16,
+    context_menu: ContextMenuSettings,
+    theme: UiTheme
+  ) -> SettingsSnapshot {
     SettingsSnapshot {
       bookmarks: self.bookmarks.clone(),
       hotlist: self.hotlist.clone(),
@@ -77,6 +84,7 @@ impl MetadataStore {
       color_rules: self.color_rules.clone(),
       shortcuts: self.shortcuts.clone(),
       details_row_height,
+      context_menu,
       theme,
       layout,
       remote_profiles: self
@@ -344,7 +352,7 @@ mod tests {
 
   use super::MetadataStore;
   use crate::domain::models::{
-    Bookmark, EntryTag, LocationKind, NavigationItemUpsertRequest, NavigationTargetKind,
+    Bookmark, ContextMenuSettings, EntryTag, LocationKind, NavigationItemUpsertRequest, NavigationTargetKind,
     NavigationTargetStatus, RemoteAuthKind, RemoteProfile, TagDefinition, UiLayout, UiTheme
   };
 
@@ -398,7 +406,12 @@ mod tests {
     store.persist().expect("failed to persist metadata");
 
     let reloaded = MetadataStore::load_from(file_path).expect("failed to reload metadata");
-    let snapshot = reloaded.to_settings_snapshot(UiLayout::fallback(), 36, UiTheme::default());
+    let snapshot = reloaded.to_settings_snapshot(
+      UiLayout::fallback(),
+      36,
+      ContextMenuSettings::default(),
+      UiTheme::default()
+    );
     assert_eq!(snapshot.bookmarks.len(), 1);
     assert_eq!(snapshot.bookmarks[0].name, "Docs");
   }
@@ -422,7 +435,12 @@ mod tests {
     .expect("failed to seed legacy metadata");
 
     let reloaded = MetadataStore::load_from(file_path).expect("failed to load legacy metadata");
-    let snapshot = reloaded.to_settings_snapshot(UiLayout::fallback(), 36, UiTheme::default());
+    let snapshot = reloaded.to_settings_snapshot(
+      UiLayout::fallback(),
+      36,
+      ContextMenuSettings::default(),
+      UiTheme::default()
+    );
 
     assert!(reloaded.navigation_items.is_empty());
     assert!(snapshot.navigation_items.is_empty());
@@ -651,7 +669,12 @@ mod tests {
       Some("SimpleFileManager.Remote.remote-1")
     );
 
-    let snapshot = store.to_settings_snapshot(UiLayout::fallback(), 36, UiTheme::default());
+    let snapshot = store.to_settings_snapshot(
+      UiLayout::fallback(),
+      36,
+      ContextMenuSettings::default(),
+      UiTheme::default()
+    );
     assert_eq!(snapshot.remote_profiles.len(), 1);
     assert_eq!(snapshot.remote_profiles[0].credential_target, None);
   }

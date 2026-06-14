@@ -29,7 +29,12 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
     drives,
     initial_path,
     initial_listing,
-    settings: metadata.to_settings_snapshot(settings.layout, settings.details_row_height, settings.theme)
+    settings: metadata.to_settings_snapshot(
+      settings.layout,
+      settings.details_row_height,
+      settings.context_menu,
+      settings.theme
+    )
   })
 }
 
@@ -118,6 +123,18 @@ pub fn resolve_system_icon(
 #[tauri::command]
 pub async fn show_native_context_menu(paths: Vec<String>, x: i32, y: i32, window: Window) -> Result<bool, String> {
   windows_shell::show_native_context_menu(paths, x, y, &window)
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn show_native_background_context_menu(
+  directory_path: String,
+  x: i32,
+  y: i32,
+  window: Window
+) -> Result<bool, String> {
+  windows_shell::show_native_background_context_menu(directory_path, x, y, &window)
     .await
     .map_err(|error| error.to_string())
 }

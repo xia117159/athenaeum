@@ -36,7 +36,12 @@ fn emit_current_settings_changed(app: &AppHandle, state: State<'_, Arc<AppState>
 pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<SettingsSnapshot, String> {
   let metadata = state.metadata.read().expect("metadata lock poisoned").clone();
   let settings = state.settings.read().expect("settings lock poisoned").clone();
-  Ok(metadata.to_settings_snapshot(settings.layout, settings.details_row_height, settings.theme))
+  Ok(metadata.to_settings_snapshot(
+    settings.layout,
+    settings.details_row_height,
+    settings.context_menu,
+    settings.theme
+  ))
 }
 
 #[tauri::command]
@@ -239,6 +244,7 @@ pub fn save_settings_model(
   {
     let mut settings = state.settings.write().expect("settings lock poisoned");
     settings.set_details_row_height(model.details_row_height);
+    settings.set_context_menu(model.context_menu);
     settings.set_theme(model.theme);
   }
   persist_state(state.inner())?;

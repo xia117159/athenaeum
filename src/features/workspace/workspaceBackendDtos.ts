@@ -12,8 +12,10 @@ import type {
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
   DEFAULT_DETAILS_ROW_HEIGHT,
+  DEFAULT_CONTEXT_MENU_SETTINGS,
   DEFAULT_LAYOUT_RATIOS,
   DEFAULT_THEME,
+  normalizeContextMenuDefault,
   normalizeTabMinWidth,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
@@ -68,6 +70,9 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
     shortcuts: model.shortcuts.map(toBackendShortcut),
     colorRules: model.colorRules.map(toBackendColorRule),
     detailsRowHeight: model.detailsRowHeight,
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(model.contextMenu?.defaultMenu)
+    },
     theme: toBackendTheme(model.theme)
   };
 }
@@ -124,6 +129,7 @@ export function createBrowserSettingsSnapshot(
     colorRules: [],
     shortcuts: [],
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
+    contextMenu: DEFAULT_CONTEXT_MENU_SETTINGS,
     theme: toBackendTheme(DEFAULT_THEME),
     layout: toBackendLayout("dual", DEFAULT_LAYOUT_RATIOS),
     remoteProfiles: [],

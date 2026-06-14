@@ -148,6 +148,7 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
         shortcuts: model.shortcuts.map(toBackendShortcut),
         colorRules: model.colorRules.map(toBackendColorRule),
         detailsRowHeight: normalizeDetailsRowHeight(model.detailsRowHeight),
+        contextMenu: model.contextMenu,
         theme: toBackendTheme(model.theme)
       }),
     runtime.invoke,

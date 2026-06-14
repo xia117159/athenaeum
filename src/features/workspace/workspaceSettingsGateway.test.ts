@@ -224,6 +224,9 @@ export const workspaceSettingsGatewayTests = (async () => {
       tagRules: [],
       columns: [],
       detailsRowHeight: 44,
+      contextMenu: {
+        defaultMenu: "custom"
+      },
       theme: {
         panelFocusAccent: "#c02f7a",
         tabMinWidth: 4096
@@ -250,6 +253,9 @@ export const workspaceSettingsGatewayTests = (async () => {
               }
             ],
             detailsRowHeight: 44,
+            contextMenu: {
+              defaultMenu: "custom"
+            },
             theme: {
               panelFocusAccent: "#c02f7a",
               tabMinWidth: 4096

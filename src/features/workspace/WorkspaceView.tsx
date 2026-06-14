@@ -29,7 +29,18 @@ import { useWorkspaceController } from "./useWorkspaceController";
 import { getActiveTab } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import type { ColumnDefinition, ColumnId, DirectoryNode, EntryViewModel, PanelId, PanelState, SearchResult, TabState, WorkspaceState } from "./types";
+import type {
+  ColumnDefinition,
+  ColumnId,
+  ContextMenuDefault,
+  DirectoryNode,
+  EntryViewModel,
+  PanelId,
+  PanelState,
+  SearchResult,
+  TabState,
+  WorkspaceState
+} from "./types";
 import "./workspace.css";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -651,6 +662,8 @@ function PanelLayout({
       columns={state.settings.model.columns}
       detailsRowHeight={state.settings.model.detailsRowHeight}
       entryDropMoveBinding={getShortcutBinding(state.settings.model.shortcuts, "drag-move")}
+      contextMenuDefault={state.settings.model.contextMenu.defaultMenu}
+      contextMenuToggleBinding={getShortcutBinding(state.settings.model.shortcuts, "context-menu-toggle")}
       panelFocusAccent={state.settings.model.theme.panelFocusAccent}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       navigation={state.navigation}
@@ -758,6 +771,8 @@ function PanelSurface({
   columns,
   detailsRowHeight,
   entryDropMoveBinding,
+  contextMenuDefault,
+  contextMenuToggleBinding,
   panelFocusAccent,
   tabMinWidth,
   navigation,
@@ -769,6 +784,8 @@ function PanelSurface({
   columns: ColumnDefinition[];
   detailsRowHeight: number;
   entryDropMoveBinding: string;
+  contextMenuDefault: ContextMenuDefault;
+  contextMenuToggleBinding: string;
   panelFocusAccent: string;
   tabMinWidth: number;
   navigation: WorkspaceState["navigation"];
@@ -893,6 +910,8 @@ function PanelSurface({
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
             onDropEntries={(paths, destination, operation) => actions.dropEntries(paths, destination, operation)}
             entryDropMoveBinding={entryDropMoveBinding}
+            contextMenuDefault={contextMenuDefault}
+            contextMenuToggleBinding={contextMenuToggleBinding}
             onInlineEditChange={(value) => actions.updateInlineEdit(panel.id, activeTab.id, value)}
             onInlineEditCommit={(value) => actions.commitInlineEdit(panel.id, activeTab.id, value)}
             onInlineEditCancel={() => actions.cancelInlineEdit(panel.id, activeTab.id)}

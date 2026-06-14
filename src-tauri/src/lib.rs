@@ -24,7 +24,7 @@ use commands::{
   },
   workspace::{
     get_item_properties, get_tree_children, initialize_workspace, list_directory, open_path_with_system_default,
-    resolve_navigation_targets, resolve_system_icon, show_native_context_menu
+    resolve_navigation_targets, resolve_system_icon, show_native_background_context_menu, show_native_context_menu
   }
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
@@ -98,6 +98,7 @@ pub fn run() {
       transfer_remote_entries,
       resolve_navigation_targets,
       open_path_with_system_default,
+      show_native_background_context_menu,
       show_native_context_menu
     ])
     .run(tauri::generate_context!())

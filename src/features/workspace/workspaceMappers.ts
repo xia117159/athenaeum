@@ -83,6 +83,13 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     description: "拖放文件或文件夹时执行移动而不是复制。"
   },
   {
+    id: "context-menu-toggle",
+    action: "右键菜单切换",
+    scope: "context-menu",
+    binding: "Shift",
+    description: "右键时临时切换 Windows 系统菜单与软件自定义菜单。"
+  },
+  {
     id: "create-folder",
     action: "新建文件夹",
     scope: "listing",
@@ -145,6 +152,9 @@ export const DEFAULT_THEME: SettingsModel["theme"] = {
   panelFocusAccent: "#0f6cbd",
   tabMinWidth: 96
 };
+export const DEFAULT_CONTEXT_MENU_SETTINGS: SettingsModel["contextMenu"] = {
+  defaultMenu: "native"
+};
 export const DEFAULT_LAYOUT_RATIOS: LayoutRatios = {
   primary: 0.52,
   tripleSecondary: 0.54,
@@ -188,6 +198,10 @@ export function normalizeThemeAccentColor(value?: string | null) {
   }
 
   return value.trim().toLowerCase();
+}
+
+export function normalizeContextMenuDefault(value?: string | null): SettingsModel["contextMenu"]["defaultMenu"] {
+  return value === "custom" ? "custom" : "native";
 }
 
 export function labelFromPath(path: string) {
@@ -361,6 +375,8 @@ function localizeShortcutAction(action: string) {
     "navigate-forward": "回到下一级",
     "Drag move": "拖放时移动",
     "drag-move": "拖放时移动",
+    "Context menu toggle": "右键菜单切换",
+    "context-menu-toggle": "右键菜单切换",
     "create-folder": "新建文件夹"
   };
   return dictionary[action] ?? action;
@@ -394,6 +410,8 @@ function localizeShortcutDescription(action: string) {
     "navigate-forward": "回到历史中的下一级文件夹。",
     "Drag move": "拖放文件或文件夹时执行移动而不是复制。",
     "drag-move": "拖放文件或文件夹时执行移动而不是复制。",
+    "Context menu toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
+    "context-menu-toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
     "create-folder": "在当前目录中新建文件夹。"
   };
   return dictionary[action] ?? action;
@@ -588,7 +606,10 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
         id: shortcut.id,
         action: localizeShortcutAction(shortcut.action),
         scope:
-          shortcut.scope === "listing" || shortcut.scope === "panel" || shortcut.scope === "workspace"
+          shortcut.scope === "listing" ||
+          shortcut.scope === "panel" ||
+          shortcut.scope === "workspace" ||
+          shortcut.scope === "context-menu"
             ? shortcut.scope
             : "workspace",
         binding: shortcut.accelerator,
@@ -611,6 +632,9 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     })),
     columns: cloneColumns(),
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(settings.contextMenu?.defaultMenu)
+    },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settings.theme?.panelFocusAccent),
       tabMinWidth: normalizeTabMinWidth(settings.theme?.tabMinWidth)
@@ -635,6 +659,9 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     tagRules: settingsModel.tagRules,
     columns: settingsModel.columns.length > 0 ? cloneColumns(settingsModel.columns) : cloneColumns(),
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(settingsModel.contextMenu?.defaultMenu)
+    },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settingsModel.theme?.panelFocusAccent),
       tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)

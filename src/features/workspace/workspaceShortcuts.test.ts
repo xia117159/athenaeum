@@ -50,6 +50,7 @@ assertTest("getShortcutBinding returns user bindings and falls back to drag move
 
   assert.equal(getShortcutBinding(shortcuts, "drag-move"), "Alt");
   assert.equal(getShortcutBinding([], "drag-move"), "Shift");
+  assert.equal(getShortcutBinding([], "context-menu-toggle"), "Shift");
   assert.equal(getShortcutBinding([], "undo"), "Ctrl+Z");
   assert.equal(getShortcutBinding([], "navigate-up"), "Alt+Up");
   assert.equal(getShortcutBinding([], "navigate-forward"), "Alt+Right");

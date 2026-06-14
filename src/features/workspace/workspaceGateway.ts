@@ -17,6 +17,7 @@ import {
 import {
   hasTauriRuntime,
   invokeWithBrowserFallback,
+  showNativeBackgroundContextMenu as openNativeBackgroundContextMenu,
   showNativeContextMenu as openNativeContextMenu
 } from "./workspaceIpc";
 import {
@@ -177,6 +178,7 @@ export interface WorkspaceGateway {
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
   showNativeContextMenu(paths: string[], x: number, y: number): Promise<boolean>;
+  showNativeBackgroundContextMenu(directoryPath: string, x: number, y: number): Promise<boolean>;
 }
 
 export {
@@ -419,6 +421,10 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
     async showNativeContextMenu(paths, x, y) {
       return openNativeContextMenu(paths, x, y);
+    },
+
+    async showNativeBackgroundContextMenu(directoryPath, x, y) {
+      return openNativeBackgroundContextMenu(directoryPath, x, y);
     }
   };
 }

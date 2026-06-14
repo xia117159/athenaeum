@@ -14,7 +14,12 @@ use crate::{
 fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
   let metadata = state.metadata.read().expect("metadata lock poisoned").clone();
   let settings = state.settings.read().expect("settings lock poisoned").clone();
-  let snapshot = metadata.to_settings_snapshot(settings.layout, settings.details_row_height, settings.theme);
+  let snapshot = metadata.to_settings_snapshot(
+    settings.layout,
+    settings.details_row_height,
+    settings.context_menu,
+    settings.theme
+  );
   let _ = app.emit("settings_changed", snapshot);
 }
 

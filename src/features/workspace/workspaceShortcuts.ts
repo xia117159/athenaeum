@@ -25,7 +25,8 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["refresh", "F5"],
   ["navigate-up", "Alt+Up"],
   ["navigate-forward", "Alt+Right"],
-  ["drag-move", "Shift"]
+  ["drag-move", "Shift"],
+  ["context-menu-toggle", "Shift"]
 ]);
 
 export const DEFAULT_SHORTCUT_BINDINGS = new Map(

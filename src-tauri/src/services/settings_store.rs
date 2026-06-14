@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 
-use crate::domain::models::{ShortcutBinding, UiLayout, UiTheme};
+use crate::domain::models::{ContextMenuSettings, ShortcutBinding, UiLayout, UiTheme};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +14,8 @@ pub struct SettingsStore {
   pub layout: UiLayout,
   #[serde(default = "default_details_row_height")]
   pub details_row_height: u16,
+  #[serde(default)]
+  pub context_menu: ContextMenuSettings,
   #[serde(default)]
   pub theme: UiTheme,
   #[serde(skip)]
@@ -25,6 +27,7 @@ impl Default for SettingsStore {
     Self {
       layout: UiLayout::fallback(),
       details_row_height: default_details_row_height(),
+      context_menu: ContextMenuSettings::default(),
       theme: UiTheme::default(),
       file_path: None
     }
@@ -48,6 +51,7 @@ impl SettingsStore {
     let mut store: Self = serde_json::from_str(&content).context("failed to parse settings store")?;
     store.layout = normalize_layout(store.layout);
     store.details_row_height = normalize_details_row_height(store.details_row_height);
+    store.context_menu = normalize_context_menu(store.context_menu);
     store.theme = normalize_theme(store.theme);
     store.file_path = Some(file_path);
     Ok(store)
@@ -79,6 +83,10 @@ impl SettingsStore {
 
   pub fn set_details_row_height(&mut self, details_row_height: u16) {
     self.details_row_height = normalize_details_row_height(details_row_height);
+  }
+
+  pub fn set_context_menu(&mut self, context_menu: ContextMenuSettings) {
+    self.context_menu = normalize_context_menu(context_menu);
   }
 
   pub fn set_theme(&mut self, theme: UiTheme) {
@@ -131,6 +139,10 @@ fn normalize_details_row_height(details_row_height: u16) -> u16 {
   details_row_height.clamp(24, 72)
 }
 
+fn normalize_context_menu(context_menu: ContextMenuSettings) -> ContextMenuSettings {
+  context_menu
+}
+
 fn normalize_tab_min_width(tab_min_width: u32) -> u32 {
   tab_min_width.max(1)
 }
@@ -162,7 +174,7 @@ mod tests {
   use std::{env, fs, path::PathBuf};
 
   use super::{validate_shortcuts, SettingsStore};
-  use crate::domain::models::{PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme};
+  use crate::domain::models::{ContextMenuDefaultMenu, ContextMenuSettings, PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme};
 
   struct TestDir {
     path: PathBuf
@@ -234,6 +246,21 @@ mod tests {
 
     let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
     assert_eq!(reloaded.details_row_height, 68);
+  }
+
+  #[test]
+  fn persist_round_trip_preserves_context_menu_default() {
+    let temp = TestDir::new("context-menu");
+    let file_path = temp.path.join("layout.toml");
+    let mut store = SettingsStore::load_default();
+    store.attach_path(file_path.clone());
+    store.set_context_menu(ContextMenuSettings {
+      default_menu: ContextMenuDefaultMenu::Custom
+    });
+    store.persist().expect("failed to persist settings");
+
+    let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
+    assert_eq!(reloaded.context_menu.default_menu, ContextMenuDefaultMenu::Custom);
   }
 
   #[test]

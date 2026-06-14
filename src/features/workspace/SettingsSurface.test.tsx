@@ -74,6 +74,7 @@ function createProps(state: WorkspaceState) {
     onUpdatePanelFocusAccent: () => undefined,
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
+    onUpdateContextMenuDefault: () => undefined,
     onSaveRemoteProfile: (_profile: RemoteConnectionProfile, _password?: string) => undefined,
     onDeleteRemoteProfile: () => undefined,
     onTestRemoteProfile: (_profile: RemoteConnectionProfile, _password?: string) => undefined,
@@ -216,6 +217,31 @@ export const completion = (async () => {
       assert.equal(confirmButton?.disabled, true);
       assert.equal(cancelButton?.disabled, false);
       assert.equal(tabMinWidthInput?.disabled, true);
+    });
+
+    await assertTest("SettingsSurface exposes the default context menu setting under rules and columns", async () => {
+      const updates: string[] = [];
+      const state = createSettingsState("rules");
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(state),
+            onUpdateContextMenuDefault: (value: "native" | "custom") => updates.push(value)
+          })
+        );
+        await flushEffects();
+      });
+
+      const toggle = container.querySelector<HTMLInputElement>('input[data-setting-id="default-context-menu-custom"]');
+      assert.ok(toggle);
+      assert.equal(toggle.checked, false);
+
+      await act(async () => {
+        toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(updates, ["custom"]);
     });
 
     await assertTest("SettingsSurface renders non-persisted tag and column settings as read-only text", async () => {

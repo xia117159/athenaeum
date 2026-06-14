@@ -5,6 +5,7 @@ import {
   hasTauriRuntime,
   invokeRequired,
   invokeWithBrowserFallback,
+  showNativeBackgroundContextMenu,
   showNativeContextMenu
 } from "./workspaceIpc";
 
@@ -99,6 +100,7 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "copy_remote_entries",
     "move_remote_entries",
     "transfer_remote_entries",
+    "show_native_background_context_menu",
     "show_native_context_menu"
   ];
 
@@ -227,5 +229,33 @@ export const workspaceIpcTests = (async () => {
       ),
       false
     );
+  });
+
+  await assertAsyncTest("showNativeBackgroundContextMenu invokes the background native menu command", async () => {
+    let invokedArgs: Record<string, unknown> | null = null;
+
+    assert.equal(
+      await showNativeBackgroundContextMenu("D:\\Projects", 10.4, 20.6, async <T>() => undefined as T, undefined),
+      false
+    );
+
+    assert.equal(
+      await showNativeBackgroundContextMenu(
+        "D:\\Projects",
+        10.4,
+        20.6,
+        async <T>(_command: string, args: Record<string, unknown>) => {
+          invokedArgs = args;
+          return true as T;
+        },
+        runtimeWindow
+      ),
+      true
+    );
+    assert.deepEqual(invokedArgs, {
+      directoryPath: "D:\\Projects",
+      x: 10,
+      y: 21
+    });
   });
 })();

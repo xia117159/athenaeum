@@ -50,6 +50,7 @@ function createTestGateway(
     savedDetailsRowHeights: number[];
     savedSettingsModels?: SettingsModel[];
     nativeContextMenus: Array<{ paths: string[]; x: number; y: number }>;
+    nativeBackgroundContextMenus?: Array<{ directoryPath: string; x: number; y: number }>;
     navigationSaves?: Array<{ displayName?: string; description: string; path: string; id?: string }>;
     navigationDeletes?: string[];
     navigationReorders?: string[][];
@@ -269,6 +270,10 @@ function createTestGateway(
       interactions.nativeContextMenus.push({ paths: [...paths], x, y });
       return true;
     },
+    async showNativeBackgroundContextMenu(directoryPath: string, x: number, y: number) {
+      interactions.nativeBackgroundContextMenus?.push({ directoryPath, x, y });
+      return true;
+    },
     async saveNavigationItem(request) {
       interactions.navigationSaves?.push({ ...request });
       const item = {
@@ -427,6 +432,7 @@ export const completion = (async () => {
     createFileCalls: [] as Array<{ parent: string; name: string }>,
     treeLoadPaths: [] as string[],
     savedDetailsRowHeights: [] as number[],
+    savedSettingsModels: [] as SettingsModel[],
     nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
     systemOpens: [] as string[],
     propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
@@ -2654,6 +2660,86 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController falls back to the app panel menu when native background menu does not open", async () => {
+      const fallbackInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>
+      };
+      let fallbackController: ReturnType<typeof useWorkspaceController> | undefined;
+      const fallbackGateway = createTestGateway(() => undefined, fallbackInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
+      });
+      fallbackGateway.showNativeBackgroundContextMenu = async (directoryPath: string, x: number, y: number) => {
+        fallbackInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        return false;
+      };
+
+      function FallbackHarness() {
+        fallbackController = useWorkspaceController(fallbackGateway);
+        return React.createElement("div", null, fallbackController.state.status);
+      }
+
+      const fallbackContainer = document.createElement("div");
+      document.body.appendChild(fallbackContainer);
+      const fallbackRoot = ReactDOM.createRoot(fallbackContainer);
+
+      try {
+        await act(async () => {
+          fallbackRoot.render(React.createElement(FallbackHarness));
+          await flushEffects();
+        });
+        await waitFor(() => fallbackController?.state.status === "ready", "fallback controller did not bootstrap");
+
+        await act(async () => {
+          fallbackController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(() => fallbackController?.state.contextMenu?.mode === "system-fallback", "fallback app menu did not open");
+        assert.deepEqual(fallbackInteractions.nativeBackgroundContextMenus, [
+          {
+            directoryPath: "D:\\Projects\\Atlas",
+            x: 1120,
+            y: 740
+          }
+        ]);
+        assert.deepEqual(fallbackInteractions.nativeContextMenus, []);
+        assert.deepEqual(fallbackController?.state.contextMenu, {
+          x: 760,
+          y: 540,
+          panelId: "panel-1",
+          tabId: "panel-1-tab-1",
+          mode: "system-fallback",
+          scope: "panel"
+        });
+      } finally {
+        await act(async () => {
+          fallbackRoot.unmount();
+          await flushEffects();
+        });
+        fallbackContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController hydrates expanded tree nodes after bootstrap restores an unloaded tree", async () => {
       const hydratedInteractions = {
         resolvedPaths: [] as string[],
@@ -2934,6 +3020,19 @@ export const completion = (async () => {
 
       assert.deepEqual(interactions.savedDetailsRowHeights, [50]);
       assert.equal(latestController?.state.settings.model.detailsRowHeight, 50);
+    });
+
+    await assertTest("useWorkspaceController persists default context menu changes through the workspace gateway", async () => {
+      interactions.savedSettingsModels.length = 0;
+
+      await act(async () => {
+        latestController?.actions.setContextMenuDefault("custom");
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.savedSettingsModels.length === 1, "context menu default was not persisted");
+      assert.equal(interactions.savedSettingsModels[0].contextMenu.defaultMenu, "custom");
+      assert.equal(latestController?.state.settings.model.contextMenu.defaultMenu, "custom");
     });
   } finally {
     await act(async () => {
