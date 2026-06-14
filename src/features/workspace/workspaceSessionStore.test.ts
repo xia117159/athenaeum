@@ -53,6 +53,7 @@ function createWorkspaceState(): WorkspaceState {
       tree: 0.31,
       search: 0.36
     },
+    treeVisible: false,
     panels: {
       ...bootstrap.panels,
       "panel-1": {
@@ -237,6 +238,12 @@ assertTest("toPersistedSession stores the bottom information panel state", () =>
   });
 });
 
+assertTest("toPersistedSession stores the directory tree visibility flag", () => {
+  const session = toPersistedSession(createWorkspaceState());
+
+  assert.equal(session.treeVisible, false);
+});
+
 assertTest("toPersistedSession keeps a navigation tab as a virtual session tab", () => {
   const state = createWorkspaceState();
   const navigationTab = createNavigationTab("navigation-tab");
@@ -268,6 +275,7 @@ assertTest("readPersistedSession returns null for unavailable or malformed stora
 assertTest("readPersistedSession normalizes old sessions without informationPanel", () => {
   const legacySession = toPersistedSession(createWorkspaceState());
   delete legacySession.informationPanel;
+  delete legacySession.treeVisible;
   const storage = createStorage({
     [WORKSPACE_SESSION_STORAGE_KEY]: JSON.stringify(legacySession)
   });
@@ -278,6 +286,7 @@ assertTest("readPersistedSession normalizes old sessions without informationPane
     expanded: false,
     activeTab: "properties"
   });
+  assert.equal(restored?.treeVisible, true);
 });
 
 assertTest("writePersistedSession ignores storage failures", () => {

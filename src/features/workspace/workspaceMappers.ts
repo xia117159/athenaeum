@@ -761,6 +761,7 @@ export function mapWorkspaceBootstrap(bootstrap: BackendWorkspaceBootstrap): Wor
     source: "tauri",
     layoutMode: bootstrap.settings.layout.layoutMode,
     layoutRatios: mapLayoutRatios(bootstrap.settings.layout),
+    treeVisible: bootstrap.settings.layout.showTree !== false,
     informationPanel: { ...DEFAULT_INFORMATION_PANEL },
     panels,
     activePanelId: "panel-1",

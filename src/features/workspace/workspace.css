@@ -154,6 +154,12 @@
   background: #f5f8fb;
 }
 
+.toolbar-button.is-active {
+  border-color: #8ab6e6;
+  background: #e8f2fd;
+  color: #0f5fa8;
+}
+
 .toolbar-button--ghost,
 .toolbar-button--flat {
   background: #fbfbfb;
@@ -307,6 +313,10 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+.workspace-main__content--tree-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workspace-main__right {
@@ -897,6 +907,66 @@
 .file-header-button__indicator {
   color: var(--accent);
   font-size: 10px;
+}
+
+.column-header-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 188px;
+  padding: 3px 0;
+  border: 1px solid #c8c8c8;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1f1f1f;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.column-header-menu__item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 18px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.column-header-menu__item:hover,
+.column-header-menu__item:focus-visible {
+  background: #e5f1fb;
+  outline: none;
+}
+
+.column-header-menu__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  color: #1f1f1f;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.column-header-menu__item span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-header-menu__separator {
+  height: 1px;
+  margin: 3px 0 3px 24px;
+  background: #e5e5e5;
 }
 
 .file-listing__body {

@@ -116,7 +116,7 @@ export interface WorkspaceGateway {
   cancelSearch(searchId: string): Promise<void>;
   getItemProperties(requestId: string, path: string, includeDirectorySize?: boolean): Promise<ItemProperties>;
   saveSession(state: WorkspaceState): Promise<void>;
-  saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios): Promise<void>;
+  saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios, treeVisible: boolean): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
   saveColorRules(colorRules: SettingsModel["colorRules"]): Promise<void>;
   saveDetailsRowHeight(value: number): Promise<void>;
@@ -269,8 +269,8 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       writeWorkspaceSession(state);
     },
 
-    async saveLayout(layoutMode, layoutRatios) {
-      await saveWorkspaceLayout(layoutMode, layoutRatios);
+    async saveLayout(layoutMode, layoutRatios, treeVisible) {
+      await saveWorkspaceLayout(layoutMode, layoutRatios, treeVisible);
     },
 
     async saveShortcuts(shortcuts) {

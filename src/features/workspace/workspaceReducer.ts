@@ -21,6 +21,7 @@ import type {
   SearchResult,
   SearchTabId,
   SearchTabState,
+  SelectionPathReplacement,
   SettingsSection,
   SettingsModel,
   TabState,
@@ -46,6 +47,7 @@ export type WorkspaceAction =
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
+  | { type: "treeVisibilitySet"; payload: boolean }
   | { type: "panelFocused"; payload: { panelId: PanelId } }
   | { type: "focusNextPanel" }
   | { type: "tabOpened"; payload: { panelId: PanelId; tab: TabState } }
@@ -66,6 +68,7 @@ export type WorkspaceAction =
         activatePanel?: boolean;
         historyIndex?: number;
         history?: string[];
+        selectionReplacements?: SelectionPathReplacement[];
       };
     }
   | { type: "addressDraftChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
@@ -134,6 +137,8 @@ export type WorkspaceAction =
   | { type: "colorRuleUpdated"; payload: { id: string; color: string } }
   | { type: "tagRuleUpdated"; payload: { id: string; quickFilter: string } }
   | { type: "columnVisibilityToggled"; payload: { id: string } }
+  | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
+  | { type: "columnsShown"; payload: { panelId?: PanelId; tabId?: string; ids?: ColumnId[] } }
   | { type: "columnWidthSet"; payload: { panelId: PanelId; tabId: string; id: ColumnId; width: string } }
   | { type: "detailsRowHeightSet"; payload: { value: number } }
   | { type: "themePanelFocusAccentSet"; payload: { color: string } }
@@ -298,6 +303,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     source: bootstrap.source,
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
+    treeVisible: bootstrap.treeVisible,
     panels: normalizedPanels,
     activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
     directoryTree: bootstrap.directoryTree,
@@ -801,6 +807,63 @@ function setColumnWidth(columns: ColumnDefinition[], columnId: ColumnId, width: 
   return changed ? nextColumns : columns;
 }
 
+function setColumnVisibility(columns: ColumnDefinition[], columnIds: ColumnId[], visible: boolean) {
+  const targetIds = new Set(columnIds);
+  let changed = false;
+  const nextColumns = columns.map((column) => {
+    if (!targetIds.has(column.id) || column.visible === visible) {
+      return column;
+    }
+    changed = true;
+    return {
+      ...column,
+      visible
+    };
+  });
+  return changed ? nextColumns : columns;
+}
+
+function getEntryPathKey(path: string) {
+  const normalized = normalizeLocationPath(path);
+  return normalized.startsWith("ftp://") || normalized.startsWith("sftp://") ? normalized : normalized.toLowerCase();
+}
+
+function preserveSelectedEntryIds(
+  tab: TabState,
+  snapshot: DirectorySnapshot,
+  replacements: SelectionPathReplacement[] = []
+) {
+  if (tab.selectedEntryIds.length === 0) {
+    return [];
+  }
+
+  const nextEntryIds = new Set(snapshot.entries.map((entry) => entry.id));
+  const nextEntryIdByPath = new Map(snapshot.entries.map((entry) => [getEntryPathKey(entry.path), entry.id]));
+  const previousEntryById = new Map(tab.snapshot.entries.map((entry) => [entry.id, entry]));
+  const replacementByPath = new Map(
+    replacements.map((replacement) => [getEntryPathKey(replacement.fromPath), replacement.toPath] as const)
+  );
+  const preservedIds: string[] = [];
+
+  for (const selectedId of tab.selectedEntryIds) {
+    let nextId: string | undefined;
+    if (nextEntryIds.has(selectedId)) {
+      nextId = selectedId;
+    } else {
+      const previousEntry = previousEntryById.get(selectedId);
+      const previousPath = previousEntry?.path ?? selectedId;
+      const replacementPath = replacementByPath.get(getEntryPathKey(previousPath));
+      nextId = nextEntryIdByPath.get(getEntryPathKey(replacementPath ?? previousPath));
+    }
+
+    if (nextId && !preservedIds.includes(nextId)) {
+      preservedIds.push(nextId);
+    }
+  }
+
+  return preservedIds;
+}
+
 function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
   const normalizedPath = normalizeLocationPath(path);
   if (expanded) {
@@ -1009,6 +1072,30 @@ function updateSettingsModel<T extends keyof WorkspaceState["settings"]["model"]
   };
 }
 
+function updateColumnsForSettingsAndTab(
+  state: WorkspaceState,
+  panelId: PanelId | undefined,
+  tabId: string | undefined,
+  updater: (columns: ColumnDefinition[]) => ColumnDefinition[]
+) {
+  const withSettings = updateSettingsModel(state, "columns", updater);
+  if (!panelId || !tabId) {
+    return withSettings;
+  }
+
+  return updatePanel(withSettings, panelId, (panel) =>
+    updateTab(panel, tabId, (tab) => {
+      const nextColumns = updater(tab.columns);
+      return nextColumns === tab.columns
+        ? tab
+        : {
+            ...tab,
+            columns: nextColumns
+          };
+    })
+  );
+}
+
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "bootstrapLoaded":
@@ -1035,6 +1122,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           [action.payload.key]: clampRatio(action.payload.key, action.payload.value)
         }
       };
+
+    case "treeVisibilitySet":
+      return state.treeVisible === action.payload
+        ? state
+        : {
+            ...state,
+            treeVisible: action.payload
+          };
 
     case "panelFocused":
       if (!getVisiblePanelIds(state.layoutMode).includes(action.payload.panelId)) {
@@ -1344,7 +1439,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,
               historyIndex: nextHistoryIndex,
-              selectedEntryIds: [],
+              selectedEntryIds: pathChanged
+                ? []
+                : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
               inlineEdit: undefined,
@@ -2101,6 +2198,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           column.id === action.payload.id ? { ...column, visible: !column.visible } : column
         )
       );
+
+    case "columnVisibilitySet":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) =>
+        setColumnVisibility(columns, [action.payload.id], action.payload.visible)
+      );
+
+    case "columnsShown":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) => {
+        const columnIds = action.payload.ids ?? columns.map((column) => column.id);
+        return setColumnVisibility(columns, columnIds, true);
+      });
 
     case "columnWidthSet":
       return updatePanel(state, action.payload.panelId, (panel) =>

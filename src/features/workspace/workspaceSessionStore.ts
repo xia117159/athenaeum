@@ -47,6 +47,7 @@ export type PersistedInformationPanel = {
 export type PersistedWorkspaceSession = {
   layoutMode: PanelLayoutMode;
   layoutRatios: PersistedLayoutRatios;
+  treeVisible?: boolean;
   informationPanel?: PersistedInformationPanel;
   activePanelId: PanelId;
   panels: Record<PanelId, PersistedPanel>;
@@ -80,6 +81,7 @@ export function readPersistedSession(storage: WorkspaceStorage | null | undefine
     const parsed = JSON.parse(raw) as PersistedWorkspaceSession;
     return {
       ...parsed,
+      treeVisible: parsed.treeVisible !== false,
       informationPanel: normalizePersistedInformationPanel(parsed.informationPanel)
     };
   } catch {
@@ -191,6 +193,7 @@ export function toPersistedSession(state: WorkspaceState): PersistedWorkspaceSes
   return {
     layoutMode: state.layoutMode,
     layoutRatios: state.layoutRatios,
+    treeVisible: state.treeVisible,
     informationPanel: {
       expanded: state.informationPanel.expanded,
       activeTab: state.informationPanel.activeTab

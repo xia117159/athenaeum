@@ -36,6 +36,7 @@ type DropOperation = "copy" | "move";
 const ICON_VIEW_MODES: TabViewMode[] = ["extra-large-icons", "large-icons", "medium-icons", "small-icons"];
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
+const DETAILS_HEADER_MENU_COLUMN_IDS: ColumnId[] = ["name", "type", "size", "modified", "tags"];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -121,6 +122,25 @@ function getEntryTypeLabel(entry: EntryViewModel) {
 
 function getLocationLabel(entry: EntryViewModel, currentPath: string) {
   return entry.parentPath === currentPath ? "当前目录" : entry.parentPath;
+}
+
+function getColumnMenuLabel(columnId: ColumnId) {
+  switch (columnId) {
+    case "name":
+      return "名称";
+    case "type":
+      return "类型";
+    case "size":
+      return "大小";
+    case "modified":
+      return "修改时间";
+    case "tags":
+      return "标签";
+    case "location":
+      return "位置";
+    default:
+      return columnId;
+  }
 }
 
 function parseSizeLabel(sizeLabel: string) {
@@ -368,6 +388,43 @@ function renderDetailsCell(
   }
 }
 
+function getDetailsCellText(entry: EntryViewModel, columnId: ColumnId, currentPath: string) {
+  switch (columnId) {
+    case "name":
+      return entry.name;
+    case "type":
+      return getEntryTypeLabel(entry);
+    case "size":
+      return entry.sizeLabel;
+    case "modified":
+      return entry.modifiedLabel;
+    case "tags":
+      return entry.tags.length > 0 ? entry.tags.join(", ") : "--";
+    case "location":
+      return getLocationLabel(entry, currentPath);
+    default:
+      return "";
+  }
+}
+
+function getTextMeasureUnits(value: string) {
+  return Array.from(value).reduce((sum, char) => {
+    const codePoint = char.codePointAt(0) ?? 0;
+    return sum + (codePoint >= 0x2e80 ? 2 : 1);
+  }, 0);
+}
+
+function estimateAutoFitColumnWidth(column: ColumnDefinition, entries: EntryViewModel[], currentPath: string) {
+  const label = getColumnMenuLabel(column.id);
+  const maxUnits = [label, ...entries.map((entry) => getDetailsCellText(entry, column.id, currentPath))]
+    .map(getTextMeasureUnits)
+    .reduce((max, units) => Math.max(max, units), 0);
+  const iconAllowance = column.id === "name" ? 34 : 0;
+  const minWidth = column.id === "name" ? 160 : column.id === "modified" ? 132 : 80;
+  const width = Math.min(520, Math.max(minWidth, Math.ceil(maxUnits * 7 + 28 + iconAllowance)));
+  return `${width}px`;
+}
+
 export function FileListingShell({
   panelId,
   tabId,
@@ -389,6 +446,8 @@ export function FileListingShell({
   onOpenContextMenu,
   onOpenNativeContextMenu,
   onResizeColumn,
+  onSetColumnVisibility,
+  onShowAllColumns,
   onDropEntries,
   entryDropMoveBinding = "Shift",
   onInlineEditChange,
@@ -415,6 +474,8 @@ export function FileListingShell({
   onOpenContextMenu: (payload: ContextMenuState) => void;
   onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => void;
   onResizeColumn: (columnId: ColumnId, width: string) => void;
+  onSetColumnVisibility?: (columnId: ColumnId, visible: boolean) => void;
+  onShowAllColumns?: (columnIds: ColumnId[]) => void;
   onDropEntries: (paths: string[], destination: string, operation: DropOperation) => void;
   entryDropMoveBinding?: string;
   onInlineEditChange: (value: string) => void;
@@ -464,6 +525,8 @@ export function FileListingShell({
   });
   const lastClickedEntryIdRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement | null>(null);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     suppressNextInlineBlurRef.current = false;
@@ -475,6 +538,31 @@ export function FileListingShell({
     input.focus();
     input.select();
   }, [inlineEdit?.mode, inlineEdit?.entryId]);
+
+  useEffect(() => {
+    if (!columnMenuPosition) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && columnMenuRef.current?.contains(event.target)) {
+        return;
+      }
+      setColumnMenuPosition(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setColumnMenuPosition(null);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [columnMenuPosition]);
 
   useEffect(
     () => () => {
@@ -1302,6 +1390,29 @@ export function FileListingShell({
     window.addEventListener("mouseup", handleStop);
   };
 
+  const menuColumns = DETAILS_HEADER_MENU_COLUMN_IDS.map((columnId) => columns.find((column) => column.id === columnId))
+    .filter((column): column is ColumnDefinition => Boolean(column));
+
+  const openColumnHeaderMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    if (viewMode !== "details") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setColumnMenuPosition({ x: event.clientX, y: event.clientY });
+  };
+
+  const selectColumnMenuItem = (callback: () => void) => {
+    callback();
+    setColumnMenuPosition(null);
+  };
+
+  const autoFitVisibleColumns = () => {
+    visibleColumns.forEach((column) => {
+      onResizeColumn(column.id, estimateAutoFitColumnWidth(column, entries, currentPath));
+    });
+  };
+
   return (
     <div
       className={`file-listing file-listing--${viewMode}`}
@@ -1310,9 +1421,9 @@ export function FileListingShell({
       onContextMenu={handleBlankContextMenu}
     >
       {viewMode === "details" ? (
-        <div className="file-listing__header" style={gridStyle}>
+        <div className="file-listing__header" style={gridStyle} onContextMenu={openColumnHeaderMenu}>
           {visibleColumns.map((column) => (
-            <div key={column.id} className={`file-header-cell file-cell--${column.align}`}>
+            <div key={column.id} className={`file-header-cell file-cell--${column.align}`} onContextMenu={openColumnHeaderMenu}>
               <button
                 type="button"
                 className={`file-header-button file-cell file-cell--header file-cell--${column.align}`}
@@ -1330,6 +1441,61 @@ export function FileListingShell({
               />
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {columnMenuPosition && viewMode === "details" ? (
+        <div
+          ref={columnMenuRef}
+          className="column-header-menu"
+          role="menu"
+          style={{
+            left: columnMenuPosition.x,
+            top: columnMenuPosition.y
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          {menuColumns.map((column) => (
+            <button
+              key={column.id}
+              type="button"
+              className="column-header-menu__item"
+              role="menuitemcheckbox"
+              aria-checked={column.visible}
+              onClick={() =>
+                selectColumnMenuItem(() => {
+                  onSetColumnVisibility?.(column.id, !column.visible);
+                })
+              }
+            >
+              <span className="column-header-menu__check" aria-hidden="true">
+                {column.visible ? "✓" : ""}
+              </span>
+              <span>{getColumnMenuLabel(column.id)}</span>
+            </button>
+          ))}
+          <div className="column-header-menu__separator" role="separator" />
+          <button
+            type="button"
+            className="column-header-menu__item"
+            role="menuitem"
+            onClick={() => selectColumnMenuItem(() => onShowAllColumns?.(menuColumns.map((column) => column.id)))}
+          >
+            <span className="column-header-menu__check" aria-hidden="true" />
+            <span>显示所有列</span>
+          </button>
+          <button
+            type="button"
+            className="column-header-menu__item"
+            role="menuitem"
+            onClick={() => selectColumnMenuItem(autoFitVisibleColumns)}
+          >
+            <span className="column-header-menu__check" aria-hidden="true" />
+            <span>立即自动调整列宽</span>
+          </button>
         </div>
       ) : null}
 

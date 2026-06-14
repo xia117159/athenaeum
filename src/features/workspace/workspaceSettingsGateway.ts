@@ -67,12 +67,13 @@ function createRuntimeId(prefix: string, runtime: WorkspaceSettingsRuntime) {
 export async function saveWorkspaceLayout(
   layoutMode: PanelLayoutMode,
   layoutRatios: LayoutRatios,
+  treeVisible = true,
   runtime: WorkspaceSettingsRuntime = {}
 ) {
   await invokeWithBrowserFallback<BackendSettingsSnapshot>(
     "save_ui_layout",
     {
-      layout: toBackendLayout(layoutMode, layoutRatios)
+      layout: toBackendLayout(layoutMode, layoutRatios, treeVisible)
     },
     async () => createBrowserSettingsSnapshot(),
     runtime.invoke,

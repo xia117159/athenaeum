@@ -6,6 +6,8 @@ import {
   Copy,
   FilePlus,
   FolderPlus,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelTopOpen,
   RefreshCw,
   Scissors,
@@ -27,7 +29,7 @@ import { useWorkspaceController } from "./useWorkspaceController";
 import { getActiveTab } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import type { ColumnDefinition, DirectoryNode, EntryViewModel, PanelId, PanelState, SearchResult, TabState, WorkspaceState } from "./types";
+import type { ColumnDefinition, ColumnId, DirectoryNode, EntryViewModel, PanelId, PanelState, SearchResult, TabState, WorkspaceState } from "./types";
 import "./workspace.css";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -365,6 +367,16 @@ export function WorkspaceView() {
             <button type="button" className="toolbar-button toolbar-button--icon" title="刷新" aria-label="刷新" onClick={() => actions.refreshPanel(state.activePanelId)}>
               <RefreshCw size={16} aria-hidden="true" />
             </button>
+            <button
+              type="button"
+              className={`toolbar-button toolbar-button--icon${state.treeVisible ? " is-active" : ""}`}
+              title={state.treeVisible ? "隐藏目录树" : "显示目录树"}
+              aria-label={state.treeVisible ? "隐藏目录树" : "显示目录树"}
+              aria-pressed={state.treeVisible}
+              onClick={() => actions.setTreeVisible(!state.treeVisible)}
+            >
+              {state.treeVisible ? <PanelLeftClose size={16} aria-hidden="true" /> : <PanelLeftOpen size={16} aria-hidden="true" />}
+            </button>
           </div>
           <span className="workspace-toolbar__separator" aria-hidden="true" />
           <button type="button" className="toolbar-button toolbar-button--icon" title="新建文件夹" aria-label="新建文件夹" disabled={!canUseDirectoryCommands} onClick={() => actions.createFolder(state.activePanelId)}>
@@ -443,29 +455,39 @@ export function WorkspaceView() {
       </section>
 
       <section className="workspace-main">
-        <div className="workspace-main__content">
-          <ResizableSplit
-            direction="horizontal"
-            ratio={state.layoutRatios.tree}
-            min={0.12}
-            max={0.36}
-            minSizePx={160}
-            handleSize={8}
-            onRatioChange={(value) => actions.setSplitRatio("tree", value)}
-          >
-            <ExplorerTreePane
-              nodes={state.directoryTree}
-              activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
-              expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
-              onToggle={(path) => {
-                if (isActiveNavigationTab) {
-                  return;
-                }
-                const isExpanded = activeTab.expandedNodePaths.includes(path);
-                actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
-              }}
-              onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}
-            />
+        <div className={`workspace-main__content${state.treeVisible ? "" : " workspace-main__content--tree-hidden"}`}>
+          {state.treeVisible ? (
+            <ResizableSplit
+              direction="horizontal"
+              ratio={state.layoutRatios.tree}
+              min={0.12}
+              max={0.36}
+              minSizePx={160}
+              handleSize={8}
+              onRatioChange={(value) => actions.setSplitRatio("tree", value)}
+            >
+              <ExplorerTreePane
+                nodes={state.directoryTree}
+                activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
+                expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
+                onToggle={(path) => {
+                  if (isActiveNavigationTab) {
+                    return;
+                  }
+                  const isExpanded = activeTab.expandedNodePaths.includes(path);
+                  actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
+                }}
+                onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}
+              />
+              <WorkspaceRightContent
+                state={state}
+                actions={actions}
+                activeFilterText={state.search.filterText}
+                activeEntries={filteredActiveEntries}
+                selectedEntries={selectedEntries}
+              />
+            </ResizableSplit>
+          ) : (
             <WorkspaceRightContent
               state={state}
               actions={actions}
@@ -473,7 +495,7 @@ export function WorkspaceView() {
               activeEntries={filteredActiveEntries}
               selectedEntries={selectedEntries}
             />
-          </ResizableSplit>
+          )}
         </div>
       </section>
 
@@ -856,6 +878,10 @@ function PanelSurface({
             inlineEdit={activeTab.inlineEdit}
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
+            onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>
+              actions.setColumnVisibility(panel.id, activeTab.id, columnId, visible)
+            }
+            onShowAllColumns={(columnIds: ColumnId[]) => actions.showAllColumns(panel.id, activeTab.id, columnIds)}
             onSelect={(entry, multi) => actions.selectEntry(panel.id, activeTab.id, entry.id, multi)}
             onSelectMultiple={handleSelectMultiple}
             onSelectAll={handleSelectAll}

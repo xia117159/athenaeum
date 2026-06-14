@@ -100,6 +100,7 @@ export const workspaceSettingsGatewayTests = (async () => {
         tree: 0.25,
         search: 0.3
       },
+      false,
       { invoke, runtimeHost }
     );
 
@@ -111,7 +112,7 @@ export const workspaceSettingsGatewayTests = (async () => {
             layoutMode: "quad",
             panelProportions: [0.62, 0.38],
             sidebarWidth: 240,
-            showTree: true,
+            showTree: false,
             showSearch: true
           }
         }

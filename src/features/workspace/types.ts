@@ -77,6 +77,11 @@ export interface DirectorySnapshot {
   entries: EntryViewModel[];
 }
 
+export interface SelectionPathReplacement {
+  fromPath: string;
+  toPath: string;
+}
+
 export interface SearchQuery {
   name: string;
   content: string;
@@ -482,6 +487,7 @@ export interface WorkspaceBootstrap {
   source: DataSource;
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
+  treeVisible: boolean;
   informationPanel: InformationPanelState;
   panels: Record<PanelId, PanelState>;
   activePanelId: PanelId;
@@ -498,6 +504,7 @@ export interface WorkspaceState {
   source: DataSource;
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
+  treeVisible: boolean;
   panels: Record<PanelId, PanelState>;
   activePanelId: PanelId;
   directoryTree: DirectoryNode[];

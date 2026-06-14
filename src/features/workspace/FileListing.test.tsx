@@ -9,7 +9,7 @@ import {
   setSystemIconResolverForTests,
   type SystemIconRequest
 } from "./systemIconGateway";
-import type { ColumnDefinition, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
+import type { ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -275,6 +275,8 @@ export const completion = (async () => {
   const nativeMenus: Array<{ paths: string[]; clientX: number; clientY: number; screenX: number; screenY: number }> = [];
   const selectedEntries: Array<{ entryId: string; multi: boolean }> = [];
   const resizedColumns: Array<{ columnId: ColumnDefinition["id"]; width: string }> = [];
+  const columnVisibilityChanges: Array<{ columnId: ColumnId; visible: boolean }> = [];
+  let showAllColumnsCalls = 0;
   const resolvedIconRequests: SystemIconRequest[] = [];
   const inlineChanges: string[] = [];
   const inlineCommits: string[] = [];
@@ -291,14 +293,15 @@ export const completion = (async () => {
     inlineEdit?: InlineEditState,
     renderPanelId: PanelId = "panel-1",
     selectedIds: string[] = ["file-source"],
-    entryDropMoveBinding = "Shift"
+    entryDropMoveBinding = "Shift",
+    renderColumns: ColumnDefinition[] = columns
   ) {
     root.render(
       React.createElement(FileListingShell, {
         panelId: renderPanelId,
         tabId: "panel-1-tab-1",
         entries,
-        columns,
+        columns: renderColumns,
         sort: { columnId: "name", direction: "asc" },
         currentPath: "D:\\",
         selectedEntryIds: selectedIds,
@@ -309,6 +312,12 @@ export const completion = (async () => {
         onSort: () => undefined,
         onResizeColumn: (columnId, width) => {
           resizedColumns.push({ columnId, width });
+        },
+        onSetColumnVisibility: (columnId, visible) => {
+          columnVisibilityChanges.push({ columnId, visible });
+        },
+        onShowAllColumns: () => {
+          showAllColumnsCalls += 1;
         },
         onSelect: (entry, multi) => {
           selectedEntries.push({ entryId: entry.id, multi });
@@ -356,6 +365,186 @@ export const completion = (async () => {
       assert.ok(header);
       assert.ok(scroll);
       assert.equal(scroll.contains(header), false);
+    });
+
+    await assertTest("FileListingShell opens a Windows-style column menu from the details header", async () => {
+      customMenus.length = 0;
+      columnVisibilityChanges.length = 0;
+      showAllColumnsCalls = 0;
+      const menuColumns: ColumnDefinition[] = [
+        { id: "name", label: "名称", visible: true, width: "2fr", align: "left" },
+        { id: "type", label: "类型", visible: true, width: "1fr", align: "left" },
+        { id: "size", label: "大小", visible: true, width: "1fr", align: "right" },
+        { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
+        { id: "tags", label: "标签", visible: false, width: "1fr", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", menuColumns);
+        await flushEffects();
+      });
+
+      const header = container.querySelector(".file-listing__header");
+      assert.ok(header);
+      await act(async () => {
+        header.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 120,
+            clientY: 44
+          })
+        );
+        await flushEffects();
+      });
+
+      const menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      assert.equal(menu.getAttribute("role"), "menu");
+      assert.equal(menu.style.left, "120px");
+      assert.equal(menu.style.top, "44px");
+      assert.equal(menu.querySelectorAll('[role="separator"]').length, 1);
+      assert.equal(menu.textContent?.includes("名称"), true);
+      assert.equal(menu.textContent?.includes("类型"), true);
+      assert.equal(menu.textContent?.includes("大小"), true);
+      assert.equal(menu.textContent?.includes("修改时间"), true);
+      assert.equal(menu.textContent?.includes("标签"), true);
+      assert.equal(menu.textContent?.includes("显示所有列"), true);
+      assert.equal(menu.textContent?.includes("立即自动调整列宽"), true);
+
+      const nameItem = Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("名称"));
+      const tagsItem = Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("标签"));
+      assert.equal(nameItem?.getAttribute("aria-checked"), "true");
+      assert.equal(tagsItem?.getAttribute("aria-checked"), "false");
+      assert.deepEqual(customMenus, []);
+    });
+
+    await assertTest("FileListingShell column menu can hide a visible detail column", async () => {
+      columnVisibilityChanges.length = 0;
+      const menuColumns: ColumnDefinition[] = [
+        { id: "name", label: "鍚嶇О", visible: true, width: "2fr", align: "left" },
+        { id: "type", label: "绫诲瀷", visible: true, width: "1fr", align: "left" },
+        { id: "size", label: "澶у皬", visible: true, width: "1fr", align: "right" },
+        { id: "modified", label: "淇敼鏃堕棿", visible: true, width: "1.2fr", align: "left" },
+        { id: "tags", label: "鏍囩", visible: false, width: "1fr", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", menuColumns);
+        await flushEffects();
+      });
+
+      const header = container.querySelector(".file-listing__header");
+      assert.ok(header);
+      await act(async () => {
+        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 34 }));
+        await flushEffects();
+      });
+
+      const menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      const typeItem = Array.from(menu.querySelectorAll('[role="menuitemcheckbox"]'))[1];
+      assert.ok(typeItem);
+
+      await act(async () => {
+        typeItem.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(columnVisibilityChanges, [{ columnId: "type", visible: false }]);
+    });
+
+    await assertTest("FileListingShell column menu toggles column visibility and can show all columns", async () => {
+      columnVisibilityChanges.length = 0;
+      showAllColumnsCalls = 0;
+      const menuColumns: ColumnDefinition[] = [
+        { id: "name", label: "名称", visible: true, width: "2fr", align: "left" },
+        { id: "type", label: "类型", visible: true, width: "1fr", align: "left" },
+        { id: "size", label: "大小", visible: true, width: "1fr", align: "right" },
+        { id: "modified", label: "修改时间", visible: false, width: "1.2fr", align: "left" },
+        { id: "tags", label: "标签", visible: false, width: "1fr", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", menuColumns);
+        await flushEffects();
+      });
+
+      const header = container.querySelector(".file-listing__header");
+      assert.ok(header);
+      await act(async () => {
+        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 34 }));
+        await flushEffects();
+      });
+      let menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      const tagsItem = Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("标签"));
+      assert.ok(tagsItem);
+
+      await act(async () => {
+        tagsItem!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(columnVisibilityChanges, [{ columnId: "tags", visible: true }]);
+
+      await act(async () => {
+        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 34 }));
+        await flushEffects();
+      });
+      menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      const showAllItem = Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("显示所有列"));
+      assert.ok(showAllItem);
+
+      await act(async () => {
+        showAllItem!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      assert.equal(showAllColumnsCalls, 1);
+    });
+
+    await assertTest("FileListingShell auto-fits visible detail columns from header and row text", async () => {
+      resizedColumns.length = 0;
+      const menuColumns: ColumnDefinition[] = [
+        { id: "name", label: "名称", visible: true, width: "2fr", align: "left" },
+        { id: "type", label: "类型", visible: true, width: "1fr", align: "left" },
+        { id: "size", label: "大小", visible: true, width: "1fr", align: "right" },
+        { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
+        { id: "tags", label: "标签", visible: false, width: "1fr", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", menuColumns);
+        await flushEffects();
+      });
+
+      const header = container.querySelector(".file-listing__header");
+      assert.ok(header);
+      await act(async () => {
+        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 96, clientY: 40 }));
+        await flushEffects();
+      });
+
+      const menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      const autoFitItem = Array.from(menu.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("立即自动调整列宽")
+      );
+      assert.ok(autoFitItem);
+
+      await act(async () => {
+        autoFitItem!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(
+        resizedColumns.map((item) => item.columnId),
+        ["name", "type", "size", "modified"]
+      );
+      assert.equal(resizedColumns.every((item) => /^\d+px$/.test(item.width)), true);
+      assert.equal(Number.parseInt(resizedColumns[0].width, 10) > Number.parseInt(resizedColumns[1].width, 10), true);
     });
 
     await assertTest("FileListingShell copies selected entries to directory tabs with pointer drag", async () => {

@@ -1095,6 +1095,7 @@ export function createMockWorkspaceBootstrap(source: WorkspaceBootstrap["source"
       tree: 0.28,
       search: 0.28
     },
+    treeVisible: true,
     informationPanel: {
       expanded: false,
       activeTab: "properties",

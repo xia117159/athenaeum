@@ -18,12 +18,16 @@ import {
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 
-export function toBackendLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios): BackendUiLayout {
+export function toBackendLayout(
+  layoutMode: PanelLayoutMode,
+  layoutRatios: LayoutRatios,
+  treeVisible = true
+): BackendUiLayout {
   return {
     layoutMode,
     panelProportions: [layoutRatios.primary, 1 - layoutRatios.primary],
     sidebarWidth: Math.round(layoutRatios.tree * 960),
-    showTree: true,
+    showTree: treeVisible,
     showSearch: true
   };
 }

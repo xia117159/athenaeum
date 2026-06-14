@@ -25,6 +25,7 @@ import type {
   PanelId,
   RemoteConnectionProfile,
   SearchProgressState,
+  SelectionPathReplacement,
   SettingsModel,
   SettingsSection,
   TabState,
@@ -518,6 +519,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const searchHistoryHydratedRef = useRef(false);
   const refreshedOperationTasksRef = useRef<Set<string>>(new Set());
   const pendingInlineRefreshPathsRef = useRef<Map<string, Set<string>>>(new Map());
+  const pendingInlineSelectionReplacementsRef = useRef<Map<string, SelectionPathReplacement[]>>(new Map());
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
     colorRules: false,
@@ -692,7 +694,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     if (state.source !== "tauri") {
       return;
     }
-    void workspaceGateway.saveLayout(state.layoutMode, state.layoutRatios);
+    void workspaceGateway.saveLayout(state.layoutMode, state.layoutRatios, state.treeVisible);
   }, [
     state.layoutMode,
     state.layoutRatios.primary,
@@ -701,6 +703,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     state.layoutRatios.quadRightSecondary,
     state.layoutRatios.tree,
     state.layoutRatios.search,
+    state.treeVisible,
     state.source
   ]);
 
@@ -880,7 +883,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       panelId: PanelId,
       path: string,
       pushHistory = true,
-      options: { tabId?: string; activatePanel?: boolean; historyIndex?: number; history?: string[] } = {}
+      options: {
+        tabId?: string;
+        activatePanel?: boolean;
+        historyIndex?: number;
+        history?: string[];
+        selectionReplacements?: SelectionPathReplacement[];
+      } = {}
     ) => {
       const panel = state.panels[panelId];
       const activeTab = getActiveTab(panel);
@@ -917,7 +926,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             pushHistory,
             activatePanel: options.activatePanel,
             historyIndex: options.historyIndex,
-            history: options.history
+            history: options.history,
+            selectionReplacements: options.selectionReplacements
           }
         });
       } catch (error) {
@@ -944,7 +954,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
                   pushHistory,
                   activatePanel: options.activatePanel,
                   historyIndex: options.historyIndex,
-                  history: options.history
+                  history: options.history,
+                  selectionReplacements: options.selectionReplacements
                 }
               });
               return;
@@ -1007,7 +1018,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     });
   });
 
-  const refreshPanelsForPaths = useEffectEvent(async (paths: string[]) => {
+  const refreshPanelsForPaths = useEffectEvent(async (
+    paths: string[],
+    selectionReplacements: SelectionPathReplacement[] = []
+  ) => {
     const seen = new Set<string>();
     const targets = getTabsForPaths(state, paths).filter((target) => {
       const key = `${target.panelId}:${target.tabId}`;
@@ -1023,7 +1037,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         commitNavigation(target.panelId, target.path, false, {
           tabId: target.tabId,
           activatePanel: false,
-          historyIndex: target.historyIndex
+          historyIndex: target.historyIndex,
+          selectionReplacements
         })
       )
     );
@@ -1036,6 +1051,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     pendingInlineRefreshPathsRef.current.set(taskId, paths);
   };
 
+  const addPendingInlineSelectionReplacements = (taskId: string, replacements: SelectionPathReplacement[]) => {
+    if (replacements.length === 0) {
+      return;
+    }
+
+    const existing = pendingInlineSelectionReplacementsRef.current.get(taskId) ?? [];
+    pendingInlineSelectionReplacementsRef.current.set(taskId, [...existing, ...replacements]);
+  };
+
   const consumePendingInlineRefreshPaths = (taskId: string) => {
     const paths = pendingInlineRefreshPathsRef.current.get(taskId);
     if (!paths) {
@@ -1046,6 +1070,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     return [...paths];
   };
 
+  const consumePendingInlineSelectionReplacements = (taskId: string) => {
+    const replacements = pendingInlineSelectionReplacementsRef.current.get(taskId) ?? [];
+    pendingInlineSelectionReplacementsRef.current.delete(taskId);
+    return replacements;
+  };
+
   const projectOperationTask = useEffectEvent(async (task: OperationTaskSnapshot) => {
     dispatch({ type: "operationTaskEventReceived", payload: task });
     if (!isTerminalOperationTask(task)) {
@@ -1054,7 +1084,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     const alreadyRefreshed = refreshedOperationTasksRef.current.has(task.taskId);
     const pendingInlineRefreshPaths = consumePendingInlineRefreshPaths(task.taskId);
-    if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0) {
+    const pendingSelectionReplacements = consumePendingInlineSelectionReplacements(task.taskId);
+    if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0 && pendingSelectionReplacements.length === 0) {
       return;
     }
 
@@ -1064,7 +1095,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const operationRefreshPaths = alreadyRefreshed ? [] : getOperationRefreshPaths(task, state.remoteProfiles);
     const refreshPaths = Array.from(new Set([...operationRefreshPaths, ...pendingInlineRefreshPaths]));
     if (refreshPaths.length > 0) {
-      await refreshPanelsForPaths(refreshPaths);
+      await refreshPanelsForPaths(refreshPaths, pendingSelectionReplacements);
     }
 
     if (task.status === "failed") {
@@ -1102,13 +1133,18 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   });
 
-  const refreshInlineEditParentAfterResult = useEffectEvent(async (task: OperationTaskSnapshot | void, parentPath: string) => {
+  const refreshInlineEditParentAfterResult = useEffectEvent(async (
+    task: OperationTaskSnapshot | void,
+    parentPath: string,
+    selectionReplacements: SelectionPathReplacement[] = []
+  ) => {
     if (!task) {
-      await refreshPanelsForPaths([parentPath]);
+      await refreshPanelsForPaths([parentPath], selectionReplacements);
       return;
     }
 
     addPendingInlineRefreshPath(task.taskId, parentPath);
+    addPendingInlineSelectionReplacements(task.taskId, selectionReplacements);
     await projectOperationResult(task);
     if (!isTerminalOperationTask(task) && pendingInlineRefreshPathsRef.current.has(task.taskId)) {
       void pollInlineOperationRefresh(task.taskId);
@@ -2039,8 +2075,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           panelId,
           tabId
         });
+        const renamedPath = appendLocationPathSegment(edit.parentPath, nextName);
         dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
-        await refreshInlineEditParentAfterResult(task, edit.parentPath);
+        await refreshInlineEditParentAfterResult(task, edit.parentPath, [
+          {
+            fromPath: edit.originalPath,
+            toPath: renamedPath
+          }
+        ]);
         return;
       }
     } catch (error) {
@@ -2317,6 +2359,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "layoutModeSet", payload: layoutMode }),
       setSplitRatio: (key: keyof WorkspaceState["layoutRatios"], value: number) =>
         dispatch({ type: "splitRatioSet", payload: { key, value } }),
+      setTreeVisible: (visible: boolean) => dispatch({ type: "treeVisibilitySet", payload: visible }),
       focusPanel: (panelId: PanelId) => dispatch({ type: "panelFocused", payload: { panelId } }),
       focusNextPanel: () => dispatch({ type: "focusNextPanel" }),
       activateTab: (panelId: PanelId, tabId: string) =>
@@ -2468,6 +2511,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       updateTabMinWidth: (value: number) =>
         dispatch({ type: "themeTabMinWidthSet", payload: { value } }),
       toggleColumnVisibility: (id: string) => dispatch({ type: "columnVisibilityToggled", payload: { id } }),
+      setColumnVisibility: (panelId: PanelId, tabId: string, id: ColumnId, visible: boolean) =>
+        dispatch({ type: "columnVisibilitySet", payload: { panelId, tabId, id, visible } }),
+      showAllColumns: (panelId: PanelId, tabId: string, ids?: ColumnId[]) =>
+        dispatch({ type: "columnsShown", payload: { panelId, tabId, ids } }),
       setColumnWidth: (panelId: PanelId, tabId: string, id: ColumnId, width: string) =>
         dispatch({ type: "columnWidthSet", payload: { panelId, tabId, id, width } }),
       setDetailsRowHeight: (value: number) => dispatch({ type: "detailsRowHeightSet", payload: { value } }),

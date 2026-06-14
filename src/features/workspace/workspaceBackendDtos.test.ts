@@ -30,12 +30,13 @@ assertTest("toBackendLayout converts workspace ratios into persisted UI layout",
       quadRightSecondary: 0.56,
       tree: 0.25,
       search: 0.3
-    }),
+    },
+    false),
     {
       layoutMode: "quad",
       panelProportions: [0.62, 0.38],
       sidebarWidth: 240,
-      showTree: true,
+      showTree: false,
       showSearch: true
     }
   );

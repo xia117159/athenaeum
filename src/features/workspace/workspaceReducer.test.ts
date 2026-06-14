@@ -771,6 +771,53 @@ assertTest("workspaceReducer can commit a background refresh without stealing ac
   assert.equal(refreshed.activePanelId, "panel-1");
 });
 
+assertTest("workspaceReducer preserves and remaps selection during a same-path refresh", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const sourceEntry = activeTab.snapshot.entries.find((entry) => entry.name === "sprint-plan.md");
+  assert.ok(sourceEntry);
+
+  const renamedPath = "D:\\Projects\\Atlas\\sprint-plan-final.md";
+  const renamedId = "D:\\Projects\\Atlas:sprint-plan-final.md";
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryIds: [sourceEntry!.id]
+    }
+  } as WorkspaceAction);
+  const refreshed = workspaceReducer(selected, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      snapshot: {
+        ...activeTab.snapshot,
+        entries: activeTab.snapshot.entries.map((entry) =>
+          entry.id === sourceEntry!.id
+            ? {
+                ...entry,
+                id: renamedId,
+                name: "sprint-plan-final.md",
+                path: renamedPath
+              }
+            : entry
+        )
+      },
+      pushHistory: false,
+      selectionReplacements: [
+        {
+          fromPath: sourceEntry!.path,
+          toPath: renamedPath
+        }
+      ]
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(refreshed.panels["panel-1"]).selectedEntryIds, [renamedId]);
+});
+
 assertTest("workspaceReducer keeps history index when refreshing a repeated history path", () => {
   const state = createState();
   const activeTab = getActiveTab(state.panels["panel-1"]);
@@ -1735,6 +1782,117 @@ assertTest("workspaceReducer stores resized detail column widths on the target t
   assert.equal(nameColumn!.width, "48px");
   assert.equal(nextState.panels["panel-2"].tabs[0].columns.find((column) => column.id === "name")?.width, originalOtherTabWidth);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "name")?.width, originalSettingsWidth);
+});
+
+assertTest("workspaceReducer shows columns on the target tab and default settings model", () => {
+  const state = createState();
+  const targetTab = getActiveTab(state.panels["panel-1"]);
+  const hidden = {
+    ...state,
+    settings: {
+      ...state.settings,
+      model: {
+        ...state.settings.model,
+        columns: state.settings.model.columns.map((column) =>
+          column.id === "tags" ? { ...column, visible: false } : column
+        )
+      }
+    },
+    panels: {
+      ...state.panels,
+      "panel-1": {
+        ...state.panels["panel-1"],
+        tabs: state.panels["panel-1"].tabs.map((tab) =>
+          tab.id === targetTab.id
+            ? {
+                ...tab,
+                columns: tab.columns.map((column) =>
+                  column.id === "tags" ? { ...column, visible: false } : column
+                )
+              }
+            : tab
+        )
+      }
+    }
+  };
+
+  const nextState = workspaceReducer(hidden, {
+    type: "columnVisibilitySet",
+    payload: {
+      panelId: "panel-1",
+      tabId: targetTab.id,
+      id: "tags",
+      visible: true
+    }
+  } as WorkspaceAction);
+
+  assert.equal(getActiveTab(nextState.panels["panel-1"]).columns.find((column) => column.id === "tags")?.visible, true);
+  assert.equal(nextState.settings.model.columns.find((column) => column.id === "tags")?.visible, true);
+});
+
+assertTest("workspaceReducer can show all requested columns on the target tab", () => {
+  const state = createState();
+  const targetTab = getActiveTab(state.panels["panel-1"]);
+  const hiddenIds = new Set(["modified", "tags"]);
+  const hidden = {
+    ...state,
+    settings: {
+      ...state.settings,
+      model: {
+        ...state.settings.model,
+        columns: state.settings.model.columns.map((column) =>
+          hiddenIds.has(column.id) ? { ...column, visible: false } : column
+        )
+      }
+    },
+    panels: {
+      ...state.panels,
+      "panel-1": {
+        ...state.panels["panel-1"],
+        tabs: state.panels["panel-1"].tabs.map((tab) =>
+          tab.id === targetTab.id
+            ? {
+                ...tab,
+                columns: tab.columns.map((column) =>
+                  hiddenIds.has(column.id) ? { ...column, visible: false } : column
+                )
+              }
+            : tab
+        )
+      }
+    }
+  };
+
+  const nextState = workspaceReducer(hidden, {
+    type: "columnsShown",
+    payload: {
+      panelId: "panel-1",
+      tabId: targetTab.id,
+      ids: ["name", "type", "size", "modified", "tags"]
+    }
+  } as WorkspaceAction);
+
+  const nextTab = getActiveTab(nextState.panels["panel-1"]);
+  assert.equal(nextTab.columns.find((column) => column.id === "modified")?.visible, true);
+  assert.equal(nextTab.columns.find((column) => column.id === "tags")?.visible, true);
+  assert.equal(nextState.settings.model.columns.find((column) => column.id === "modified")?.visible, true);
+  assert.equal(nextState.settings.model.columns.find((column) => column.id === "tags")?.visible, true);
+});
+
+assertTest("workspaceReducer stores the directory tree visibility flag", () => {
+  const state = createState();
+
+  const hidden = workspaceReducer(state, {
+    type: "treeVisibilitySet",
+    payload: false
+  } as WorkspaceAction);
+  const shown = workspaceReducer(hidden, {
+    type: "treeVisibilitySet",
+    payload: true
+  } as WorkspaceAction);
+
+  assert.equal(hidden.treeVisible, false);
+  assert.equal(shown.treeVisible, true);
 });
 
 assertTest("workspaceReducer preserves local-only columns and tag filters when backend settings sync", () => {

@@ -63,6 +63,7 @@ function createTestGateway(
   },
   overrides: {
     loadBootstrap?: () => WorkspaceBootstrap | Promise<WorkspaceBootstrap>;
+    resolveDirectory?: WorkspaceGateway["resolveDirectory"];
     loadTreeChildren?: (path: string) => DirectoryNode[] | Promise<DirectoryNode[]>;
     getItemProperties?: WorkspaceGateway["getItemProperties"];
     renameEntry?: WorkspaceGateway["renameEntry"];
@@ -103,6 +104,9 @@ function createTestGateway(
     },
     async resolveDirectory(path) {
       interactions.resolvedPaths.push(path);
+      if (overrides.resolveDirectory) {
+        return overrides.resolveDirectory(path);
+      }
       return resolveMockDirectory(path);
     },
     async loadTreeChildren(path) {
@@ -2114,7 +2118,7 @@ export const completion = (async () => {
       }
     });
 
-    await assertTest("useWorkspaceController refreshes the source directory after a completed inline rename", async () => {
+    await assertTest("useWorkspaceController refreshes the source directory and keeps renamed entry selected", async () => {
       const refreshInteractions = {
         resolvedPaths: [] as string[],
         copyCalls: [] as Array<{ paths: string[]; destination: string }>,
@@ -2142,6 +2146,26 @@ export const completion = (async () => {
       };
       const refreshGateway = createTestGateway(() => undefined, refreshInteractions, {
         loadBootstrap: () => refreshBootstrap,
+        resolveDirectory: async (path) => {
+          const snapshot = resolveMockDirectory(path);
+          if (path !== refreshPath) {
+            return snapshot;
+          }
+          const renamedPath = `${refreshPath}/manifest-final.yml`;
+          return {
+            ...snapshot,
+            entries: snapshot.entries.map((entry) =>
+              entry.name === "manifest.yml"
+                ? {
+                    ...entry,
+                    id: `${refreshPath}:manifest-final.yml`,
+                    name: "manifest-final.yml",
+                    path: renamedPath
+                  }
+                : entry
+            )
+          };
+        },
         renameEntry: async (source, newName) => {
           refreshInteractions.renameCalls.push({ source, newName });
           const now = "2026-06-10T08:00:00Z";
@@ -2208,6 +2232,13 @@ export const completion = (async () => {
             newName: "manifest-final.yml"
           }
         ]);
+        await waitFor(
+          () =>
+            getActiveTab(refreshController!.state.panels["panel-1"]).selectedEntryIds.includes(
+              `${refreshPath}:manifest-final.yml`
+            ),
+          "renamed entry was not selected after the refreshed directory snapshot"
+        );
       } finally {
         await act(async () => {
           refreshRoot.unmount();

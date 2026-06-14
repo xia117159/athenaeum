@@ -258,6 +258,7 @@ export async function mergeBootstrapWithSession(
     ...base,
     layoutMode: session.layoutMode,
     layoutRatios: normalizeLayoutRatios(session.layoutRatios),
+    treeVisible: session.treeVisible !== false,
     informationPanel: {
       ...base.informationPanel,
       ...normalizePersistedInformationPanel(session.informationPanel)
