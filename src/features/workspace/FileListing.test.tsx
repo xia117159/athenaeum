@@ -1094,6 +1094,53 @@ export const completion = (async () => {
       assert.equal(nativeMenus.length, 0);
     });
 
+    await assertTest("FileListingShell suppresses Shift right-button text selection before opening a blank app menu", async () => {
+      customMenus.length = 0;
+      nativeMenus.length = 0;
+
+      await act(async () => {
+        render("details");
+        await flushEffects();
+      });
+
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(scroll);
+
+      const mouseDown = new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        shiftKey: true,
+        clientX: 48,
+        clientY: 64
+      });
+
+      await act(async () => {
+        scroll.dispatchEvent(mouseDown);
+        await flushEffects();
+      });
+
+      assert.equal(mouseDown.defaultPrevented, true);
+      assert.deepEqual(customMenus, []);
+      assert.deepEqual(nativeMenus, []);
+
+      await act(async () => {
+        scroll.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            shiftKey: true,
+            clientX: 48,
+            clientY: 64
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.deepEqual(customMenus, [{ mode: "custom", scope: "panel" }]);
+      assert.equal(nativeMenus.length, 0);
+    });
+
     await assertTest("FileListingShell opens the native background menu from blank icon-card padding", async () => {
       customMenus.length = 0;
       nativeMenus.length = 0;

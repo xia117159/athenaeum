@@ -88,6 +88,15 @@ assertTest("workspace top chrome separates command and address rows without the 
   assert.equal(css.includes(".workspace-error"), false);
 });
 
+assertTest("workspace view menu reuses shared view and sort submenus", () => {
+  assert.equal(workspaceViewSource.includes("WorkspaceViewMenuItems"), true);
+  assert.equal(workspaceViewSource.includes("WorkspaceSortMenuItems"), true);
+  assert.equal(workspaceViewSource.includes('label: "视图"'), true);
+  assert.equal(workspaceViewSource.includes('label: "排序方式"'), true);
+  assertDeclaration(getCssBlock(".menu-dropdown__submenu"), "position", "relative");
+  assertDeclaration(getCssBlock(".menu-dropdown__submenu-items"), "position", "absolute");
+});
+
 assertTest("workspace view does not render inline notification labels below the address bar", () => {
   assert.equal(workspaceViewSource.includes("NotificationTray"), false);
   assert.equal(workspaceViewSource.includes("notification-tray"), false);

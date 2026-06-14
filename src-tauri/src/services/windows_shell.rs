@@ -8,7 +8,12 @@ mod imp {
   };
 
   use anyhow::{anyhow, bail, Context, Result};
-  use crate::domain::models::{NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus};
+  use crate::domain::models::{
+    NativeBackgroundContextMenuAction, NativeBackgroundContextMenuOptions,
+    NativeBackgroundContextMenuResult, NativeBackgroundContextMenuSortColumn,
+    NativeBackgroundContextMenuSortDirection, NativeBackgroundContextMenuViewMode, NavigationTargetInfo,
+    NavigationTargetKind, NavigationTargetStatus
+  };
   use tauri::{Runtime, Window};
   use windows::{
     core::{PCSTR, PCWSTR},
@@ -21,8 +26,9 @@ mod imp {
           SHBindToParent, SHParseDisplayName, ShellExecuteW
         },
         WindowsAndMessaging::{
-          CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow, TrackPopupMenuEx,
-          HMENU, TPM_RETURNCMD, TPM_RIGHTBUTTON, SW_SHOWNORMAL, WM_NULL
+          AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW, SetForegroundWindow,
+          TrackPopupMenuEx, HMENU, MENU_ITEM_FLAGS, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+          MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON, SW_SHOWNORMAL, WM_NULL
         }
       }
     }
@@ -30,6 +36,25 @@ mod imp {
 
   const CMD_FIRST: u32 = 1;
   const CMD_LAST: u32 = 0x7FFF;
+  const BACKGROUND_SHELL_CMD_FIRST: u32 = 1000;
+  const BACKGROUND_CMD_CREATE_FILE: u32 = 1;
+  const BACKGROUND_CMD_CREATE_FOLDER: u32 = 2;
+  const BACKGROUND_CMD_VIEW_EXTRA_LARGE: u32 = 10;
+  const BACKGROUND_CMD_VIEW_LARGE: u32 = 11;
+  const BACKGROUND_CMD_VIEW_MEDIUM: u32 = 12;
+  const BACKGROUND_CMD_VIEW_SMALL: u32 = 13;
+  const BACKGROUND_CMD_VIEW_LIST: u32 = 14;
+  const BACKGROUND_CMD_VIEW_DETAILS: u32 = 15;
+  const BACKGROUND_CMD_VIEW_TILES: u32 = 16;
+  const BACKGROUND_CMD_VIEW_CONTENT: u32 = 17;
+  const BACKGROUND_CMD_SORT_NAME: u32 = 30;
+  const BACKGROUND_CMD_SORT_MODIFIED: u32 = 31;
+  const BACKGROUND_CMD_SORT_TYPE: u32 = 32;
+  const BACKGROUND_CMD_SORT_SIZE: u32 = 33;
+  const BACKGROUND_CMD_SORT_ASC: u32 = 40;
+  const BACKGROUND_CMD_SORT_DESC: u32 = 41;
+  const BACKGROUND_CMD_PASTE: u32 = 50;
+  const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 6;
 
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
   pub enum NavigationOpenValidationError {
@@ -428,9 +453,9 @@ mod imp {
     })
   }
 
-  fn invoke_command(context_menu: &IContextMenu, hwnd: HWND, command_id: u32) -> Result<()> {
+  fn invoke_command(context_menu: &IContextMenu, hwnd: HWND, command_id: u32, command_first: u32) -> Result<()> {
     let command_offset = command_id
-      .checked_sub(CMD_FIRST)
+      .checked_sub(command_first)
       .ok_or_else(|| anyhow!("invalid shell command id"))?;
 
     let invoke = CMINVOKECOMMANDINFO {
@@ -507,8 +532,299 @@ mod imp {
       return Ok(did_native_menu_open(command_id, menu_last_error));
     }
 
-    let _ = invoke_command(context_menu, hwnd, command_id);
+    let _ = invoke_command(context_menu, hwnd, command_id, CMD_FIRST);
     Ok(true)
+  }
+
+  fn menu_text(value: &str) -> Vec<u16> {
+    wide_null(OsStr::new(value))
+  }
+
+  fn append_menu_item(menu: HMENU, flags: MENU_ITEM_FLAGS, command_id: u32, label: &str) -> Result<()> {
+    let label = menu_text(label);
+    unsafe {
+      AppendMenuW(menu, flags | MF_STRING, command_id as usize, PCWSTR(label.as_ptr()))
+        .ok()
+        .with_context(|| format!("failed to append menu item {label:?}"))?;
+    }
+    Ok(())
+  }
+
+  fn append_menu_separator(menu: HMENU) -> Result<()> {
+    unsafe {
+      AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())
+        .ok()
+        .context("failed to append menu separator")?;
+    }
+    Ok(())
+  }
+
+  fn append_submenu(parent: HMENU, submenu: HMENU, label: &str) -> Result<()> {
+    let label = menu_text(label);
+    unsafe {
+      AppendMenuW(parent, MF_POPUP | MF_STRING, submenu.0 as usize, PCWSTR(label.as_ptr()))
+        .ok()
+        .with_context(|| format!("failed to append submenu {label:?}"))?;
+    }
+    Ok(())
+  }
+
+  fn checked_flag(checked: bool) -> MENU_ITEM_FLAGS {
+    if checked {
+      MF_CHECKED
+    } else {
+      MENU_ITEM_FLAGS(0)
+    }
+  }
+
+  fn enabled_flag(enabled: bool) -> MENU_ITEM_FLAGS {
+    if enabled {
+      MENU_ITEM_FLAGS(0)
+    } else {
+      MF_GRAYED
+    }
+  }
+
+  fn create_attached_submenu(parent: HMENU, label: &str, build: impl FnOnce(HMENU) -> Result<()>) -> Result<()> {
+    let submenu = unsafe { CreatePopupMenu().context("failed to create submenu")? };
+    if let Err(error) = build(submenu).and_then(|_| append_submenu(parent, submenu, label)) {
+      unsafe {
+        let _ = DestroyMenu(submenu);
+      }
+      return Err(error);
+    }
+    Ok(())
+  }
+
+  fn append_background_view_menu(parent: HMENU, options: NativeBackgroundContextMenuOptions) -> Result<()> {
+    create_attached_submenu(parent, "视图", |submenu| {
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::ExtraLargeIcons),
+        BACKGROUND_CMD_VIEW_EXTRA_LARGE,
+        "超大图标"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::LargeIcons),
+        BACKGROUND_CMD_VIEW_LARGE,
+        "大图标"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::MediumIcons),
+        BACKGROUND_CMD_VIEW_MEDIUM,
+        "中等图标"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::SmallIcons),
+        BACKGROUND_CMD_VIEW_SMALL,
+        "小图标"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::List),
+        BACKGROUND_CMD_VIEW_LIST,
+        "列表"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::Details),
+        BACKGROUND_CMD_VIEW_DETAILS,
+        "详细信息列表"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::Tiles),
+        BACKGROUND_CMD_VIEW_TILES,
+        "平铺"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.view_mode == NativeBackgroundContextMenuViewMode::Content),
+        BACKGROUND_CMD_VIEW_CONTENT,
+        "内容"
+      )
+    })
+  }
+
+  fn append_background_sort_menu(parent: HMENU, options: NativeBackgroundContextMenuOptions) -> Result<()> {
+    create_attached_submenu(parent, "排序方式", |submenu| {
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.column_id == NativeBackgroundContextMenuSortColumn::Name),
+        BACKGROUND_CMD_SORT_NAME,
+        "名称"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.column_id == NativeBackgroundContextMenuSortColumn::Modified),
+        BACKGROUND_CMD_SORT_MODIFIED,
+        "修改日期"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.column_id == NativeBackgroundContextMenuSortColumn::Type),
+        BACKGROUND_CMD_SORT_TYPE,
+        "类型"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.column_id == NativeBackgroundContextMenuSortColumn::Size),
+        BACKGROUND_CMD_SORT_SIZE,
+        "大小"
+      )?;
+      append_menu_separator(submenu)?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.direction == NativeBackgroundContextMenuSortDirection::Asc),
+        BACKGROUND_CMD_SORT_ASC,
+        "递增"
+      )?;
+      append_menu_item(
+        submenu,
+        checked_flag(options.sort.direction == NativeBackgroundContextMenuSortDirection::Desc),
+        BACKGROUND_CMD_SORT_DESC,
+        "递减"
+      )
+    })
+  }
+
+  fn append_background_custom_menu_items(menu: HMENU, options: NativeBackgroundContextMenuOptions) -> Result<()> {
+    append_menu_item(menu, MENU_ITEM_FLAGS(0), BACKGROUND_CMD_CREATE_FILE, "新建文件")?;
+    append_menu_item(menu, MENU_ITEM_FLAGS(0), BACKGROUND_CMD_CREATE_FOLDER, "新建文件夹")?;
+    append_background_view_menu(menu, options)?;
+    append_background_sort_menu(menu, options)?;
+    append_menu_item(menu, enabled_flag(options.can_paste), BACKGROUND_CMD_PASTE, "粘贴")?;
+    append_menu_separator(menu)
+  }
+
+  fn custom_background_action_for_command(command_id: u32) -> Option<NativeBackgroundContextMenuAction> {
+    match command_id {
+      BACKGROUND_CMD_CREATE_FILE => Some(NativeBackgroundContextMenuAction::CreateFile),
+      BACKGROUND_CMD_CREATE_FOLDER => Some(NativeBackgroundContextMenuAction::CreateFolder),
+      BACKGROUND_CMD_VIEW_EXTRA_LARGE => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::ExtraLargeIcons
+      }),
+      BACKGROUND_CMD_VIEW_LARGE => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::LargeIcons
+      }),
+      BACKGROUND_CMD_VIEW_MEDIUM => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::MediumIcons
+      }),
+      BACKGROUND_CMD_VIEW_SMALL => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::SmallIcons
+      }),
+      BACKGROUND_CMD_VIEW_LIST => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::List
+      }),
+      BACKGROUND_CMD_VIEW_DETAILS => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::Details
+      }),
+      BACKGROUND_CMD_VIEW_TILES => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::Tiles
+      }),
+      BACKGROUND_CMD_VIEW_CONTENT => Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::Content
+      }),
+      BACKGROUND_CMD_SORT_NAME => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: Some(NativeBackgroundContextMenuSortColumn::Name),
+        direction: None
+      }),
+      BACKGROUND_CMD_SORT_MODIFIED => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: Some(NativeBackgroundContextMenuSortColumn::Modified),
+        direction: None
+      }),
+      BACKGROUND_CMD_SORT_TYPE => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: Some(NativeBackgroundContextMenuSortColumn::Type),
+        direction: None
+      }),
+      BACKGROUND_CMD_SORT_SIZE => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: Some(NativeBackgroundContextMenuSortColumn::Size),
+        direction: None
+      }),
+      BACKGROUND_CMD_SORT_ASC => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: None,
+        direction: Some(NativeBackgroundContextMenuSortDirection::Asc)
+      }),
+      BACKGROUND_CMD_SORT_DESC => Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: None,
+        direction: Some(NativeBackgroundContextMenuSortDirection::Desc)
+      }),
+      BACKGROUND_CMD_PASTE => Some(NativeBackgroundContextMenuAction::Paste),
+      _ => None
+    }
+  }
+
+  fn show_background_context_menu(
+    context_menu: &IContextMenu,
+    hwnd: HWND,
+    x: i32,
+    y: i32,
+    options: NativeBackgroundContextMenuOptions
+  ) -> Result<NativeBackgroundContextMenuResult> {
+    let popup = PopupMenu::create()?;
+    append_background_custom_menu_items(popup.handle(), options)?;
+    unsafe {
+      context_menu
+        .QueryContextMenu(
+          popup.handle(),
+          BACKGROUND_CUSTOM_TOP_ITEM_COUNT,
+          BACKGROUND_SHELL_CMD_FIRST,
+          CMD_LAST,
+          CMF_NORMAL
+        )
+        .ok()
+        .context("failed to populate shell background context menu")?;
+    }
+
+    if hwnd.0.is_null() {
+      bail!("failed to resolve window handle");
+    }
+    unsafe {
+      let _ = SetForegroundWindow(hwnd);
+    }
+
+    let (menu_x, menu_y) = resolve_menu_position(x, y);
+    unsafe {
+      SetLastError(ERROR_SUCCESS);
+    }
+    let command_id = unsafe {
+      TrackPopupMenuEx(
+        popup.handle(),
+        TPM_RIGHTBUTTON.0 | TPM_RETURNCMD.0,
+        menu_x,
+        menu_y,
+        hwnd,
+        None
+      )
+    }
+    .0 as u32;
+    let menu_last_error = unsafe { GetLastError() };
+    unsafe {
+      let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+    }
+
+    if command_id == 0 {
+      return Ok(NativeBackgroundContextMenuResult {
+        opened: did_native_menu_open(command_id, menu_last_error),
+        action: None
+      });
+    }
+
+    if let Some(action) = custom_background_action_for_command(command_id) {
+      return Ok(NativeBackgroundContextMenuResult {
+        opened: true,
+        action: Some(action)
+      });
+    }
+
+    let _ = invoke_command(context_menu, hwnd, command_id, BACKGROUND_SHELL_CMD_FIRST);
+    Ok(NativeBackgroundContextMenuResult {
+      opened: true,
+      action: None
+    })
   }
 
   fn show_native_context_menu_inner(paths: Vec<String>, x: i32, y: i32, hwnd_raw: isize) -> Result<bool> {
@@ -526,7 +842,13 @@ mod imp {
     show_context_menu(&context_menu, hwnd, x, y)
   }
 
-  fn show_native_background_context_menu_inner(directory_path: String, x: i32, y: i32, hwnd_raw: isize) -> Result<bool> {
+  fn show_native_background_context_menu_inner(
+    directory_path: String,
+    x: i32,
+    y: i32,
+    options: NativeBackgroundContextMenuOptions,
+    hwnd_raw: isize
+  ) -> Result<NativeBackgroundContextMenuResult> {
     let _com = ComGuard::init()?;
     let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
     let directory = validate_background_path(directory_path)?;
@@ -550,7 +872,7 @@ mod imp {
         .context("failed to bind shell folder background to context menu")?
     };
 
-    show_context_menu(&context_menu, hwnd, x, y)
+    show_background_context_menu(&context_menu, hwnd, x, y, options)
   }
 
   pub async fn show_native_context_menu<R: Runtime>(
@@ -578,15 +900,16 @@ mod imp {
     directory_path: String,
     x: i32,
     y: i32,
+    options: NativeBackgroundContextMenuOptions,
     window: &Window<R>
-  ) -> Result<bool> {
+  ) -> Result<NativeBackgroundContextMenuResult> {
     let hwnd = window.hwnd().context("failed to resolve Tauri window handle")?;
     let hwnd_raw = hwnd.0 as isize;
     let (sender, receiver) = tokio::sync::oneshot::channel();
 
     window
       .run_on_main_thread(move || {
-        let _ = sender.send(show_native_background_context_menu_inner(directory_path, x, y, hwnd_raw));
+        let _ = sender.send(show_native_background_context_menu_inner(directory_path, x, y, options, hwnd_raw));
       })
       .context("failed to schedule native background context menu on the Tauri main thread")?;
 
@@ -599,11 +922,17 @@ mod imp {
   mod tests {
     use anyhow::Result;
 
+    use crate::domain::models::{
+      NativeBackgroundContextMenuAction, NativeBackgroundContextMenuSortColumn,
+      NativeBackgroundContextMenuSortDirection, NativeBackgroundContextMenuViewMode
+    };
     use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS};
 
     use super::{
-      did_native_menu_open, resolve_navigation_target, validate_background_path, validate_paths,
-      validate_shell_execute_result, validate_system_default_open_path, NavigationOpenValidationError
+      custom_background_action_for_command, did_native_menu_open, resolve_navigation_target,
+      validate_background_path, validate_paths, validate_shell_execute_result, validate_system_default_open_path,
+      NavigationOpenValidationError, BACKGROUND_CMD_CREATE_FILE, BACKGROUND_CMD_PASTE,
+      BACKGROUND_CMD_SORT_DESC, BACKGROUND_CMD_SORT_SIZE, BACKGROUND_CMD_VIEW_TILES
     };
 
     #[test]
@@ -630,6 +959,39 @@ mod imp {
     #[test]
     fn validate_paths_rejects_remote_inputs() {
       assert!(validate_paths(vec!["sftp://deploy@example/root".into()]).is_err());
+    }
+
+    #[test]
+    fn custom_background_menu_commands_map_to_frontend_actions() {
+      assert_eq!(
+        custom_background_action_for_command(BACKGROUND_CMD_CREATE_FILE),
+        Some(NativeBackgroundContextMenuAction::CreateFile)
+      );
+      assert_eq!(
+        custom_background_action_for_command(BACKGROUND_CMD_VIEW_TILES),
+        Some(NativeBackgroundContextMenuAction::SetViewMode {
+          view_mode: NativeBackgroundContextMenuViewMode::Tiles
+        })
+      );
+      assert_eq!(
+        custom_background_action_for_command(BACKGROUND_CMD_SORT_SIZE),
+        Some(NativeBackgroundContextMenuAction::SetSort {
+          column_id: Some(NativeBackgroundContextMenuSortColumn::Size),
+          direction: None
+        })
+      );
+      assert_eq!(
+        custom_background_action_for_command(BACKGROUND_CMD_SORT_DESC),
+        Some(NativeBackgroundContextMenuAction::SetSort {
+          column_id: None,
+          direction: Some(NativeBackgroundContextMenuSortDirection::Desc)
+        })
+      );
+      assert_eq!(
+        custom_background_action_for_command(BACKGROUND_CMD_PASTE),
+        Some(NativeBackgroundContextMenuAction::Paste)
+      );
+      assert_eq!(custom_background_action_for_command(9999), None);
     }
 
     #[test]
@@ -817,8 +1179,9 @@ pub async fn show_native_background_context_menu<R: tauri::Runtime>(
   _directory_path: String,
   _x: i32,
   _y: i32,
+  _options: crate::domain::models::NativeBackgroundContextMenuOptions,
   _window: &tauri::Window<R>
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<crate::domain::models::NativeBackgroundContextMenuResult> {
   anyhow::bail!("native background context menu is only supported on Windows")
 }
 

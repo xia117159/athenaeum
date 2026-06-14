@@ -95,6 +95,8 @@ import type {
   LayoutRatios,
   NavigationItem,
   NavigationItemUpsertRequest,
+  NativeBackgroundContextMenuOptions,
+  NativeBackgroundContextMenuResult,
   NavigationTargetInfo,
   PanelLayoutMode,
   RemoteConnectionProfile,
@@ -178,7 +180,12 @@ export interface WorkspaceGateway {
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
   showNativeContextMenu(paths: string[], x: number, y: number): Promise<boolean>;
-  showNativeBackgroundContextMenu(directoryPath: string, x: number, y: number): Promise<boolean>;
+  showNativeBackgroundContextMenu(
+    directoryPath: string,
+    x: number,
+    y: number,
+    options: NativeBackgroundContextMenuOptions
+  ): Promise<NativeBackgroundContextMenuResult>;
 }
 
 export {
@@ -423,8 +430,8 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return openNativeContextMenu(paths, x, y);
     },
 
-    async showNativeBackgroundContextMenu(directoryPath, x, y) {
-      return openNativeBackgroundContextMenu(directoryPath, x, y);
+    async showNativeBackgroundContextMenu(directoryPath, x, y, options) {
+      return openNativeBackgroundContextMenu(directoryPath, x, y, options);
     }
   };
 }

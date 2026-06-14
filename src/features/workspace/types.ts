@@ -398,6 +398,24 @@ export interface NativeContextMenuRequest {
   screenY: number;
 }
 
+export type NativeBackgroundContextMenuAction =
+  | { type: "createFile" }
+  | { type: "createFolder" }
+  | { type: "setViewMode"; viewMode: TabViewMode }
+  | { type: "setSort"; columnId?: ColumnId; direction?: SortDirection }
+  | { type: "paste" };
+
+export interface NativeBackgroundContextMenuOptions {
+  viewMode: TabViewMode;
+  sort: SortState;
+  canPaste: boolean;
+}
+
+export interface NativeBackgroundContextMenuResult {
+  opened: boolean;
+  action?: NativeBackgroundContextMenuAction;
+}
+
 export interface RemoteConnectionProfile {
   id: string;
   name: string;

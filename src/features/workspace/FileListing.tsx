@@ -17,6 +17,7 @@ import {
 } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
+import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
 import { devLog, devWarn } from "./devLog";
 import type {
@@ -83,16 +84,7 @@ type EntryPointerDropTarget = {
   element: HTMLElement;
 };
 
-export const TAB_VIEW_MODE_OPTIONS: Array<{ id: TabViewMode; label: string }> = [
-  { id: "extra-large-icons", label: "超大图标" },
-  { id: "large-icons", label: "大图标" },
-  { id: "medium-icons", label: "中等图标" },
-  { id: "small-icons", label: "小图标" },
-  { id: "list", label: "列表" },
-  { id: "details", label: "详细信息列表" },
-  { id: "tiles", label: "平铺" },
-  { id: "content", label: "内容" }
-];
+export const TAB_VIEW_MODE_OPTIONS: Array<{ id: TabViewMode; label: string }> = WORKSPACE_VIEW_MODE_MENU_ITEMS;
 
 export function getTabViewModeLabel(mode: TabViewMode) {
   return TAB_VIEW_MODE_OPTIONS.find((option) => option.id === mode)?.label ?? mode;
@@ -1269,6 +1261,17 @@ export function FileListingShell({
 
   const handleListingMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
+    const isBlankListingTarget = () => {
+      if (target.closest("[data-entry-path]") || target.closest(".inline-edit-input")) {
+        return false;
+      }
+
+      return (
+        target.classList.contains("file-listing__scroll") ||
+        target.classList.contains("file-listing__body") ||
+        target.closest(".file-listing__scroll") !== null
+      );
+    };
 
     devLog("[FileListing] handleListingMouseDown triggered", {
       button: event.button,
@@ -1279,6 +1282,11 @@ export function FileListingShell({
       isScrollContainer: target.classList.contains("file-listing__scroll"),
       isBodyContainer: target.classList.contains("file-listing__body")
     });
+
+    if (event.button === 2 && isBlankListingTarget()) {
+      event.preventDefault();
+      return;
+    }
 
     // 只处理左键，并且不是在列表项上
     if (event.button !== 0) {
@@ -1298,12 +1306,7 @@ export function FileListingShell({
 
     // 允许点击在 scroll 容器、body 容器或空白区域
     // 不排除 file-listing__body，让它的空白区域也能触发框选
-    const isScrollContainer = target.classList.contains("file-listing__scroll");
-    const isBodyContainer = target.classList.contains("file-listing__body");
-    const isValidTarget = isScrollContainer || isBodyContainer ||
-                          target.closest(".file-listing__scroll") !== null;
-
-    if (!isValidTarget) {
+    if (!isBlankListingTarget()) {
       devLog("[FileListing] Target is not valid for marquee selection");
       return;
     }

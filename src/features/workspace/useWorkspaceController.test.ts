@@ -272,7 +272,7 @@ function createTestGateway(
     },
     async showNativeBackgroundContextMenu(directoryPath: string, x: number, y: number) {
       interactions.nativeBackgroundContextMenus?.push({ directoryPath, x, y });
-      return true;
+      return { opened: true };
     },
     async saveNavigationItem(request) {
       interactions.navigationSaves?.push({ ...request });
@@ -1984,7 +1984,7 @@ export const completion = (async () => {
 
         const createEdit = inlineController?.state.panels["panel-1"].tabs[0].inlineEdit;
         assert.equal(createEdit?.mode, "create-folder");
-        assert.equal(createEdit?.value, "新建文件夹");
+        assert.equal(createEdit?.value, "新文件夹");
         assert.equal(promptCalls, 0);
 
         await act(async () => {
@@ -2011,7 +2011,7 @@ export const completion = (async () => {
 
         const createFileEdit = inlineController?.state.panels["panel-1"].tabs[0].inlineEdit;
         assert.equal(createFileEdit?.mode, "create-file");
-        assert.equal(createFileEdit?.value, "新建文件.txt");
+        assert.equal(createFileEdit?.value, "新文件");
 
         await act(async () => {
           inlineController?.actions.updateInlineEdit("panel-1", "inline-tab", "notes.txt");
@@ -2680,7 +2680,7 @@ export const completion = (async () => {
       });
       fallbackGateway.showNativeBackgroundContextMenu = async (directoryPath: string, x: number, y: number) => {
         fallbackInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
-        return false;
+        return { opened: false };
       };
 
       function FallbackHarness() {
@@ -2737,6 +2737,97 @@ export const completion = (async () => {
           await flushEffects();
         });
         fallbackContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController applies custom actions returned from the native background menu", async () => {
+      const nativeActionInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>
+      };
+      let nativeActionController: ReturnType<typeof useWorkspaceController> | undefined;
+      let capturedOptions: unknown;
+      const nativeActionGateway = createTestGateway(() => undefined, nativeActionInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
+      });
+      nativeActionGateway.showNativeBackgroundContextMenu = async (directoryPath, x, y, options) => {
+        nativeActionInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        capturedOptions = options;
+        return {
+          opened: true,
+          action: {
+            type: "setViewMode",
+            viewMode: "tiles"
+          }
+        };
+      };
+
+      function NativeActionHarness() {
+        nativeActionController = useWorkspaceController(nativeActionGateway);
+        return React.createElement("div", null, nativeActionController.state.status);
+      }
+
+      const nativeActionContainer = document.createElement("div");
+      document.body.appendChild(nativeActionContainer);
+      const nativeActionRoot = ReactDOM.createRoot(nativeActionContainer);
+
+      try {
+        await act(async () => {
+          nativeActionRoot.render(React.createElement(NativeActionHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeActionController?.state.status === "ready", "native action controller did not bootstrap");
+
+        await act(async () => {
+          nativeActionController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativeActionController?.state.panels["panel-1"].tabs[0].viewMode === "tiles",
+          "native background action did not update the tab view mode"
+        );
+        assert.deepEqual(nativeActionInteractions.nativeBackgroundContextMenus, [
+          {
+            directoryPath: "D:\\Projects\\Atlas",
+            x: 1120,
+            y: 740
+          }
+        ]);
+        assert.deepEqual(capturedOptions, {
+          viewMode: "details",
+          sort: {
+            columnId: "name",
+            direction: "asc"
+          },
+          canPaste: false
+        });
+        assert.equal(nativeActionController?.state.contextMenu, undefined);
+      } finally {
+        await act(async () => {
+          nativeActionRoot.unmount();
+          await flushEffects();
+        });
+        nativeActionContainer.remove();
       }
     });
 

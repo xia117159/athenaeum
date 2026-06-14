@@ -233,29 +233,51 @@ export const workspaceIpcTests = (async () => {
 
   await assertAsyncTest("showNativeBackgroundContextMenu invokes the background native menu command", async () => {
     let invokedArgs: Record<string, unknown> | null = null;
+    const options = {
+      viewMode: "details" as const,
+      sort: {
+        columnId: "name" as const,
+        direction: "asc" as const
+      },
+      canPaste: true
+    };
 
-    assert.equal(
-      await showNativeBackgroundContextMenu("D:\\Projects", 10.4, 20.6, async <T>() => undefined as T, undefined),
-      false
+    assert.deepEqual(
+      await showNativeBackgroundContextMenu("D:\\Projects", 10.4, 20.6, options, async <T>() => undefined as T, undefined),
+      { opened: false }
     );
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeBackgroundContextMenu(
         "D:\\Projects",
         10.4,
         20.6,
+        options,
         async <T>(_command: string, args: Record<string, unknown>) => {
           invokedArgs = args;
-          return true as T;
+          return {
+            opened: true,
+            action: {
+              type: "setSort",
+              columnId: "size"
+            }
+          } as T;
         },
         runtimeWindow
       ),
-      true
+      {
+        opened: true,
+        action: {
+          type: "setSort",
+          columnId: "size"
+        }
+      }
     );
     assert.deepEqual(invokedArgs, {
       directoryPath: "D:\\Projects",
       x: 10,
-      y: 21
+      y: 21,
+      options
     });
   });
 })();

@@ -24,6 +24,7 @@ import type {
   SelectionPathReplacement,
   SettingsSection,
   SettingsModel,
+  SortState,
   TabState,
   TabViewMode,
   WorkspaceBootstrap,
@@ -91,6 +92,7 @@ export type WorkspaceAction =
   | { type: "allEntriesSelected"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionCleared"; payload: { panelId: PanelId; tabId: string } }
   | { type: "tabSortChanged"; payload: { panelId: PanelId; tabId: string; columnId: ColumnId } }
+  | { type: "tabSortSet"; payload: { panelId: PanelId; tabId: string; sort: Partial<SortState> } }
   | { type: "tabViewModeSet"; payload: { panelId: PanelId; tabId: string; viewMode: TabViewMode } }
   | { type: "inlineEditStarted"; payload: { panelId: PanelId; tabId: string; edit: InlineEditState } }
   | { type: "inlineEditChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
@@ -1677,6 +1679,21 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                     direction: "asc"
                   }
             }
+        )
+      );
+
+    case "tabSortSet":
+      return updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) =>
+          isNavigationTab(tab)
+            ? tab
+            : {
+                ...tab,
+                sort: {
+                  columnId: action.payload.sort.columnId ?? tab.sort.columnId,
+                  direction: action.payload.sort.direction ?? tab.sort.direction
+                }
+              }
         )
       );
 

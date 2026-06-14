@@ -18,6 +18,8 @@ import type {
   DirectorySnapshot,
   EntryViewModel,
   MultiSelectionPropertiesSummary,
+  NativeBackgroundContextMenuAction,
+  NativeBackgroundContextMenuOptions,
   NativeContextMenuRequest,
   NavigationItem,
   NavigationItemUpsertRequest,
@@ -28,6 +30,7 @@ import type {
   SelectionPathReplacement,
   SettingsModel,
   SettingsSection,
+  SortState,
   TabState,
   TabViewMode,
   WorkspaceState
@@ -1997,7 +2000,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         tabId: activeTab.id,
         edit: {
           mode: "create-folder",
-          value: "新建文件夹",
+          value: "新文件夹",
           kind: "folder",
           parentPath: activeTab.snapshot.location.path
         }
@@ -2018,7 +2021,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         tabId: activeTab.id,
         edit: {
           mode: "create-file",
-          value: "新建文件.txt",
+          value: "新文件",
           kind: "file",
           parentPath: activeTab.snapshot.location.path
         }
@@ -2192,6 +2195,52 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     dispatch({ type: "tabMoved", payload: { sourcePanelId, targetPanelId, tabId, targetIndex } });
   });
 
+  const createBackgroundContextMenuOptions = (panelId: PanelId, tabId: string): NativeBackgroundContextMenuOptions => {
+    const tab = findTab(state, panelId, tabId);
+    if (isDirectoryTab(tab)) {
+      return {
+        viewMode: tab.viewMode,
+        sort: tab.sort,
+        canPaste: Boolean(state.clipboard?.paths.length)
+      };
+    }
+
+    return {
+      viewMode: "details",
+      sort: {
+        columnId: "name",
+        direction: "asc"
+      },
+      canPaste: false
+    };
+  };
+
+  const runNativeBackgroundContextMenuAction = (
+    action: NativeBackgroundContextMenuAction,
+    panelId: PanelId,
+    tabId: string
+  ) => {
+    switch (action.type) {
+      case "createFile":
+        void createFile(panelId);
+        return;
+      case "createFolder":
+        void createFolder(panelId);
+        return;
+      case "setViewMode":
+        dispatch({ type: "tabViewModeSet", payload: { panelId, tabId, viewMode: action.viewMode } });
+        return;
+      case "setSort":
+        dispatch({ type: "tabSortSet", payload: { panelId, tabId, sort: action } });
+        return;
+      case "paste":
+        void pasteIntoPanel(panelId);
+        return;
+      default:
+        return;
+    }
+  };
+
   const openNativeContextMenu = useEffectEvent(async (request: NativeContextMenuRequest) => {
     dispatch({ type: "contextMenuSet", payload: undefined });
     const target = request.target ?? "selection";
@@ -2218,10 +2267,22 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       }
 
       let opened = false;
+      let action: NativeBackgroundContextMenuAction | undefined;
       try {
-        opened = await workspaceGateway.showNativeBackgroundContextMenu(directoryPath, request.screenX, request.screenY);
+        const result = await workspaceGateway.showNativeBackgroundContextMenu(
+          directoryPath,
+          request.screenX,
+          request.screenY,
+          createBackgroundContextMenuOptions(request.panelId, request.tabId)
+        );
+        opened = result.opened;
+        action = result.action;
       } catch {
         opened = false;
+      }
+      if (action) {
+        runNativeBackgroundContextMenuAction(action, request.panelId, request.tabId);
+        return;
       }
       if (!opened) {
         openFallbackMenu();
@@ -2462,6 +2523,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       },
       sortEntries: (panelId: PanelId, tabId: string, columnId: ColumnId) =>
         dispatch({ type: "tabSortChanged", payload: { panelId, tabId, columnId } }),
+      setSort: (panelId: PanelId, tabId: string, sort: Partial<SortState>) =>
+        dispatch({ type: "tabSortSet", payload: { panelId, tabId, sort } }),
       setTabViewMode: (panelId: PanelId, tabId: string, viewMode: TabViewMode) =>
         dispatch({ type: "tabViewModeSet", payload: { panelId, tabId, viewMode } }),
       openEntry: (panelId: PanelId, entry: EntryViewModel) => {

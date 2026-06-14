@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,6 +20,7 @@ import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
+import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import { OperationConflictDialog } from "./OperationTaskCenter";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
@@ -45,12 +46,27 @@ import "./workspace.css";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
 
-type MenuItemDefinition = {
+type MenuActionItemDefinition = {
+  kind?: "action";
   label: string;
   disabled?: boolean;
   checked?: boolean;
   onSelect: () => void;
 };
+
+type MenuSubmenuItemDefinition = {
+  kind: "submenu";
+  label: string;
+  disabled?: boolean;
+  children: ReactNode;
+};
+
+type MenuSeparatorDefinition = {
+  kind: "separator";
+  id: string;
+};
+
+type MenuItemDefinition = MenuActionItemDefinition | MenuSubmenuItemDefinition | MenuSeparatorDefinition;
 
 type MenuDefinition = {
   id: string;
@@ -187,6 +203,44 @@ export function WorkspaceView() {
     setOpenMenuId(null);
   };
 
+  const renderMenuItem = (item: MenuItemDefinition) => {
+    if (item.kind === "separator") {
+      return <div key={item.id} className="menu-dropdown__separator" role="separator" />;
+    }
+
+    if (item.kind === "submenu") {
+      return (
+        <div key={item.label} className={`menu-dropdown__submenu${item.disabled ? " is-disabled" : ""}`} role="none">
+          <button
+            type="button"
+            className="menu-dropdown__item menu-dropdown__item--submenu-trigger"
+            disabled={item.disabled}
+            aria-haspopup="menu"
+          >
+            <span className="menu-dropdown__check" />
+            <span>{item.label}</span>
+          </button>
+          <div className="menu-dropdown__submenu-items" role="menu">
+            {item.children}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <button
+        key={item.label}
+        type="button"
+        className="menu-dropdown__item"
+        disabled={item.disabled}
+        onClick={() => handleMenuAction(item.onSelect)}
+      >
+        <span className="menu-dropdown__check">{item.checked ? "√" : ""}</span>
+        <span>{item.label}</span>
+      </button>
+    );
+  };
+
   const handleAddressInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const isCtrl = event.ctrlKey || event.metaKey;
 
@@ -261,6 +315,45 @@ export function WorkspaceView() {
       id: "view",
       label: "查看",
       items: [
+        {
+          kind: "submenu",
+          label: "视图",
+          disabled: !canUseDirectoryCommands,
+          children: (
+            <WorkspaceViewMenuItems
+              classNames={{
+                item: "menu-dropdown__item",
+                check: "menu-dropdown__check"
+              }}
+              disabled={!canUseDirectoryCommands}
+              viewMode={canUseDirectoryCommands ? activeTab.viewMode : "details"}
+              onSelect={(viewMode) => handleMenuAction(() => actions.setTabViewMode(state.activePanelId, activeTab.id, viewMode))}
+            />
+          )
+        },
+        {
+          kind: "submenu",
+          label: "排序方式",
+          disabled: !canUseDirectoryCommands,
+          children: (
+            <WorkspaceSortMenuItems
+              classNames={{
+                item: "menu-dropdown__item",
+                check: "menu-dropdown__check",
+                separator: "menu-dropdown__separator"
+              }}
+              disabled={!canUseDirectoryCommands}
+              sort={canUseDirectoryCommands ? activeTab.sort : undefined}
+              onSelectColumn={(columnId) =>
+                handleMenuAction(() => actions.setSort(state.activePanelId, activeTab.id, { columnId }))
+              }
+              onSelectDirection={(direction) =>
+                handleMenuAction(() => actions.setSort(state.activePanelId, activeTab.id, { direction }))
+              }
+            />
+          )
+        },
+        { kind: "separator", id: "view-workspace-separator" },
         ...LAYOUT_LABELS.map((layout) => ({
           label: layout.label,
           checked: state.layoutMode === layout.mode,
@@ -340,18 +433,7 @@ export function WorkspaceView() {
               </button>
               {openMenuId === menu.id ? (
                 <div className="menu-dropdown">
-                  {menu.items.map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      className="menu-dropdown__item"
-                      disabled={item.disabled}
-                      onClick={() => handleMenuAction(item.onSelect)}
-                    >
-                      <span className="menu-dropdown__check">{item.checked ? "√" : ""}</span>
-                      <span>{item.label}</span>
-                    </button>
-                  ))}
+                  {menu.items.map(renderMenuItem)}
                 </div>
               ) : null}
             </div>
@@ -518,6 +600,7 @@ export function WorkspaceView() {
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
           tab={state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)}
+          clipboard={state.clipboard}
           actions={actions}
           onClose={() => actions.closeContextMenu()}
         />

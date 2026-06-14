@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult } from "./types";
 
 export type WorkspaceInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
 
@@ -72,22 +73,25 @@ export async function showNativeBackgroundContextMenu(
   directoryPath: string,
   x: number,
   y: number,
+  options: NativeBackgroundContextMenuOptions,
   invokeFn: WorkspaceInvoke = invoke,
   runtimeHost: RuntimeHost = getRuntimeHost()
 ) {
+  const fallbackResult: NativeBackgroundContextMenuResult = { opened: false };
   if (!hasTauriRuntime(runtimeHost)) {
-    return false;
+    return fallbackResult;
   }
 
   try {
-    const opened = await invokeFn<boolean>("show_native_background_context_menu", {
+    const result = await invokeFn<NativeBackgroundContextMenuResult | boolean>("show_native_background_context_menu", {
       directoryPath,
       x: Math.round(x),
-      y: Math.round(y)
+      y: Math.round(y),
+      options
     });
-    return opened;
+    return typeof result === "boolean" ? { opened: result } : result;
   } catch (error) {
     console.warn("Falling back from show_native_background_context_menu", error);
-    return false;
+    return fallbackResult;
   }
 }

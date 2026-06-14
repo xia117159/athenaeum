@@ -420,6 +420,77 @@ pub struct ContextMenuSettings {
   pub default_menu: ContextMenuDefaultMenu
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeBackgroundContextMenuViewMode {
+  ExtraLargeIcons,
+  LargeIcons,
+  MediumIcons,
+  SmallIcons,
+  List,
+  Details,
+  Tiles,
+  Content
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum NativeBackgroundContextMenuSortColumn {
+  Name,
+  Modified,
+  Type,
+  Size
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum NativeBackgroundContextMenuSortDirection {
+  Asc,
+  Desc
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBackgroundContextMenuSortState {
+  pub column_id: NativeBackgroundContextMenuSortColumn,
+  pub direction: NativeBackgroundContextMenuSortDirection
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBackgroundContextMenuOptions {
+  pub view_mode: NativeBackgroundContextMenuViewMode,
+  pub sort: NativeBackgroundContextMenuSortState,
+  pub can_paste: bool
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum NativeBackgroundContextMenuAction {
+  CreateFile,
+  CreateFolder,
+  SetViewMode {
+    #[serde(rename = "viewMode")]
+    view_mode: NativeBackgroundContextMenuViewMode
+  },
+  SetSort {
+    #[serde(rename = "columnId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column_id: Option<NativeBackgroundContextMenuSortColumn>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    direction: Option<NativeBackgroundContextMenuSortDirection>
+  },
+  Paste
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBackgroundContextMenuResult {
+  pub opened: bool,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub action: Option<NativeBackgroundContextMenuAction>
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutBinding {
@@ -1040,9 +1111,12 @@ fn default_search_recursive() -> bool {
 #[cfg(test)]
 mod tests {
   use super::{
-    NavigationItem, NavigationItemUpsertRequest, NavigationTargetInfo, NavigationTargetKind,
-    NavigationTargetStatus, RemoteHostKeyInfo, RemoteHostKeyTrustState, RemoteTransferOperation,
-    RemoteTransferRequest, RemoteTrustHostKeyRequest, UiTheme
+    NativeBackgroundContextMenuAction, NativeBackgroundContextMenuResult,
+    NativeBackgroundContextMenuSortColumn, NativeBackgroundContextMenuSortDirection,
+    NativeBackgroundContextMenuViewMode, NavigationItem, NavigationItemUpsertRequest,
+    NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus, RemoteHostKeyInfo,
+    RemoteHostKeyTrustState, RemoteTransferOperation, RemoteTransferRequest, RemoteTrustHostKeyRequest,
+    UiTheme
   };
 
   #[test]
@@ -1114,6 +1188,34 @@ mod tests {
 
     assert_eq!(value["panelFocusAccent"], "#c02f7a");
     assert_eq!(value["tabMinWidth"], 132);
+  }
+
+  #[test]
+  fn native_background_context_menu_result_uses_frontend_action_contract() {
+    let view_result = NativeBackgroundContextMenuResult {
+      opened: true,
+      action: Some(NativeBackgroundContextMenuAction::SetViewMode {
+        view_mode: NativeBackgroundContextMenuViewMode::Tiles
+      })
+    };
+    let view_value = serde_json::to_value(&view_result).expect("native action result should serialize");
+
+    assert_eq!(view_value["opened"], true);
+    assert_eq!(view_value["action"]["type"], "setViewMode");
+    assert_eq!(view_value["action"]["viewMode"], "tiles");
+
+    let sort_result = NativeBackgroundContextMenuResult {
+      opened: true,
+      action: Some(NativeBackgroundContextMenuAction::SetSort {
+        column_id: Some(NativeBackgroundContextMenuSortColumn::Size),
+        direction: Some(NativeBackgroundContextMenuSortDirection::Desc)
+      })
+    };
+    let sort_value = serde_json::to_value(&sort_result).expect("native sort action should serialize");
+
+    assert_eq!(sort_value["action"]["type"], "setSort");
+    assert_eq!(sort_value["action"]["columnId"], "size");
+    assert_eq!(sort_value["action"]["direction"], "desc");
   }
 
   #[test]

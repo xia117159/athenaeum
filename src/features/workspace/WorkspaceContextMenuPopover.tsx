@@ -1,7 +1,7 @@
-import { type CSSProperties, useLayoutEffect, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { TAB_VIEW_MODE_OPTIONS } from "./FileListing";
-import type { ContextMenuState, TabState, TabViewMode } from "./types";
+import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
+import type { ClipboardState, ContextMenuState, TabState, TabViewMode } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -12,12 +12,14 @@ export function WorkspaceContextMenuPopover({
   contextMenu,
   viewMode,
   tab,
+  clipboard,
   actions,
   onClose
 }: {
   contextMenu: ContextMenuState;
   viewMode: TabViewMode;
   tab?: TabState;
+  clipboard?: ClipboardState;
   actions: WorkspaceActions;
   onClose: () => void;
 }) {
@@ -85,25 +87,59 @@ export function WorkspaceContextMenuPopover({
   };
   const isNavigationTab = tab?.kind === "navigation";
   const isDirectoryTab = tab?.kind === "directory";
+  const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
+  const canPaste = Boolean(clipboard?.paths.length);
 
-  const renderViewSubmenu = () => (
-    <div className="context-menu__submenu">
-      <span className="context-menu__submenu-label">查看</span>
-      <div className="context-menu__submenu-items">
-        {TAB_VIEW_MODE_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className="context-menu__item"
-            onClick={() => handleAction(() => actions.setTabViewMode(contextMenu.panelId, contextMenu.tabId, option.id))}
-          >
-            <span className="context-menu__check">{viewMode === option.id ? "✓" : ""}</span>
-            <span>{option.label}</span>
-          </button>
-        ))}
+  const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
+    <div className={`context-menu__submenu${disabled ? " is-disabled" : ""}`} role="none">
+      <button
+        type="button"
+        className="context-menu__item context-menu__item--submenu-trigger"
+        disabled={disabled}
+        aria-haspopup="menu"
+      >
+        <span className="context-menu__check" />
+        <span>{label}</span>
+      </button>
+      <div className="context-menu__submenu-items" role="menu">
+        {children}
       </div>
     </div>
   );
+
+  const renderViewSubmenu = () =>
+    renderSubmenu(
+      "视图",
+      <WorkspaceViewMenuItems
+        classNames={{
+          item: "context-menu__item",
+          check: "context-menu__check"
+        }}
+        viewMode={viewMode}
+        onSelect={(nextViewMode) =>
+          handleAction(() => actions.setTabViewMode(contextMenu.panelId, contextMenu.tabId, nextViewMode))
+        }
+      />,
+      !isDirectoryTab
+    );
+
+  const renderSortSubmenu = () =>
+    renderSubmenu(
+      "排序方式",
+      <WorkspaceSortMenuItems
+        classNames={{
+          item: "context-menu__item",
+          check: "context-menu__check",
+          separator: "context-menu__separator"
+        }}
+        sort={currentSort}
+        onSelectColumn={(columnId) => handleAction(() => actions.setSort(contextMenu.panelId, contextMenu.tabId, { columnId }))}
+        onSelectDirection={(direction) =>
+          handleAction(() => actions.setSort(contextMenu.panelId, contextMenu.tabId, { direction }))
+        }
+      />,
+      !isDirectoryTab
+    );
 
   const renderTabMenu = () => (
     <>
@@ -153,14 +189,26 @@ export function WorkspaceContextMenuPopover({
 
   const renderPanelMenu = () => (
     <>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
-        <span className="context-menu__check" />
-        <span>新建文件夹</span>
-      </button>
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFile(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建文件</span>
       </button>
+      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
+        <span className="context-menu__check" />
+        <span>新建文件夹</span>
+      </button>
+      {renderViewSubmenu()}
+      {renderSortSubmenu()}
+      <button
+        type="button"
+        className="context-menu__item"
+        disabled={!isDirectoryTab || !canPaste}
+        onClick={() => handleAction(() => actions.pasteIntoPanel(contextMenu.panelId))}
+      >
+        <span className="context-menu__check" />
+        <span>粘贴</span>
+      </button>
+      <div className="context-menu__separator" />
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
         <span className="context-menu__check" />
         <span>复制路径</span>
@@ -169,7 +217,6 @@ export function WorkspaceContextMenuPopover({
         <span className="context-menu__check" />
         <span>添加当前文件夹到导航页</span>
       </button>
-      {renderViewSubmenu()}
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab && !isNavigationTab} onClick={() => handleAction(() => actions.refreshPanel(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>刷新</span>

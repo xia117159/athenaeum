@@ -5,7 +5,7 @@ use tauri::{State, Window};
 use crate::{
   domain::models::{
     ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget, NavigationTargetInfo, SystemIconBitmap,
-    SystemIconRequest, WorkspaceBootstrap
+    NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult, SystemIconRequest, WorkspaceBootstrap
   },
   services::{fs_service, icon_service, remote_service, windows_shell, AppState}
 };
@@ -132,9 +132,10 @@ pub async fn show_native_background_context_menu(
   directory_path: String,
   x: i32,
   y: i32,
+  options: NativeBackgroundContextMenuOptions,
   window: Window
-) -> Result<bool, String> {
-  windows_shell::show_native_background_context_menu(directory_path, x, y, &window)
+) -> Result<NativeBackgroundContextMenuResult, String> {
+  windows_shell::show_native_background_context_menu(directory_path, x, y, options, &window)
     .await
     .map_err(|error| error.to_string())
 }

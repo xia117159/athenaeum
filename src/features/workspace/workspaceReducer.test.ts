@@ -1054,6 +1054,43 @@ assertTest("workspaceReducer toggles tab sort direction when the same column hea
     assert.equal(getActiveTab(secondSort.panels["panel-1"]).sort.direction, "desc");
   });
 
+assertTest("workspaceReducer stores explicit tab sort selections from context menus", () => {
+    const state = createState();
+    const activeTab = getActiveTab(state.panels["panel-1"]);
+
+    const sortedBySize = workspaceReducer(state, {
+      type: "tabSortSet",
+      payload: {
+        panelId: "panel-1",
+        tabId: activeTab.id,
+        sort: {
+          columnId: "size"
+        }
+      }
+    });
+
+    assert.deepEqual(getActiveTab(sortedBySize.panels["panel-1"]).sort, {
+      columnId: "size",
+      direction: "asc"
+    });
+
+    const descending = workspaceReducer(sortedBySize, {
+      type: "tabSortSet",
+      payload: {
+        panelId: "panel-1",
+        tabId: activeTab.id,
+        sort: {
+          direction: "desc"
+        }
+      }
+    });
+
+    assert.deepEqual(getActiveTab(descending.panels["panel-1"]).sort, {
+      columnId: "size",
+      direction: "desc"
+    });
+  });
+
 assertTest("workspaceReducer stores view mode per tab", () => {
     const state = createState();
     const activeTab = getActiveTab(state.panels["panel-1"]);

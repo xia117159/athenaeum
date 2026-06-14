@@ -213,6 +213,27 @@ export interface ContextMenuSettings {
   defaultMenu: "native" | "custom";
 }
 
+export type NativeBackgroundContextMenuAction =
+  | { type: "createFile" }
+  | { type: "createFolder" }
+  | { type: "setViewMode"; viewMode: "extra-large-icons" | "large-icons" | "medium-icons" | "small-icons" | "list" | "details" | "tiles" | "content" }
+  | { type: "setSort"; columnId?: "name" | "modified" | "type" | "size"; direction?: "asc" | "desc" }
+  | { type: "paste" };
+
+export interface NativeBackgroundContextMenuOptions {
+  viewMode: "extra-large-icons" | "large-icons" | "medium-icons" | "small-icons" | "list" | "details" | "tiles" | "content";
+  sort: {
+    columnId: "name" | "modified" | "type" | "size";
+    direction: "asc" | "desc";
+  };
+  canPaste: boolean;
+}
+
+export interface NativeBackgroundContextMenuResult {
+  opened: boolean;
+  action?: NativeBackgroundContextMenuAction;
+}
+
 export interface ShortcutBinding {
   id: string;
   action: string;
