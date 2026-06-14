@@ -774,6 +774,7 @@ export const completion = (async () => {
 
     await assertTest("workspace information panel styles define the shell, tabs, and compact summary bar", async () => {
       const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const propertiesGridBlock = css.match(/\.properties-panel__grid\s*\{[^}]*\}/u)?.[0] ?? "";
       assert.equal(css.includes(".workspace-main__right--with-summary"), true);
       assert.equal(css.includes(".information-panel__content-shell"), true);
       assert.equal(css.includes(".information-panel__top-tabs"), true);
@@ -783,14 +784,24 @@ export const completion = (async () => {
       assert.equal(css.includes(".information-panel__content-label"), true);
       assert.equal(css.includes(".information-panel__extension-filter"), true);
       assert.equal(css.includes(".information-panel__actions"), true);
+      assert.equal(css.includes("container-name: information-panel-content;"), true);
+      assert.equal(css.includes("grid-template-rows: auto minmax(0, 1fr);"), true);
+      assert.equal(css.includes("grid-template-columns: minmax(220px, 1fr) minmax(132px, max-content) minmax(160px, 0.42fr);"), true);
+      assert.equal(css.includes("grid-template-rows: auto minmax(44px, 1fr) auto;"), true);
+      assert.equal(css.includes("padding: 4px 6px 6px;"), true);
       assert.equal(css.includes("grid-auto-rows: max-content;"), true);
       assert.equal(css.includes("grid-template-rows: none;"), true);
       assert.equal(css.includes(".information-panel__actions {\n  display: grid;\n  grid-template-rows: auto auto auto auto minmax(0, 1fr);"), false);
       assert.equal(css.includes(".properties-panel__grid"), true);
+      assert.equal(css.includes("grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);"), true);
+      assert.equal(css.includes("column-width: 190px;"), true);
+      assert.equal(css.includes("column-fill: auto;"), true);
+      assert.equal(css.includes("break-inside: avoid;"), true);
+      assert.equal(propertiesGridBlock.includes("grid-auto-flow"), false);
       assert.equal(css.includes(".operation-history-panel"), true);
       assert.equal(css.includes("max-height: 30px;"), true);
       assert.equal(css.includes("gap: 3px;"), true);
-      assert.equal(css.includes("min-height: 18px;"), true);
+      assert.equal(css.includes("min-height: 20px;"), true);
       assert.equal(css.includes("grid-template-columns: minmax(128px, 260px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;"), true);
       assert.equal(css.includes("width: 24px;"), true);
       assert.equal(css.includes("height: 24px;"), true);

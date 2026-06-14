@@ -56,6 +56,12 @@ async function flushEffects() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function getLastCssRuleBody(css: string, selector: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = Array.from(css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g")));
+  return matches.length > 0 ? matches[matches.length - 1][1] : "";
+}
+
 function createSettingsState(section: SettingsSection = "shortcuts") {
   const state = createWorkspaceState(createMockWorkspaceBootstrap("mock"));
   return {
@@ -162,6 +168,17 @@ export const completion = (async () => {
       assert.equal(css.includes("container-name: settings-content"), true);
       assert.match(css, /@container\s+settings-content\s+\(max-width:\s*600px\)[\s\S]*?\.settings-page--connections\s+\.connections-editor[\s\S]*?grid-template-columns:\s*1fr;/);
       assert.equal(/@media\s*\(max-width:\s*960px\)[\s\S]*?settings-window__nav/.test(css), false);
+
+      const navHeadingRule = getLastCssRuleBody(css, ".settings-window__nav-heading");
+      const navItemRule = getLastCssRuleBody(css, ".settings-window__nav-item");
+      const navItemTextRule = getLastCssRuleBody(css, ".settings-window__nav-item span");
+      assert.match(css, /\.settings-window__nav\s*\{[^}]*--settings-nav-font-size:\s*\d+(?:\.\d+)?px;/);
+      assert.match(navHeadingRule, /font-size:\s*var\(--settings-nav-font-size\);/);
+      assert.match(navHeadingRule, /font-weight:\s*700;/);
+      assert.match(navItemRule, /font-size:\s*var\(--settings-nav-font-size\);/);
+      assert.match(navItemRule, /font-weight:\s*400;/);
+      assert.match(navItemRule, /min-height:\s*0;/);
+      assert.doesNotMatch(navItemTextRule, /font-weight:\s*(?:[6-9]00|bold|bolder)\b/);
     });
 
     await assertTest("ShortcutCaptureInput captures Ctrl+Alt+P once and ignores text input paths", async () => {

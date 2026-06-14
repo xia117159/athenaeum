@@ -715,7 +715,7 @@ function WorkspaceRightContent({
         min={0.5}
         max={0.82}
         minSizePx={240}
-        secondMinSizePx={180}
+        secondMinSizePx={222}
         handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("search", 1 - value)}
         className="workspace-main__right-split"

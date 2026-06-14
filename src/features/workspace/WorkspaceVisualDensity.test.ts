@@ -84,6 +84,10 @@ assertTest("workspace top chrome separates command and address rows without the 
   assert.equal(workspaceViewSource.includes("workspace-toolbar__history"), false);
   assert.equal(workspaceViewSource.includes("OperationSummaryButton"), false);
   assertDeclaration(getCssBlock(".information-panel__summary"), "grid-template-columns", "minmax\\(128px, 260px\\) minmax\\(76px, 0\\.7fr\\) minmax\\(64px, 0\\.6fr\\) minmax\\(96px, 0\\.9fr\\) minmax\\(118px, 1fr\\) 26px 26px");
+  assertDeclaration(getCssBlock(".information-panel.is-expanded"), "min-height", "222px");
+  assertDeclaration(getCssBlock(".information-panel__content-shell"), "grid-template-rows", "27px minmax\\(165px, 1fr\\)");
+  assertDeclaration(getCssBlock(".information-panel__content"), "min-height", "165px");
+  assert.equal(workspaceViewSource.includes("secondMinSizePx={222}"), true);
   assertDeclaration(getCssBlock(".address-bar"), "width", "100%");
   assert.equal(css.includes(".workspace-error"), false);
 });
