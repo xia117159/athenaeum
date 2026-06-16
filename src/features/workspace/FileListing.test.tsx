@@ -10,7 +10,7 @@ import {
   type SystemIconRequest
 } from "./systemIconGateway";
 import { installLegacyInputEventPatch } from "./testDom";
-import type { ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
+import type { ClipboardState, ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -284,6 +284,7 @@ export const completion = (async () => {
   const inlineCommits: string[] = [];
   const inlineCommitValues: Array<string | undefined> = [];
   const inlineCancels: string[] = [];
+  const systemDragStarts: string[][] = [];
 
   setSystemIconResolverForTests(async (request) => {
     resolvedIconRequests.push(request);
@@ -298,7 +299,8 @@ export const completion = (async () => {
     entryDropMoveBinding = "Shift",
     renderColumns: ColumnDefinition[] = columns,
     contextMenuDefault: "native" | "custom" = "native",
-    contextMenuToggleBinding = "Shift"
+    contextMenuToggleBinding = "Shift",
+    clipboard?: ClipboardState
   ) {
     root.render(
       React.createElement(FileListingShell, {
@@ -311,6 +313,7 @@ export const completion = (async () => {
         selectedEntryIds: selectedIds,
         viewMode,
         inlineEdit,
+        clipboard,
         detailsRowHeight: 42,
         entryDropMoveBinding,
         contextMenuDefault,
@@ -345,6 +348,9 @@ export const completion = (async () => {
         },
         onDropEntries: (paths, destination, operation) => {
           dropped.push({ paths, destination, operation });
+        },
+        onStartSystemFileDrag: (paths) => {
+          systemDragStarts.push([...paths]);
         },
         onInlineEditChange: (value) => {
           inlineChanges.push(value);
@@ -565,7 +571,7 @@ export const completion = (async () => {
       const rows = Array.from(container.querySelectorAll(".file-row"));
       const sourceRow = rows[1];
       assert.ok(sourceRow);
-      assert.equal((sourceRow as HTMLElement).draggable, false);
+      assert.equal((sourceRow as HTMLElement).draggable, true);
 
       const targetTab = createTabDropTarget("E:\\Target");
       const restoreElementFromPoint = stubElementFromPoint(targetTab);
@@ -584,6 +590,33 @@ export const completion = (async () => {
       assert.deepEqual(dropped, [
         { paths: ["D:\\Archive", "D:\\report.txt"], destination: "E:\\Target", operation: "copy" }
       ]);
+    });
+
+    await assertTest("FileListingShell marks cut clipboard entries and writes URI list during drag", async () => {
+      systemDragStarts.length = 0;
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", columns, "native", "Shift", {
+          mode: "cut",
+          paths: ["D:\\report.txt"]
+        });
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const sourceRow = rows[1] as HTMLElement | undefined;
+      assert.ok(sourceRow);
+      assert.equal(sourceRow.classList.contains("is-cut"), true);
+      assert.equal(sourceRow.dataset.clipboardMode, "cut");
+
+      const transfer = createDataTransfer();
+      await act(async () => {
+        dispatchDragEvent(sourceRow, "dragstart", transfer);
+        await flushEffects();
+      });
+
+      assert.equal(transfer.getData("text/uri-list"), "file:///D:/report.txt");
+      assert.equal(transfer.getData("text/plain"), "D:\\report.txt");
+      assert.deepEqual(systemDragStarts, [["D:\\report.txt"]]);
     });
 
     await assertTest("FileListingShell uses the configured modifier for pointer move drops onto tabs", async () => {

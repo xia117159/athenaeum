@@ -2989,6 +2989,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

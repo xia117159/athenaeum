@@ -8,6 +8,7 @@ import { createNavigationTab, getActiveTab } from "./workspaceReducer";
 import type {
   DirectoryNode,
   EntryViewModel,
+  NativeBackgroundContextMenuOptions,
   OperationTaskSnapshot,
   RemoteConnectionProfile,
   SettingsModel,
@@ -62,6 +63,9 @@ function createTestGateway(
     trustedHostKeys?: Array<{ profileId: string; keyBase64: string }>;
     cancelSearchIds?: string[];
     propertyCalls?: Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>;
+    systemClipboardWrites?: Array<{ paths: string[]; mode: "copy" | "cut" }>;
+    systemClipboardReads?: number;
+    systemDragStarts?: string[][];
   },
   overrides: {
     loadBootstrap?: () => WorkspaceBootstrap | Promise<WorkspaceBootstrap>;
@@ -71,6 +75,7 @@ function createTestGateway(
     renameEntry?: WorkspaceGateway["renameEntry"];
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
+    readSystemFileClipboard?: WorkspaceGateway["readSystemFileClipboard"];
   } = {}
 ): WorkspaceGateway {
   const emptyFavorites = { bookmarks: [], hotlist: [] };
@@ -178,9 +183,6 @@ function createTestGateway(
       }
       return () => undefined;
     },
-    async listenOperationConflicts() {
-      return () => undefined;
-    },
     async listenOperationHistory() {
       return () => undefined;
     },
@@ -258,14 +260,22 @@ function createTestGateway(
     async cancelOperation(taskId) {
       return { ...createOperationTask(taskId), status: "cancelled" };
     },
-    async resolveOperationConflict() {
-      return createOperationTask("resolved-conflict");
-    },
     async undoLatestOperation() {
       return { ...createOperationTask("undo-latest"), kind: "undo" };
     },
     async undoOperation(recordId) {
       return { ...createOperationTask(`undo-${recordId}`), kind: "undo" };
+    },
+    async setSystemFileClipboard(paths, mode) {
+      interactions.systemClipboardWrites?.push({ paths: [...paths], mode });
+    },
+    async readSystemFileClipboard() {
+      interactions.systemClipboardReads = (interactions.systemClipboardReads ?? 0) + 1;
+      return overrides.readSystemFileClipboard ? overrides.readSystemFileClipboard() : null;
+    },
+    async startSystemFileDrag(paths) {
+      interactions.systemDragStarts?.push([...paths]);
+      return null;
     },
     async showNativeContextMenu(paths: string[], x: number, y: number) {
       interactions.nativeContextMenus.push({ paths: [...paths], x, y });
@@ -438,7 +448,10 @@ export const completion = (async () => {
     savedSettingsModels: [] as SettingsModel[],
     nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
     systemOpens: [] as string[],
-    propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
+    propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>,
+    systemClipboardWrites: [] as Array<{ paths: string[]; mode: "copy" | "cut" }>,
+    systemClipboardReads: 0,
+    systemDragStarts: [] as string[][]
   };
 
   const gateway = createTestGateway(() => {
@@ -1854,6 +1867,251 @@ export const completion = (async () => {
       assert.equal(interactions.resolvedPaths.includes("C:\\Users\\Admin\\Downloads"), true);
     });
 
+    await assertTest("useWorkspaceController syncs local copy and cut selections to the Windows file clipboard", async () => {
+      interactions.systemClipboardWrites.length = 0;
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      assert.equal(activeTab.kind, "directory");
+      const firstEntry = activeTab.snapshot.entries[0];
+      assert.ok(firstEntry);
+
+      await act(async () => {
+        latestController?.actions.selectEntry("panel-1", activeTab.id, firstEntry.id, false);
+        await flushEffects();
+      });
+
+      await act(async () => {
+        latestController?.actions.copySelection("panel-1");
+        await flushEffects();
+      });
+
+      await act(async () => {
+        latestController?.actions.cutSelection("panel-1");
+        await flushEffects();
+      });
+
+      assert.deepEqual(interactions.systemClipboardWrites, [
+        {
+          paths: [firstEntry.path],
+          mode: "copy"
+        },
+        {
+          paths: [firstEntry.path],
+          mode: "cut"
+        }
+      ]);
+      assert.deepEqual(latestController?.state.clipboard, {
+        paths: [firstEntry.path],
+        mode: "cut"
+      });
+    });
+
+    await assertTest("useWorkspaceController pastes Windows file clipboard entries into the selected folder", async () => {
+      const pasteInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let pasteController: ReturnType<typeof useWorkspaceController> | undefined;
+      const pasteGateway = createTestGateway(() => undefined, pasteInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "cut",
+          paths: ["D:\\Projects\\Atlas\\README.md"]
+        })
+      });
+
+      function PasteHarness() {
+        pasteController = useWorkspaceController(pasteGateway);
+        return React.createElement("div", null, pasteController.state.status);
+      }
+
+      const pasteContainer = document.createElement("div");
+      document.body.appendChild(pasteContainer);
+      const pasteRoot = ReactDOM.createRoot(pasteContainer);
+
+      try {
+        await act(async () => {
+          pasteRoot.render(React.createElement(PasteHarness));
+          await flushEffects();
+        });
+        await waitFor(() => pasteController?.state.status === "ready", "paste controller did not bootstrap");
+
+        await act(async () => {
+          await pasteController?.actions.pasteIntoPanel("panel-2");
+          await flushEffects();
+        });
+
+        assert.equal(pasteInteractions.systemClipboardReads, 1);
+        assert.deepEqual(pasteInteractions.moveCalls, [
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+        assert.equal(pasteInteractions.copyCalls.length, 0);
+        assert.equal(pasteController?.state.clipboard, undefined);
+      } finally {
+        await act(async () => {
+          pasteRoot.unmount();
+          await flushEffects();
+        });
+        pasteContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController lets same-parent copy paste and drop operations reach the shell gateway", async () => {
+      const noOpInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let noOpController: ReturnType<typeof useWorkspaceController> | undefined;
+      const noOpGateway = createTestGateway(() => undefined, noOpInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "copy",
+          paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"]
+        })
+      });
+
+      function NoOpHarness() {
+        noOpController = useWorkspaceController(noOpGateway);
+        return React.createElement("div", null, noOpController.state.status);
+      }
+
+      const noOpContainer = document.createElement("div");
+      document.body.appendChild(noOpContainer);
+      const noOpRoot = ReactDOM.createRoot(noOpContainer);
+
+      try {
+        await act(async () => {
+          noOpRoot.render(React.createElement(NoOpHarness));
+          await flushEffects();
+        });
+        await waitFor(() => noOpController?.state.status === "ready", "no-op controller did not bootstrap");
+
+        await act(async () => {
+          await noOpController?.actions.pasteIntoPanel("panel-2");
+          await noOpController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(noOpInteractions.systemClipboardReads, 1);
+        assert.deepEqual([...noOpInteractions.copyCalls].sort((left, right) => left.paths[0].localeCompare(right.paths[0])), [
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          },
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+        assert.deepEqual(noOpInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          noOpRoot.unmount();
+          await flushEffects();
+        });
+        noOpContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController skips same-parent cut paste and move drop operations", async () => {
+      const noOpInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let noOpController: ReturnType<typeof useWorkspaceController> | undefined;
+      const noOpGateway = createTestGateway(() => undefined, noOpInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "cut",
+          paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"]
+        })
+      });
+
+      function NoOpHarness() {
+        noOpController = useWorkspaceController(noOpGateway);
+        return React.createElement("div", null, noOpController.state.status);
+      }
+
+      const noOpContainer = document.createElement("div");
+      document.body.appendChild(noOpContainer);
+      const noOpRoot = ReactDOM.createRoot(noOpContainer);
+
+      try {
+        await act(async () => {
+          noOpRoot.render(React.createElement(NoOpHarness));
+          await flushEffects();
+        });
+        await waitFor(() => noOpController?.state.status === "ready", "no-op controller did not bootstrap");
+
+        await act(async () => {
+          await noOpController?.actions.pasteIntoPanel("panel-2");
+          await noOpController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            "C:\\Users\\Admin\\Downloads",
+            "move"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(noOpInteractions.systemClipboardReads, 1);
+        assert.deepEqual(noOpInteractions.copyCalls, []);
+        assert.deepEqual(noOpInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          noOpRoot.unmount();
+          await flushEffects();
+        });
+        noOpContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController starts native system file drag only for local file paths", async () => {
+      interactions.systemDragStarts.length = 0;
+
+      await act(async () => {
+        latestController?.actions.startSystemFileDrag([
+          "D:\\Projects\\Atlas\\README.md",
+          "sftp://deploy@edge-01/releases/manifest.yml"
+        ]);
+        await flushEffects();
+      });
+
+      assert.deepEqual(interactions.systemDragStarts, [["D:\\Projects\\Atlas\\README.md"]]);
+    });
+
     await assertTest("useWorkspaceController routes remote clipboard and mutation actions through the gateway", async () => {
       interactions.resolvedPaths.length = 0;
       interactions.copyCalls.length = 0;
@@ -1861,6 +2119,7 @@ export const completion = (async () => {
       interactions.deleteCalls.length = 0;
       interactions.renameCalls.length = 0;
       interactions.createDirectoryCalls.length = 0;
+      interactions.systemClipboardWrites.length = 0;
 
       const remoteFileId = "sftp://deploy@edge-01/releases:manifest.yml";
       const remoteFilePath = "sftp://deploy@edge-01/releases/manifest.yml";
@@ -1875,6 +2134,7 @@ export const completion = (async () => {
         await flushEffects();
       });
       assert.deepEqual(latestController?.state.clipboard?.paths, [remoteFilePath]);
+      assert.deepEqual(interactions.systemClipboardWrites, []);
 
       await act(async () => {
         await latestController?.actions.pasteIntoPanel("panel-2");
@@ -2869,6 +3129,90 @@ export const completion = (async () => {
           await flushEffects();
         });
         fallbackContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController enables native background paste from the Windows file clipboard", async () => {
+      const nativePasteInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let nativePasteController: ReturnType<typeof useWorkspaceController> | undefined;
+      let capturedOptions: NativeBackgroundContextMenuOptions | undefined;
+      const nativePasteGateway = createTestGateway(
+        () => undefined,
+        nativePasteInteractions,
+        {
+          loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+          readSystemFileClipboard: async () => ({
+            mode: "copy",
+            paths: ["D:\\Projects\\Atlas\\README.md"]
+          })
+        }
+      );
+      nativePasteGateway.showNativeBackgroundContextMenu = async (directoryPath, x, y, options) => {
+        nativePasteInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        capturedOptions = options;
+        return { opened: true };
+      };
+
+      function NativePasteHarness() {
+        nativePasteController = useWorkspaceController(nativePasteGateway);
+        return React.createElement("div", null, nativePasteController.state.status);
+      }
+
+      const nativePasteContainer = document.createElement("div");
+      document.body.appendChild(nativePasteContainer);
+      const nativePasteRoot = ReactDOM.createRoot(nativePasteContainer);
+
+      try {
+        await act(async () => {
+          nativePasteRoot.render(React.createElement(NativePasteHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativePasteController?.state.status === "ready", "native paste controller did not bootstrap");
+
+        await act(async () => {
+          nativePasteController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativePasteInteractions.nativeBackgroundContextMenus.length === 1,
+          "native background menu did not open"
+        );
+        assert.equal(nativePasteInteractions.systemClipboardReads, 1);
+        assert.equal(capturedOptions?.canPaste, true);
+        assert.deepEqual(nativePasteController?.state.clipboard, {
+          mode: "copy",
+          paths: ["D:\\Projects\\Atlas\\README.md"]
+        });
+      } finally {
+        await act(async () => {
+          nativePasteRoot.unmount();
+          await flushEffects();
+        });
+        nativePasteContainer.remove();
       }
     });
 

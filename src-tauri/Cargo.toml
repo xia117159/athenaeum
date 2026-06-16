@@ -31,6 +31,7 @@ tokio = { version = "1.49.0", features = ["fs", "macros", "process", "rt-multi-t
 toml = "0.9.12"
 uuid = { version = "1.21.0", features = ["serde", "v4"] }
 walkdir = "2.5.0"
+windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

@@ -234,6 +234,13 @@ export interface NativeBackgroundContextMenuResult {
   action?: NativeBackgroundContextMenuAction;
 }
 
+export type SystemFileClipboardMode = "copy" | "cut";
+
+export interface SystemFileClipboard {
+  mode: SystemFileClipboardMode;
+  paths: string[];
+}
+
 export interface ShortcutBinding {
   id: string;
   action: string;

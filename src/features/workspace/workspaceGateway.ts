@@ -17,6 +17,9 @@ import {
 import {
   hasTauriRuntime,
   invokeWithBrowserFallback,
+  readSystemFileClipboard as readNativeSystemFileClipboard,
+  setSystemFileClipboard as setNativeSystemFileClipboard,
+  startSystemFileDrag as startNativeSystemFileDrag,
   showNativeBackgroundContextMenu as openNativeBackgroundContextMenu,
   showNativeContextMenu as openNativeContextMenu
 } from "./workspaceIpc";
@@ -33,12 +36,10 @@ import {
   deleteWorkspaceEntries,
   listWorkspaceOperationHistory,
   listWorkspaceOperationTasks,
-  listenWorkspaceOperationConflicts,
   listenWorkspaceOperationHistory,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
   renameWorkspaceEntry,
-  resolveWorkspaceOperationConflict,
   undoLatestWorkspaceOperation,
   undoWorkspaceOperation
 } from "./workspaceOperationsGateway";
@@ -77,8 +78,6 @@ import {
 } from "./workspacePropertiesGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
-  OperationConflictRequest,
-  OperationConflictResolution,
   OperationHistoryEventEnvelope,
   OperationHistoryListSnapshot,
   OperationIntent,
@@ -102,6 +101,7 @@ import type {
   RemoteConnectionProfile,
   SearchProgressState,
   SettingsModel,
+  SystemFileClipboard,
   WorkspaceBootstrap,
   WorkspaceState,
   ItemProperties
@@ -143,7 +143,6 @@ export interface WorkspaceGateway {
   listOperationTasks(): Promise<OperationTaskListSnapshot>;
   listOperationHistory(): Promise<OperationHistoryListSnapshot>;
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
-  listenOperationConflicts(handler: (event: OperationConflictRequest) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
   copyEntries(
@@ -176,9 +175,11 @@ export interface WorkspaceGateway {
     options?: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">>
   ): Promise<OperationTaskSnapshot | void>;
   cancelOperation(taskId: string): Promise<OperationTaskSnapshot>;
-  resolveOperationConflict(resolution: OperationConflictResolution): Promise<OperationTaskSnapshot>;
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
+  setSystemFileClipboard(paths: string[], mode: SystemFileClipboard["mode"]): Promise<void>;
+  readSystemFileClipboard(): Promise<SystemFileClipboard | null>;
+  startSystemFileDrag(paths: string[]): Promise<SystemFileClipboard["mode"] | null>;
   showNativeContextMenu(paths: string[], x: number, y: number): Promise<boolean>;
   showNativeBackgroundContextMenu(
     directoryPath: string,
@@ -374,10 +375,6 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return listenWorkspaceOperationTasks(handler);
     },
 
-    async listenOperationConflicts(handler) {
-      return listenWorkspaceOperationConflicts(handler);
-    },
-
     async listenOperationHistory(handler) {
       return listenWorkspaceOperationHistory(handler);
     },
@@ -414,16 +411,24 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return cancelWorkspaceOperation(taskId);
     },
 
-    async resolveOperationConflict(resolution) {
-      return resolveWorkspaceOperationConflict(resolution);
-    },
-
     async undoLatestOperation(requestId) {
       return undoLatestWorkspaceOperation(requestId);
     },
 
     async undoOperation(recordId, requestId) {
       return undoWorkspaceOperation(recordId, requestId);
+    },
+
+    async setSystemFileClipboard(paths, mode) {
+      await setNativeSystemFileClipboard(paths, mode);
+    },
+
+    async readSystemFileClipboard() {
+      return readNativeSystemFileClipboard();
+    },
+
+    async startSystemFileDrag(paths) {
+      return startNativeSystemFileDrag(paths);
     },
 
     async showNativeContextMenu(paths, x, y) {

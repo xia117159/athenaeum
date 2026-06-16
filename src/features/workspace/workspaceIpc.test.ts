@@ -5,6 +5,10 @@ import {
   hasTauriRuntime,
   invokeRequired,
   invokeWithBrowserFallback,
+  readSystemFileClipboard,
+  performSystemFileOperation,
+  setSystemFileClipboard,
+  startSystemFileDrag,
   showNativeBackgroundContextMenu,
   showNativeContextMenu
 } from "./workspaceIpc";
@@ -85,6 +89,9 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "mark_navigation_item_opened",
     "resolve_navigation_targets",
     "open_path_with_system_default",
+    "set_system_file_clipboard",
+    "read_system_file_clipboard",
+    "start_system_file_drag",
     "list_remote_profiles",
     "save_remote_profile",
     "delete_remote_profile",
@@ -279,5 +286,90 @@ export const workspaceIpcTests = (async () => {
       y: 21,
       options
     });
+  });
+
+  await assertAsyncTest("system file clipboard commands are thin IPC wrappers", async () => {
+    let setArgs: Record<string, unknown> | null = null;
+    let readCalled = false;
+
+    await setSystemFileClipboard(
+      ["D:\\Projects\\Atlas\\README.md"],
+      "cut",
+      async <T>(_command: string, args: Record<string, unknown>) => {
+        setArgs = args;
+        return undefined as T;
+      },
+      runtimeWindow
+    );
+
+    const clipboard = await readSystemFileClipboard(
+      async <T>(_command: string, _args: Record<string, unknown>) => {
+        readCalled = true;
+        return { mode: "copy", paths: ["D:\\source.txt"] } as T;
+      },
+      runtimeWindow
+    );
+
+    assert.deepEqual(setArgs, {
+      paths: ["D:\\Projects\\Atlas\\README.md"],
+      mode: "cut"
+    });
+    assert.deepEqual(clipboard, {
+      mode: "copy",
+      paths: ["D:\\source.txt"]
+    });
+    assert.equal(readCalled, true);
+  });
+
+  await assertAsyncTest("startSystemFileDrag is a thin IPC wrapper", async () => {
+    let invokedCommand: string | null = null;
+    let invokedArgs: Record<string, unknown> | null = null;
+
+    const result = await startSystemFileDrag(
+      ["D:\\Projects\\Atlas\\README.md"],
+      async <T>(command: string, args: Record<string, unknown>) => {
+        invokedCommand = command;
+        invokedArgs = args;
+        return "copy" as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(result, "copy");
+    assert.equal(invokedCommand, "start_system_file_drag");
+    assert.deepEqual(invokedArgs, {
+      paths: ["D:\\Projects\\Atlas\\README.md"]
+    });
+    assert.equal(await startSystemFileDrag(["D:\\Projects\\Atlas\\README.md"], async <T>() => "copy" as T, undefined), null);
+  });
+
+  await assertAsyncTest("performSystemFileOperation invokes the native shell operation command", async () => {
+    let invokedCommand: string | null = null;
+    let invokedArgs: Record<string, unknown> | null = null;
+
+    await performSystemFileOperation(
+      ["D:\\Projects\\Atlas\\README.md"],
+      "D:\\Archive",
+      "copy",
+      async <T>(command: string, args: Record<string, unknown>) => {
+        invokedCommand = command;
+        invokedArgs = args;
+        return undefined as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(invokedCommand, "perform_system_file_operation");
+    assert.deepEqual(invokedArgs, {
+      request: {
+        sources: ["D:\\Projects\\Atlas\\README.md"],
+        destination: "D:\\Archive",
+        operation: "copy"
+      }
+    });
+    assert.equal(
+      await performSystemFileOperation(["D:\\Projects\\Atlas\\README.md"], "D:\\Archive", "move", async <T>() => undefined as T, undefined),
+      undefined
+    );
   });
 })();

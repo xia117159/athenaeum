@@ -23,6 +23,7 @@ import { devLog, devWarn } from "./devLog";
 import type {
   ColumnDefinition,
   ColumnId,
+  ClipboardState,
   ContextMenuDefault,
   ContextMenuState,
   EntryViewModel,
@@ -428,6 +429,7 @@ export function FileListingShell({
   selectedEntryIds,
   viewMode,
   inlineEdit,
+  clipboard,
   onSort,
   onSelect,
   onSelectMultiple,
@@ -442,6 +444,7 @@ export function FileListingShell({
   onSetColumnVisibility,
   onShowAllColumns,
   onDropEntries,
+  onStartSystemFileDrag,
   entryDropMoveBinding = "Shift",
   contextMenuDefault = "native",
   contextMenuToggleBinding = "Shift",
@@ -458,6 +461,7 @@ export function FileListingShell({
   selectedEntryIds: string[];
   viewMode: TabViewMode;
   inlineEdit?: InlineEditState;
+  clipboard?: ClipboardState;
   onSort: (columnId: ColumnId) => void;
   onSelect: (entry: EntryViewModel, multi: boolean) => void;
   onSelectMultiple?: (entryIds: string[]) => void;
@@ -472,6 +476,7 @@ export function FileListingShell({
   onSetColumnVisibility?: (columnId: ColumnId, visible: boolean) => void;
   onShowAllColumns?: (columnIds: ColumnId[]) => void;
   onDropEntries: (paths: string[], destination: string, operation: DropOperation) => void;
+  onStartSystemFileDrag?: (paths: string[]) => void;
   entryDropMoveBinding?: string;
   contextMenuDefault?: ContextMenuDefault;
   contextMenuToggleBinding?: string;
@@ -502,6 +507,7 @@ export function FileListingShell({
     ? [inlineCreateEntry, ...sortEntries(entries, sort, currentPath)]
     : sortEntries(entries, sort, currentPath);
   const selectedPaths = entries.filter((entry) => selectedEntryIds.includes(entry.id)).map((entry) => entry.path);
+  const cutPathSet = new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dropOperation, setDropOperation] = useState<DropOperation>("move");
   const [isListingDropTarget, setIsListingDropTarget] = useState(false);
@@ -671,6 +677,12 @@ export function FileListingShell({
         (((inlineEdit.mode === "create-folder" || inlineEdit.mode === "create-file") && entry.inlineCreate) ||
           (inlineEdit.mode === "rename" && inlineEdit.entryId === entry.id))
     );
+
+  const isCutEntry = (entry: ListingEntry) => !entry.inlineCreate && cutPathSet.has(entry.path.toLowerCase());
+
+  const entryClipboardAttrs = (entry: ListingEntry) => ({
+    "data-clipboard-mode": isCutEntry(entry) ? "cut" : undefined
+  });
 
   const handleInlineEditKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -877,7 +889,7 @@ export function FileListingShell({
     }
 
     return {
-      draggable: false,
+      draggable: true,
       onClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (suppressNextEntryClickRef.current === entry.id) {
           suppressNextEntryClickRef.current = null;
@@ -957,6 +969,7 @@ export function FileListingShell({
 
         startEntryDrag(event.dataTransfer, { sourcePanelId: panelId, sourceTabId: tabId, paths: dragPaths });
         event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
+        onStartSystemFileDrag?.(dragPaths);
       },
       onDragEnd: () => {
         clearEntryDrag();
@@ -1017,10 +1030,11 @@ export function FileListingShell({
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
+      const isCut = isCutEntry(entry);
       return (
         <div
           key={entry.id}
-          className={`file-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}`}
+          className={`file-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1028,6 +1042,7 @@ export function FileListingShell({
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
           data-drop-operation={isDropTarget ? dropOperation : undefined}
+          {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
           <div className="file-row__grid" style={gridStyle}>
@@ -1046,10 +1061,11 @@ export function FileListingShell({
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
+      const isCut = isCutEntry(entry);
       return (
         <div
           key={entry.id}
-          className={`file-card file-card--icon${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}`}
+          className={`file-card file-card--icon${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1057,6 +1073,7 @@ export function FileListingShell({
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
           data-drop-operation={isDropTarget ? dropOperation : undefined}
+          {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
           <div className="file-card__hero">
@@ -1080,10 +1097,11 @@ export function FileListingShell({
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
+      const isCut = isCutEntry(entry);
       return (
         <div
           key={entry.id}
-          className={`file-list-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}`}
+          className={`file-list-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1091,6 +1109,7 @@ export function FileListingShell({
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
           data-drop-operation={isDropTarget ? dropOperation : undefined}
+          {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
           {renderNameCell(entry, compactIconSpec, "entry-name--compact", renderEntryNameContent(entry))}
@@ -1103,10 +1122,11 @@ export function FileListingShell({
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
+      const isCut = isCutEntry(entry);
       return (
         <div
           key={entry.id}
-          className={`file-card file-card--tile${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}`}
+          className={`file-card file-card--tile${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1114,6 +1134,7 @@ export function FileListingShell({
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
           data-drop-operation={isDropTarget ? dropOperation : undefined}
+          {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
           <div className="file-card__leading">{renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry))}</div>
@@ -1131,10 +1152,11 @@ export function FileListingShell({
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
+      const isCut = isCutEntry(entry);
       return (
         <div
           key={entry.id}
-          className={`file-content-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}`}
+          className={`file-content-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1142,6 +1164,7 @@ export function FileListingShell({
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
           data-drop-operation={isDropTarget ? dropOperation : undefined}
+          {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
           <div className="file-content-item__main">

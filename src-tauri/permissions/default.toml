@@ -41,6 +41,10 @@ permissions = [
   "allow-mark-navigation-item-opened",
   "allow-resolve-navigation-targets",
   "allow-open-path-with-system-default",
+  "allow-set-system-file-clipboard",
+  "allow-read-system-file-clipboard",
+  "allow-start-system-file-drag",
+  "allow-perform-system-file-operation",
   "allow-list-remote-profiles",
   "allow-save-remote-profile",
   "allow-delete-remote-profile",
@@ -259,6 +263,26 @@ commands.allow = ["resolve_navigation_targets"]
 identifier = "allow-open-path-with-system-default"
 description = "Allows opening a local navigation target with the Windows default application."
 commands.allow = ["open_path_with_system_default"]
+
+[[permission]]
+identifier = "allow-set-system-file-clipboard"
+description = "Allows writing local file selections to the Windows file clipboard."
+commands.allow = ["set_system_file_clipboard"]
+
+[[permission]]
+identifier = "allow-read-system-file-clipboard"
+description = "Allows reading local file selections from the Windows file clipboard."
+commands.allow = ["read_system_file_clipboard"]
+
+[[permission]]
+identifier = "allow-start-system-file-drag"
+description = "Allows starting native Windows file drag operations from the workspace."
+commands.allow = ["start_system_file_drag"]
+
+[[permission]]
+identifier = "allow-perform-system-file-operation"
+description = "Allows local copy and move operations through the Windows shell."
+commands.allow = ["perform_system_file_operation"]
 
 [[permission]]
 identifier = "allow-list-remote-profiles"

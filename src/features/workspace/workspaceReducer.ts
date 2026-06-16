@@ -9,7 +9,6 @@ import type {
   NavigationItem,
   NavigationTargetInfo,
   MultiSelectionPropertiesSummary,
-  OperationConflictRequest,
   OperationHistoryRecord,
   OperationTaskSnapshot,
   PanelId,
@@ -167,14 +166,6 @@ export type WorkspaceAction =
   | { type: "operationTaskEventReceived"; payload: OperationTaskSnapshot }
   | { type: "operationHistorySnapshotLoaded"; payload: { records: OperationHistoryRecord[]; historySequence: number } }
   | { type: "operationHistoryEventReceived"; payload: { record: OperationHistoryRecord; historySequence: number } }
-  | { type: "operationConflictRequested"; payload: OperationConflictRequest }
-  | {
-      type: "operationConflictDialogChanged";
-      payload: Partial<
-        Pick<NonNullable<WorkspaceState["operations"]["conflictDialog"]>, "selectedResolution" | "renameValue" | "applyToAll" | "resolving">
-      >;
-    }
-  | { type: "operationConflictDialogClosed"; payload?: { conflictId?: string } }
   | { type: "notificationAdded"; payload: WorkspaceState["notifications"][number] }
   | { type: "notificationDismissed"; payload: { id: string } }
   | { type: "contextMenuSet"; payload?: WorkspaceState["contextMenu"] };
@@ -2422,59 +2413,6 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ...state.operations,
           history: upsertOperationHistoryRecord(state.operations.history, action.payload.record),
           historySequence: action.payload.historySequence
-        }
-      };
-
-    case "operationConflictRequested":
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          expanded: true,
-          activeTab: "history"
-        },
-        operations: {
-          ...state.operations,
-          tasksOpen: true,
-          conflictDialog: {
-            request: action.payload,
-            renameValue: action.payload.suggestedName ?? "",
-            selectedResolution: action.payload.allowedResolutions.includes("keepBoth")
-              ? "keepBoth"
-              : action.payload.allowedResolutions[0] ?? "skip",
-            applyToAll: false,
-            resolving: false
-          }
-        }
-      };
-
-    case "operationConflictDialogChanged":
-      if (!state.operations.conflictDialog) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          conflictDialog: {
-            ...state.operations.conflictDialog,
-            ...action.payload
-          }
-        }
-      };
-
-    case "operationConflictDialogClosed":
-      if (
-        action.payload?.conflictId &&
-        state.operations.conflictDialog?.request.conflictId !== action.payload.conflictId
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          conflictDialog: undefined
         }
       };
 

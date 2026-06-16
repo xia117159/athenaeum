@@ -1,1369 +1,1679 @@
 mod windows_credentials;
 
 use std::{
-  env,
-  fs,
-  io,
-  net::{TcpStream, ToSocketAddrs},
-  path::{Path, PathBuf},
-  process::{Command, Output},
-  time::{Duration, SystemTime, UNIX_EPOCH}
+    env, fs, io,
+    net::{TcpStream, ToSocketAddrs},
+    path::{Path, PathBuf},
+    process::{Command, Output},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD}, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use chrono::{TimeZone, Utc};
 use sha2::{Digest, Sha256};
-use ssh2::{CheckResult, FileStat, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session, Sftp};
+use ssh2::{
+    CheckResult, FileStat, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session, Sftp,
+};
 
 use crate::domain::models::{
-  DirectorySizeAvailability, DirectorySizeState, EntryDecoration, EntryKind, EntryViewModel, ItemProperties,
-  ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability, ItemPropertyFieldState,
-  LocationDescriptor, LocationKind, RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteHostKeyTrustState,
-  RemoteProfile, RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest
+    DirectorySizeAvailability, DirectorySizeState, EntryDecoration, EntryKind, EntryViewModel,
+    ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField,
+    ItemPropertyFieldAvailability, ItemPropertyFieldState, LocationDescriptor, LocationKind,
+    RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteHostKeyTrustState, RemoteProfile,
+    RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest,
 };
 
 pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
-  if profile.id.trim().is_empty() {
-    bail!("id is required");
-  }
-  if profile.name.trim().is_empty() {
-    bail!("name is required");
-  }
-  if profile.host.trim().is_empty() {
-    bail!("host is required");
-  }
-  if matches!(profile.auth_kind.clone(), RemoteAuthKind::Password | RemoteAuthKind::KeyFile)
-    && profile.username.trim().is_empty()
-  {
-    bail!("username is required");
-  }
-  if !matches!(profile.protocol.clone(), LocationKind::Ftp | LocationKind::Sftp) {
-    bail!("remote protocol must be ftp or sftp");
-  }
-  validate_remote_path(&profile.root_path)?;
-  if profile.host.contains("://") || profile.host.contains('/') || profile.host.contains('\\') {
-    bail!("host must not include a scheme or path");
-  }
-  if profile.port == 0 {
-    bail!("port must be greater than zero");
-  }
-  if profile.connect_timeout_secs == 0 || profile.command_timeout_secs == 0 {
-    bail!("timeouts must be greater than zero");
-  }
-  if matches!(profile.auth_kind.clone(), RemoteAuthKind::Anonymous) && !matches!(profile.protocol.clone(), LocationKind::Ftp) {
-    bail!("anonymous auth is only supported for FTP");
-  }
-  if matches!(profile.auth_kind.clone(), RemoteAuthKind::KeyFile) {
-    if !matches!(profile.protocol.clone(), LocationKind::Sftp) {
-      bail!("key-file auth is only supported for SFTP");
+    if profile.id.trim().is_empty() {
+        bail!("id is required");
     }
-    if profile.private_key_path.as_deref().unwrap_or_default().trim().is_empty() {
-      bail!("private key path is required for key-file auth");
+    if profile.name.trim().is_empty() {
+        bail!("name is required");
     }
-  }
-  Ok(())
+    if profile.host.trim().is_empty() {
+        bail!("host is required");
+    }
+    if matches!(
+        profile.auth_kind.clone(),
+        RemoteAuthKind::Password | RemoteAuthKind::KeyFile
+    ) && profile.username.trim().is_empty()
+    {
+        bail!("username is required");
+    }
+    if !matches!(
+        profile.protocol.clone(),
+        LocationKind::Ftp | LocationKind::Sftp
+    ) {
+        bail!("remote protocol must be ftp or sftp");
+    }
+    validate_remote_path(&profile.root_path)?;
+    if profile.host.contains("://") || profile.host.contains('/') || profile.host.contains('\\') {
+        bail!("host must not include a scheme or path");
+    }
+    if profile.port == 0 {
+        bail!("port must be greater than zero");
+    }
+    if profile.connect_timeout_secs == 0 || profile.command_timeout_secs == 0 {
+        bail!("timeouts must be greater than zero");
+    }
+    if matches!(profile.auth_kind.clone(), RemoteAuthKind::Anonymous)
+        && !matches!(profile.protocol.clone(), LocationKind::Ftp)
+    {
+        bail!("anonymous auth is only supported for FTP");
+    }
+    if matches!(profile.auth_kind.clone(), RemoteAuthKind::KeyFile) {
+        if !matches!(profile.protocol.clone(), LocationKind::Sftp) {
+            bail!("key-file auth is only supported for SFTP");
+        }
+        if profile
+            .private_key_path
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            bail!("private key path is required for key-file auth");
+        }
+    }
+    Ok(())
 }
 
 pub fn credential_target_for_profile(id: &str) -> String {
-  format!("SimpleFileManager.Remote.{}", id.trim())
+    format!("SimpleFileManager.Remote.{}", id.trim())
 }
 
 pub fn prepare_profile_for_save(
-  request: RemoteProfileUpsertRequest,
-  existing_credential_target: Option<&str>
+    request: RemoteProfileUpsertRequest,
+    existing_credential_target: Option<&str>,
 ) -> Result<RemoteProfile> {
-  let mut profile = normalize_profile(request.profile);
-  let existing_credential_target = existing_credential_target
-    .and_then(|target| (!target.trim().is_empty()).then(|| target.to_string()));
-  profile.credential_target = None;
-  validate_profile(&profile)?;
+    let mut profile = normalize_profile(request.profile);
+    let existing_credential_target = existing_credential_target
+        .and_then(|target| (!target.trim().is_empty()).then(|| target.to_string()));
+    profile.credential_target = None;
+    validate_profile(&profile)?;
 
-  match profile.auth_kind.clone() {
-    RemoteAuthKind::Anonymous => {
-      if let Some(target) = existing_credential_target.as_deref() {
-        let _ = windows_credentials::delete_secret(target);
-      }
-      profile.credential_target = None;
+    match profile.auth_kind.clone() {
+        RemoteAuthKind::Anonymous => {
+            if let Some(target) = existing_credential_target.as_deref() {
+                let _ = windows_credentials::delete_secret(target);
+            }
+            profile.credential_target = None;
+        }
+        RemoteAuthKind::Password | RemoteAuthKind::KeyFile => {
+            if let Some(secret) = request
+                .password
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                let target = existing_credential_target
+                    .unwrap_or_else(|| credential_target_for_profile(&profile.id));
+                windows_credentials::write_secret(&target, secret)?;
+                profile.credential_target = Some(target);
+            } else {
+                profile.credential_target = existing_credential_target;
+            }
+        }
     }
-    RemoteAuthKind::Password | RemoteAuthKind::KeyFile => {
-      if let Some(secret) = request.password.as_deref().filter(|value| !value.trim().is_empty()) {
-        let target = existing_credential_target.unwrap_or_else(|| credential_target_for_profile(&profile.id));
-        windows_credentials::write_secret(&target, secret)?;
-        profile.credential_target = Some(target);
-      } else {
-        profile.credential_target = existing_credential_target;
-      }
-    }
-  }
 
-  Ok(profile)
+    Ok(profile)
 }
 
 pub fn cleanup_profile_after_delete(profile: &RemoteProfile) {
-  if let Some(target) = profile.credential_target.as_deref() {
-    let _ = windows_credentials::delete_secret(target);
-  }
+    if let Some(target) = profile.credential_target.as_deref() {
+        let _ = windows_credentials::delete_secret(target);
+    }
 }
 
 pub fn test_profile(profile: &RemoteProfile, password: Option<&str>) -> Result<RemoteTestResult> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  select_adapter(&profile).test_profile(&profile, password)
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    select_adapter(&profile).test_profile(&profile, password)
 }
 
 pub fn fetch_host_key_info(profile: &RemoteProfile) -> Result<RemoteHostKeyInfo> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  if !matches!(profile.protocol, LocationKind::Sftp) {
-    bail!("host key confirmation is only supported for SFTP profiles");
-  }
-  let session = connect_ssh_session(&profile)?;
-  create_remote_host_key_info(&profile, &session)
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    if !matches!(profile.protocol, LocationKind::Sftp) {
+        bail!("host key confirmation is only supported for SFTP profiles");
+    }
+    let session = connect_ssh_session(&profile)?;
+    create_remote_host_key_info(&profile, &session)
 }
 
-pub fn trust_host_key(profile: &RemoteProfile, request: &RemoteTrustHostKeyRequest) -> Result<RemoteHostKeyInfo> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  if !matches!(profile.protocol, LocationKind::Sftp) {
-    bail!("host key confirmation is only supported for SFTP profiles");
-  }
-  if request.profile_id != profile.id {
-    bail!("host key profile id does not match");
-  }
-  if request.host != profile.host || request.port != profile.port {
-    bail!("host key target does not match the remote profile");
-  }
+pub fn trust_host_key(
+    profile: &RemoteProfile,
+    request: &RemoteTrustHostKeyRequest,
+) -> Result<RemoteHostKeyInfo> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    if !matches!(profile.protocol, LocationKind::Sftp) {
+        bail!("host key confirmation is only supported for SFTP profiles");
+    }
+    if request.profile_id != profile.id {
+        bail!("host key profile id does not match");
+    }
+    if request.host != profile.host || request.port != profile.port {
+        bail!("host key target does not match the remote profile");
+    }
 
-  let key = STANDARD
-    .decode(request.key_base64.as_bytes())
-    .context("host key is not valid base64")?;
-  let host_key_type = host_key_type_from_algorithm(&request.algorithm)
-    .ok_or_else(|| anyhow!("unsupported host key algorithm: {}", request.algorithm))?;
-  write_known_host_entry(&profile, &key, host_key_type)?;
-  fetch_host_key_info(&profile)
+    let key = STANDARD
+        .decode(request.key_base64.as_bytes())
+        .context("host key is not valid base64")?;
+    let host_key_type = host_key_type_from_algorithm(&request.algorithm)
+        .ok_or_else(|| anyhow!("unsupported host key algorithm: {}", request.algorithm))?;
+    write_known_host_entry(&profile, &key, host_key_type)?;
+    fetch_host_key_info(&profile)
 }
 
-pub fn list_directory(profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<Vec<EntryViewModel>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  if let Some(path) = path {
-    validate_remote_path_within_root(&profile, path)?;
-  }
-  select_adapter(&profile).list_directory(&profile, password, path)
+pub fn list_directory(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    path: Option<&str>,
+) -> Result<Vec<EntryViewModel>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    if let Some(path) = path {
+        validate_remote_path_within_root(&profile, path)?;
+    }
+    select_adapter(&profile).list_directory(&profile, password, path)
 }
 
 pub fn get_item_properties(
-  request: &ItemPropertiesRequest,
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_path: &str,
-  display_path: &str
+    request: &ItemPropertiesRequest,
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    remote_path: &str,
+    display_path: &str,
 ) -> Result<ItemProperties> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  validate_remote_path_within_root(&profile, remote_path)?;
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    validate_remote_path_within_root(&profile, remote_path)?;
 
-  match profile.protocol.clone() {
-    LocationKind::Sftp => get_sftp_item_properties(request, &profile, password, remote_path, display_path),
-    LocationKind::Ftp => get_ftp_item_properties(request, &profile, password, remote_path, display_path),
-    LocationKind::Local => bail!("remote item properties require ftp or sftp profile")
-  }
+    match profile.protocol.clone() {
+        LocationKind::Sftp => {
+            get_sftp_item_properties(request, &profile, password, remote_path, display_path)
+        }
+        LocationKind::Ftp => {
+            get_ftp_item_properties(request, &profile, password, remote_path, display_path)
+        }
+        LocationKind::Local => bail!("remote item properties require ftp or sftp profile"),
+    }
 }
 
 fn remote_extension_with_dot(remote_path: &str, is_directory: bool) -> Option<String> {
-  if is_directory {
-    return None;
-  }
-  let name = remote_file_name(remote_path)?;
-  let (_, extension) = split_remote_file_name(&name);
-  extension.map(|value| format!(".{value}"))
+    if is_directory {
+        return None;
+    }
+    let name = remote_file_name(remote_path)?;
+    let (_, extension) = split_remote_file_name(&name);
+    extension.map(|value| format!(".{value}"))
 }
 
-fn remote_target(profile: &RemoteProfile, remote_path: &str, display_path: &str) -> ItemPropertiesTarget {
-  ItemPropertiesTarget::Remote {
-    protocol: profile.protocol.clone(),
-    profile_id: profile.id.clone(),
-    remote_path: normalize_remote_path(remote_path),
-    display_path: display_path.to_string()
-  }
+fn remote_target(
+    profile: &RemoteProfile,
+    remote_path: &str,
+    display_path: &str,
+) -> ItemPropertiesTarget {
+    ItemPropertiesTarget::Remote {
+        protocol: profile.protocol.clone(),
+        profile_id: profile.id.clone(),
+        remote_path: normalize_remote_path(remote_path),
+        display_path: display_path.to_string(),
+    }
 }
 
-fn field_state(field: ItemPropertyField, state: ItemPropertyFieldAvailability, message: impl Into<String>) -> ItemPropertyFieldState {
-  ItemPropertyFieldState {
-    field,
-    state,
-    message: Some(message.into())
-  }
+fn field_state(
+    field: ItemPropertyField,
+    state: ItemPropertyFieldAvailability,
+    message: impl Into<String>,
+) -> ItemPropertyFieldState {
+    ItemPropertyFieldState {
+        field,
+        state,
+        message: Some(message.into()),
+    }
 }
 
 fn remote_directory_size_state(is_directory: bool) -> DirectorySizeState {
-  if is_directory {
-    DirectorySizeState {
-      state: DirectorySizeAvailability::NotComputed,
-      size_bytes: None,
-      message: Some("Remote directory size is not computed".into())
+    if is_directory {
+        DirectorySizeState {
+            state: DirectorySizeAvailability::NotComputed,
+            size_bytes: None,
+            message: Some("Remote directory size is not computed".into()),
+        }
+    } else {
+        DirectorySizeState {
+            state: DirectorySizeAvailability::NotApplicable,
+            size_bytes: None,
+            message: None,
+        }
     }
-  } else {
-    DirectorySizeState {
-      state: DirectorySizeAvailability::NotApplicable,
-      size_bytes: None,
-      message: None
-    }
-  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FtpPropertyLookup {
-  ProfileRoot,
-  ParentDirectory(String)
+    ProfileRoot,
+    ParentDirectory(String),
 }
 
 fn ftp_property_lookup_path(profile: &RemoteProfile, remote_path: &str) -> FtpPropertyLookup {
-  let remote_path = normalize_remote_path(remote_path);
-  if remote_path == normalize_remote_path(&profile.root_path) {
-    return FtpPropertyLookup::ProfileRoot;
-  }
+    let remote_path = normalize_remote_path(remote_path);
+    if remote_path == normalize_remote_path(&profile.root_path) {
+        return FtpPropertyLookup::ProfileRoot;
+    }
 
-  FtpPropertyLookup::ParentDirectory(remote_parent_path(&remote_path).unwrap_or_else(|| profile.root_path.clone()))
+    FtpPropertyLookup::ParentDirectory(
+        remote_parent_path(&remote_path).unwrap_or_else(|| profile.root_path.clone()),
+    )
 }
 
 fn base_ftp_field_states() -> Vec<ItemPropertyFieldState> {
-  vec![
-    field_state(
-      ItemPropertyField::AllocatedBytes,
-      ItemPropertyFieldAvailability::Unsupported,
-      "FTP does not provide allocated size"
-    ),
-    field_state(
-      ItemPropertyField::CreatedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "FTP does not provide created date"
-    ),
-    field_state(
-      ItemPropertyField::AccessedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "FTP does not provide accessed date"
-    )
-  ]
+    vec![
+        field_state(
+            ItemPropertyField::AllocatedBytes,
+            ItemPropertyFieldAvailability::Unsupported,
+            "FTP does not provide allocated size",
+        ),
+        field_state(
+            ItemPropertyField::CreatedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "FTP does not provide created date",
+        ),
+        field_state(
+            ItemPropertyField::AccessedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "FTP does not provide accessed date",
+        ),
+    ]
 }
 
 fn ftp_profile_root_properties(
-  request: &ItemPropertiesRequest,
-  profile: &RemoteProfile,
-  remote_path: &str,
-  display_path: &str
+    request: &ItemPropertiesRequest,
+    profile: &RemoteProfile,
+    remote_path: &str,
+    display_path: &str,
 ) -> ItemProperties {
-  let remote_path = normalize_remote_path(remote_path);
-  let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
-  let mut field_states = base_ftp_field_states();
-  field_states.push(field_state(
-    ItemPropertyField::ModifiedAt,
-    ItemPropertyFieldAvailability::Unsupported,
-    "FTP server did not provide modified date"
-  ));
-  field_states.push(field_state(
-    ItemPropertyField::DirectorySize,
-    ItemPropertyFieldAvailability::NotComputed,
-    "Remote directory size is not computed"
-  ));
-  field_states.push(field_state(
-    ItemPropertyField::Attributes,
-    ItemPropertyFieldAvailability::Unsupported,
-    "FTP server did not provide root directory attributes"
-  ));
+    let remote_path = normalize_remote_path(remote_path);
+    let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
+    let mut field_states = base_ftp_field_states();
+    field_states.push(field_state(
+        ItemPropertyField::ModifiedAt,
+        ItemPropertyFieldAvailability::Unsupported,
+        "FTP server did not provide modified date",
+    ));
+    field_states.push(field_state(
+        ItemPropertyField::DirectorySize,
+        ItemPropertyFieldAvailability::NotComputed,
+        "Remote directory size is not computed",
+    ));
+    field_states.push(field_state(
+        ItemPropertyField::Attributes,
+        ItemPropertyFieldAvailability::Unsupported,
+        "FTP server did not provide root directory attributes",
+    ));
 
-  ItemProperties {
-    request_id: request.request_id.clone(),
-    target: remote_target(profile, &remote_path, display_path),
-    display_path: display_path.to_string(),
-    actual_path: remote_path.clone(),
-    parent_path: remote_parent_path(&remote_path),
-    name,
-    extension: None,
-    kind: EntryKind::Directory,
-    size_bytes: None,
-    allocated_bytes: None,
-    created_at: None,
-    modified_at: None,
-    accessed_at: None,
-    is_hidden: remote_file_name(&remote_path)
-      .map(|value| value.starts_with('.'))
-      .unwrap_or(false),
-    is_read_only: false,
-    is_symlink: false,
-    directory_size_state: remote_directory_size_state(true),
-    field_states,
-    error_message: None
-  }
+    ItemProperties {
+        request_id: request.request_id.clone(),
+        target: remote_target(profile, &remote_path, display_path),
+        display_path: display_path.to_string(),
+        actual_path: remote_path.clone(),
+        parent_path: remote_parent_path(&remote_path),
+        name,
+        extension: None,
+        kind: EntryKind::Directory,
+        size_bytes: None,
+        allocated_bytes: None,
+        created_at: None,
+        modified_at: None,
+        accessed_at: None,
+        is_hidden: remote_file_name(&remote_path)
+            .map(|value| value.starts_with('.'))
+            .unwrap_or(false),
+        is_read_only: false,
+        is_symlink: false,
+        directory_size_state: remote_directory_size_state(true),
+        field_states,
+        error_message: None,
+    }
 }
 
 fn get_sftp_item_properties(
-  request: &ItemPropertiesRequest,
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_path: &str,
-  display_path: &str
+    request: &ItemPropertiesRequest,
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    remote_path: &str,
+    display_path: &str,
 ) -> Result<ItemProperties> {
-  let remote_path = normalize_remote_path(remote_path);
-  let (_, sftp) = connect_sftp(profile, password)?;
-  let stat = sftp
-    .lstat(Path::new(&remote_path))
-    .with_context(|| format!("failed to stat remote path {remote_path}"))?;
-  let is_directory = stat.is_dir();
-  let modified_at = stat
-    .mtime
-    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
-  let accessed_at = stat
-    .atime
-    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
-  let mut field_states = vec![
-    field_state(
-      ItemPropertyField::AllocatedBytes,
-      ItemPropertyFieldAvailability::Unsupported,
-      "SFTP does not provide allocated size"
-    ),
-    field_state(
-      ItemPropertyField::CreatedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "SFTP does not provide created date"
-    )
-  ];
+    let remote_path = normalize_remote_path(remote_path);
+    let (_, sftp) = connect_sftp(profile, password)?;
+    let stat = sftp
+        .lstat(Path::new(&remote_path))
+        .with_context(|| format!("failed to stat remote path {remote_path}"))?;
+    let is_directory = stat.is_dir();
+    let modified_at = stat
+        .mtime
+        .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
+    let accessed_at = stat
+        .atime
+        .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
+    let mut field_states = vec![
+        field_state(
+            ItemPropertyField::AllocatedBytes,
+            ItemPropertyFieldAvailability::Unsupported,
+            "SFTP does not provide allocated size",
+        ),
+        field_state(
+            ItemPropertyField::CreatedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "SFTP does not provide created date",
+        ),
+    ];
 
-  if modified_at.is_none() {
-    field_states.push(field_state(
-      ItemPropertyField::ModifiedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "SFTP server did not provide modified date"
-    ));
-  }
-  if accessed_at.is_none() {
-    field_states.push(field_state(
-      ItemPropertyField::AccessedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "SFTP server did not provide accessed date"
-    ));
-  }
-  if is_directory {
-    field_states.push(field_state(
-      ItemPropertyField::DirectorySize,
-      ItemPropertyFieldAvailability::NotComputed,
-      "Remote directory size is not computed"
-    ));
-  }
-  if !is_directory && stat.size.is_none() {
-    field_states.push(field_state(
-      ItemPropertyField::SizeBytes,
-      ItemPropertyFieldAvailability::Unsupported,
-      "SFTP server did not provide size"
-    ));
-  }
+    if modified_at.is_none() {
+        field_states.push(field_state(
+            ItemPropertyField::ModifiedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "SFTP server did not provide modified date",
+        ));
+    }
+    if accessed_at.is_none() {
+        field_states.push(field_state(
+            ItemPropertyField::AccessedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "SFTP server did not provide accessed date",
+        ));
+    }
+    if is_directory {
+        field_states.push(field_state(
+            ItemPropertyField::DirectorySize,
+            ItemPropertyFieldAvailability::NotComputed,
+            "Remote directory size is not computed",
+        ));
+    }
+    if !is_directory && stat.size.is_none() {
+        field_states.push(field_state(
+            ItemPropertyField::SizeBytes,
+            ItemPropertyFieldAvailability::Unsupported,
+            "SFTP server did not provide size",
+        ));
+    }
 
-  Ok(ItemProperties {
-    request_id: request.request_id.clone(),
-    target: remote_target(profile, &remote_path, display_path),
-    display_path: display_path.to_string(),
-    actual_path: remote_path.clone(),
-    parent_path: remote_parent_path(&remote_path),
-    name: remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone()),
-    extension: remote_extension_with_dot(&remote_path, is_directory),
-    kind: if is_directory { EntryKind::Directory } else { EntryKind::File },
-    size_bytes: (!is_directory).then_some(stat.size).flatten(),
-    allocated_bytes: None,
-    created_at: None,
-    modified_at,
-    accessed_at,
-    is_hidden: remote_file_name(&remote_path)
-      .map(|value| value.starts_with('.'))
-      .unwrap_or(false),
-    is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
-    is_symlink: stat.file_type().is_symlink(),
-    directory_size_state: remote_directory_size_state(is_directory),
-    field_states,
-    error_message: None
-  })
+    Ok(ItemProperties {
+        request_id: request.request_id.clone(),
+        target: remote_target(profile, &remote_path, display_path),
+        display_path: display_path.to_string(),
+        actual_path: remote_path.clone(),
+        parent_path: remote_parent_path(&remote_path),
+        name: remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone()),
+        extension: remote_extension_with_dot(&remote_path, is_directory),
+        kind: if is_directory {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
+        },
+        size_bytes: (!is_directory).then_some(stat.size).flatten(),
+        allocated_bytes: None,
+        created_at: None,
+        modified_at,
+        accessed_at,
+        is_hidden: remote_file_name(&remote_path)
+            .map(|value| value.starts_with('.'))
+            .unwrap_or(false),
+        is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
+        is_symlink: stat.file_type().is_symlink(),
+        directory_size_state: remote_directory_size_state(is_directory),
+        field_states,
+        error_message: None,
+    })
 }
 
 fn get_ftp_item_properties(
-  request: &ItemPropertiesRequest,
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_path: &str,
-  display_path: &str
+    request: &ItemPropertiesRequest,
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    remote_path: &str,
+    display_path: &str,
 ) -> Result<ItemProperties> {
-  let remote_path = normalize_remote_path(remote_path);
-  let parent = match ftp_property_lookup_path(profile, &remote_path) {
-    FtpPropertyLookup::ProfileRoot => {
-      list_directory(profile, password, Some(&remote_path))?;
-      return Ok(ftp_profile_root_properties(request, profile, &remote_path, display_path));
+    let remote_path = normalize_remote_path(remote_path);
+    let parent = match ftp_property_lookup_path(profile, &remote_path) {
+        FtpPropertyLookup::ProfileRoot => {
+            list_directory(profile, password, Some(&remote_path))?;
+            return Ok(ftp_profile_root_properties(
+                request,
+                profile,
+                &remote_path,
+                display_path,
+            ));
+        }
+        FtpPropertyLookup::ParentDirectory(parent) => parent,
+    };
+    let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
+    let entry = list_directory(profile, password, Some(&parent))?
+        .into_iter()
+        .find(|entry| normalize_remote_path(&entry.path) == remote_path || entry.name == name)
+        .ok_or_else(|| anyhow!("remote path not found: {remote_path}"))?;
+    let kind = entry.kind.clone();
+    let is_directory = kind == EntryKind::Directory;
+    let mut field_states = base_ftp_field_states();
+
+    if entry.modified_at.is_none() {
+        field_states.push(field_state(
+            ItemPropertyField::ModifiedAt,
+            ItemPropertyFieldAvailability::Unsupported,
+            "FTP server did not provide modified date",
+        ));
     }
-    FtpPropertyLookup::ParentDirectory(parent) => parent
-  };
-  let name = remote_file_name(&remote_path).unwrap_or_else(|| remote_path.clone());
-  let entry = list_directory(profile, password, Some(&parent))?
-    .into_iter()
-    .find(|entry| normalize_remote_path(&entry.path) == remote_path || entry.name == name)
-    .ok_or_else(|| anyhow!("remote path not found: {remote_path}"))?;
-  let kind = entry.kind.clone();
-  let is_directory = kind == EntryKind::Directory;
-  let mut field_states = base_ftp_field_states();
+    if !is_directory && entry.size.is_none() {
+        field_states.push(field_state(
+            ItemPropertyField::SizeBytes,
+            ItemPropertyFieldAvailability::Unsupported,
+            "FTP server did not provide size",
+        ));
+    }
+    if is_directory {
+        field_states.push(field_state(
+            ItemPropertyField::DirectorySize,
+            ItemPropertyFieldAvailability::NotComputed,
+            "Remote directory size is not computed",
+        ));
+    }
 
-  if entry.modified_at.is_none() {
-    field_states.push(field_state(
-      ItemPropertyField::ModifiedAt,
-      ItemPropertyFieldAvailability::Unsupported,
-      "FTP server did not provide modified date"
-    ));
-  }
-  if !is_directory && entry.size.is_none() {
-    field_states.push(field_state(
-      ItemPropertyField::SizeBytes,
-      ItemPropertyFieldAvailability::Unsupported,
-      "FTP server did not provide size"
-    ));
-  }
-  if is_directory {
-    field_states.push(field_state(
-      ItemPropertyField::DirectorySize,
-      ItemPropertyFieldAvailability::NotComputed,
-      "Remote directory size is not computed"
-    ));
-  }
-
-  Ok(ItemProperties {
-    request_id: request.request_id.clone(),
-    target: remote_target(profile, &remote_path, display_path),
-    display_path: display_path.to_string(),
-    actual_path: remote_path.clone(),
-    parent_path: Some(parent),
-    name,
-    extension: remote_extension_with_dot(&remote_path, is_directory),
-    kind,
-    size_bytes: entry.size,
-    allocated_bytes: None,
-    created_at: None,
-    modified_at: entry.modified_at,
-    accessed_at: None,
-    is_hidden: entry.is_hidden,
-    is_read_only: entry.is_read_only,
-    is_symlink: entry.is_symlink,
-    directory_size_state: remote_directory_size_state(is_directory),
-    field_states,
-    error_message: None
-  })
+    Ok(ItemProperties {
+        request_id: request.request_id.clone(),
+        target: remote_target(profile, &remote_path, display_path),
+        display_path: display_path.to_string(),
+        actual_path: remote_path.clone(),
+        parent_path: Some(parent),
+        name,
+        extension: remote_extension_with_dot(&remote_path, is_directory),
+        kind,
+        size_bytes: entry.size,
+        allocated_bytes: None,
+        created_at: None,
+        modified_at: entry.modified_at,
+        accessed_at: None,
+        is_hidden: entry.is_hidden,
+        is_read_only: entry.is_read_only,
+        is_symlink: entry.is_symlink,
+        directory_size_state: remote_directory_size_state(is_directory),
+        field_states,
+        error_message: None,
+    })
 }
 
-pub fn create_directory(profile: &RemoteProfile, password: Option<&str>, parent: &str, name: &str) -> Result<String> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  validate_remote_path_within_root(&profile, parent)?;
-  validate_remote_entry_name(name)?;
-  select_adapter(&profile).create_directory(&profile, password, parent, name)
+pub fn create_directory(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    parent: &str,
+    name: &str,
+) -> Result<String> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    validate_remote_path_within_root(&profile, parent)?;
+    validate_remote_entry_name(name)?;
+    select_adapter(&profile).create_directory(&profile, password, parent, name)
 }
 
-pub fn delete_entries(profile: &RemoteProfile, password: Option<&str>, sources: &[String]) -> Result<Vec<String>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  for source in sources {
+pub fn delete_entries(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    sources: &[String],
+) -> Result<Vec<String>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    for source in sources {
+        validate_remote_operation_source(&profile, source)?;
+    }
+    select_adapter(&profile).delete_entries(&profile, password, sources)
+}
+
+pub fn rename_entry(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    source: &str,
+    new_name: &str,
+) -> Result<String> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
     validate_remote_operation_source(&profile, source)?;
-  }
-  select_adapter(&profile).delete_entries(&profile, password, sources)
-}
-
-pub fn rename_entry(profile: &RemoteProfile, password: Option<&str>, source: &str, new_name: &str) -> Result<String> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  validate_remote_operation_source(&profile, source)?;
-  validate_remote_entry_name(new_name)?;
-  select_adapter(&profile).rename_entry(&profile, password, source, new_name)
+    validate_remote_entry_name(new_name)?;
+    select_adapter(&profile).rename_entry(&profile, password, source, new_name)
 }
 
 pub fn upload_files(
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  local_sources: &[String],
-  remote_destination: &str
-) -> Result<Vec<String>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  validate_remote_path_within_root(&profile, remote_destination)?;
-  select_adapter(&profile).upload_files(&profile, password, local_sources, remote_destination)
-}
-
-pub fn download_entries(
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_sources: &[String],
-  local_destination: &str
-) -> Result<Vec<String>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  for source in remote_sources {
-    validate_remote_operation_source(&profile, source)?;
-  }
-  select_adapter(&profile).download_entries(&profile, password, remote_sources, local_destination)
-}
-
-pub fn copy_entries(
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_sources: &[String],
-  remote_destination: &str
-) -> Result<Vec<String>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  for source in remote_sources {
-    validate_remote_operation_source(&profile, source)?;
-  }
-  validate_remote_path_within_root(&profile, remote_destination)?;
-  select_adapter(&profile).copy_entries(&profile, password, remote_sources, remote_destination)
-}
-
-pub fn move_entries(
-  profile: &RemoteProfile,
-  password: Option<&str>,
-  remote_sources: &[String],
-  remote_destination: &str
-) -> Result<Vec<String>> {
-  let profile = normalize_profile(profile.clone());
-  validate_profile(&profile)?;
-  for source in remote_sources {
-    validate_remote_operation_source(&profile, source)?;
-  }
-  validate_remote_path_within_root(&profile, remote_destination)?;
-  select_adapter(&profile).move_entries(&profile, password, remote_sources, remote_destination)
-}
-
-pub fn transfer_entries(
-  source_profile: &RemoteProfile,
-  source_password: Option<&str>,
-  destination_profile: &RemoteProfile,
-  destination_password: Option<&str>,
-  remote_sources: &[String],
-  remote_destination: &str,
-  delete_sources: bool
-) -> Result<Vec<String>> {
-  let source_profile = normalize_profile(source_profile.clone());
-  let destination_profile = normalize_profile(destination_profile.clone());
-  validate_profile(&source_profile)?;
-  validate_profile(&destination_profile)?;
-  for source in remote_sources {
-    validate_remote_operation_source(&source_profile, source)?;
-  }
-  validate_remote_path_within_root(&destination_profile, remote_destination)?;
-
-  let temp_root = create_remote_transfer_temp_dir()?;
-  let transfer_result = (|| {
-    let downloaded = download_entries(
-      &source_profile,
-      source_password,
-      remote_sources,
-      &temp_root.to_string_lossy()
-    )?;
-    let uploaded = upload_files(
-      &destination_profile,
-      destination_password,
-      &downloaded,
-      remote_destination
-    )?;
-    if delete_sources {
-      delete_entries(&source_profile, source_password, remote_sources)?;
-    }
-    Ok(uploaded)
-  })();
-  let cleanup_result = fs::remove_dir_all(&temp_root);
-
-  match (transfer_result, cleanup_result) {
-    (Ok(uploaded), Ok(())) => Ok(uploaded),
-    (Ok(uploaded), Err(error)) if error.kind() == io::ErrorKind::NotFound => Ok(uploaded),
-    (Ok(_), Err(error)) => Err(error).with_context(|| format!("failed to clean remote transfer temp directory {}", temp_root.display())),
-    (Err(error), _) => Err(error)
-  }
-}
-
-trait RemoteAdapter {
-  fn kind(&self) -> RemoteAdapterKind;
-  fn test_profile(&self, profile: &RemoteProfile, password: Option<&str>) -> Result<RemoteTestResult>;
-  fn list_directory(&self, profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<Vec<EntryViewModel>>;
-  fn create_directory(&self, profile: &RemoteProfile, password: Option<&str>, parent: &str, name: &str) -> Result<String>;
-  fn delete_entries(&self, profile: &RemoteProfile, password: Option<&str>, sources: &[String]) -> Result<Vec<String>>;
-  fn rename_entry(&self, profile: &RemoteProfile, password: Option<&str>, source: &str, new_name: &str) -> Result<String>;
-  fn upload_files(
-    &self,
     profile: &RemoteProfile,
     password: Option<&str>,
     local_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>>;
-  fn download_entries(
-    &self,
+    remote_destination: &str,
+) -> Result<Vec<String>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    validate_remote_path_within_root(&profile, remote_destination)?;
+    select_adapter(&profile).upload_files(&profile, password, local_sources, remote_destination)
+}
+
+pub fn download_entries(
     profile: &RemoteProfile,
     password: Option<&str>,
     remote_sources: &[String],
-    local_destination: &str
-  ) -> Result<Vec<String>>;
-  fn copy_entries(
-    &self,
+    local_destination: &str,
+) -> Result<Vec<String>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    for source in remote_sources {
+        validate_remote_operation_source(&profile, source)?;
+    }
+    select_adapter(&profile).download_entries(&profile, password, remote_sources, local_destination)
+}
+
+pub fn copy_entries(
     profile: &RemoteProfile,
     password: Option<&str>,
     remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>>;
-  fn move_entries(
-    &self,
+    remote_destination: &str,
+) -> Result<Vec<String>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    for source in remote_sources {
+        validate_remote_operation_source(&profile, source)?;
+    }
+    validate_remote_path_within_root(&profile, remote_destination)?;
+    select_adapter(&profile).copy_entries(&profile, password, remote_sources, remote_destination)
+}
+
+pub fn move_entries(
     profile: &RemoteProfile,
     password: Option<&str>,
     remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>>;
+    remote_destination: &str,
+) -> Result<Vec<String>> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    for source in remote_sources {
+        validate_remote_operation_source(&profile, source)?;
+    }
+    validate_remote_path_within_root(&profile, remote_destination)?;
+    select_adapter(&profile).move_entries(&profile, password, remote_sources, remote_destination)
+}
+
+pub fn transfer_entries(
+    source_profile: &RemoteProfile,
+    source_password: Option<&str>,
+    destination_profile: &RemoteProfile,
+    destination_password: Option<&str>,
+    remote_sources: &[String],
+    remote_destination: &str,
+    delete_sources: bool,
+) -> Result<Vec<String>> {
+    let source_profile = normalize_profile(source_profile.clone());
+    let destination_profile = normalize_profile(destination_profile.clone());
+    validate_profile(&source_profile)?;
+    validate_profile(&destination_profile)?;
+    for source in remote_sources {
+        validate_remote_operation_source(&source_profile, source)?;
+    }
+    validate_remote_path_within_root(&destination_profile, remote_destination)?;
+
+    let temp_root = create_remote_transfer_temp_dir()?;
+    let transfer_result = (|| {
+        let downloaded = download_entries(
+            &source_profile,
+            source_password,
+            remote_sources,
+            &temp_root.to_string_lossy(),
+        )?;
+        let uploaded = upload_files(
+            &destination_profile,
+            destination_password,
+            &downloaded,
+            remote_destination,
+        )?;
+        if delete_sources {
+            delete_entries(&source_profile, source_password, remote_sources)?;
+        }
+        Ok(uploaded)
+    })();
+    let cleanup_result = fs::remove_dir_all(&temp_root);
+
+    match (transfer_result, cleanup_result) {
+        (Ok(uploaded), Ok(())) => Ok(uploaded),
+        (Ok(uploaded), Err(error)) if error.kind() == io::ErrorKind::NotFound => Ok(uploaded),
+        (Ok(_), Err(error)) => Err(error).with_context(|| {
+            format!(
+                "failed to clean remote transfer temp directory {}",
+                temp_root.display()
+            )
+        }),
+        (Err(error), _) => Err(error),
+    }
+}
+
+trait RemoteAdapter {
+    fn kind(&self) -> RemoteAdapterKind;
+    fn test_profile(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+    ) -> Result<RemoteTestResult>;
+    fn list_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Vec<EntryViewModel>>;
+    fn create_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String>;
+    fn delete_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        sources: &[String],
+    ) -> Result<Vec<String>>;
+    fn rename_entry(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        source: &str,
+        new_name: &str,
+    ) -> Result<String>;
+    fn upload_files(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        local_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>>;
+    fn download_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        local_destination: &str,
+    ) -> Result<Vec<String>>;
+    fn copy_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>>;
+    fn move_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>>;
 }
 
 struct CurlRemoteAdapter;
 
 impl RemoteAdapter for CurlRemoteAdapter {
-  fn kind(&self) -> RemoteAdapterKind {
-    RemoteAdapterKind::Curl
-  }
-
-  fn test_profile(&self, profile: &RemoteProfile, password: Option<&str>) -> Result<RemoteTestResult> {
-    if matches!(profile.auth_kind.clone(), RemoteAuthKind::KeyFile) {
-      return Ok(RemoteTestResult {
-        success: false,
-        message: "Key-file SFTP probing is not implemented yet".into(),
-        adapter: self.kind(),
-        details: vec!["Planned Windows path: invoke sftp.exe or curl --key with host-key controls.".into()]
-      });
+    fn kind(&self) -> RemoteAdapterKind {
+        RemoteAdapterKind::Curl
     }
 
-    let output = run_curl_list(profile, password, None)?;
-    if output.status.success() {
-      Ok(RemoteTestResult {
-        success: true,
-        message: "Connection probe succeeded".into(),
-        adapter: self.kind(),
-        details: collect_probe_details(&output)
-      })
-    } else {
-      Ok(RemoteTestResult {
-        success: false,
-        message: stderr_message(&output, "Remote probe failed"),
-        adapter: self.kind(),
-        details: collect_probe_details(&output)
-      })
+    fn test_profile(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+    ) -> Result<RemoteTestResult> {
+        if matches!(profile.auth_kind.clone(), RemoteAuthKind::KeyFile) {
+            return Ok(RemoteTestResult {
+                success: false,
+                message: "Key-file SFTP probing is not implemented yet".into(),
+                adapter: self.kind(),
+                details: vec![
+                    "Planned Windows path: invoke sftp.exe or curl --key with host-key controls."
+                        .into(),
+                ],
+            });
+        }
+
+        let output = run_curl_list(profile, password, None)?;
+        if output.status.success() {
+            Ok(RemoteTestResult {
+                success: true,
+                message: "Connection probe succeeded".into(),
+                adapter: self.kind(),
+                details: collect_probe_details(&output),
+            })
+        } else {
+            Ok(RemoteTestResult {
+                success: false,
+                message: stderr_message(&output, "Remote probe failed"),
+                adapter: self.kind(),
+                details: collect_probe_details(&output),
+            })
+        }
     }
-  }
 
-  fn list_directory(&self, profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<Vec<EntryViewModel>> {
-    let output = run_curl_list(profile, password, path)?;
-    if !output.status.success() {
-      bail!("{}", stderr_message(&output, "remote directory listing failed"));
+    fn list_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Vec<EntryViewModel>> {
+        let output = run_curl_list(profile, password, path)?;
+        if !output.status.success() {
+            bail!(
+                "{}",
+                stderr_message(&output, "remote directory listing failed")
+            );
+        }
+        Ok(parse_listing_entries(profile, path, &output.stdout))
     }
-    Ok(parse_listing_entries(profile, path, &output.stdout))
-  }
 
-  fn create_directory(&self, profile: &RemoteProfile, password: Option<&str>, parent: &str, name: &str) -> Result<String> {
-    let created = join_remote_path(&normalize_remote_path(parent), name);
-    let created = available_curl_conflict_path(profile, password, &created)?;
-    run_curl_quotes(profile, password, &[format!("MKD {created}")])?;
-    Ok(created)
-  }
-
-  fn delete_entries(&self, profile: &RemoteProfile, password: Option<&str>, sources: &[String]) -> Result<Vec<String>> {
-    let mut deleted = Vec::new();
-    for source in sources {
-      let source = normalize_remote_path(source);
-      delete_ftp_entry(profile, password, &source)?;
-      deleted.push(source);
+    fn create_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String> {
+        let created = join_remote_path(&normalize_remote_path(parent), name);
+        let created = available_curl_conflict_path(profile, password, &created)?;
+        run_curl_quotes(profile, password, &[format!("MKD {created}")])?;
+        Ok(created)
     }
-    Ok(deleted)
-  }
 
-  fn rename_entry(&self, profile: &RemoteProfile, password: Option<&str>, source: &str, new_name: &str) -> Result<String> {
-    let source = normalize_remote_path(source);
-    let parent = remote_parent_path(&source).ok_or_else(|| anyhow!("cannot rename remote root"))?;
-    let destination = join_remote_path(&parent, new_name);
-    if remote_path_exists_via_curl(profile, password, &destination)? {
-      bail!("remote destination already exists: {destination}");
+    fn delete_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        sources: &[String],
+    ) -> Result<Vec<String>> {
+        let mut deleted = Vec::new();
+        for source in sources {
+            let source = normalize_remote_path(source);
+            delete_ftp_entry(profile, password, &source)?;
+            deleted.push(source);
+        }
+        Ok(deleted)
     }
-    run_curl_quotes(profile, password, &[format!("RNFR {source}"), format!("RNTO {destination}")])?;
-    Ok(destination)
-  }
 
-  fn upload_files(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    local_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let mut uploaded = Vec::new();
-    for source in local_sources {
-      let source_path = Path::new(source);
-      let file_name = source_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("invalid local source path: {source}"))?;
-      let target = join_remote_path(&normalize_remote_path(remote_destination), file_name);
-      let target = available_curl_conflict_path(profile, password, &target)?;
-      upload_path_with_curl(profile, password, source_path, &target)?;
-      uploaded.push(target);
+    fn rename_entry(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        source: &str,
+        new_name: &str,
+    ) -> Result<String> {
+        let source = normalize_remote_path(source);
+        let parent =
+            remote_parent_path(&source).ok_or_else(|| anyhow!("cannot rename remote root"))?;
+        let destination = join_remote_path(&parent, new_name);
+        if remote_path_exists_via_curl(profile, password, &destination)? {
+            bail!("remote destination already exists: {destination}");
+        }
+        run_curl_quotes(
+            profile,
+            password,
+            &[format!("RNFR {source}"), format!("RNTO {destination}")],
+        )?;
+        Ok(destination)
     }
-    Ok(uploaded)
-  }
 
-  fn download_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    local_destination: &str
-  ) -> Result<Vec<String>> {
-    let mut downloaded = Vec::new();
-    for source in remote_sources {
-      let source = normalize_remote_path(source);
-      let file_name = remote_file_name(&source).ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
-      let destination = available_local_conflict_path(&Path::new(local_destination).join(file_name));
-      run_curl_download(profile, password, &source, &destination)?;
-      downloaded.push(destination.to_string_lossy().into_owned());
+    fn upload_files(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        local_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let mut uploaded = Vec::new();
+        for source in local_sources {
+            let source_path = Path::new(source);
+            let file_name = source_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| anyhow!("invalid local source path: {source}"))?;
+            let target = join_remote_path(&normalize_remote_path(remote_destination), file_name);
+            let target = available_curl_conflict_path(profile, password, &target)?;
+            upload_path_with_curl(profile, password, source_path, &target)?;
+            uploaded.push(target);
+        }
+        Ok(uploaded)
     }
-    Ok(downloaded)
-  }
 
-  fn copy_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let temp_root = create_remote_transfer_temp_dir()?;
-    let copy_result = (|| {
-      let downloaded = self.download_entries(profile, password, remote_sources, &temp_root.to_string_lossy())?;
-      self.upload_files(profile, password, &downloaded, remote_destination)
-    })();
-    let cleanup_result = fs::remove_dir_all(&temp_root);
-
-    match (copy_result, cleanup_result) {
-      (Ok(copied), Ok(())) => Ok(copied),
-      (Ok(copied), Err(error)) if error.kind() == io::ErrorKind::NotFound => Ok(copied),
-      (Ok(_), Err(error)) => Err(error).with_context(|| format!("failed to clean FTP copy temp directory {}", temp_root.display())),
-      (Err(error), _) => Err(error)
+    fn download_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        local_destination: &str,
+    ) -> Result<Vec<String>> {
+        let mut downloaded = Vec::new();
+        for source in remote_sources {
+            let source = normalize_remote_path(source);
+            let file_name = remote_file_name(&source)
+                .ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
+            let destination =
+                available_local_conflict_path(&Path::new(local_destination).join(file_name));
+            run_curl_download(profile, password, &source, &destination)?;
+            downloaded.push(destination.to_string_lossy().into_owned());
+        }
+        Ok(downloaded)
     }
-  }
 
-  fn move_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let mut moved = Vec::new();
-    for source in remote_sources {
-      let source = normalize_remote_path(source);
-      let file_name = remote_file_name(&source).ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
-      let destination = join_remote_path(&normalize_remote_path(remote_destination), &file_name);
-      let destination = available_curl_conflict_path(profile, password, &destination)?;
-      run_curl_quotes(profile, password, &[format!("RNFR {source}"), format!("RNTO {destination}")])?;
-      moved.push(destination);
+    fn copy_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let temp_root = create_remote_transfer_temp_dir()?;
+        let copy_result = (|| {
+            let downloaded = self.download_entries(
+                profile,
+                password,
+                remote_sources,
+                &temp_root.to_string_lossy(),
+            )?;
+            self.upload_files(profile, password, &downloaded, remote_destination)
+        })();
+        let cleanup_result = fs::remove_dir_all(&temp_root);
+
+        match (copy_result, cleanup_result) {
+            (Ok(copied), Ok(())) => Ok(copied),
+            (Ok(copied), Err(error)) if error.kind() == io::ErrorKind::NotFound => Ok(copied),
+            (Ok(_), Err(error)) => Err(error).with_context(|| {
+                format!(
+                    "failed to clean FTP copy temp directory {}",
+                    temp_root.display()
+                )
+            }),
+            (Err(error), _) => Err(error),
+        }
     }
-    Ok(moved)
-  }
+
+    fn move_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let mut moved = Vec::new();
+        for source in remote_sources {
+            let source = normalize_remote_path(source);
+            let file_name = remote_file_name(&source)
+                .ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
+            let destination =
+                join_remote_path(&normalize_remote_path(remote_destination), &file_name);
+            let destination = available_curl_conflict_path(profile, password, &destination)?;
+            run_curl_quotes(
+                profile,
+                password,
+                &[format!("RNFR {source}"), format!("RNTO {destination}")],
+            )?;
+            moved.push(destination);
+        }
+        Ok(moved)
+    }
 }
 
 struct SftpRemoteAdapter;
 
 impl RemoteAdapter for SftpRemoteAdapter {
-  fn kind(&self) -> RemoteAdapterKind {
-    RemoteAdapterKind::Sftp
-  }
-
-  fn test_profile(&self, profile: &RemoteProfile, password: Option<&str>) -> Result<RemoteTestResult> {
-    match connect_sftp(profile, password) {
-      Ok((_, sftp)) => match sftp.readdir(Path::new(&profile.root_path)) {
-        Ok(_) => Ok(RemoteTestResult {
-          success: true,
-          message: "SFTP connection probe succeeded".into(),
-          adapter: self.kind(),
-          details: Vec::new()
-        }),
-        Err(error) => Ok(RemoteTestResult {
-          success: false,
-          message: format!("SFTP connected but failed to read root: {error}"),
-          adapter: self.kind(),
-          details: Vec::new()
-        })
-      },
-      Err(error) => Ok(RemoteTestResult {
-        success: false,
-        message: error.to_string(),
-        adapter: self.kind(),
-        details: Vec::new()
-      })
+    fn kind(&self) -> RemoteAdapterKind {
+        RemoteAdapterKind::Sftp
     }
-  }
 
-  fn list_directory(&self, profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<Vec<EntryViewModel>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
-    let entries = sftp
-      .readdir(Path::new(&base_path))
-      .with_context(|| format!("failed to list remote directory {base_path}"))?;
-    Ok(parse_sftp_entries(profile, &base_path, entries))
-  }
-
-  fn create_directory(&self, profile: &RemoteProfile, password: Option<&str>, parent: &str, name: &str) -> Result<String> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let destination = join_remote_path(&normalize_remote_path(parent), name);
-    let destination = available_sftp_conflict_path(&sftp, &destination);
-    sftp
-      .mkdir(Path::new(&destination), 0o755)
-      .with_context(|| format!("failed to create remote directory {destination}"))?;
-    Ok(destination)
-  }
-
-  fn delete_entries(&self, profile: &RemoteProfile, password: Option<&str>, sources: &[String]) -> Result<Vec<String>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let mut deleted = Vec::new();
-    for source in sources {
-      let source = normalize_remote_path(source);
-      let stat = sftp.lstat(Path::new(&source)).with_context(|| format!("failed to stat remote path {source}"))?;
-      if stat.is_dir() {
-        remove_sftp_directory_recursively(&sftp, &source)?;
-      } else {
-        sftp.unlink(Path::new(&source)).with_context(|| format!("failed to delete remote file {source}"))?;
-      }
-      deleted.push(source);
+    fn test_profile(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+    ) -> Result<RemoteTestResult> {
+        match connect_sftp(profile, password) {
+            Ok((_, sftp)) => match sftp.readdir(Path::new(&profile.root_path)) {
+                Ok(_) => Ok(RemoteTestResult {
+                    success: true,
+                    message: "SFTP connection probe succeeded".into(),
+                    adapter: self.kind(),
+                    details: Vec::new(),
+                }),
+                Err(error) => Ok(RemoteTestResult {
+                    success: false,
+                    message: format!("SFTP connected but failed to read root: {error}"),
+                    adapter: self.kind(),
+                    details: Vec::new(),
+                }),
+            },
+            Err(error) => Ok(RemoteTestResult {
+                success: false,
+                message: error.to_string(),
+                adapter: self.kind(),
+                details: Vec::new(),
+            }),
+        }
     }
-    Ok(deleted)
-  }
 
-  fn rename_entry(&self, profile: &RemoteProfile, password: Option<&str>, source: &str, new_name: &str) -> Result<String> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let source = normalize_remote_path(source);
-    let parent = remote_parent_path(&source).ok_or_else(|| anyhow!("cannot rename remote root"))?;
-    let destination = join_remote_path(&parent, new_name);
-    if sftp.lstat(Path::new(&destination)).is_ok() {
-      bail!("remote destination already exists: {destination}");
+    fn list_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Vec<EntryViewModel>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
+        let entries = sftp
+            .readdir(Path::new(&base_path))
+            .with_context(|| format!("failed to list remote directory {base_path}"))?;
+        Ok(parse_sftp_entries(profile, &base_path, entries))
     }
-    sftp
-      .rename(Path::new(&source), Path::new(&destination), None)
-      .with_context(|| format!("failed to rename remote path {source} to {destination}"))?;
-    Ok(destination)
-  }
 
-  fn upload_files(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    local_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let mut uploaded = Vec::new();
-    for source in local_sources {
-      let source_path = Path::new(source);
-      let file_name = source_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("invalid local source path: {source}"))?;
-      let target = join_remote_path(&normalize_remote_path(remote_destination), file_name);
-      let target = available_sftp_conflict_path(&sftp, &target);
-      upload_path_to_sftp(&sftp, source_path, &target)?;
-      uploaded.push(target);
+    fn create_directory(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let destination = join_remote_path(&normalize_remote_path(parent), name);
+        let destination = available_sftp_conflict_path(&sftp, &destination);
+        sftp.mkdir(Path::new(&destination), 0o755)
+            .with_context(|| format!("failed to create remote directory {destination}"))?;
+        Ok(destination)
     }
-    Ok(uploaded)
-  }
 
-  fn download_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    local_destination: &str
-  ) -> Result<Vec<String>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let mut downloaded = Vec::new();
-    for source in remote_sources {
-      let source = normalize_remote_path(source);
-      let stat = sftp.lstat(Path::new(&source)).with_context(|| format!("failed to stat remote path {source}"))?;
-      let file_name = remote_file_name(&source).ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
-      let destination = available_local_conflict_path(&Path::new(local_destination).join(file_name));
-      download_path_from_sftp(&sftp, &source, &stat, &destination)?;
-      downloaded.push(destination.to_string_lossy().into_owned());
+    fn delete_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        sources: &[String],
+    ) -> Result<Vec<String>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let mut deleted = Vec::new();
+        for source in sources {
+            let source = normalize_remote_path(source);
+            let stat = sftp
+                .lstat(Path::new(&source))
+                .with_context(|| format!("failed to stat remote path {source}"))?;
+            if stat.is_dir() {
+                remove_sftp_directory_recursively(&sftp, &source)?;
+            } else {
+                sftp.unlink(Path::new(&source))
+                    .with_context(|| format!("failed to delete remote file {source}"))?;
+            }
+            deleted.push(source);
+        }
+        Ok(deleted)
     }
-    Ok(downloaded)
-  }
 
-  fn copy_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let mut copied = Vec::new();
-    for source in remote_sources {
-      let source = normalize_remote_path(source);
-      let stat = sftp.lstat(Path::new(&source)).with_context(|| format!("failed to stat remote path {source}"))?;
-      let file_name = remote_file_name(&source).ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
-      let destination = join_remote_path(&normalize_remote_path(remote_destination), &file_name);
-      let destination = available_sftp_conflict_path(&sftp, &destination);
-      ensure_remote_not_inside_source(&source, &destination)?;
-      copy_sftp_path(&sftp, &source, &stat, &destination)?;
-      copied.push(destination);
+    fn rename_entry(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        source: &str,
+        new_name: &str,
+    ) -> Result<String> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let source = normalize_remote_path(source);
+        let parent =
+            remote_parent_path(&source).ok_or_else(|| anyhow!("cannot rename remote root"))?;
+        let destination = join_remote_path(&parent, new_name);
+        if sftp.lstat(Path::new(&destination)).is_ok() {
+            bail!("remote destination already exists: {destination}");
+        }
+        sftp.rename(Path::new(&source), Path::new(&destination), None)
+            .with_context(|| format!("failed to rename remote path {source} to {destination}"))?;
+        Ok(destination)
     }
-    Ok(copied)
-  }
 
-  fn move_entries(
-    &self,
-    profile: &RemoteProfile,
-    password: Option<&str>,
-    remote_sources: &[String],
-    remote_destination: &str
-  ) -> Result<Vec<String>> {
-    let (_, sftp) = connect_sftp(profile, password)?;
-    let mut moved = Vec::new();
-    for source in remote_sources {
-      let source = normalize_remote_path(source);
-      let file_name = remote_file_name(&source).ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
-      let destination = join_remote_path(&normalize_remote_path(remote_destination), &file_name);
-      let destination = available_sftp_conflict_path(&sftp, &destination);
-      ensure_remote_not_inside_source(&source, &destination)?;
-      sftp
-        .rename(Path::new(&source), Path::new(&destination), None)
-        .with_context(|| format!("failed to move remote path {source} to {destination}"))?;
-      moved.push(destination);
+    fn upload_files(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        local_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let mut uploaded = Vec::new();
+        for source in local_sources {
+            let source_path = Path::new(source);
+            let file_name = source_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| anyhow!("invalid local source path: {source}"))?;
+            let target = join_remote_path(&normalize_remote_path(remote_destination), file_name);
+            let target = available_sftp_conflict_path(&sftp, &target);
+            upload_path_to_sftp(&sftp, source_path, &target)?;
+            uploaded.push(target);
+        }
+        Ok(uploaded)
     }
-    Ok(moved)
-  }
+
+    fn download_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        local_destination: &str,
+    ) -> Result<Vec<String>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let mut downloaded = Vec::new();
+        for source in remote_sources {
+            let source = normalize_remote_path(source);
+            let stat = sftp
+                .lstat(Path::new(&source))
+                .with_context(|| format!("failed to stat remote path {source}"))?;
+            let file_name = remote_file_name(&source)
+                .ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
+            let destination =
+                available_local_conflict_path(&Path::new(local_destination).join(file_name));
+            download_path_from_sftp(&sftp, &source, &stat, &destination)?;
+            downloaded.push(destination.to_string_lossy().into_owned());
+        }
+        Ok(downloaded)
+    }
+
+    fn copy_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let mut copied = Vec::new();
+        for source in remote_sources {
+            let source = normalize_remote_path(source);
+            let stat = sftp
+                .lstat(Path::new(&source))
+                .with_context(|| format!("failed to stat remote path {source}"))?;
+            let file_name = remote_file_name(&source)
+                .ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
+            let destination =
+                join_remote_path(&normalize_remote_path(remote_destination), &file_name);
+            let destination = available_sftp_conflict_path(&sftp, &destination);
+            ensure_remote_not_inside_source(&source, &destination)?;
+            copy_sftp_path(&sftp, &source, &stat, &destination)?;
+            copied.push(destination);
+        }
+        Ok(copied)
+    }
+
+    fn move_entries(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        remote_sources: &[String],
+        remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let mut moved = Vec::new();
+        for source in remote_sources {
+            let source = normalize_remote_path(source);
+            let file_name = remote_file_name(&source)
+                .ok_or_else(|| anyhow!("invalid remote source path: {source}"))?;
+            let destination =
+                join_remote_path(&normalize_remote_path(remote_destination), &file_name);
+            let destination = available_sftp_conflict_path(&sftp, &destination);
+            ensure_remote_not_inside_source(&source, &destination)?;
+            sftp.rename(Path::new(&source), Path::new(&destination), None)
+                .with_context(|| format!("failed to move remote path {source} to {destination}"))?;
+            moved.push(destination);
+        }
+        Ok(moved)
+    }
 }
 
 struct UnsupportedRemoteAdapter;
 
 impl RemoteAdapter for UnsupportedRemoteAdapter {
-  fn kind(&self) -> RemoteAdapterKind {
-    RemoteAdapterKind::Unsupported
-  }
+    fn kind(&self) -> RemoteAdapterKind {
+        RemoteAdapterKind::Unsupported
+    }
 
-  fn test_profile(&self, _profile: &RemoteProfile, _password: Option<&str>) -> Result<RemoteTestResult> {
-    Ok(RemoteTestResult {
-      success: false,
-      message: "No supported remote adapter was found on this machine".into(),
-      adapter: self.kind(),
-      details: vec!["Expected Windows path is curl.exe for password-based FTP/SFTP probing.".into()]
-    })
-  }
+    fn test_profile(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+    ) -> Result<RemoteTestResult> {
+        Ok(RemoteTestResult {
+            success: false,
+            message: "No supported remote adapter was found on this machine".into(),
+            adapter: self.kind(),
+            details: vec![
+                "Expected Windows path is curl.exe for password-based FTP/SFTP probing.".into(),
+            ],
+        })
+    }
 
-  fn list_directory(&self, _profile: &RemoteProfile, _password: Option<&str>, _path: Option<&str>) -> Result<Vec<EntryViewModel>> {
-    bail!("remote directory listing is unavailable because no supported adapter was found")
-  }
+    fn list_directory(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _path: Option<&str>,
+    ) -> Result<Vec<EntryViewModel>> {
+        bail!("remote directory listing is unavailable because no supported adapter was found")
+    }
 
-  fn create_directory(&self, _profile: &RemoteProfile, _password: Option<&str>, _parent: &str, _name: &str) -> Result<String> {
-    bail!("remote directory creation is unavailable because no supported adapter was found")
-  }
+    fn create_directory(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _parent: &str,
+        _name: &str,
+    ) -> Result<String> {
+        bail!("remote directory creation is unavailable because no supported adapter was found")
+    }
 
-  fn delete_entries(&self, _profile: &RemoteProfile, _password: Option<&str>, _sources: &[String]) -> Result<Vec<String>> {
-    bail!("remote delete is unavailable because no supported adapter was found")
-  }
+    fn delete_entries(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _sources: &[String],
+    ) -> Result<Vec<String>> {
+        bail!("remote delete is unavailable because no supported adapter was found")
+    }
 
-  fn rename_entry(&self, _profile: &RemoteProfile, _password: Option<&str>, _source: &str, _new_name: &str) -> Result<String> {
-    bail!("remote rename is unavailable because no supported adapter was found")
-  }
+    fn rename_entry(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _source: &str,
+        _new_name: &str,
+    ) -> Result<String> {
+        bail!("remote rename is unavailable because no supported adapter was found")
+    }
 
-  fn upload_files(
-    &self,
-    _profile: &RemoteProfile,
-    _password: Option<&str>,
-    _local_sources: &[String],
-    _remote_destination: &str
-  ) -> Result<Vec<String>> {
-    bail!("remote upload is unavailable because no supported adapter was found")
-  }
+    fn upload_files(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _local_sources: &[String],
+        _remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        bail!("remote upload is unavailable because no supported adapter was found")
+    }
 
-  fn download_entries(
-    &self,
-    _profile: &RemoteProfile,
-    _password: Option<&str>,
-    _remote_sources: &[String],
-    _local_destination: &str
-  ) -> Result<Vec<String>> {
-    bail!("remote download is unavailable because no supported adapter was found")
-  }
+    fn download_entries(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _remote_sources: &[String],
+        _local_destination: &str,
+    ) -> Result<Vec<String>> {
+        bail!("remote download is unavailable because no supported adapter was found")
+    }
 
-  fn copy_entries(
-    &self,
-    _profile: &RemoteProfile,
-    _password: Option<&str>,
-    _remote_sources: &[String],
-    _remote_destination: &str
-  ) -> Result<Vec<String>> {
-    bail!("remote copy is unavailable because no supported adapter was found")
-  }
+    fn copy_entries(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _remote_sources: &[String],
+        _remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        bail!("remote copy is unavailable because no supported adapter was found")
+    }
 
-  fn move_entries(
-    &self,
-    _profile: &RemoteProfile,
-    _password: Option<&str>,
-    _remote_sources: &[String],
-    _remote_destination: &str
-  ) -> Result<Vec<String>> {
-    bail!("remote move is unavailable because no supported adapter was found")
-  }
+    fn move_entries(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _remote_sources: &[String],
+        _remote_destination: &str,
+    ) -> Result<Vec<String>> {
+        bail!("remote move is unavailable because no supported adapter was found")
+    }
 }
 
 fn select_adapter(profile: &RemoteProfile) -> Box<dyn RemoteAdapter + Send + Sync> {
-  match profile.protocol {
-    LocationKind::Sftp => Box::new(SftpRemoteAdapter),
-    LocationKind::Ftp if preferred_curl_executable().is_some() => Box::new(CurlRemoteAdapter),
-    _ => Box::new(UnsupportedRemoteAdapter)
-  }
+    match profile.protocol {
+        LocationKind::Sftp => Box::new(SftpRemoteAdapter),
+        LocationKind::Ftp if preferred_curl_executable().is_some() => Box::new(CurlRemoteAdapter),
+        _ => Box::new(UnsupportedRemoteAdapter),
+    }
 }
 
 fn preferred_curl_executable() -> Option<&'static str> {
-  if cfg!(target_os = "windows") && Command::new("curl.exe").arg("--version").output().is_ok() {
-    Some("curl.exe")
-  } else if Command::new("curl").arg("--version").output().is_ok() {
-    Some("curl")
-  } else {
-    None
-  }
+    if cfg!(target_os = "windows") && Command::new("curl.exe").arg("--version").output().is_ok() {
+        Some("curl.exe")
+    } else if Command::new("curl").arg("--version").output().is_ok() {
+        Some("curl")
+    } else {
+        None
+    }
 }
 
 fn normalize_profile(mut profile: RemoteProfile) -> RemoteProfile {
-  profile.id = profile.id.trim().to_string();
-  profile.name = profile.name.trim().to_string();
-  profile.host = profile.host.trim().to_string();
-  profile.username = profile.username.trim().to_string();
-  profile.root_path = normalize_remote_path(&profile.root_path);
-  if profile.port == 0 {
-    profile.port = match profile.protocol {
-      LocationKind::Ftp => 21,
-      LocationKind::Sftp => 22,
-      LocationKind::Local => 0
-    };
-  }
-  if profile.connect_timeout_secs == 0 {
-    profile.connect_timeout_secs = 10;
-  }
-  if profile.command_timeout_secs == 0 {
-    profile.command_timeout_secs = 20;
-  }
-  profile
-}
-
-fn run_curl_list(profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<Output> {
-  let executable = preferred_curl_executable().context("failed to locate curl executable")?;
-  let mut command = Command::new(executable);
-  command.args([
-    "--silent",
-    "--show-error",
-    "--fail",
-    "--list-only",
-    "--connect-timeout",
-    &profile.connect_timeout_secs.to_string(),
-    "--max-time",
-    &profile.command_timeout_secs.to_string()
-  ]);
-
-  apply_curl_transfer_mode(&mut command, profile);
-
-  match profile.auth_kind.clone() {
-    RemoteAuthKind::Anonymous => {}
-    RemoteAuthKind::Password => {
-      let secret = resolve_secret(profile, password).context("password is required for remote probing")?;
-      command.arg("--user").arg(format!("{}:{secret}", profile.username));
+    profile.id = profile.id.trim().to_string();
+    profile.name = profile.name.trim().to_string();
+    profile.host = profile.host.trim().to_string();
+    profile.username = profile.username.trim().to_string();
+    profile.root_path = normalize_remote_path(&profile.root_path);
+    if profile.port == 0 {
+        profile.port = match profile.protocol {
+            LocationKind::Ftp => 21,
+            LocationKind::Sftp => 22,
+            LocationKind::Local => 0,
+        };
     }
-    RemoteAuthKind::KeyFile => {}
-  }
-
-  command.arg(build_url(profile, path));
-  command.output().context("failed to launch curl for remote operation")
+    if profile.connect_timeout_secs == 0 {
+        profile.connect_timeout_secs = 10;
+    }
+    if profile.command_timeout_secs == 0 {
+        profile.command_timeout_secs = 20;
+    }
+    profile
 }
 
-fn run_curl_quotes(profile: &RemoteProfile, password: Option<&str>, quotes: &[String]) -> Result<()> {
-  let executable = preferred_curl_executable().context("failed to locate curl executable")?;
-  let mut command = Command::new(executable);
-  command.args([
-    "--silent",
-    "--show-error",
-    "--fail",
-    "--connect-timeout",
-    &profile.connect_timeout_secs.to_string(),
-    "--max-time",
-    &profile.command_timeout_secs.to_string()
-  ]);
-  apply_curl_transfer_mode(&mut command, profile);
-  add_curl_auth(&mut command, profile, password)?;
-  for quote in quotes {
-    command.arg("--quote").arg(quote);
-  }
-  command.arg(build_url(profile, Some("/")));
-  let output = command.output().context("failed to launch curl for remote operation")?;
-  if !output.status.success() {
-    bail!("{}", stderr_message(&output, "remote operation failed"));
-  }
-  Ok(())
+fn run_curl_list(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    path: Option<&str>,
+) -> Result<Output> {
+    let executable = preferred_curl_executable().context("failed to locate curl executable")?;
+    let mut command = Command::new(executable);
+    command.args([
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--list-only",
+        "--connect-timeout",
+        &profile.connect_timeout_secs.to_string(),
+        "--max-time",
+        &profile.command_timeout_secs.to_string(),
+    ]);
+
+    apply_curl_transfer_mode(&mut command, profile);
+
+    match profile.auth_kind.clone() {
+        RemoteAuthKind::Anonymous => {}
+        RemoteAuthKind::Password => {
+            let secret = resolve_secret(profile, password)
+                .context("password is required for remote probing")?;
+            command
+                .arg("--user")
+                .arg(format!("{}:{secret}", profile.username));
+        }
+        RemoteAuthKind::KeyFile => {}
+    }
+
+    command.arg(build_url(profile, path));
+    command
+        .output()
+        .context("failed to launch curl for remote operation")
 }
 
-fn run_curl_upload(profile: &RemoteProfile, password: Option<&str>, local_source: &Path, remote_target: &str) -> Result<()> {
-  let executable = preferred_curl_executable().context("failed to locate curl executable")?;
-  let mut command = Command::new(executable);
-  command.args([
-    "--silent",
-    "--show-error",
-    "--fail",
-    "--ftp-create-dirs",
-    "--connect-timeout",
-    &profile.connect_timeout_secs.to_string(),
-    "--max-time",
-    &profile.command_timeout_secs.to_string(),
-    "--upload-file"
-  ]);
-  command.arg(local_source);
-  apply_curl_transfer_mode(&mut command, profile);
-  add_curl_auth(&mut command, profile, password)?;
-  command.arg(build_url(profile, Some(remote_target)));
-  let output = command.output().context("failed to launch curl for remote upload")?;
-  if !output.status.success() {
-    bail!("{}", stderr_message(&output, "remote upload failed"));
-  }
-  Ok(())
+fn run_curl_quotes(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    quotes: &[String],
+) -> Result<()> {
+    let executable = preferred_curl_executable().context("failed to locate curl executable")?;
+    let mut command = Command::new(executable);
+    command.args([
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--connect-timeout",
+        &profile.connect_timeout_secs.to_string(),
+        "--max-time",
+        &profile.command_timeout_secs.to_string(),
+    ]);
+    apply_curl_transfer_mode(&mut command, profile);
+    add_curl_auth(&mut command, profile, password)?;
+    for quote in quotes {
+        command.arg("--quote").arg(quote);
+    }
+    command.arg(build_url(profile, Some("/")));
+    let output = command
+        .output()
+        .context("failed to launch curl for remote operation")?;
+    if !output.status.success() {
+        bail!("{}", stderr_message(&output, "remote operation failed"));
+    }
+    Ok(())
 }
 
-fn run_curl_download(profile: &RemoteProfile, password: Option<&str>, remote_source: &str, local_target: &Path) -> Result<()> {
-  let executable = preferred_curl_executable().context("failed to locate curl executable")?;
-  if let Some(parent) = local_target.parent() {
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-  }
-  let mut command = Command::new(executable);
-  command.args([
-    "--silent",
-    "--show-error",
-    "--fail",
-    "--connect-timeout",
-    &profile.connect_timeout_secs.to_string(),
-    "--max-time",
-    &profile.command_timeout_secs.to_string(),
-    "--output"
-  ]);
-  command.arg(local_target);
-  apply_curl_transfer_mode(&mut command, profile);
-  add_curl_auth(&mut command, profile, password)?;
-  command.arg(build_url(profile, Some(remote_source)));
-  let output = command.output().context("failed to launch curl for remote download")?;
-  if !output.status.success() {
-    bail!("{}", stderr_message(&output, "remote download failed"));
-  }
-  Ok(())
+fn run_curl_upload(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    local_source: &Path,
+    remote_target: &str,
+) -> Result<()> {
+    let executable = preferred_curl_executable().context("failed to locate curl executable")?;
+    let mut command = Command::new(executable);
+    command.args([
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--ftp-create-dirs",
+        "--connect-timeout",
+        &profile.connect_timeout_secs.to_string(),
+        "--max-time",
+        &profile.command_timeout_secs.to_string(),
+        "--upload-file",
+    ]);
+    command.arg(local_source);
+    apply_curl_transfer_mode(&mut command, profile);
+    add_curl_auth(&mut command, profile, password)?;
+    command.arg(build_url(profile, Some(remote_target)));
+    let output = command
+        .output()
+        .context("failed to launch curl for remote upload")?;
+    if !output.status.success() {
+        bail!("{}", stderr_message(&output, "remote upload failed"));
+    }
+    Ok(())
+}
+
+fn run_curl_download(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    remote_source: &str,
+    local_target: &Path,
+) -> Result<()> {
+    let executable = preferred_curl_executable().context("failed to locate curl executable")?;
+    if let Some(parent) = local_target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let mut command = Command::new(executable);
+    command.args([
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--connect-timeout",
+        &profile.connect_timeout_secs.to_string(),
+        "--max-time",
+        &profile.command_timeout_secs.to_string(),
+        "--output",
+    ]);
+    command.arg(local_target);
+    apply_curl_transfer_mode(&mut command, profile);
+    add_curl_auth(&mut command, profile, password)?;
+    command.arg(build_url(profile, Some(remote_source)));
+    let output = command
+        .output()
+        .context("failed to launch curl for remote download")?;
+    if !output.status.success() {
+        bail!("{}", stderr_message(&output, "remote download failed"));
+    }
+    Ok(())
 }
 
 fn apply_curl_transfer_mode(command: &mut Command, profile: &RemoteProfile) {
-  if matches!(profile.protocol.clone(), LocationKind::Ftp) && !profile.passive_mode {
-    command.arg("--ftp-port").arg("-");
-  }
-}
-
-fn remote_path_exists_via_curl(profile: &RemoteProfile, password: Option<&str>, remote_path: &str) -> Result<bool> {
-  let output = run_curl_list(profile, password, Some(remote_path))?;
-  Ok(output.status.success())
-}
-
-fn available_curl_conflict_path(profile: &RemoteProfile, password: Option<&str>, destination: &str) -> Result<String> {
-  let destination = normalize_remote_path(destination);
-  if !remote_path_exists_via_curl(profile, password, &destination)? {
-    return Ok(destination);
-  }
-
-  let parent = remote_parent_path(&destination).unwrap_or_else(|| "/".to_string());
-  let file_name = remote_file_name(&destination).unwrap_or_else(|| "item".to_string());
-  let (stem, extension) = split_remote_file_name(&file_name);
-  for index in 1.. {
-    let candidate_name = match extension {
-      Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
-      _ => format!("{stem} ({index})")
-    };
-    let candidate = join_remote_path(&parent, &candidate_name);
-    if !remote_path_exists_via_curl(profile, password, &candidate)? {
-      return Ok(candidate);
+    if matches!(profile.protocol.clone(), LocationKind::Ftp) && !profile.passive_mode {
+        command.arg("--ftp-port").arg("-");
     }
-  }
-
-  unreachable!("conflict index iteration is unbounded")
 }
 
-fn upload_path_with_curl(profile: &RemoteProfile, password: Option<&str>, local_source: &Path, remote_target: &str) -> Result<()> {
-  let metadata = fs::symlink_metadata(local_source)
-    .with_context(|| format!("failed to stat local path {}", local_source.display()))?;
-  ensure_local_path_is_not_symlink(&metadata, local_source, "upload")?;
-  if metadata.is_dir() && !metadata.file_type().is_symlink() {
-    run_curl_quotes(profile, password, &[format!("MKD {}", normalize_remote_path(remote_target))])?;
-    for entry in fs::read_dir(local_source).with_context(|| format!("failed to read {}", local_source.display()))? {
-      let entry = entry.context("failed to read recursive local directory entry")?;
-      let child_name = entry
-        .file_name()
-        .to_str()
-        .ok_or_else(|| anyhow!("local path contains a non-Unicode file name: {}", entry.path().display()))?
-        .to_string();
-      validate_remote_entry_name(&child_name)?;
-      let child_remote_target = join_remote_path(remote_target, &child_name);
-      upload_path_with_curl(profile, password, &entry.path(), &child_remote_target)?;
+fn remote_path_exists_via_curl(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    remote_path: &str,
+) -> Result<bool> {
+    let output = run_curl_list(profile, password, Some(remote_path))?;
+    Ok(output.status.success())
+}
+
+fn available_curl_conflict_path(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    destination: &str,
+) -> Result<String> {
+    let destination = normalize_remote_path(destination);
+    if !remote_path_exists_via_curl(profile, password, &destination)? {
+        return Ok(destination);
     }
-  } else {
-    run_curl_upload(profile, password, local_source, remote_target)?;
-  }
-  Ok(())
+
+    let parent = remote_parent_path(&destination).unwrap_or_else(|| "/".to_string());
+    let file_name = remote_file_name(&destination).unwrap_or_else(|| "item".to_string());
+    let (stem, extension) = split_remote_file_name(&file_name);
+    for index in 1.. {
+        let candidate_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate = join_remote_path(&parent, &candidate_name);
+        if !remote_path_exists_via_curl(profile, password, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+
+    unreachable!("conflict index iteration is unbounded")
+}
+
+fn upload_path_with_curl(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    local_source: &Path,
+    remote_target: &str,
+) -> Result<()> {
+    let metadata = fs::symlink_metadata(local_source)
+        .with_context(|| format!("failed to stat local path {}", local_source.display()))?;
+    ensure_local_path_is_not_symlink(&metadata, local_source, "upload")?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        run_curl_quotes(
+            profile,
+            password,
+            &[format!("MKD {}", normalize_remote_path(remote_target))],
+        )?;
+        for entry in fs::read_dir(local_source)
+            .with_context(|| format!("failed to read {}", local_source.display()))?
+        {
+            let entry = entry.context("failed to read recursive local directory entry")?;
+            let child_name = entry
+                .file_name()
+                .to_str()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "local path contains a non-Unicode file name: {}",
+                        entry.path().display()
+                    )
+                })?
+                .to_string();
+            validate_remote_entry_name(&child_name)?;
+            let child_remote_target = join_remote_path(remote_target, &child_name);
+            upload_path_with_curl(profile, password, &entry.path(), &child_remote_target)?;
+        }
+    } else {
+        run_curl_upload(profile, password, local_source, remote_target)?;
+    }
+    Ok(())
 }
 
 fn delete_ftp_entry(profile: &RemoteProfile, password: Option<&str>, source: &str) -> Result<()> {
-  let source = normalize_remote_path(source);
-  if run_curl_quotes(profile, password, &[format!("DELE {source}")]).is_ok() {
-    return Ok(());
-  }
+    let source = normalize_remote_path(source);
+    if run_curl_quotes(profile, password, &[format!("DELE {source}")]).is_ok() {
+        return Ok(());
+    }
 
-  delete_ftp_directory(profile, password, &source)
+    delete_ftp_directory(profile, password, &source)
 }
 
-fn delete_ftp_directory(profile: &RemoteProfile, password: Option<&str>, source: &str) -> Result<()> {
-  let output = run_curl_list(profile, password, Some(source))?;
-  if !output.status.success() {
-    run_curl_quotes(profile, password, &[format!("RMD {}", normalize_remote_path(source))])?;
-    return Ok(());
-  }
+fn delete_ftp_directory(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    source: &str,
+) -> Result<()> {
+    let output = run_curl_list(profile, password, Some(source))?;
+    if !output.status.success() {
+        run_curl_quotes(
+            profile,
+            password,
+            &[format!("RMD {}", normalize_remote_path(source))],
+        )?;
+        return Ok(());
+    }
 
-  for child in parse_curl_listing_child_paths(source, &output.stdout) {
-    delete_ftp_entry(profile, password, &child)?;
-  }
+    for child in parse_curl_listing_child_paths(source, &output.stdout) {
+        delete_ftp_entry(profile, password, &child)?;
+    }
 
-  run_curl_quotes(profile, password, &[format!("RMD {}", normalize_remote_path(source))])
+    run_curl_quotes(
+        profile,
+        password,
+        &[format!("RMD {}", normalize_remote_path(source))],
+    )
 }
 
 fn parse_curl_listing_child_paths(base_path: &str, stdout: &[u8]) -> Vec<String> {
-  let base_path = normalize_remote_path(base_path);
-  String::from_utf8_lossy(stdout)
-    .lines()
-    .filter_map(|line| {
-      let trimmed = line.trim().trim_end_matches('/');
-      if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
-        return None;
-      }
-      if trimmed.starts_with('/') {
-        Some(normalize_remote_path(trimmed))
-      } else {
-        Some(join_remote_path(&base_path, trimmed))
-      }
-    })
-    .filter(|path| path != &base_path)
-    .collect()
+    let base_path = normalize_remote_path(base_path);
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim().trim_end_matches('/');
+            if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+                return None;
+            }
+            if trimmed.starts_with('/') {
+                Some(normalize_remote_path(trimmed))
+            } else {
+                Some(join_remote_path(&base_path, trimmed))
+            }
+        })
+        .filter(|path| path != &base_path)
+        .collect()
 }
 
-fn add_curl_auth(command: &mut Command, profile: &RemoteProfile, password: Option<&str>) -> Result<()> {
-  match profile.auth_kind.clone() {
-    RemoteAuthKind::Anonymous => {}
-    RemoteAuthKind::Password => {
-      let secret = resolve_secret(profile, password).context("password is required for remote operation")?;
-      command.arg("--user").arg(format!("{}:{secret}", profile.username));
+fn add_curl_auth(
+    command: &mut Command,
+    profile: &RemoteProfile,
+    password: Option<&str>,
+) -> Result<()> {
+    match profile.auth_kind.clone() {
+        RemoteAuthKind::Anonymous => {}
+        RemoteAuthKind::Password => {
+            let secret = resolve_secret(profile, password)
+                .context("password is required for remote operation")?;
+            command
+                .arg("--user")
+                .arg(format!("{}:{secret}", profile.username));
+        }
+        RemoteAuthKind::KeyFile => bail!("key-file auth is not supported by the curl FTP adapter"),
     }
-    RemoteAuthKind::KeyFile => bail!("key-file auth is not supported by the curl FTP adapter")
-  }
-  Ok(())
+    Ok(())
 }
 
 fn resolve_secret(profile: &RemoteProfile, password: Option<&str>) -> Option<String> {
-  password
-    .filter(|value| !value.trim().is_empty())
-    .map(ToOwned::to_owned)
-    .or_else(|| profile.credential_target.as_deref().and_then(windows_credentials::read_secret))
+    password
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            profile
+                .credential_target
+                .as_deref()
+                .and_then(windows_credentials::read_secret)
+        })
 }
 
 fn connect_sftp(profile: &RemoteProfile, password: Option<&str>) -> Result<(Session, Sftp)> {
-  let session = connect_ssh_session(profile)?;
-  verify_sftp_host_key(&session, profile)?;
+    let session = connect_ssh_session(profile)?;
+    verify_sftp_host_key(&session, profile)?;
 
-  authenticate_sftp_session(&session, profile, password)?;
+    authenticate_sftp_session(&session, profile, password)?;
 
-  let sftp = session.sftp().context("failed to open SFTP subsystem")?;
-  Ok((session, sftp))
+    let sftp = session.sftp().context("failed to open SFTP subsystem")?;
+    Ok((session, sftp))
 }
 
 fn connect_ssh_session(profile: &RemoteProfile) -> Result<Session> {
-  let address = (profile.host.as_str(), profile.port)
-    .to_socket_addrs()
-    .with_context(|| format!("failed to resolve {}:{}", profile.host, profile.port))?
-    .next()
-    .ok_or_else(|| anyhow!("failed to resolve {}:{}", profile.host, profile.port))?;
-  let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(profile.connect_timeout_secs))
-    .with_context(|| format!("failed to connect to {}:{}", profile.host, profile.port))?;
-  tcp
-    .set_read_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
-    .context("failed to configure SFTP read timeout")?;
-  tcp
-    .set_write_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
-    .context("failed to configure SFTP write timeout")?;
+    let address = (profile.host.as_str(), profile.port)
+        .to_socket_addrs()
+        .with_context(|| format!("failed to resolve {}:{}", profile.host, profile.port))?
+        .next()
+        .ok_or_else(|| anyhow!("failed to resolve {}:{}", profile.host, profile.port))?;
+    let tcp =
+        TcpStream::connect_timeout(&address, Duration::from_secs(profile.connect_timeout_secs))
+            .with_context(|| format!("failed to connect to {}:{}", profile.host, profile.port))?;
+    tcp.set_read_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
+        .context("failed to configure SFTP read timeout")?;
+    tcp.set_write_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
+        .context("failed to configure SFTP write timeout")?;
 
-  let mut session = Session::new().context("failed to create SSH session")?;
-  session.set_tcp_stream(tcp);
-  session.set_timeout(profile.command_timeout_secs.saturating_mul(1000).min(u32::MAX as u64) as u32);
-  session.handshake().context("failed to complete SSH handshake")?;
-  Ok(session)
+    let mut session = Session::new().context("failed to create SSH session")?;
+    session.set_tcp_stream(tcp);
+    session.set_timeout(
+        profile
+            .command_timeout_secs
+            .saturating_mul(1000)
+            .min(u32::MAX as u64) as u32,
+    );
+    session
+        .handshake()
+        .context("failed to complete SSH handshake")?;
+    Ok(session)
 }
 
-fn authenticate_sftp_session(session: &Session, profile: &RemoteProfile, password: Option<&str>) -> Result<()> {
-  match profile.auth_kind.clone() {
-    RemoteAuthKind::Password => {
-      let secret = resolve_secret(profile, password).context("password is required for SFTP operation")?;
-      session
-        .userauth_password(&profile.username, &secret)
-        .context("SFTP password authentication failed")?;
+fn authenticate_sftp_session(
+    session: &Session,
+    profile: &RemoteProfile,
+    password: Option<&str>,
+) -> Result<()> {
+    match profile.auth_kind.clone() {
+        RemoteAuthKind::Password => {
+            let secret = resolve_secret(profile, password)
+                .context("password is required for SFTP operation")?;
+            session
+                .userauth_password(&profile.username, &secret)
+                .context("SFTP password authentication failed")?;
+        }
+        RemoteAuthKind::KeyFile => {
+            let private_key = profile
+                .private_key_path
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .context("private key path is required for SFTP key-file auth")?;
+            let passphrase = resolve_secret(profile, password);
+            session
+                .userauth_pubkey_file(
+                    &profile.username,
+                    None,
+                    Path::new(private_key),
+                    passphrase.as_deref(),
+                )
+                .context("SFTP key-file authentication failed")?;
+        }
+        RemoteAuthKind::Anonymous => bail!("anonymous auth is not supported for SFTP"),
     }
-    RemoteAuthKind::KeyFile => {
-      let private_key = profile
-        .private_key_path
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .context("private key path is required for SFTP key-file auth")?;
-      let passphrase = resolve_secret(profile, password);
-      session
-        .userauth_pubkey_file(
-          &profile.username,
-          None,
-          Path::new(private_key),
-          passphrase.as_deref()
-        )
-        .context("SFTP key-file authentication failed")?;
+
+    if !session.authenticated() {
+        bail!("SFTP authentication failed");
     }
-    RemoteAuthKind::Anonymous => bail!("anonymous auth is not supported for SFTP")
-  }
 
-  if !session.authenticated() {
-    bail!("SFTP authentication failed");
-  }
-
-  Ok(())
+    Ok(())
 }
 
 fn verify_sftp_host_key(session: &Session, profile: &RemoteProfile) -> Result<()> {
-  if profile.ignore_host_key {
-    return Ok(());
-  }
+    if profile.ignore_host_key {
+        return Ok(());
+    }
 
-  let known_hosts_path = known_hosts_path()?;
-  if !known_hosts_path.exists() {
-    bail!(
+    let known_hosts_path = known_hosts_path()?;
+    if !known_hosts_path.exists() {
+        bail!(
       "SFTP host key is not trusted yet; add {}:{} to known_hosts or enable ignoreHostKey for this profile",
       profile.host,
       profile.port
     );
-  }
+    }
 
-  let mut known_hosts = session.known_hosts().context("failed to initialize known_hosts checker")?;
-  known_hosts
-    .read_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
-    .with_context(|| format!("failed to read {}", known_hosts_path.display()))?;
-  let (key, _) = session.host_key().context("SFTP server did not provide a host key")?;
-  match known_hosts.check_port(&profile.host, profile.port, key) {
+    let mut known_hosts = session
+        .known_hosts()
+        .context("failed to initialize known_hosts checker")?;
+    known_hosts
+        .read_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
+        .with_context(|| format!("failed to read {}", known_hosts_path.display()))?;
+    let (key, _) = session
+        .host_key()
+        .context("SFTP server did not provide a host key")?;
+    match known_hosts.check_port(&profile.host, profile.port, key) {
     CheckResult::Match => Ok(()),
     CheckResult::NotFound => bail!(
       "SFTP host key is not trusted yet; add {}:{} to known_hosts or enable ignoreHostKey for this profile",
@@ -2096,14 +2406,15 @@ mod tests {
     use super::{
         available_remote_conflict_path, build_url, copy_entries, create_directory,
         credential_target_for_profile, delete_entries, download_entries, encode_remote_url_path,
-        ensure_remote_not_inside_source, ensure_remote_stat_is_not_symlink, ftp_profile_root_properties,
-        ftp_property_lookup_path, host_key_algorithm, host_key_fingerprint_sha256, host_key_type_from_algorithm, join_remote_path,
+        ensure_remote_not_inside_source, ensure_remote_stat_is_not_symlink,
+        ftp_profile_root_properties, ftp_property_lookup_path, host_key_algorithm,
+        host_key_fingerprint_sha256, host_key_type_from_algorithm, join_remote_path,
         known_hosts_host, list_directory, move_entries, normalize_profile, normalize_remote_path,
-        parse_curl_listing_child_paths, parse_listing_entries, parse_sftp_entries, FtpPropertyLookup,
+        parse_curl_listing_child_paths, parse_listing_entries, parse_sftp_entries,
         preferred_curl_executable, prepare_profile_for_save, remote_file_name, remote_parent_path,
         remote_path_is_within_root, rename_entry, select_adapter, test_profile, transfer_entries,
         upload_files, validate_profile, validate_remote_entry_name, validate_remote_path,
-        validate_remote_path_within_root,
+        validate_remote_path_within_root, FtpPropertyLookup,
     };
     use std::{env, fs, path::PathBuf};
 
@@ -2112,8 +2423,8 @@ mod tests {
 
     use crate::domain::models::{
         DirectorySizeAvailability, EntryKind, ItemPropertiesRequest, ItemPropertiesTarget,
-        ItemPropertyField, ItemPropertyFieldAvailability, LocationKind, RemoteAdapterKind, RemoteAuthKind,
-        RemoteProfile, RemoteProfileUpsertRequest,
+        ItemPropertyField, ItemPropertyFieldAvailability, LocationKind, RemoteAdapterKind,
+        RemoteAuthKind, RemoteProfile, RemoteProfileUpsertRequest,
     };
 
     fn sample_profile() -> RemoteProfile {
@@ -2285,7 +2596,10 @@ mod tests {
         profile.protocol = LocationKind::Ftp;
         profile.root_path = "/".into();
 
-        assert_eq!(ftp_property_lookup_path(&profile, "/"), FtpPropertyLookup::ProfileRoot);
+        assert_eq!(
+            ftp_property_lookup_path(&profile, "/"),
+            FtpPropertyLookup::ProfileRoot
+        );
         assert_eq!(
             ftp_property_lookup_path(&profile, "/report.txt"),
             FtpPropertyLookup::ParentDirectory("/".into())

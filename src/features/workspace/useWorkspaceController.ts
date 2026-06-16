@@ -9,7 +9,7 @@ import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryS
 import { createDefaultSearchId } from "./workspaceSearch";
 import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
-import type { OperationConflictResolution, OperationPathRef } from "../../app/types";
+import type { OperationPathRef } from "../../app/types";
 import type {
   ColumnId,
   ColumnDefinition,
@@ -365,6 +365,10 @@ function isSameOrDescendantPath(source: string, destination: string) {
   return destinationKey === sourceKey || destinationKey.startsWith(prefix);
 }
 
+function isLocalFileClipboard(paths: string[]) {
+  return paths.length > 0 && paths.every((path) => !isRemotePath(path));
+}
+
 function appendLocationPathSegment(basePath: string, segment: string) {
   const separator = getLocationPathSeparator(basePath);
   return basePath.endsWith(separator) ? `${basePath}${segment}` : `${basePath}${separator}${segment}`;
@@ -506,6 +510,11 @@ export function getParentPathForRefresh(path: string): string | null {
   }
 
   return `${root}${trimmedPath.slice(0, separatorIndex)}`;
+}
+
+function hasSameParentPath(source: string, destination: string) {
+  const parent = getParentPathForRefresh(source);
+  return Boolean(parent && pathsEqual(parent, destination));
 }
 
 export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
@@ -1175,15 +1184,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const unlistenFns: Array<() => void> = [];
 
     void (async () => {
-      const [unlistenTasks, unlistenConflicts, unlistenHistory] = await Promise.all([
+      const [unlistenTasks, unlistenHistory] = await Promise.all([
         workspaceGateway.listenOperationTasks((event) => {
           if (!disposed) {
             void projectOperationTask(event.snapshot);
-          }
-        }),
-        workspaceGateway.listenOperationConflicts((request) => {
-          if (!disposed) {
-            dispatch({ type: "operationConflictRequested", payload: request });
           }
         }),
         workspaceGateway.listenOperationHistory((event) => {
@@ -1195,12 +1199,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
       if (disposed) {
         unlistenTasks();
-        unlistenConflicts();
         unlistenHistory();
         return;
       }
 
-      unlistenFns.push(unlistenTasks, unlistenConflicts, unlistenHistory);
+      unlistenFns.push(unlistenTasks, unlistenHistory);
 
       const [taskSnapshot, historySnapshot] = await Promise.all([
         workspaceGateway.listOperationTasks(),
@@ -1315,35 +1318,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   });
 
-  const resolveOperationConflict = useEffectEvent(async () => {
-    const dialog = state.operations.conflictDialog;
-    if (!dialog) {
-      return;
-    }
-
-    if (dialog.selectedResolution === "rename" && !dialog.renameValue.trim()) {
-      pushNotification("warning", "Enter a new name to resolve the conflict.");
-      return;
-    }
-
-    dispatch({ type: "operationConflictDialogChanged", payload: { resolving: true } });
-    const resolution: OperationConflictResolution = {
-      conflictId: dialog.request.conflictId,
-      resolution: dialog.selectedResolution,
-      newName: dialog.selectedResolution === "rename" ? dialog.renameValue.trim() : null,
-      applyToAll: dialog.selectedResolution === "rename" ? false : dialog.applyToAll
-    };
-
-    try {
-      const task = await workspaceGateway.resolveOperationConflict(resolution);
-      dispatch({ type: "operationConflictDialogClosed", payload: { conflictId: dialog.request.conflictId } });
-      await projectOperationTask(task);
-    } catch (error) {
-      dispatch({ type: "operationConflictDialogChanged", payload: { resolving: false } });
-      pushNotification("danger", getErrorMessage(error, "Unable to resolve the file conflict"));
-    }
-  });
-
   const handleOpenNewTab = useEffectEvent(async (panelId: PanelId, path?: string) => {
     const sourceTab = getActiveTab(state.panels[panelId]);
     const basePath = path ?? (isNavigationTab(sourceTab) ? getFallbackDirectoryPath(state, panelId) : sourceTab.snapshot.location.path);
@@ -1413,9 +1387,18 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
+    const operablePaths =
+      operation === "move"
+        ? normalizedPaths.filter((path) => !hasSameParentPath(path, normalizedDestination))
+        : normalizedPaths;
+    if (operablePaths.length === 0) {
+      pushNotification("info", "已在目标文件夹中，未执行复制或移动。");
+      return;
+    }
+
     const sourceParents = Array.from(
       new Set(
-        normalizedPaths
+        operablePaths
           .map((path) => getParentPathForRefresh(path))
           .filter((path): path is string => Boolean(path))
       )
@@ -1430,8 +1413,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       };
       const task =
         operation === "copy"
-          ? await workspaceGateway.copyEntries(normalizedPaths, normalizedDestination, operationOptions)
-          : await workspaceGateway.moveEntries(normalizedPaths, normalizedDestination, operationOptions);
+          ? await workspaceGateway.copyEntries(operablePaths, normalizedDestination, operationOptions)
+          : await workspaceGateway.moveEntries(operablePaths, normalizedDestination, operationOptions);
       await projectOperationResult(task);
       if (!task) {
         const refreshPaths = operation === "copy" ? [normalizedDestination] : [...sourceParents, normalizedDestination];
@@ -1603,11 +1586,40 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     const selectedPaths = selection.map((entry) => entry.path);
     dispatch({ type: "clipboardSet", payload: { mode, paths: selectedPaths } });
+    if (isLocalFileClipboard(selectedPaths)) {
+      void workspaceGateway.setSystemFileClipboard(selectedPaths, mode).catch((error) => {
+        pushNotification("warning", getErrorMessage(error, "无法写入系统文件剪贴板。"));
+      });
+    }
     pushNotification("success", `${mode === "copy" ? "已复制" : "已剪切"} ${selectedPaths.length} 项到剪贴板。`);
   });
 
+  const startSystemFileDrag = useEffectEvent((paths: string[]) => {
+    const localPaths = paths.filter((path) => !isRemotePath(path));
+    if (localPaths.length === 0) {
+      return;
+    }
+
+    void workspaceGateway.startSystemFileDrag(localPaths).catch((error) => {
+      pushNotification("warning", getErrorMessage(error, "Unable to start system file drag."));
+    });
+  });
+
   const pasteIntoPanel = useEffectEvent(async (panelId: PanelId) => {
-    const clipboard = state.clipboard;
+    let clipboard = state.clipboard;
+    try {
+      const systemClipboard = await workspaceGateway.readSystemFileClipboard();
+      if (systemClipboard?.paths.length) {
+        clipboard = systemClipboard;
+        dispatch({ type: "clipboardSet", payload: systemClipboard });
+      }
+    } catch (error) {
+      if (!clipboard?.paths.length) {
+        pushNotification("danger", getErrorMessage(error, "无法读取系统文件剪贴板。"));
+        return;
+      }
+      pushNotification("warning", getErrorMessage(error, "无法读取系统文件剪贴板，继续使用软件剪贴板。"));
+    }
     if (!clipboard || clipboard.paths.length === 0) {
       pushNotification("warning", "剪贴板为空。");
       return;
@@ -1619,9 +1631,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     const destination = activeTab.snapshot.location.path;
+    const operablePaths =
+      clipboard.mode === "cut" ? clipboard.paths.filter((path) => !hasSameParentPath(path, destination)) : clipboard.paths;
+    if (operablePaths.length === 0) {
+      pushNotification("info", "已在目标文件夹中，未执行粘贴。");
+      return;
+    }
     const sourceParents = Array.from(
       new Set(
-        clipboard.paths
+        operablePaths
           .map((path) => getParentPathForRefresh(path))
           .filter((path): path is string => Boolean(path))
       )
@@ -1635,8 +1653,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       };
       const task =
         clipboard.mode === "copy"
-          ? await workspaceGateway.copyEntries(clipboard.paths, destination, operationOptions)
-          : await workspaceGateway.moveEntries(clipboard.paths, destination, operationOptions);
+          ? await workspaceGateway.copyEntries(operablePaths, destination, operationOptions)
+          : await workspaceGateway.moveEntries(operablePaths, destination, operationOptions);
       if (clipboard.mode === "cut" && task?.status !== "waitingConflict") {
         dispatch({ type: "clipboardSet", payload: undefined });
       }
@@ -2265,11 +2283,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       let opened = false;
       let action: NativeBackgroundContextMenuAction | undefined;
       try {
+        const menuOptions = createBackgroundContextMenuOptions(request.panelId, request.tabId);
+        const systemClipboard = await workspaceGateway.readSystemFileClipboard();
+        if (systemClipboard?.paths.length) {
+          dispatch({ type: "clipboardSet", payload: systemClipboard });
+          menuOptions.canPaste = true;
+        }
         const result = await workspaceGateway.showNativeBackgroundContextMenu(
           directoryPath,
           request.screenX,
           request.screenY,
-          createBackgroundContextMenuOptions(request.panelId, request.tabId)
+          menuOptions
         );
         opened = result.opened;
         action = result.action;
@@ -2323,7 +2347,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
 
-      if (shortcutMatches(shortcuts, "undo", eventBinding) && !editable && !state.operations.conflictDialog) {
+      if (shortcutMatches(shortcuts, "undo", eventBinding) && !editable) {
         event.preventDefault();
         void undoLatestOperation();
         return;
@@ -2618,18 +2642,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       cancelOperation: (taskId: string) => void cancelOperation(taskId),
       undoLatestOperation: () => void undoLatestOperation(),
       undoOperation: (recordId: string) => void undoOperation(recordId),
-      resolveOperationConflict: () => void resolveOperationConflict(),
-      updateOperationConflictDialog: (
-        payload: Partial<
-          Pick<
-            NonNullable<WorkspaceState["operations"]["conflictDialog"]>,
-            "selectedResolution" | "renameValue" | "applyToAll" | "resolving"
-          >
-        >
-      ) => dispatch({ type: "operationConflictDialogChanged", payload }),
-      closeOperationConflictDialog: () => dispatch({ type: "operationConflictDialogClosed" }),
       copySelection: (panelId: PanelId) => copySelection(panelId, "copy"),
       cutSelection: (panelId: PanelId) => copySelection(panelId, "cut"),
+      startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       pasteIntoPanel: (panelId: PanelId) => void pasteIntoPanel(panelId),
       deleteSelection: (panelId: PanelId) => void deleteSelection(panelId),
       renameSelection: (panelId: PanelId) => void renameSelection(panelId),
@@ -2691,6 +2706,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       saveNavigationItem,
       saveRemoteProfile,
       state,
+      startSystemFileDrag,
       stopSearch,
       testRemoteProfile,
       undoLatestOperation,

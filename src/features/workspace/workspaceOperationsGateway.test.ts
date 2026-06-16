@@ -127,18 +127,55 @@ export const workspaceOperationsGatewayTests = (async () => {
     assert.deepEqual(invokedCommands, []);
   });
 
-  await assertAsyncTest("copy/delete/create operations invoke task intents", async () => {
+  await assertAsyncTest("local copy and move operations use the Windows shell file operation command", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return { taskId: `task-${invocations.length}` } as T;
+      return undefined as T;
     };
 
     await copyWorkspaceEntries(["D:\\Projects\\README.md"], "D:\\Archive", {
       invoke,
       runtimeHost,
       listRemoteProfiles: async () => []
-    }, { requestId: "copy-request" });
+    });
+    await moveWorkspaceEntries(["D:\\Projects\\Draft.txt"], "D:\\Archive", {
+      invoke,
+      runtimeHost,
+      listRemoteProfiles: async () => []
+    });
+
+    assert.deepEqual(invocations, [
+      {
+        command: "perform_system_file_operation",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\README.md"],
+            destination: "D:\\Archive",
+            operation: "copy"
+          }
+        }
+      },
+      {
+        command: "perform_system_file_operation",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\Draft.txt"],
+            destination: "D:\\Archive",
+            operation: "move"
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("delete and create operations invoke task intents", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { taskId: `task-${invocations.length}` } as T;
+    };
+
     await deleteWorkspaceEntries(["D:\\Projects\\old.txt"], {
       invoke,
       runtimeHost,
@@ -158,17 +195,14 @@ export const workspaceOperationsGatewayTests = (async () => {
     assert.deepEqual(invocations.map((item) => item.command), [
       "start_file_operation",
       "start_file_operation",
-      "start_file_operation",
       "start_file_operation"
     ]);
     assert.deepEqual(invocations.map((item) => (item.args.intent as { kind: string; requestId: string }).kind), [
-      "copy",
       "delete",
       "createDirectory",
       "createFile"
     ]);
     assert.deepEqual(invocations.map((item) => (item.args.intent as { requestId: string }).requestId), [
-      "copy-request",
       "delete-request",
       "mkdir-request",
       "file-request"

@@ -1,6 +1,4 @@
 import type {
-  ConflictResolutionKind,
-  OperationConflictRequest,
   OperationHistoryRecord,
   OperationIntent,
   OperationPathRef,
@@ -238,6 +236,8 @@ export interface ClipboardState {
   paths: string[];
 }
 
+export type SystemFileClipboard = ClipboardState;
+
 export interface InlineEditState {
   mode: "create-folder" | "create-file" | "rename";
   value: string;
@@ -270,21 +270,11 @@ export interface EntryDragPayload {
 }
 
 export type {
-  ConflictResolutionKind,
-  OperationConflictRequest,
   OperationHistoryRecord,
   OperationIntent,
   OperationPathRef,
   OperationTaskSnapshot
 };
-
-export interface OperationConflictDialogState {
-  request: OperationConflictRequest;
-  renameValue: string;
-  selectedResolution: ConflictResolutionKind;
-  applyToAll: boolean;
-  resolving: boolean;
-}
 
 export interface OperationWorkspaceState {
   tasksOpen: boolean;
@@ -292,7 +282,6 @@ export interface OperationWorkspaceState {
   taskSequence: number;
   history: OperationHistoryRecord[];
   historySequence: number;
-  conflictDialog?: OperationConflictDialogState;
 }
 
 export type InformationPanelTab = "properties" | "search" | "history";

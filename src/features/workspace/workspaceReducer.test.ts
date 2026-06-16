@@ -8,7 +8,6 @@ import {
   workspaceReducer
 } from "./workspaceReducer";
 import type {
-  OperationConflictRequest,
   OperationHistoryRecord,
   OperationTaskSnapshot,
   SearchResult,
@@ -127,21 +126,6 @@ function createOperationHistoryRecord(
   };
 }
 
-function createOperationConflict(): OperationConflictRequest {
-  return {
-    conflictId: "conflict-1",
-    taskId: "task-1",
-    createdAt: "2026-06-10T08:00:02Z",
-    source: { kind: "local", path: "D:\\Source\\report.txt" },
-    destination: { kind: "local", path: "D:\\Target\\report.txt" },
-    existingKind: "file",
-    incomingKind: "file",
-    suggestedName: "report (1).txt",
-    allowedResolutions: ["skip", "keepBoth", "rename"],
-    message: "Target exists"
-  };
-}
-
 function withPanelTabs(state: WorkspaceState, panelId: "panel-2", tabs: TabState[], activeTabId: string): WorkspaceState {
   return {
     ...state,
@@ -228,34 +212,6 @@ assertTest("workspaceReducer projects operation history by backend sequence", ()
   assert.equal(stale.operations.history[0].status, "undoable");
   assert.equal(updated.operations.history[0].status, "undone");
   assert.equal(updated.operations.historySequence, 5);
-});
-
-assertTest("workspaceReducer opens and updates the operation conflict dialog from backend requests", () => {
-  const state = createState();
-  const requested = workspaceReducer(state, {
-    type: "operationConflictRequested",
-    payload: createOperationConflict()
-  } as WorkspaceAction);
-  const changed = workspaceReducer(requested, {
-    type: "operationConflictDialogChanged",
-    payload: { selectedResolution: "rename", renameValue: "report-final.txt", applyToAll: true }
-  } as WorkspaceAction);
-  const ignoredClose = workspaceReducer(changed, {
-    type: "operationConflictDialogClosed",
-    payload: { conflictId: "other-conflict" }
-  } as WorkspaceAction);
-  const closed = workspaceReducer(ignoredClose, {
-    type: "operationConflictDialogClosed",
-    payload: { conflictId: "conflict-1" }
-  } as WorkspaceAction);
-
-  assert.equal(requested.operations.tasksOpen, true);
-  assert.equal(requested.operations.conflictDialog?.selectedResolution, "keepBoth");
-  assert.equal(changed.operations.conflictDialog?.selectedResolution, "rename");
-  assert.equal(changed.operations.conflictDialog?.renameValue, "report-final.txt");
-  assert.equal(changed.operations.conflictDialog?.applyToAll, true);
-  assert.ok(ignoredClose.operations.conflictDialog);
-  assert.equal(closed.operations.conflictDialog, undefined);
 });
 
 assertTest("workspaceReducer clears the previously focused panel selection when focus changes", () => {

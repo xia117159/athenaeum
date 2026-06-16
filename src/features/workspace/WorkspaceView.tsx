@@ -22,10 +22,10 @@ import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
-import { OperationConflictDialog } from "./OperationTaskCenter";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { WorkspaceTreeBranch } from "./WorkspaceTreeBranch";
 import { openSettingsWindow } from "./settingsWindow";
+import { listenSystemFileDrops } from "./systemDragDrop";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { getActiveTab } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
@@ -197,6 +197,28 @@ export function WorkspaceView() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listenSystemFileDrops((paths, destination) => {
+      actions.dropEntries(paths, destination, "copy");
+    })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [actions]);
 
   const handleMenuAction = (action: () => void) => {
     action();
@@ -606,13 +628,6 @@ export function WorkspaceView() {
         />
       ) : null}
 
-      <OperationConflictDialog
-        dialog={state.operations.conflictDialog}
-        onUpdate={actions.updateOperationConflictDialog}
-        onResolve={actions.resolveOperationConflict}
-        onCancelTask={actions.cancelOperation}
-      />
-
       {state.status === "loading" ? (
         <div className="workspace-loading">
           <strong>正在加载工作区</strong>
@@ -743,6 +758,7 @@ function PanelLayout({
       isFocused={state.activePanelId === panelId}
       filterText={activeFilterText}
       columns={state.settings.model.columns}
+      clipboard={state.clipboard}
       detailsRowHeight={state.settings.model.detailsRowHeight}
       entryDropMoveBinding={getShortcutBinding(state.settings.model.shortcuts, "drag-move")}
       contextMenuDefault={state.settings.model.contextMenu.defaultMenu}
@@ -852,6 +868,7 @@ function PanelSurface({
   isFocused,
   filterText,
   columns,
+  clipboard,
   detailsRowHeight,
   entryDropMoveBinding,
   contextMenuDefault,
@@ -865,6 +882,7 @@ function PanelSurface({
   isFocused: boolean;
   filterText: string;
   columns: ColumnDefinition[];
+  clipboard: WorkspaceState["clipboard"];
   detailsRowHeight: number;
   entryDropMoveBinding: string;
   contextMenuDefault: ContextMenuDefault;
@@ -976,6 +994,7 @@ function PanelSurface({
             selectedEntryIds={activeTab.selectedEntryIds}
             viewMode={activeTab.viewMode}
             inlineEdit={activeTab.inlineEdit}
+            clipboard={clipboard}
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
             onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>
@@ -992,6 +1011,7 @@ function PanelSurface({
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
             onDropEntries={(paths, destination, operation) => actions.dropEntries(paths, destination, operation)}
+            onStartSystemFileDrag={(paths) => actions.startSystemFileDrag(paths)}
             entryDropMoveBinding={entryDropMoveBinding}
             contextMenuDefault={contextMenuDefault}
             contextMenuToggleBinding={contextMenuToggleBinding}

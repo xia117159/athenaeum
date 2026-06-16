@@ -21,7 +21,7 @@ import {
   type WorkspaceOperationCommand
 } from "./remoteUri";
 import { listRemoteProfilesRequired } from "./workspaceDirectoryGateway";
-import { hasTauriRuntime, invokeRequired, type WorkspaceInvoke } from "./workspaceIpc";
+import { hasTauriRuntime, invokeRequired, performSystemFileOperation, type WorkspaceInvoke } from "./workspaceIpc";
 
 type BackendOperationResult = {
   affectedPaths: string[];
@@ -92,6 +92,27 @@ export function createPathRef(path: string, profiles: BackendRemoteProfile[]): O
     kind: "local",
     path
   };
+}
+
+function allPathRefsAreLocal(paths: OperationPathRef[]) {
+  return paths.every((path) => path.kind === "local");
+}
+
+async function maybePerformSystemCopyOrMove(
+  paths: string[],
+  destination: string,
+  operation: "copy" | "move",
+  profiles: BackendRemoteProfile[],
+  runtime: WorkspaceOperationRuntime
+) {
+  const sources = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (sources.length === 0 || destinationRef.kind !== "local" || !allPathRefsAreLocal(sources)) {
+    return false;
+  }
+
+  await performSystemFileOperation(paths, destination, operation, runtime.invoke, runtime.runtimeHost);
+  return true;
 }
 
 function createBrowserTaskSnapshot(intent: OperationIntent): OperationTaskSnapshot {
@@ -252,6 +273,9 @@ export async function copyWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  if (await maybePerformSystemCopyOrMove(paths, destination, "copy", profiles, runtime)) {
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("copy"),
@@ -277,6 +301,9 @@ export async function moveWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  if (await maybePerformSystemCopyOrMove(paths, destination, "move", profiles, runtime)) {
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("move"),

@@ -1,5 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult } from "./types";
+import type { NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult, SystemFileClipboard } from "./types";
+
+export type SystemFileOperationKind = "copy" | "move";
 
 export type WorkspaceInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
 
@@ -94,4 +96,60 @@ export async function showNativeBackgroundContextMenu(
     console.warn("Falling back from show_native_background_context_menu", error);
     return fallbackResult;
   }
+}
+
+export async function setSystemFileClipboard(
+  paths: string[],
+  mode: SystemFileClipboard["mode"],
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return;
+  }
+
+  await invokeFn<void>("set_system_file_clipboard", { paths, mode });
+}
+
+export async function readSystemFileClipboard(
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
+  }
+
+  return invokeFn<SystemFileClipboard | null>("read_system_file_clipboard", {});
+}
+
+export async function startSystemFileDrag(
+  paths: string[],
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
+  }
+
+  return invokeFn<SystemFileClipboard["mode"]>("start_system_file_drag", { paths });
+}
+
+export async function performSystemFileOperation(
+  sources: string[],
+  destination: string,
+  operation: SystemFileOperationKind,
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return;
+  }
+
+  await invokeFn<void>("perform_system_file_operation", {
+    request: {
+      sources,
+      destination,
+      operation
+    }
+  });
 }
