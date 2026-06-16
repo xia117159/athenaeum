@@ -497,6 +497,28 @@ export const completion = (async () => {
       assert.equal(latestController?.state.layoutMode, "dual");
     });
 
+    await assertTest("useWorkspaceController exposes dismissible warning notifications", async () => {
+      await act(async () => {
+        latestController?.actions.showNotification("warning", "Explorer drag is blocked while elevated.");
+        await flushEffects();
+      });
+
+      const notification = latestController?.state.notifications.find((item) =>
+        item.message.includes("Explorer drag is blocked")
+      );
+      assert.equal(notification?.intent, "warning");
+
+      await act(async () => {
+        latestController?.actions.dismissNotification(notification!.id);
+        await flushEffects();
+      });
+
+      assert.equal(
+        latestController?.state.notifications.some((item) => item.id === notification!.id),
+        false
+      );
+    });
+
     await assertTest("useWorkspaceController opens file entries through the system default app", async () => {
       interactions.systemOpens.length = 0;
       const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);

@@ -3,7 +3,8 @@ import {
   clearSystemFileDropHighlight,
   createSystemFileDropPayloadHandler,
   findSystemFileDropTargetFromPoint,
-  updateSystemFileDropHighlight
+  updateSystemFileDropHighlight,
+  warnIfExplorerFileDropsAreBlocked
 } from "./systemDragDrop";
 
 const { JSDOM } = require("jsdom") as {
@@ -193,5 +194,31 @@ export const systemDragDropTests = (() => {
     }
 
     assert.deepEqual(received, []);
+  });
+
+  assertTest("warnIfExplorerFileDropsAreBlocked reports elevated Windows drop blocking", () => {
+    const warnings: unknown[][] = [];
+    const blocked = warnIfExplorerFileDropsAreBlocked(
+      {
+        isElevated: true,
+        integrityLevel: "high",
+        explorerToAppDragBlocked: true,
+        message: "Explorer file drops are blocked while elevated."
+      },
+      (...args) => warnings.push(args)
+    );
+    warnIfExplorerFileDropsAreBlocked(
+      {
+        isElevated: false,
+        integrityLevel: "medium",
+        explorerToAppDragBlocked: false,
+        message: null
+      },
+      (...args) => warnings.push(args)
+    );
+
+    assert.equal(blocked, true);
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]?.[0]), /Explorer file drops/);
   });
 })();

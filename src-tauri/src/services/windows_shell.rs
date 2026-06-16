@@ -13,6 +13,7 @@ mod imp {
         NativeBackgroundContextMenuSortDirection, NativeBackgroundContextMenuViewMode,
         NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus, SystemFileClipboard,
         SystemFileClipboardMode, SystemFileOperationKind, SystemFileOperationRequest,
+        WindowsDragDropEnvironment,
     };
     use anyhow::{anyhow, bail, Context, Result};
     use tauri::{Runtime, Window};
@@ -20,9 +21,14 @@ mod imp {
         core::{implement, PCSTR, PCWSTR},
         Win32::{
             Foundation::{
-                GetLastError, SetLastError, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP,
+                CloseHandle, GetLastError, SetLastError, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP,
                 DRAGDROP_S_USEDEFAULTCURSORS, ERROR_SUCCESS, HANDLE, HGLOBAL, HWND, LPARAM, POINT,
                 S_OK, WIN32_ERROR, WPARAM,
+            },
+            Security::{
+                GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
+                TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenElevation,
+                TokenIntegrityLevel,
             },
             System::{
                 Com::{
@@ -38,7 +44,12 @@ mod imp {
                     IDropSource, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE,
                     DROPEFFECT_NONE,
                 },
-                SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS},
+                SystemServices::{
+                    MK_LBUTTON, MODIFIERKEYS_FLAGS, SECURITY_MANDATORY_HIGH_RID,
+                    SECURITY_MANDATORY_LOW_RID, SECURITY_MANDATORY_MEDIUM_RID,
+                    SECURITY_MANDATORY_SYSTEM_RID,
+                },
+                Threading::{GetCurrentProcess, OpenProcessToken},
             },
             UI::{
                 Shell::{
@@ -79,6 +90,20 @@ mod imp {
     const BACKGROUND_CMD_SORT_DESC: u32 = 41;
     const BACKGROUND_CMD_PASTE: u32 = 50;
     const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 6;
+    const ELEVATED_DRAG_DROP_MESSAGE: &str =
+        "Explorer file drops are blocked while this process is running elevated.";
+
+    struct HandleGuard(HANDLE);
+
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum NavigationOpenValidationError {
@@ -120,6 +145,97 @@ mod imp {
             .filter(|name| !name.trim().is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| fallback.trim().to_string())
+    }
+
+    fn integrity_level_name(integrity_rid: u32) -> &'static str {
+        if integrity_rid < SECURITY_MANDATORY_LOW_RID as u32 {
+            "untrusted"
+        } else if integrity_rid < SECURITY_MANDATORY_MEDIUM_RID as u32 {
+            "low"
+        } else if integrity_rid < SECURITY_MANDATORY_HIGH_RID as u32 {
+            "medium"
+        } else if integrity_rid < SECURITY_MANDATORY_SYSTEM_RID as u32 {
+            "high"
+        } else {
+            "system"
+        }
+    }
+
+    fn explorer_to_app_drag_blocked(is_elevated: bool, integrity_rid: u32) -> bool {
+        is_elevated || integrity_rid >= SECURITY_MANDATORY_HIGH_RID as u32
+    }
+
+    fn open_current_process_token() -> Result<HandleGuard> {
+        let mut token = HANDLE::default();
+        unsafe {
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+                .context("failed to open current process token")?;
+        }
+        Ok(HandleGuard(token))
+    }
+
+    fn current_process_is_elevated(token: HANDLE) -> Result<bool> {
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned_length = 0_u32;
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                Some((&mut elevation as *mut TOKEN_ELEVATION).cast()),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned_length,
+            )
+            .context("failed to read current process elevation")?;
+        }
+        Ok(elevation.TokenIsElevated != 0)
+    }
+
+    fn current_process_integrity_rid(token: HANDLE) -> Result<u32> {
+        let mut required_length = 0_u32;
+        let _ = unsafe {
+            GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut required_length)
+        };
+        if required_length == 0 {
+            bail!("failed to query current process integrity token length");
+        }
+
+        let mut buffer = vec![0_u8; required_length as usize];
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenIntegrityLevel,
+                Some(buffer.as_mut_ptr().cast()),
+                required_length,
+                &mut required_length,
+            )
+            .context("failed to read current process integrity level")?;
+
+            let label = &*(buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>());
+            let authority_count = GetSidSubAuthorityCount(label.Label.Sid);
+            if authority_count.is_null() || *authority_count == 0 {
+                bail!("current process integrity SID is invalid");
+            }
+
+            let rid = GetSidSubAuthority(label.Label.Sid, *authority_count as u32 - 1);
+            if rid.is_null() {
+                bail!("current process integrity SID RID is invalid");
+            }
+            Ok(*rid)
+        }
+    }
+
+    pub fn get_windows_drag_drop_environment() -> Result<WindowsDragDropEnvironment> {
+        let token = open_current_process_token()?;
+        let is_elevated = current_process_is_elevated(token.0)?;
+        let integrity_rid = current_process_integrity_rid(token.0)?;
+        let blocked = explorer_to_app_drag_blocked(is_elevated, integrity_rid);
+
+        Ok(WindowsDragDropEnvironment {
+            is_elevated,
+            integrity_level: integrity_level_name(integrity_rid).into(),
+            explorer_to_app_drag_blocked: blocked,
+            message: blocked.then_some(ELEVATED_DRAG_DROP_MESSAGE.into()),
+        })
     }
 
     fn invalid_target_info(raw: &str, message: impl Into<String>) -> NavigationTargetInfo {
@@ -1480,13 +1596,18 @@ mod imp {
         };
         use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS};
         use windows::Win32::System::Ole::{DROPEFFECT_COPY, DROPEFFECT_MOVE};
+        use windows::Win32::System::SystemServices::{
+            SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_LOW_RID,
+            SECURITY_MANDATORY_MEDIUM_RID, SECURITY_MANDATORY_SYSTEM_RID,
+        };
         use windows::Win32::UI::Shell::DROPFILES;
 
         use super::{
             build_drop_effect_payload, build_hdrop_payload, custom_background_action_for_command,
-            did_native_menu_open, mode_from_drop_effect, resolve_navigation_target,
-            system_file_drag_allowed_effects, validate_background_path, validate_paths,
-            validate_shell_execute_result, validate_system_default_open_path,
+            did_native_menu_open, explorer_to_app_drag_blocked, integrity_level_name,
+            mode_from_drop_effect, resolve_navigation_target, system_file_drag_allowed_effects,
+            validate_background_path, validate_paths, validate_shell_execute_result,
+            validate_system_default_open_path,
             NavigationOpenValidationError, BACKGROUND_CMD_CREATE_FILE, BACKGROUND_CMD_PASTE,
             BACKGROUND_CMD_SORT_DESC, BACKGROUND_CMD_SORT_SIZE, BACKGROUND_CMD_VIEW_TILES,
         };
@@ -1573,6 +1694,40 @@ mod imp {
         #[test]
         fn system_file_drag_out_allows_copy_only() {
             assert_eq!(system_file_drag_allowed_effects(), DROPEFFECT_COPY);
+        }
+
+        #[test]
+        fn drag_drop_environment_marks_elevated_or_high_integrity_as_blocking_explorer_drops() {
+            assert_eq!(integrity_level_name(0), "untrusted");
+            assert_eq!(
+                integrity_level_name(SECURITY_MANDATORY_LOW_RID as u32),
+                "low"
+            );
+            assert_eq!(
+                integrity_level_name(SECURITY_MANDATORY_MEDIUM_RID as u32),
+                "medium"
+            );
+            assert_eq!(
+                integrity_level_name(SECURITY_MANDATORY_HIGH_RID as u32),
+                "high"
+            );
+            assert_eq!(
+                integrity_level_name(SECURITY_MANDATORY_SYSTEM_RID as u32),
+                "system"
+            );
+
+            assert!(!explorer_to_app_drag_blocked(
+                false,
+                SECURITY_MANDATORY_MEDIUM_RID as u32
+            ));
+            assert!(explorer_to_app_drag_blocked(
+                true,
+                SECURITY_MANDATORY_MEDIUM_RID as u32
+            ));
+            assert!(explorer_to_app_drag_blocked(
+                false,
+                SECURITY_MANDATORY_HIGH_RID as u32
+            ));
         }
 
         #[test]
@@ -1828,9 +1983,9 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{
-    open_path_with_system_default, perform_system_file_operation, read_system_file_clipboard,
-    resolve_navigation_target, set_system_file_clipboard, show_native_background_context_menu,
-    show_native_context_menu, start_system_file_drag,
+    get_windows_drag_drop_environment, open_path_with_system_default, perform_system_file_operation,
+    read_system_file_clipboard, resolve_navigation_target, set_system_file_clipboard,
+    show_native_background_context_menu, show_native_context_menu, start_system_file_drag,
 };
 
 #[cfg(not(windows))]
@@ -1929,6 +2084,17 @@ pub fn set_system_file_clipboard(
 pub fn read_system_file_clipboard(
 ) -> anyhow::Result<Option<crate::domain::models::SystemFileClipboard>> {
     Ok(None)
+}
+
+#[cfg(not(windows))]
+pub fn get_windows_drag_drop_environment(
+) -> anyhow::Result<crate::domain::models::WindowsDragDropEnvironment> {
+    Ok(crate::domain::models::WindowsDragDropEnvironment {
+        is_elevated: false,
+        integrity_level: "unsupported".into(),
+        explorer_to_app_drag_blocked: false,
+        message: None,
+    })
 }
 
 #[cfg(not(windows))]

@@ -3024,6 +3024,74 @@ body.is-entry-pointer-dragging * {
   font-size: 16px;
 }
 
+.workspace-notification-stack {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 90;
+  display: grid;
+  gap: 6px;
+  width: min(380px, calc(100% - 16px));
+  pointer-events: none;
+}
+
+.workspace-notification {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  align-items: start;
+  gap: 8px;
+  min-height: 32px;
+  padding: 7px 6px 7px 10px;
+  border: 1px solid #c8c8c8;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  color: #1f1f1f;
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.workspace-notification span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.workspace-notification--info {
+  border-left: 3px solid #0f6cbd;
+}
+
+.workspace-notification--success {
+  border-left: 3px solid #107c10;
+}
+
+.workspace-notification--warning {
+  border-left: 3px solid #9a6700;
+}
+
+.workspace-notification--danger {
+  border-left: 3px solid #a4262c;
+}
+
+.workspace-notification__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.workspace-notification__close:hover {
+  background: #eef4fb;
+  color: #1f1f1f;
+}
+
 .operation-summary-button {
   position: relative;
   justify-content: center;

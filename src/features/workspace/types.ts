@@ -238,6 +238,13 @@ export interface ClipboardState {
 
 export type SystemFileClipboard = ClipboardState;
 
+export interface WindowsDragDropEnvironment {
+  isElevated: boolean;
+  integrityLevel: string;
+  explorerToAppDragBlocked: boolean;
+  message?: string | null;
+}
+
 export interface InlineEditState {
   mode: "create-folder" | "create-file" | "rename";
   value: string;

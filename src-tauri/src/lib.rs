@@ -26,10 +26,11 @@ use commands::{
         save_tag_definition, save_ui_layout, save_ui_theme,
     },
     workspace::{
-        get_item_properties, get_tree_children, initialize_workspace, list_directory,
-        open_path_with_system_default, perform_system_file_operation, read_system_file_clipboard,
-        resolve_navigation_targets, resolve_system_icon, set_system_file_clipboard,
-        show_native_background_context_menu, show_native_context_menu, start_system_file_drag,
+        get_item_properties, get_tree_children, get_windows_drag_drop_environment,
+        initialize_workspace, list_directory, open_path_with_system_default,
+        perform_system_file_operation, read_system_file_clipboard, resolve_navigation_targets,
+        resolve_system_icon, set_system_file_clipboard, show_native_background_context_menu,
+        show_native_context_menu, start_system_file_drag,
     },
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
@@ -105,6 +106,7 @@ pub fn run() {
             open_path_with_system_default,
             set_system_file_clipboard,
             read_system_file_clipboard,
+            get_windows_drag_drop_environment,
             start_system_file_drag,
             perform_system_file_operation,
             show_native_background_context_menu,

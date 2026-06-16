@@ -2665,6 +2665,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       testRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void testRemoteProfile(profile, password),
       openContextMenu: (payload: ContextMenuState) => dispatch({ type: "contextMenuSet", payload }),
       openNativeContextMenu: (payload: NativeContextMenuRequest) => void openNativeContextMenu(payload),
+      showNotification: (intent: WorkspaceState["notifications"][number]["intent"], message: string) =>
+        pushNotification(intent, message),
       closeContextMenu: () => dispatch({ type: "contextMenuSet", payload: undefined }),
       dismissNotification: (id: string) => dispatch({ type: "notificationDismissed", payload: { id } })
     }),

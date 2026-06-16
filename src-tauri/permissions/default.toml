@@ -43,6 +43,7 @@ permissions = [
   "allow-open-path-with-system-default",
   "allow-set-system-file-clipboard",
   "allow-read-system-file-clipboard",
+  "allow-get-windows-drag-drop-environment",
   "allow-start-system-file-drag",
   "allow-perform-system-file-operation",
   "allow-list-remote-profiles",
@@ -273,6 +274,11 @@ commands.allow = ["set_system_file_clipboard"]
 identifier = "allow-read-system-file-clipboard"
 description = "Allows reading local file selections from the Windows file clipboard."
 commands.allow = ["read_system_file_clipboard"]
+
+[[permission]]
+identifier = "allow-get-windows-drag-drop-environment"
+description = "Allows reading Windows drag-and-drop runtime diagnostics for the current process."
+commands.allow = ["get_windows_drag_drop_environment"]
 
 [[permission]]
 identifier = "allow-start-system-file-drag"

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  getWindowsDragDropEnvironment,
   hasTauriRuntime,
   invokeRequired,
   invokeWithBrowserFallback,
@@ -91,6 +92,7 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "open_path_with_system_default",
     "set_system_file_clipboard",
     "read_system_file_clipboard",
+    "get_windows_drag_drop_environment",
     "start_system_file_drag",
     "perform_system_file_operation",
     "list_remote_profiles",
@@ -132,6 +134,13 @@ assertTest("Tauri main window keeps native file drag-and-drop enabled", () => {
     };
   };
   assert.equal(config.app?.windows?.[0]?.dragDropEnabled, true);
+});
+
+assertTest("Windows app manifest keeps the main process at the caller integrity level", () => {
+  const manifest = fs.readFileSync(path.join(process.cwd(), "src-tauri/windows-app-manifest.xml"), "utf8");
+
+  assert.equal(manifest.includes('requestedExecutionLevel level="asInvoker"'), true);
+  assert.equal(manifest.includes('uiAccess="false"'), true);
 });
 
 export const workspaceIpcTests = (async () => {
@@ -358,6 +367,32 @@ export const workspaceIpcTests = (async () => {
       paths: ["D:\\Projects\\Atlas\\README.md"]
     });
     assert.equal(await startSystemFileDrag(["D:\\Projects\\Atlas\\README.md"], async <T>() => "copy" as T, undefined), null);
+  });
+
+  await assertAsyncTest("getWindowsDragDropEnvironment reports elevated drag-drop diagnostics", async () => {
+    let invokedCommand: string | null = null;
+
+    const environment = await getWindowsDragDropEnvironment(
+      async <T>(command: string, _args: Record<string, unknown>) => {
+        invokedCommand = command;
+        return {
+          isElevated: true,
+          integrityLevel: "high",
+          explorerToAppDragBlocked: true,
+          message: "Explorer file drops are blocked while elevated."
+        } as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(invokedCommand, "get_windows_drag_drop_environment");
+    assert.deepEqual(environment, {
+      isElevated: true,
+      integrityLevel: "high",
+      explorerToAppDragBlocked: true,
+      message: "Explorer file drops are blocked while elevated."
+    });
+    assert.equal(await getWindowsDragDropEnvironment(async <T>() => null as T, undefined), null);
   });
 
   await assertAsyncTest("performSystemFileOperation invokes the native shell operation command", async () => {

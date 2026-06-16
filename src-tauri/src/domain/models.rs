@@ -522,6 +522,15 @@ pub struct SystemFileOperationRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct WindowsDragDropEnvironment {
+    pub is_elevated: bool,
+    pub integrity_level: String,
+    pub explorer_to_app_drag_blocked: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ShortcutBinding {
     pub id: String,
     pub action: String,
@@ -1151,7 +1160,7 @@ mod tests {
         NativeBackgroundContextMenuViewMode, NavigationItem, NavigationItemUpsertRequest,
         NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus, RemoteHostKeyInfo,
         RemoteHostKeyTrustState, RemoteTransferOperation, RemoteTransferRequest,
-        RemoteTrustHostKeyRequest, UiTheme,
+        RemoteTrustHostKeyRequest, UiTheme, WindowsDragDropEnvironment,
     };
 
     #[test]
@@ -1256,6 +1265,26 @@ mod tests {
         assert_eq!(sort_value["action"]["type"], "setSort");
         assert_eq!(sort_value["action"]["columnId"], "size");
         assert_eq!(sort_value["action"]["direction"], "desc");
+    }
+
+    #[test]
+    fn windows_drag_drop_environment_uses_camel_case_contract_fields() {
+        let environment = WindowsDragDropEnvironment {
+            is_elevated: true,
+            integrity_level: "high".into(),
+            explorer_to_app_drag_blocked: true,
+            message: Some("Explorer file drops are blocked while elevated.".into()),
+        };
+
+        let value = serde_json::to_value(&environment).expect("environment should serialize");
+
+        assert_eq!(value["isElevated"], true);
+        assert_eq!(value["integrityLevel"], "high");
+        assert_eq!(value["explorerToAppDragBlocked"], true);
+        assert_eq!(
+            value["message"],
+            "Explorer file drops are blocked while elevated."
+        );
     }
 
     #[test]

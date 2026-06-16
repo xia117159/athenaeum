@@ -1,8 +1,15 @@
 import type { Event } from "@tauri-apps/api/event";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
-import { hasTauriRuntime } from "./workspaceIpc";
+import { getWindowsDragDropEnvironment, hasTauriRuntime } from "./workspaceIpc";
+import type { WindowsDragDropEnvironment } from "./types";
 
 export type SystemFileDropHandler = (paths: string[], destination: string) => void;
+
+export type SystemFileDropListenOptions = {
+  runtimeHost?: object | null;
+  onExplorerFileDropsBlocked?: (environment: WindowsDragDropEnvironment) => void;
+  warn?: (...args: unknown[]) => void;
+};
 
 type SystemFileDropPayload =
   | {
@@ -130,15 +137,48 @@ export function createSystemFileDropPayloadHandler(onDrop: SystemFileDropHandler
   };
 }
 
+export function warnIfExplorerFileDropsAreBlocked(
+  environment: WindowsDragDropEnvironment | null,
+  warn: (...args: unknown[]) => void = console.warn
+) {
+  if (!environment?.explorerToAppDragBlocked) {
+    return false;
+  }
+
+  warn(
+    "Windows Explorer file drops into the app are blocked because the app is running elevated.",
+    environment
+  );
+  return true;
+}
+
+function isSystemFileDropListenOptions(value: unknown): value is SystemFileDropListenOptions {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    ("runtimeHost" in value || "onExplorerFileDropsBlocked" in value || "warn" in value)
+  );
+}
+
 export async function listenSystemFileDrops(
   onDrop: SystemFileDropHandler,
-  runtimeHost: object | null | undefined = typeof window === "undefined" ? undefined : window
+  optionsOrRuntimeHost: SystemFileDropListenOptions | object | null | undefined =
+    typeof window === "undefined" ? undefined : window
 ) {
+  const options = isSystemFileDropListenOptions(optionsOrRuntimeHost)
+    ? optionsOrRuntimeHost
+    : { runtimeHost: optionsOrRuntimeHost };
+  const runtimeHost =
+    "runtimeHost" in options ? options.runtimeHost : typeof window === "undefined" ? undefined : window;
   if (!hasTauriRuntime(runtimeHost)) {
     return () => undefined;
   }
 
   const handlePayload = createSystemFileDropPayloadHandler(onDrop);
+  const environment = await getWindowsDragDropEnvironment(undefined, runtimeHost);
+  if (warnIfExplorerFileDropsAreBlocked(environment, options.warn ?? console.warn) && environment) {
+    options.onExplorerFileDropsBlocked?.(environment);
+  }
   const { getCurrentWebview } = await import("@tauri-apps/api/webview");
   const webview = getCurrentWebview();
   const unlisten = await webview.onDragDropEvent((event: Event<DragDropEvent>) => {

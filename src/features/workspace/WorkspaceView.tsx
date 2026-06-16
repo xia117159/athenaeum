@@ -14,7 +14,8 @@ import {
   Search,
   Trash2,
   ClipboardPaste,
-  TextCursorInput
+  TextCursorInput,
+  X
 } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
@@ -40,6 +41,7 @@ import type {
   PanelState,
   SearchResult,
   TabState,
+  WindowsDragDropEnvironment,
   WorkspaceState
 } from "./types";
 import "./workspace.css";
@@ -139,6 +141,7 @@ export function WorkspaceView() {
   const menuRootRef = useRef<HTMLDivElement | null>(null);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
+  const explorerDragWarningShownRef = useRef(false);
   const recentPaths = isActiveNavigationTab ? [] : getUniqueRecentPaths(activeTab.history, activeTab.snapshot.location.path);
   const navigationTabOpen = Object.values(state.panels).some((panel) => panel.tabs.some((tab) => tab.kind === "navigation"));
 
@@ -198,13 +201,32 @@ export function WorkspaceView() {
     };
   }, []);
 
+  const handleExplorerFileDropsBlocked = useCallback(
+    (environment: WindowsDragDropEnvironment) => {
+      if (explorerDragWarningShownRef.current) {
+        return;
+      }
+      explorerDragWarningShownRef.current = true;
+      actions.showNotification(
+        "warning",
+        `Windows 已阻止从资源管理器拖入文件：当前应用为 ${environment.integrityLevel} 完整性级别。请用普通权限重新启动应用。`
+      );
+    },
+    [actions]
+  );
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
-    void listenSystemFileDrops((paths, destination) => {
-      actions.dropEntries(paths, destination, "copy");
-    })
+    void listenSystemFileDrops(
+      (paths, destination) => {
+        actions.dropEntries(paths, destination, "copy");
+      },
+      {
+        onExplorerFileDropsBlocked: handleExplorerFileDropsBlocked
+      }
+    )
       .then((cleanup) => {
         if (disposed) {
           cleanup();
@@ -218,7 +240,7 @@ export function WorkspaceView() {
       disposed = true;
       unlisten?.();
     };
-  }, [actions]);
+  }, [actions, handleExplorerFileDropsBlocked]);
 
   const handleMenuAction = (action: () => void) => {
     action();
@@ -642,6 +664,29 @@ export function WorkspaceView() {
           actions={actions}
           onClose={() => actions.closeContextMenu()}
         />
+      ) : null}
+
+      {state.notifications.length > 0 ? (
+        <div className="workspace-notification-stack" role="region" aria-label="通知">
+          {state.notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`workspace-notification workspace-notification--${notification.intent}`}
+              role={notification.intent === "danger" ? "alert" : "status"}
+            >
+              <span>{notification.message}</span>
+              <button
+                type="button"
+                className="workspace-notification__close"
+                title="关闭通知"
+                aria-label="关闭通知"
+                onClick={() => actions.dismissNotification(notification.id)}
+              >
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
       ) : null}
 
       {state.status === "loading" ? (

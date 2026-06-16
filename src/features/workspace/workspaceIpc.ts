@@ -1,5 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult, SystemFileClipboard } from "./types";
+import type {
+  NativeBackgroundContextMenuOptions,
+  NativeBackgroundContextMenuResult,
+  SystemFileClipboard,
+  WindowsDragDropEnvironment
+} from "./types";
 
 export type SystemFileOperationKind = "copy" | "move";
 
@@ -120,6 +125,22 @@ export async function readSystemFileClipboard(
   }
 
   return invokeFn<SystemFileClipboard | null>("read_system_file_clipboard", {});
+}
+
+export async function getWindowsDragDropEnvironment(
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+): Promise<WindowsDragDropEnvironment | null> {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
+  }
+
+  try {
+    return await invokeFn<WindowsDragDropEnvironment>("get_windows_drag_drop_environment", {});
+  } catch (error) {
+    console.warn("Unable to read Windows drag-and-drop environment", error);
+    return null;
+  }
 }
 
 export async function startSystemFileDrag(

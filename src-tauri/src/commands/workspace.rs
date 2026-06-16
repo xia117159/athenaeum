@@ -7,7 +7,8 @@ use crate::{
         ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
-        SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WorkspaceBootstrap,
+        SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WindowsDragDropEnvironment,
+        WorkspaceBootstrap,
     },
     services::{fs_service, icon_service, remote_service, windows_shell, AppState},
 };
@@ -200,6 +201,11 @@ pub fn set_system_file_clipboard(
 #[tauri::command]
 pub fn read_system_file_clipboard() -> Result<Option<SystemFileClipboard>, String> {
     windows_shell::read_system_file_clipboard().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_windows_drag_drop_environment() -> Result<WindowsDragDropEnvironment, String> {
+    windows_shell::get_windows_drag_drop_environment().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
