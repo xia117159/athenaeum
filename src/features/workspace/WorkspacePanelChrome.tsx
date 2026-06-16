@@ -84,6 +84,10 @@ function getDeepestForwardPath(currentPath: string, history: string[] | undefine
   }, null);
 }
 
+function isExternalFileDrag(dataTransfer: DataTransfer | null) {
+  return Array.from(dataTransfer?.types ?? []).includes("Files");
+}
+
 function getForwardBreadcrumbs(breadcrumbs: BreadcrumbItem[], history: string[] | undefined, historyIndex: number | undefined) {
   const currentPath = breadcrumbs[breadcrumbs.length - 1]?.path;
   if (!currentPath) {
@@ -380,6 +384,16 @@ export function WorkspacePanelChrome({
       return false;
     }
 
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setEntryDropTargetTabId(tab.id);
+      return true;
+    }
+
     const payload = readEntryDragPayload(event.dataTransfer, panelId, tab.id);
     if (!payload && !hasEntryDragPayload(event.dataTransfer)) {
       return false;
@@ -398,6 +412,13 @@ export function WorkspacePanelChrome({
   const handleEntryDropOnTab = (event: ReactDragEvent<HTMLElement>, tab: TabState) => {
     if (!canDropEntriesOnTab(tab)) {
       return false;
+    }
+
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearEntryDropTarget(tab.id);
+      return true;
     }
 
     const payload = readEntryDragPayload(event.dataTransfer, panelId, tab.id);
@@ -439,6 +460,15 @@ export function WorkspacePanelChrome({
     const tab = getEntryDropTabFromEvent(event);
     if (tab) {
       handleEntryDragOverTab(event, tab);
+      return;
+    }
+
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
     }
   };
 
@@ -454,6 +484,12 @@ export function WorkspacePanelChrome({
     const tab = getEntryDropTabFromEvent(event);
     if (tab) {
       handleEntryDropOnTab(event, tab);
+      return;
+    }
+
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
     }
   };
 

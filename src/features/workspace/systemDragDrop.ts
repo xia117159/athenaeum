@@ -4,6 +4,25 @@ import { hasTauriRuntime } from "./workspaceIpc";
 
 export type SystemFileDropHandler = (paths: string[], destination: string) => void;
 
+type SystemFileDropPayload =
+  | {
+      type: "enter";
+      paths: string[];
+      position: { x: number; y: number };
+    }
+  | {
+      type: "over";
+      position: { x: number; y: number };
+    }
+  | {
+      type: "drop";
+      paths: string[];
+      position: { x: number; y: number };
+    }
+  | {
+      type: "leave";
+    };
+
 type SystemFileDropTarget = {
   element: HTMLElement;
   kind: string;
@@ -69,6 +88,48 @@ export function updateSystemFileDropHighlight(position?: { x: number; y: number 
   return target;
 }
 
+export function createSystemFileDropPayloadHandler(onDrop: SystemFileDropHandler) {
+  let systemDragActive = false;
+
+  return (payload: SystemFileDropPayload) => {
+    if (payload.type === "leave") {
+      systemDragActive = false;
+      clearSystemFileDropHighlight();
+      return;
+    }
+
+    if (payload.type === "enter") {
+      systemDragActive = payload.paths.length > 0;
+      if (systemDragActive) {
+        updateSystemFileDropHighlight(payload.position);
+      }
+      return;
+    }
+
+    if (payload.type === "over") {
+      if (systemDragActive) {
+        updateSystemFileDropHighlight(payload.position);
+      }
+      return;
+    }
+
+    if (!systemDragActive || payload.paths.length === 0) {
+      clearSystemFileDropHighlight();
+      systemDragActive = false;
+      return;
+    }
+
+    const target = updateSystemFileDropHighlight(payload.position);
+    clearSystemFileDropHighlight();
+    systemDragActive = false;
+    if (!target) {
+      return;
+    }
+
+    onDrop(payload.paths, target.path);
+  };
+}
+
 export async function listenSystemFileDrops(
   onDrop: SystemFileDropHandler,
   runtimeHost: object | null | undefined = typeof window === "undefined" ? undefined : window
@@ -77,48 +138,13 @@ export async function listenSystemFileDrops(
     return () => undefined;
   }
 
+  const handlePayload = createSystemFileDropPayloadHandler(onDrop);
   const { getCurrentWebview } = await import("@tauri-apps/api/webview");
   const webview = getCurrentWebview();
-  let systemDragActive = false;
   const unlisten = await webview.onDragDropEvent((event: Event<DragDropEvent>) => {
-    if (event.payload.type === "leave") {
-      systemDragActive = false;
-      clearSystemFileDropHighlight();
-      return;
-    }
-
-    if (event.payload.type === "enter") {
-      systemDragActive = event.payload.paths.length > 0;
-      if (systemDragActive) {
-        updateSystemFileDropHighlight(event.payload.position);
-      }
-      return;
-    }
-
-    if (event.payload.type === "over") {
-      if (systemDragActive) {
-        updateSystemFileDropHighlight(event.payload.position);
-      }
-      return;
-    }
-
-    if (event.payload.paths.length === 0) {
-      clearSystemFileDropHighlight();
-      systemDragActive = false;
-      return;
-    }
-
-    const target = updateSystemFileDropHighlight(event.payload.position);
-    clearSystemFileDropHighlight();
-    systemDragActive = false;
-    if (!target) {
-      return;
-    }
-
-    onDrop(event.payload.paths, target.path);
+    handlePayload(event.payload);
   });
   return () => {
-    systemDragActive = false;
     clearSystemFileDropHighlight();
     unlisten();
   };

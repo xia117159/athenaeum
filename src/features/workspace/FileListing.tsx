@@ -12,8 +12,7 @@ import {
 import {
   clearEntryDrag,
   hasEntryDragPayload,
-  readEntryDragPayload,
-  startEntryDrag
+  readEntryDragPayload
 } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
@@ -50,6 +49,31 @@ function clampClientPointToRect(clientX: number, clientY: number, rect: DOMRect)
     x: clamp(clientX, rect.left, rect.right),
     y: clamp(clientY, rect.top, rect.bottom)
   };
+}
+
+function isPointOutsideViewport(clientX: number, clientY: number) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const width = window.innerWidth || document.documentElement.clientWidth || 0;
+  const height = window.innerHeight || document.documentElement.clientHeight || 0;
+  return clientX < 0 || clientY < 0 || (width > 0 && clientX > width) || (height > 0 && clientY > height);
+}
+
+function isExternalFileDrag(dataTransfer: DataTransfer | null) {
+  return Array.from(dataTransfer?.types ?? []).includes("Files");
+}
+
+function getElementFromClientPoint(clientX: number, clientY: number) {
+  if (typeof document.elementFromPoint !== "function") {
+    return null;
+  }
+  return document.elementFromPoint(clientX, clientY);
+}
+
+function shouldStartSystemFileDragFromPointer(clientX: number, clientY: number) {
+  return isPointOutsideViewport(clientX, clientY) || getElementFromClientPoint(clientX, clientY) === null;
 }
 
 type DropModifierState = {
@@ -815,7 +839,7 @@ export function FileListingShell({
       }, 0);
 
       const dropTarget = getPointerEntryDropTarget(
-        document.elementFromPoint(finishEvent.clientX, finishEvent.clientY),
+        getElementFromClientPoint(finishEvent.clientX, finishEvent.clientY),
         activeDrag,
         panelId,
         finishEvent,
@@ -842,10 +866,32 @@ export function FileListingShell({
 
       activeDrag.dragging = true;
       moveEvent.preventDefault();
+      if (shouldStartSystemFileDragFromPointer(moveEvent.clientX, moveEvent.clientY)) {
+        cleanup();
+        activeEntryPointerDragRef.current = null;
+        suppressNextEntryClickRef.current = activeDrag.sourceEntryId;
+        window.setTimeout(() => {
+          if (suppressNextEntryClickRef.current === activeDrag.sourceEntryId) {
+            suppressNextEntryClickRef.current = null;
+          }
+        }, 0);
+        clearEntryDrag();
+        clearDropState();
+        if (moveEvent.target instanceof HTMLElement && typeof moveEvent.target.releasePointerCapture === "function") {
+          try {
+            moveEvent.target.releasePointerCapture(moveEvent.pointerId);
+          } catch {
+            // Pointer capture may already be released by the WebView boundary transition.
+          }
+        }
+        onStartSystemFileDrag?.(activeDrag.paths);
+        return;
+      }
+
       document.body.classList.add("is-entry-pointer-dragging");
       applyPointerDropTarget(
         getPointerEntryDropTarget(
-          document.elementFromPoint(moveEvent.clientX, moveEvent.clientY),
+          getElementFromClientPoint(moveEvent.clientX, moveEvent.clientY),
           activeDrag,
           panelId,
           moveEvent,
@@ -889,7 +935,7 @@ export function FileListingShell({
     }
 
     return {
-      draggable: true,
+      draggable: false,
       onClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (suppressNextEntryClickRef.current === entry.id) {
           suppressNextEntryClickRef.current = null;
@@ -961,22 +1007,24 @@ export function FileListingShell({
         }, 0);
       },
       onPointerDown: (event: ReactPointerEvent<HTMLElement>) => startEntryPointerDrag(event, entry),
-      onDragStart: (event: ReactDragEvent<HTMLElement>) => {
-        const dragPaths = getDragPaths(entry);
-        if (!event.dataTransfer) {
-          return;
-        }
-
-        startEntryDrag(event.dataTransfer, { sourcePanelId: panelId, sourceTabId: tabId, paths: dragPaths });
-        event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
-        onStartSystemFileDrag?.(dragPaths);
-      },
+      onDragStart: (event: ReactDragEvent<HTMLElement>) => event.preventDefault(),
       onDragEnd: () => {
         clearEntryDrag();
         clearDropState();
       },
       onDragOver: entry.kind === "folder"
         ? (event: ReactDragEvent<HTMLElement>) => {
+            if (isExternalFileDrag(event.dataTransfer)) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = "copy";
+              }
+              setDropTargetPath(entry.path);
+              setDropOperation("copy");
+              return;
+            }
+
             const payload = readEntryDragPayload(event.dataTransfer, panelId, tabId);
             if (!payload && !hasEntryDragPayload(event.dataTransfer)) {
               return;
@@ -1007,6 +1055,13 @@ export function FileListingShell({
         : undefined,
       onDrop: entry.kind === "folder"
         ? (event: ReactDragEvent<HTMLElement>) => {
+            if (isExternalFileDrag(event.dataTransfer)) {
+              event.preventDefault();
+              event.stopPropagation();
+              clearDropState();
+              return;
+            }
+
             const payload = readEntryDragPayload(event.dataTransfer, panelId, tabId);
             if (!payload) {
               return;
@@ -1240,6 +1295,17 @@ export function FileListingShell({
       return;
     }
 
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setDropTargetPath(null);
+      setIsListingDropTarget(true);
+      setDropOperation("copy");
+      return;
+    }
+
     const payload = readEntryDragPayload(event.dataTransfer, panelId, tabId);
     if (!payload && !hasEntryDragPayload(event.dataTransfer)) {
       return;
@@ -1267,6 +1333,12 @@ export function FileListingShell({
 
   const handleListingDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
+      return;
+    }
+
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      clearDropState();
       return;
     }
 

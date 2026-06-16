@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   clearSystemFileDropHighlight,
+  createSystemFileDropPayloadHandler,
   findSystemFileDropTargetFromPoint,
   updateSystemFileDropHighlight
 } from "./systemDragDrop";
@@ -120,5 +121,77 @@ export const systemDragDropTests = (() => {
 
     assert.equal(listing.classList.contains("is-drop-target"), false);
     assert.equal(listing.dataset.dropOperation, undefined);
+  });
+
+  assertTest("createSystemFileDropPayloadHandler drops external files on the highlighted target", () => {
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "D:\\Inbox";
+    document.body.appendChild(listing);
+
+    const received: Array<{ paths: string[]; destination: string }> = [];
+    const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+      received.push({ paths, destination });
+    });
+    const restore = stubElementFromPoint(listing);
+    try {
+      handlePayload({
+        type: "enter",
+        paths: ["C:\\Users\\me\\Desktop\\a.txt"],
+        position: { x: 20, y: 20 }
+      });
+      assert.equal(listing.classList.contains("is-drop-target"), true);
+      assert.equal(listing.dataset.dropOperation, "copy");
+
+      handlePayload({
+        type: "drop",
+        paths: ["C:\\Users\\me\\Desktop\\a.txt"],
+        position: { x: 20, y: 20 }
+      });
+    } finally {
+      restore();
+      listing.remove();
+      clearSystemFileDropHighlight();
+    }
+
+    assert.deepEqual(received, [
+      {
+        paths: ["C:\\Users\\me\\Desktop\\a.txt"],
+        destination: "D:\\Inbox"
+      }
+    ]);
+    assert.equal(listing.classList.contains("is-drop-target"), false);
+  });
+
+  assertTest("createSystemFileDropPayloadHandler ignores drops after a leave event", () => {
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "D:\\Inbox";
+    document.body.appendChild(listing);
+
+    const received: Array<{ paths: string[]; destination: string }> = [];
+    const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+      received.push({ paths, destination });
+    });
+    const restore = stubElementFromPoint(listing);
+    try {
+      handlePayload({
+        type: "enter",
+        paths: ["C:\\Users\\me\\Desktop\\a.txt"],
+        position: { x: 20, y: 20 }
+      });
+      handlePayload({ type: "leave" });
+      handlePayload({
+        type: "drop",
+        paths: ["C:\\Users\\me\\Desktop\\a.txt"],
+        position: { x: 20, y: 20 }
+      });
+    } finally {
+      restore();
+      listing.remove();
+      clearSystemFileDropHighlight();
+    }
+
+    assert.deepEqual(received, []);
   });
 })();

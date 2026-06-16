@@ -92,6 +92,7 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "set_system_file_clipboard",
     "read_system_file_clipboard",
     "start_system_file_drag",
+    "perform_system_file_operation",
     "list_remote_profiles",
     "save_remote_profile",
     "delete_remote_profile",
@@ -115,6 +116,22 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
   for (const command of requiredCommands) {
     assert.equal(appPermission.includes(`"${command}"`), true, `${command} should be allowed by default permission`);
   }
+  assert.equal(
+    appPermission.includes("register_system_file_drop_target"),
+    false,
+    "file drops must use Tauri/wry's dragDropEnabled target instead of overriding it"
+  );
+});
+
+assertTest("Tauri main window keeps native file drag-and-drop enabled", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src-tauri/tauri.conf.json"), "utf8")) as {
+    app?: {
+      windows?: Array<{
+        dragDropEnabled?: boolean;
+      }>;
+    };
+  };
+  assert.equal(config.app?.windows?.[0]?.dragDropEnabled, true);
 });
 
 export const workspaceIpcTests = (async () => {

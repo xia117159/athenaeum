@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -263,6 +263,17 @@ export function WorkspaceView() {
     );
   };
 
+  const handleExternalFileDrag = (event: ReactDragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  };
+
   const handleAddressInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const isCtrl = event.ctrlKey || event.metaKey;
 
@@ -433,7 +444,12 @@ export function WorkspaceView() {
   ];
 
   return (
-    <div className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}>
+    <div
+      className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}
+      onDragEnter={handleExternalFileDrag}
+      onDragOver={handleExternalFileDrag}
+      onDrop={handleExternalFileDrag}
+    >
       <header className="workspace-menubar" ref={menuRootRef}>
         <div className="workspace-menubar__menus">
           {menuDefinitions.map((menu) => (

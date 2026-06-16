@@ -96,6 +96,22 @@ function createDataTransfer() {
         return "";
       }
       return store.get(type) ?? "";
+    },
+    files: []
+  };
+}
+
+function createExternalFileDataTransfer() {
+  return {
+    dropEffect: "none",
+    effectAllowed: "copy",
+    types: ["Files"],
+    files: [{}],
+    setData() {
+      return undefined;
+    },
+    getData() {
+      return "";
     }
   };
 }
@@ -103,7 +119,7 @@ function createDataTransfer() {
 function dispatchDragEvent(
   target: Element,
   type: string,
-  dataTransfer: ReturnType<typeof createDataTransfer>,
+  dataTransfer: ReturnType<typeof createDataTransfer> | ReturnType<typeof createExternalFileDataTransfer>,
   ctrlKey = false,
   shiftKey = false
 ): Event {
@@ -116,7 +132,7 @@ function dispatchDragEvent(
     shiftKey: boolean;
     clientX: number;
     clientY: number;
-    dataTransfer: ReturnType<typeof createDataTransfer>;
+    dataTransfer: ReturnType<typeof createDataTransfer> | ReturnType<typeof createExternalFileDataTransfer>;
   };
 
   Object.defineProperties(event, {
@@ -571,7 +587,7 @@ export const completion = (async () => {
       const rows = Array.from(container.querySelectorAll(".file-row"));
       const sourceRow = rows[1];
       assert.ok(sourceRow);
-      assert.equal((sourceRow as HTMLElement).draggable, true);
+      assert.equal((sourceRow as HTMLElement).draggable, false);
 
       const targetTab = createTabDropTarget("E:\\Target");
       const restoreElementFromPoint = stubElementFromPoint(targetTab);
@@ -592,7 +608,7 @@ export const completion = (async () => {
       ]);
     });
 
-    await assertTest("FileListingShell marks cut clipboard entries and writes URI list during drag", async () => {
+    await assertTest("FileListingShell starts a native system drag when a pointer drag leaves the window", async () => {
       systemDragStarts.length = 0;
       await act(async () => {
         render("details", undefined, "panel-1", ["file-source"], "Shift", columns, "native", "Shift", {
@@ -607,15 +623,40 @@ export const completion = (async () => {
       assert.ok(sourceRow);
       assert.equal(sourceRow.classList.contains("is-cut"), true);
       assert.equal(sourceRow.dataset.clipboardMode, "cut");
+      assert.equal(sourceRow.draggable, false);
 
-      const transfer = createDataTransfer();
       await act(async () => {
-        dispatchDragEvent(sourceRow, "dragstart", transfer);
+        sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+        window.dispatchEvent(createPointerEvent("pointermove", { clientX: 28, clientY: 8 }));
+        window.dispatchEvent(createPointerEvent("pointermove", { clientX: -8, clientY: 8 }));
         await flushEffects();
       });
 
-      assert.equal(transfer.getData("text/uri-list"), "file:///D:/report.txt");
-      assert.equal(transfer.getData("text/plain"), "D:\\report.txt");
+      assert.deepEqual(systemDragStarts, [["D:\\report.txt"]]);
+    });
+
+    await assertTest("FileListingShell starts a native system drag when hit-testing leaves the WebView content", async () => {
+      systemDragStarts.length = 0;
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"]);
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const sourceRow = rows[1] as HTMLElement | undefined;
+      assert.ok(sourceRow);
+
+      const restoreElementFromPoint = stubElementFromPoint(null);
+      try {
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 28, clientY: 8 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+
       assert.deepEqual(systemDragStarts, [["D:\\report.txt"]]);
     });
 
@@ -715,7 +756,7 @@ export const completion = (async () => {
       assert.deepEqual(dropped, [{ paths: ["D:\\report.txt"], destination: "D:\\", operation: "move" }]);
     });
 
-    await assertTest("FileListingShell emits move and Ctrl-copy drop operations onto folder rows", async () => {
+    await assertTest("FileListingShell accepts external file drags over folder rows and listing blank space", async () => {
       await act(async () => {
         render("details");
         await flushEffects();
@@ -724,40 +765,28 @@ export const completion = (async () => {
       dropped.length = 0;
       const rows = Array.from(container.querySelectorAll(".file-row"));
       const targetRow = rows[0];
-      const sourceRow = rows[1];
+      const scroll = container.querySelector(".file-listing__scroll");
       assert.ok(targetRow);
-      assert.ok(sourceRow);
+      assert.ok(scroll);
 
-      const moveTransfer = createDataTransfer();
-      const dragOverEvents: Event[] = [];
+      const folderTransfer = createExternalFileDataTransfer();
+      const listingTransfer = createExternalFileDataTransfer();
+      let folderOverEvent: Event | undefined;
+      let listingOverEvent: Event | undefined;
       await act(async () => {
-        dispatchDragEvent(sourceRow, "dragstart", moveTransfer);
-        moveTransfer.setReadBlocked(true);
-        dragOverEvents.push(dispatchDragEvent(targetRow, "dragover", moveTransfer));
-        moveTransfer.setReadBlocked(false);
-        dispatchDragEvent(targetRow, "drop", moveTransfer);
+        folderOverEvent = dispatchDragEvent(targetRow, "dragover", folderTransfer);
+        listingOverEvent = dispatchDragEvent(scroll, "dragover", listingTransfer);
         await flushEffects();
       });
 
-      const copyTransfer = createDataTransfer();
-      await act(async () => {
-        dispatchDragEvent(sourceRow, "dragstart", copyTransfer);
-        copyTransfer.setReadBlocked(true);
-        dragOverEvents.push(dispatchDragEvent(targetRow, "dragover", copyTransfer, true));
-        copyTransfer.setReadBlocked(false);
-        dispatchDragEvent(targetRow, "drop", copyTransfer, true);
-        await flushEffects();
-      });
-
-      assert.equal(dragOverEvents[0].defaultPrevented, true);
-      assert.equal(dragOverEvents[1].defaultPrevented, true);
-      assert.deepEqual(dropped, [
-        { paths: ["D:\\report.txt"], destination: "D:\\Archive", operation: "move" },
-        { paths: ["D:\\report.txt"], destination: "D:\\Archive", operation: "copy" }
-      ]);
+      assert.equal(folderOverEvent?.defaultPrevented, true);
+      assert.equal(listingOverEvent?.defaultPrevented, true);
+      assert.equal(folderTransfer.dropEffect, "copy");
+      assert.equal(listingTransfer.dropEffect, "copy");
+      assert.deepEqual(dropped, []);
     });
 
-    await assertTest("FileListingShell allows dropping entries onto the current directory when transfer types are hidden", async () => {
+    await assertTest("FileListingShell ignores HTML5 drops without internal entry payloads", async () => {
       await act(async () => {
         render("details");
         await flushEffects();
@@ -773,7 +802,6 @@ export const completion = (async () => {
       const transfer = createDataTransfer();
       let dragOverEvent: Event | undefined;
       await act(async () => {
-        dispatchDragEvent(sourceRow, "dragstart", transfer);
         transfer.setReadBlocked(true);
         transfer.setTypesHidden(true);
         dragOverEvent = dispatchDragEvent(scroll, "dragover", transfer);
@@ -783,8 +811,8 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      assert.equal(dragOverEvent?.defaultPrevented, true);
-      assert.deepEqual(dropped, [{ paths: ["D:\\report.txt"], destination: "D:\\", operation: "move" }]);
+      assert.equal(dragOverEvent?.defaultPrevented, false);
+      assert.deepEqual(dropped, []);
     });
 
     await assertTest("FileListingShell exposes all Windows-aligned view mode classes", async () => {
