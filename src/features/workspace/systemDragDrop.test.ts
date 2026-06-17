@@ -87,21 +87,23 @@ export const systemDragDropTests = (() => {
     }
   });
 
-  assertTest("updateSystemFileDropHighlight applies Windows drop target classes and clears previous targets", () => {
+  assertTest("updateSystemFileDropHighlight applies isolated Windows drop target classes and clears previous targets", () => {
     const tab = document.createElement("button");
     tab.dataset.entryDropKind = "tab";
     tab.dataset.entryDropPath = "D:\\";
     const listing = document.createElement("div");
     listing.dataset.entryDropKind = "listing";
     listing.dataset.entryDropPath = "D:\\";
+    listing.classList.add("is-drop-target");
+    listing.dataset.dropOperation = "move";
     document.body.append(tab, listing);
 
     let restore = stubElementFromPoint(tab);
     try {
       const target = updateSystemFileDropHighlight({ x: 10, y: 10 });
       assert.equal(target?.path, "D:\\");
-      assert.equal(tab.classList.contains("is-entry-drop-target"), true);
-      assert.equal(tab.dataset.dropOperation, "copy");
+      assert.equal(tab.classList.contains("is-system-entry-drop-target"), true);
+      assert.equal(tab.dataset.systemDropOperation, "copy");
     } finally {
       restore();
     }
@@ -110,9 +112,11 @@ export const systemDragDropTests = (() => {
     try {
       const target = updateSystemFileDropHighlight({ x: 12, y: 12 });
       assert.equal(target?.path, "D:\\");
-      assert.equal(tab.classList.contains("is-entry-drop-target"), false);
+      assert.equal(tab.classList.contains("is-system-entry-drop-target"), false);
+      assert.equal(listing.classList.contains("is-system-drop-target"), true);
       assert.equal(listing.classList.contains("is-drop-target"), true);
-      assert.equal(listing.dataset.dropOperation, "copy");
+      assert.equal(listing.dataset.systemDropOperation, "copy");
+      assert.equal(listing.dataset.dropOperation, "move");
     } finally {
       restore();
       clearSystemFileDropHighlight();
@@ -120,8 +124,10 @@ export const systemDragDropTests = (() => {
       listing.remove();
     }
 
-    assert.equal(listing.classList.contains("is-drop-target"), false);
-    assert.equal(listing.dataset.dropOperation, undefined);
+    assert.equal(listing.classList.contains("is-system-drop-target"), false);
+    assert.equal(listing.classList.contains("is-drop-target"), true);
+    assert.equal(listing.dataset.systemDropOperation, undefined);
+    assert.equal(listing.dataset.dropOperation, "move");
   });
 
   assertTest("updateSystemFileDropHighlight falls back from plain file rows to their listing", () => {
@@ -138,16 +144,16 @@ export const systemDragDropTests = (() => {
       const target = updateSystemFileDropHighlight({ x: 20, y: 20 });
       assert.equal(target?.path, "D:\\Inbox");
       assert.equal(target?.kind, "listing");
-      assert.equal(listing.classList.contains("is-drop-target"), true);
-      assert.equal(listing.dataset.dropOperation, "copy");
+      assert.equal(listing.classList.contains("is-system-drop-target"), true);
+      assert.equal(listing.dataset.systemDropOperation, "copy");
     } finally {
       restore();
       clearSystemFileDropHighlight();
       listing.remove();
     }
 
-    assert.equal(listing.classList.contains("is-drop-target"), false);
-    assert.equal(listing.dataset.dropOperation, undefined);
+    assert.equal(listing.classList.contains("is-system-drop-target"), false);
+    assert.equal(listing.dataset.systemDropOperation, undefined);
   });
 
   assertTest("updateSystemFileDropHighlight recovers when a highlighted listing was removed before the next drag", () => {
@@ -162,7 +168,7 @@ export const systemDragDropTests = (() => {
     let restore = stubElementFromPoint(staleListing);
     try {
       updateSystemFileDropHighlight({ x: 10, y: 10 });
-      assert.equal(staleListing.classList.contains("is-drop-target"), true);
+      assert.equal(staleListing.classList.contains("is-system-drop-target"), true);
     } finally {
       restore();
     }
@@ -172,8 +178,8 @@ export const systemDragDropTests = (() => {
     try {
       const target = updateSystemFileDropHighlight({ x: 12, y: 12 });
       assert.equal(target?.path, "E:\\Target");
-      assert.equal(nextListing.classList.contains("is-drop-target"), true);
-      assert.equal(nextListing.dataset.dropOperation, "copy");
+      assert.equal(nextListing.classList.contains("is-system-drop-target"), true);
+      assert.equal(nextListing.dataset.systemDropOperation, "copy");
     } finally {
       restore();
       clearSystemFileDropHighlight();
@@ -198,8 +204,8 @@ export const systemDragDropTests = (() => {
         paths: ["C:\\Users\\me\\Desktop\\a.txt"],
         position: { x: 20, y: 20 }
       });
-      assert.equal(listing.classList.contains("is-drop-target"), true);
-      assert.equal(listing.dataset.dropOperation, "copy");
+      assert.equal(listing.classList.contains("is-system-drop-target"), true);
+      assert.equal(listing.dataset.systemDropOperation, "copy");
 
       handlePayload({
         type: "drop",
@@ -218,7 +224,54 @@ export const systemDragDropTests = (() => {
         destination: "D:\\Inbox"
       }
     ]);
-    assert.equal(listing.classList.contains("is-drop-target"), false);
+    assert.equal(listing.classList.contains("is-system-drop-target"), false);
+  });
+
+  assertTest("createSystemFileDropPayloadHandler ignores duplicate enter/drop payloads within the dedupe window", () => {
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "D:\\DuplicateInbox";
+    document.body.appendChild(listing);
+
+    const received: Array<{ paths: string[]; destination: string }> = [];
+    const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+      received.push({ paths, destination });
+    });
+    const restore = stubElementFromPoint(listing);
+    const paths = ["C:\\Users\\me\\Desktop\\duplicate.txt"];
+    try {
+      handlePayload({
+        type: "enter",
+        paths,
+        position: { x: 20, y: 20 }
+      });
+      handlePayload({
+        type: "drop",
+        paths,
+        position: { x: 20, y: 20 }
+      });
+      handlePayload({
+        type: "enter",
+        paths,
+        position: { x: 20, y: 20 }
+      });
+      handlePayload({
+        type: "drop",
+        paths,
+        position: { x: 20, y: 20 }
+      });
+    } finally {
+      restore();
+      listing.remove();
+      clearSystemFileDropHighlight();
+    }
+
+    assert.deepEqual(received, [
+      {
+        paths,
+        destination: "D:\\DuplicateInbox"
+      }
+    ]);
   });
 
   assertTest("createSystemFileDropPayloadHandler ignores drops after a leave event", () => {

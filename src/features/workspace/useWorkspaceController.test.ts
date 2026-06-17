@@ -77,6 +77,8 @@ function createTestGateway(
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
     readSystemFileClipboard?: WorkspaceGateway["readSystemFileClipboard"];
+    copyEntries?: WorkspaceGateway["copyEntries"];
+    moveEntries?: WorkspaceGateway["moveEntries"];
   } = {}
 ): WorkspaceGateway {
   const emptyFavorites = { bookmarks: [], hotlist: [] };
@@ -237,10 +239,16 @@ function createTestGateway(
         trustState: "trusted" as const
       };
     },
-    async copyEntries(paths, destination) {
+    async copyEntries(paths, destination, options) {
+      if (overrides.copyEntries) {
+        return overrides.copyEntries(paths, destination, options);
+      }
       interactions.copyCalls.push({ paths: [...paths], destination });
     },
-    async moveEntries(paths, destination) {
+    async moveEntries(paths, destination, options) {
+      if (overrides.moveEntries) {
+        return overrides.moveEntries(paths, destination, options);
+      }
       interactions.moveCalls.push({ paths: [...paths], destination });
     },
     async deleteEntries(paths) {
@@ -1893,6 +1901,107 @@ export const completion = (async () => {
       assert.equal(interactions.resolvedPaths.includes("C:\\Users\\Admin\\Downloads"), true);
     });
 
+    await assertTest("useWorkspaceController dedupes identical drag-drop copy requests while one is in flight", async () => {
+      const dedupeInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      const pendingCopyReleases: Array<() => void> = [];
+      let dedupeController: ReturnType<typeof useWorkspaceController> | undefined;
+      const dedupeGateway = createTestGateway(() => undefined, dedupeInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        copyEntries: async (paths, destination) => {
+          dedupeInteractions.copyCalls.push({ paths: [...paths], destination });
+          await new Promise<void>((resolve) => {
+            pendingCopyReleases.push(resolve);
+          });
+        }
+      });
+
+      function DedupeHarness() {
+        dedupeController = useWorkspaceController(dedupeGateway);
+        return React.createElement("div", null, dedupeController.state.status);
+      }
+
+      const dedupeContainer = document.createElement("div");
+      document.body.appendChild(dedupeContainer);
+      const dedupeRoot = ReactDOM.createRoot(dedupeContainer);
+
+      try {
+        await act(async () => {
+          dedupeRoot.render(React.createElement(DedupeHarness));
+          await flushEffects();
+        });
+        await waitFor(() => dedupeController?.state.status === "ready", "dedupe controller did not bootstrap");
+
+        let firstDrop: Promise<void> | undefined;
+        await act(async () => {
+          firstDrop = dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await waitFor(() => dedupeInteractions.copyCalls.length === 1, "first drop copy did not start");
+        });
+
+        await act(async () => {
+          await dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(dedupeInteractions.copyCalls.length, 1);
+        pendingCopyReleases.shift()?.();
+
+        await act(async () => {
+          await firstDrop;
+          await flushEffects();
+        });
+
+        await act(async () => {
+          const nextDrop = dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await waitFor(() => dedupeInteractions.copyCalls.length === 2, "new drop after completion did not start");
+          pendingCopyReleases.shift()?.();
+          await nextDrop;
+          await flushEffects();
+        });
+
+        assert.deepEqual(dedupeInteractions.copyCalls, [
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          },
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+      } finally {
+        pendingCopyReleases.splice(0).forEach((release) => release());
+        await act(async () => {
+          dedupeRoot.unmount();
+          await flushEffects();
+        });
+        dedupeContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController syncs local copy and cut selections to the Windows file clipboard", async () => {
       interactions.systemClipboardWrites.length = 0;
       const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
@@ -2124,6 +2233,76 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController blocks paste operations into a source folder descendant", async () => {
+      const descendantInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let descendantController: ReturnType<typeof useWorkspaceController> | undefined;
+      const descendantBootstrap = createMockWorkspaceBootstrap("tauri");
+      descendantBootstrap.panels["panel-2"] = {
+        ...descendantBootstrap.panels["panel-2"],
+        tabs: [createTabState("C:\\Users\\Admin\\Downloads\\Child", "panel-2-descendant")],
+        activeTabId: "panel-2-descendant"
+      };
+      let clipboardMode: "copy" | "cut" = "copy";
+      const descendantGateway = createTestGateway(() => undefined, descendantInteractions, {
+        loadBootstrap: () => descendantBootstrap,
+        readSystemFileClipboard: async () => ({
+          mode: clipboardMode,
+          paths: ["C:\\Users\\Admin\\Downloads"]
+        })
+      });
+
+      function DescendantHarness() {
+        descendantController = useWorkspaceController(descendantGateway);
+        return React.createElement("div", null, descendantController.state.status);
+      }
+
+      const descendantContainer = document.createElement("div");
+      document.body.appendChild(descendantContainer);
+      const descendantRoot = ReactDOM.createRoot(descendantContainer);
+
+      try {
+        await act(async () => {
+          descendantRoot.render(React.createElement(DescendantHarness));
+          await flushEffects();
+        });
+        await waitFor(() => descendantController?.state.status === "ready", "descendant controller did not bootstrap");
+
+        await act(async () => {
+          await descendantController?.actions.pasteIntoPanel("panel-2");
+          clipboardMode = "cut";
+          await descendantController?.actions.pasteIntoPanel("panel-2");
+          await descendantController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads"],
+            "C:\\Users\\Admin\\Downloads\\Child",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(descendantInteractions.systemClipboardReads, 2);
+        assert.deepEqual(descendantInteractions.copyCalls, []);
+        assert.deepEqual(descendantInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          descendantRoot.unmount();
+          await flushEffects();
+        });
+        descendantContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController starts native system file drag only for local file paths", async () => {
       interactions.systemDragStarts.length = 0;
 
@@ -2312,6 +2491,96 @@ export const completion = (async () => {
           await flushEffects();
         });
         multiContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController does not convert search result tabs during directory refreshes", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const searchRefreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let searchRefreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const searchRefreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      const directoryTab = createTabState(sharedPath, "panel-1-directory", {
+        selectedEntryIds: ["C:\\Users\\Admin\\Downloads:desktop-build.msi"]
+      });
+      const searchResultTab = {
+        ...createTabState(sharedPath, "panel-1-search-results"),
+        title: "搜索结果",
+        kind: "search-results" as const,
+        search: {
+          sourceTabId: directoryTab.id,
+          sourcePath: sharedPath,
+          query: {
+            name: "build",
+            content: "",
+            nameMode: "normal" as const,
+            contentMode: "normal" as const,
+            extensionFilterText: "",
+            extensionFilterMode: "include" as const,
+            includeFolders: true,
+            recursive: true,
+            caseSensitive: false,
+            scope: "active-panel" as const
+          },
+          results: []
+        }
+      };
+      searchRefreshBootstrap.panels["panel-1"] = {
+        ...searchRefreshBootstrap.panels["panel-1"],
+        tabs: [directoryTab, searchResultTab],
+        activeTabId: directoryTab.id
+      };
+
+      const searchRefreshGateway = createTestGateway(() => undefined, searchRefreshInteractions, {
+        loadBootstrap: () => searchRefreshBootstrap
+      });
+
+      function SearchRefreshHarness() {
+        searchRefreshController = useWorkspaceController(searchRefreshGateway);
+        return React.createElement("div", null, searchRefreshController.state.status);
+      }
+
+      const searchRefreshContainer = document.createElement("div");
+      document.body.appendChild(searchRefreshContainer);
+      const searchRefreshRoot = ReactDOM.createRoot(searchRefreshContainer);
+      const originalConfirm = window.confirm;
+      window.confirm = () => true;
+
+      try {
+        await act(async () => {
+          searchRefreshRoot.render(React.createElement(SearchRefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => searchRefreshController?.state.status === "ready", "search refresh controller did not bootstrap");
+
+        await act(async () => {
+          searchRefreshController?.actions.deleteSelection("panel-1");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => searchRefreshInteractions.resolvedPaths.includes(sharedPath),
+          "directory tab did not refresh after delete"
+        );
+        const searchTab = searchRefreshController?.state.panels["panel-1"].tabs.find((tab) => tab.id === searchResultTab.id);
+        assert.equal(searchTab?.kind, "search-results");
+      } finally {
+        window.confirm = originalConfirm;
+        await act(async () => {
+          searchRefreshRoot.unmount();
+          await flushEffects();
+        });
+        searchRefreshContainer.remove();
       }
     });
 

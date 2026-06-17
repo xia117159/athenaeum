@@ -40,7 +40,7 @@ const sftpProfile = {
 } satisfies BackendRemoteProfile;
 
 export const workspaceOperationsGatewayTests = (async () => {
-  await assertAsyncTest("moveWorkspaceEntries invokes start_file_operation with canonical path refs", async () => {
+  await assertAsyncTest("moveWorkspaceEntries routes local-to-remote moves through remote transfer commands", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
@@ -60,24 +60,122 @@ export const workspaceOperationsGatewayTests = (async () => {
 
     assert.deepEqual(invocations, [
       {
+        command: "upload_remote_files",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "/home/cheng/inbox"
+          }
+        }
+      },
+      {
+        command: "delete_entries",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\Atlas\\README.md"]
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("copyWorkspaceEntries routes remote-to-local copies through remote download commands", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { affectedPaths: [] } as T;
+    };
+
+    await copyWorkspaceEntries(
+      ["sftp://cheng@127.0.0.1:6666/home/cheng/report.txt"],
+      "D:\\Downloads",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "copy-request", source: "dragDrop", panelId: "panel-1", tabId: "tab-1" }
+    );
+
+    assert.deepEqual(invocations, [
+      {
+        command: "download_remote_entries",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["/home/cheng/report.txt"],
+            destination: "D:\\Downloads"
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("copyWorkspaceEntries rejects mixed local and remote sources before task mode", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { affectedPaths: [] } as T;
+    };
+
+    await assert.rejects(
+      () =>
+        copyWorkspaceEntries(
+          ["D:\\Projects\\Atlas\\README.md", "sftp://cheng@127.0.0.1:6666/home/cheng/report.txt"],
+          "D:\\Downloads",
+          {
+            invoke,
+            runtimeHost,
+            listRemoteProfiles: async () => [sftpProfile]
+          }
+        ),
+      /Mixed local and remote sources/
+    );
+
+    assert.deepEqual(invocations, []);
+  });
+
+  await assertAsyncTest("createWorkspaceDirectory invokes start_file_operation with canonical path refs", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { taskId: "task-create" } as T;
+    };
+
+    await createWorkspaceDirectory(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox",
+      "new-folder",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "create-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+
+    assert.deepEqual(invocations, [
+      {
         command: "start_file_operation",
         args: {
           intent: {
-            requestId: "move-request",
-            source: "dragDrop",
+            requestId: "create-request",
+            source: "inlineEdit",
             panelId: "panel-1",
             tabId: "tab-1",
-            kind: "move",
-            sources: [{ kind: "local", path: "D:\\Projects\\Atlas\\README.md" }],
-            destination: {
+            kind: "createDirectory",
+            parent: {
               kind: "remote",
               profileId: "remote-test",
               protocol: "sftp",
               remotePath: "/home/cheng/inbox"
             },
+            name: "new-folder",
             conflictPolicy: {
               defaultResolution: "ask",
-              allowApplyToAll: true
+              allowApplyToAll: false
             }
           }
         }

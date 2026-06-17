@@ -98,6 +98,10 @@ function allPathRefsAreLocal(paths: OperationPathRef[]) {
   return paths.every((path) => path.kind === "local");
 }
 
+function anyPathRefIsRemote(paths: OperationPathRef[]) {
+  return paths.some((path) => path.kind === "remote");
+}
+
 async function maybePerformSystemCopyOrMove(
   paths: string[],
   destination: string,
@@ -273,6 +277,12 @@ export async function copyWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (destinationRef.kind === "remote" || anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planCopyOrMoveEntries("copy", paths, destination, profiles), runtime);
+    return undefined;
+  }
   if (await maybePerformSystemCopyOrMove(paths, destination, "copy", profiles, runtime)) {
     return undefined;
   }
@@ -301,6 +311,12 @@ export async function moveWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (destinationRef.kind === "remote" || anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planCopyOrMoveEntries("move", paths, destination, profiles), runtime);
+    return undefined;
+  }
   if (await maybePerformSystemCopyOrMove(paths, destination, "move", profiles, runtime)) {
     return undefined;
   }

@@ -37,13 +37,44 @@ type SystemFileDropTarget = {
 };
 
 const SYSTEM_DROP_CLASS_BY_KIND: Record<string, string> = {
-  tab: "is-entry-drop-target",
-  folder: "is-drop-target",
-  listing: "is-drop-target"
+  tab: "is-system-entry-drop-target",
+  folder: "is-system-drop-target",
+  listing: "is-system-drop-target"
 };
+
+const SYSTEM_DROP_DEDUPE_WINDOW_MS = 1500;
+const recentSystemDropKeys = new Map<string, number>();
 
 let highlightedSystemDropElement: HTMLElement | null = null;
 let highlightedSystemDropClass: string | null = null;
+
+function normalizeSystemDropKeyPath(path: string) {
+  return path.trim().replace(/\//g, "\\").toLowerCase();
+}
+
+function createSystemDropDedupeKey(paths: string[], destination: string) {
+  const sourceKey = Array.from(new Set(paths.map(normalizeSystemDropKeyPath).filter(Boolean)))
+    .sort()
+    .join("\u001f");
+  return `${sourceKey}\u001e${normalizeSystemDropKeyPath(destination)}`;
+}
+
+function wasSystemDropRecentlyHandled(paths: string[], destination: string, now = Date.now()) {
+  const key = createSystemDropDedupeKey(paths, destination);
+  for (const [recentKey, handledAt] of recentSystemDropKeys) {
+    if (now - handledAt > SYSTEM_DROP_DEDUPE_WINDOW_MS) {
+      recentSystemDropKeys.delete(recentKey);
+    }
+  }
+
+  const handledAt = recentSystemDropKeys.get(key);
+  if (handledAt !== undefined && now - handledAt <= SYSTEM_DROP_DEDUPE_WINDOW_MS) {
+    return true;
+  }
+
+  recentSystemDropKeys.set(key, now);
+  return false;
+}
 
 export function findSystemFileDropTargetFromPoint(position?: { x: number; y: number }): SystemFileDropTarget | null {
   if (!position || typeof document === "undefined") {
@@ -86,7 +117,7 @@ export function clearSystemFileDropHighlight() {
     highlightedSystemDropElement.classList.remove(highlightedSystemDropClass);
   }
   if (highlightedSystemDropElement) {
-    delete highlightedSystemDropElement.dataset.dropOperation;
+    delete highlightedSystemDropElement.dataset.systemDropOperation;
   }
   highlightedSystemDropElement = null;
   highlightedSystemDropClass = null;
@@ -111,7 +142,7 @@ export function updateSystemFileDropHighlight(position?: { x: number; y: number 
     highlightedSystemDropElement = target.element;
     highlightedSystemDropClass = className;
   }
-  target.element.dataset.dropOperation = "copy";
+  target.element.dataset.systemDropOperation = "copy";
   return target;
 }
 
@@ -150,6 +181,10 @@ export function createSystemFileDropPayloadHandler(onDrop: SystemFileDropHandler
     clearSystemFileDropHighlight();
     systemDragActive = false;
     if (!target) {
+      return;
+    }
+
+    if (wasSystemDropRecentlyHandled(payload.paths, target.path)) {
       return;
     }
 

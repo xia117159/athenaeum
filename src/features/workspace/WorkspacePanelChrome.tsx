@@ -463,13 +463,7 @@ export function WorkspacePanelChrome({
       return;
     }
 
-    if (isExternalFileDrag(event.dataTransfer)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "copy";
-      }
-    }
+    clearEntryDropTarget();
   };
 
   const handleStripEntryDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -487,10 +481,7 @@ export function WorkspacePanelChrome({
       return;
     }
 
-    if (isExternalFileDrag(event.dataTransfer)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    clearEntryDropTarget();
   };
 
   return (

@@ -56,6 +56,18 @@ function hasSameJsonShape(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function createDragDropRequestKey(paths: string[], destination: string, operation: "copy" | "move") {
+  return [
+    operation,
+    destination,
+    ...Array.from(new Set(paths)).sort((left, right) => left.localeCompare(right))
+  ].join("\u001f");
+}
+
+function createDragDropRequestId(operation: "copy" | "move", sequence: number) {
+  return `drag-drop-${operation}-${Date.now().toString(36)}-${sequence.toString(36)}`;
+}
+
 function isUntrustedSftpHostKeyError(message: string) {
   return message.includes("SFTP host key is not trusted yet");
 }
@@ -289,11 +301,14 @@ function findTab(state: WorkspaceState, panelId: PanelId, tabId: string) {
 }
 
 function getTabsForPaths(state: WorkspaceState, paths: string[]) {
-  const normalizedPaths = new Set(paths.map((path) => normalizeLocationPath(path)));
+  const normalizedPaths = paths.map((path) => normalizeLocationPath(path));
   return Object.values(state.panels).flatMap((panel) =>
     panel.tabs
-      .filter((tab) => !isNavigationTab(tab))
-      .filter((tab) => normalizedPaths.has(normalizeLocationPath(tab.snapshot.location.path)))
+      .filter(isDirectoryTab)
+      .filter((tab) => {
+        const tabPath = normalizeLocationPath(tab.snapshot.location.path);
+        return normalizedPaths.some((path) => pathsEqual(tabPath, path) || isSameOrDescendantPath(path, tabPath));
+      })
       .map((tab) => ({
         panelId: panel.id,
         tabId: tab.id,
@@ -532,6 +547,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const refreshedOperationTasksRef = useRef<Set<string>>(new Set());
   const pendingInlineRefreshPathsRef = useRef<Map<string, Set<string>>>(new Map());
   const pendingInlineSelectionReplacementsRef = useRef<Map<string, SelectionPathReplacement[]>>(new Map());
+  const pendingDragDropRequestKeysRef = useRef<Set<string>>(new Set());
+  const nextDragDropRequestIdRef = useRef(0);
+  const delayedRefreshTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
     colorRules: false,
@@ -563,6 +581,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       contextMenu: false
     };
   };
+
+  useEffect(
+    () => () => {
+      for (const timeout of delayedRefreshTimeoutsRef.current) {
+        clearTimeout(timeout);
+      }
+      delayedRefreshTimeoutsRef.current = [];
+    },
+    []
+  );
 
   const skipChangedSettingsPersistence = (current: SettingsModel, next: SettingsModel) => {
     skipNextSettingsPersistenceRef.current = {
@@ -1068,6 +1096,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     );
   });
 
+  const scheduleDelayedRefreshPanelsForPaths = useEffectEvent((paths: string[]) => {
+    const uniquePaths = Array.from(new Set(paths.map((path) => normalizeLocationPath(path))));
+    for (const delay of [700, 2200]) {
+      const timeout = setTimeout(() => {
+        delayedRefreshTimeoutsRef.current = delayedRefreshTimeoutsRef.current.filter((item) => item !== timeout);
+        void refreshPanelsForPaths(uniquePaths);
+      }, delay);
+      delayedRefreshTimeoutsRef.current.push(timeout);
+    }
+  });
+
   const addPendingInlineRefreshPath = (taskId: string, path: string) => {
     const normalizedPath = normalizeLocationPath(path);
     const paths = pendingInlineRefreshPathsRef.current.get(taskId) ?? new Set<string>();
@@ -1137,7 +1176,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const pollInlineOperationRefresh = useEffectEvent(async (taskId: string) => {
-    for (const delay of [120, 240, 480, 800, 1200, 1600]) {
+    let delay = 120;
+    for (let attempt = 0; attempt < 72; attempt += 1) {
       if (!pendingInlineRefreshPathsRef.current.has(taskId)) {
         return;
       }
@@ -1154,6 +1194,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         devLog("[useWorkspaceController] inline operation polling failed", error);
         return;
       }
+      delay = Math.min(Math.ceil(delay * 1.5), 5000);
     }
   });
 
@@ -1405,7 +1446,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       pushNotification("info", "已在目标文件夹中，未执行复制或移动。");
       return;
     }
-
     const sourceParents = Array.from(
       new Set(
         operablePaths
@@ -1413,10 +1453,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           .filter((path): path is string => Boolean(path))
       )
     );
+    const requestKey = createDragDropRequestKey(operablePaths, normalizedDestination, operation);
+    if (pendingDragDropRequestKeysRef.current.has(requestKey)) {
+      return;
+    }
+    pendingDragDropRequestKeysRef.current.add(requestKey);
 
     try {
       const activeTab = getActiveDirectoryTab(state, state.activePanelId);
       const operationOptions = {
+        requestId: createDragDropRequestId(operation, nextDragDropRequestIdRef.current++),
         source: "dragDrop" as const,
         panelId: state.activePanelId,
         tabId: activeTab?.id ?? null
@@ -1430,6 +1476,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : `${operation === "copy" ? "复制" : "移动"}失败`);
+    } finally {
+      pendingDragDropRequestKeysRef.current.delete(requestKey);
     }
   });
 
@@ -1640,6 +1688,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const destination = activeTab.snapshot.location.path;
     const operablePaths =
       clipboard.mode === "cut" ? clipboard.paths.filter((path) => !hasSameParentPath(path, destination)) : clipboard.paths;
+    if (operablePaths.some((path) => isSameOrDescendantPath(path, destination))) {
+      pushNotification("warning", "Cannot paste an item into itself or one of its child folders.");
+      return;
+    }
     if (operablePaths.length === 0) {
       pushNotification("info", "已在目标文件夹中，未执行粘贴。");
       return;
@@ -2313,6 +2365,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         return;
       }
       await refreshPanelsForPaths([directoryPath]);
+      scheduleDelayedRefreshPanelsForPaths([directoryPath]);
       return;
     }
 
@@ -2340,6 +2393,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     );
     if (parentPaths.length > 0) {
       await refreshPanelsForPaths(parentPaths);
+      scheduleDelayedRefreshPanelsForPaths(parentPaths);
     }
   });
 

@@ -141,9 +141,12 @@ export function WorkspaceView() {
   const menuRootRef = useRef<HTMLDivElement | null>(null);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
+  const actionsRef = useRef(actions);
   const explorerDragWarningShownRef = useRef(false);
   const recentPaths = isActiveNavigationTab ? [] : getUniqueRecentPaths(activeTab.history, activeTab.snapshot.location.path);
   const navigationTabOpen = Object.values(state.panels).some((panel) => panel.tabs.some((tab) => tab.kind === "navigation"));
+
+  actionsRef.current = actions;
 
   const handleOpenSettingsWindow = () => {
     void openSettingsWindow().catch((error) => {
@@ -207,12 +210,12 @@ export function WorkspaceView() {
         return;
       }
       explorerDragWarningShownRef.current = true;
-      actions.showNotification(
+      actionsRef.current.showNotification(
         "warning",
         `Windows 已阻止从资源管理器拖入文件：当前应用为 ${environment.integrityLevel} 完整性级别。请用普通权限重新启动应用。`
       );
     },
-    [actions]
+    []
   );
 
   useEffect(() => {
@@ -221,7 +224,7 @@ export function WorkspaceView() {
 
     void listenSystemFileDrops(
       (paths, destination) => {
-        actions.dropEntries(paths, destination, "copy");
+        actionsRef.current.dropEntries(paths, destination, "copy");
       },
       {
         onExplorerFileDropsBlocked: handleExplorerFileDropsBlocked
@@ -240,7 +243,7 @@ export function WorkspaceView() {
       disposed = true;
       unlisten?.();
     };
-  }, [actions, handleExplorerFileDropsBlocked]);
+  }, [handleExplorerFileDropsBlocked]);
 
   const handleMenuAction = (action: () => void) => {
     action();

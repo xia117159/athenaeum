@@ -642,6 +642,50 @@ export const completion = (async () => {
       assert.deepEqual(droppedEntries, []);
     });
 
+    await assertTest("WorkspacePanelChrome does not advertise external drops on blank tab strip space", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspacePanelChrome, {
+            panelId: "panel-1",
+            tabs,
+            activeTabId: "panel-1-tab-1",
+            breadcrumbs,
+            onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+            onCloseTab: (tabId: string) => closedTabs.push(tabId),
+            onMoveTab: recordMovedTab(movedTabs),
+            onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+            onOpenNewTab: () => {
+              openCount += 1;
+            },
+            onNavigateToPath: (path: string) => navigatedPaths.push(path),
+            onDropEntries: (paths: string[], destination: string, operation: "copy" | "move") =>
+              droppedEntries.push({ paths, destination, operation })
+          })
+        );
+        await flushEffects();
+      });
+
+      const tabStrip = container.querySelector(".tab-strip");
+      assert.ok(tabStrip);
+      const restoreElementFromPoint = stubElementFromPoint(tabStrip);
+      try {
+        const transfer = createExternalFileDataTransfer();
+        let overEvent: Event | undefined;
+        let dropEvent: Event | undefined;
+        await act(async () => {
+          overEvent = dispatchDragEvent(tabStrip, "dragover", transfer);
+          dropEvent = dispatchDragEvent(tabStrip, "drop", transfer);
+          await flushEffects();
+        });
+
+        assert.equal(overEvent?.defaultPrevented, false);
+        assert.equal(dropEvent?.defaultPrevented, false);
+        assert.equal(transfer.dropEffect, "none");
+      } finally {
+        restoreElementFromPoint();
+      }
+    });
+
     await assertTest("WorkspacePanelChrome resolves tab drops from the strip hit-test target", async () => {
       droppedEntries.length = 0;
 
