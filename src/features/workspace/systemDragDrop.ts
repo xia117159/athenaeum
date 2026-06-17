@@ -52,6 +52,21 @@ export function findSystemFileDropTargetFromPoint(position?: { x: number; y: num
 
   const scale = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
   const element = document.elementFromPoint(position.x / scale, position.y / scale);
+  const entryElement = element?.closest("[data-entry-path]") as HTMLElement | null;
+  if (entryElement && !entryElement.dataset.entryDropKind) {
+    const listingElement = entryElement.closest("[data-entry-drop-kind='listing'][data-entry-drop-path]") as HTMLElement | null;
+    const listingPath = listingElement?.dataset.entryDropPath;
+    if (!listingElement || !listingPath) {
+      return null;
+    }
+
+    return {
+      element: listingElement,
+      kind: "listing",
+      path: listingPath
+    };
+  }
+
   const dropElement = element?.closest("[data-entry-drop-kind][data-entry-drop-path]") as HTMLElement | null;
   const kind = dropElement?.dataset.entryDropKind;
   const path = dropElement?.dataset.entryDropPath;
@@ -78,6 +93,11 @@ export function clearSystemFileDropHighlight() {
 }
 
 export function updateSystemFileDropHighlight(position?: { x: number; y: number }) {
+  if (highlightedSystemDropElement && !highlightedSystemDropElement.isConnected) {
+    highlightedSystemDropElement = null;
+    highlightedSystemDropClass = null;
+  }
+
   const target = findSystemFileDropTargetFromPoint(position);
   if (!target) {
     clearSystemFileDropHighlight();

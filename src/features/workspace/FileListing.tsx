@@ -109,6 +109,37 @@ type EntryPointerDropTarget = {
   element: HTMLElement;
 };
 
+const POINTER_DROP_CLASS_BY_KIND: Record<EntryPointerDropTarget["kind"], string> = {
+  tab: "is-entry-drop-target",
+  folder: "is-drop-target",
+  listing: "is-drop-target"
+};
+
+let highlightedPointerDropElement: HTMLElement | null = null;
+let highlightedPointerDropClass: string | null = null;
+
+function clearPointerEntryDropHighlight() {
+  if (highlightedPointerDropElement && highlightedPointerDropClass) {
+    highlightedPointerDropElement.classList.remove(highlightedPointerDropClass);
+  }
+  if (highlightedPointerDropElement) {
+    delete highlightedPointerDropElement.dataset.dropOperation;
+  }
+  highlightedPointerDropElement = null;
+  highlightedPointerDropClass = null;
+}
+
+function applyPointerEntryDropHighlight(target: EntryPointerDropTarget) {
+  const className = POINTER_DROP_CLASS_BY_KIND[target.kind] ?? "is-drop-target";
+  if (highlightedPointerDropElement !== target.element || highlightedPointerDropClass !== className) {
+    clearPointerEntryDropHighlight();
+    target.element.classList.add(className);
+    highlightedPointerDropElement = target.element;
+    highlightedPointerDropClass = className;
+  }
+  target.element.dataset.dropOperation = target.operation;
+}
+
 export const TAB_VIEW_MODE_OPTIONS: Array<{ id: TabViewMode; label: string }> = WORKSPACE_VIEW_MODE_MENU_ITEMS;
 
 export function getTabViewModeLabel(mode: TabViewMode) {
@@ -321,7 +352,18 @@ function getPointerEntryDropTarget(
 ): EntryPointerDropTarget | null {
   const entryElement = element?.closest("[data-entry-path]") as HTMLElement | null;
   if (entryElement && !entryElement.dataset.entryDropKind) {
-    return null;
+    const listingElement = entryElement.closest("[data-entry-drop-kind='listing'][data-entry-drop-path]") as HTMLElement | null;
+    const listingPath = listingElement?.dataset.entryDropPath;
+    if (!listingElement || !listingPath) {
+      return null;
+    }
+    const targetPanelId = parsePanelId(listingElement.dataset.panelId, fallbackPanelId);
+    return {
+      kind: "listing",
+      path: listingPath,
+      operation: getEntryDropOperationFromModifiers(modifiers, activeDrag.sourcePanelId, targetPanelId, moveBinding),
+      element: listingElement
+    };
   }
 
   const dropElement = element?.closest("[data-entry-drop-kind][data-entry-drop-path]") as HTMLElement | null;
@@ -539,7 +581,6 @@ export function FileListingShell({
   const suppressNextInlineBlurRef = useRef(false);
   const activeEntryPointerDragRef = useRef<ActiveEntryPointerDrag | null>(null);
   const cleanupEntryPointerDragRef = useRef<(() => void) | null>(null);
-  const pointerTabDropElementRef = useRef<HTMLElement | null>(null);
   const suppressNextEntryClickRef = useRef<string | null>(null);
   const inlineIconSpec = getInlineIconSpec(viewMode);
   const compactIconSpec = getInlineIconSpec("list");
@@ -594,10 +635,7 @@ export function FileListingShell({
   useEffect(
     () => () => {
       cleanupEntryPointerDragRef.current?.();
-      if (pointerTabDropElementRef.current) {
-        pointerTabDropElementRef.current.classList.remove("is-entry-drop-target");
-        pointerTabDropElementRef.current = null;
-      }
+      clearPointerEntryDropHighlight();
     },
     []
   );
@@ -639,27 +677,10 @@ export function FileListingShell({
   } as CSSProperties;
 
   const clearDropState = () => {
-    if (pointerTabDropElementRef.current) {
-      pointerTabDropElementRef.current.classList.remove("is-entry-drop-target");
-      pointerTabDropElementRef.current = null;
-    }
+    clearPointerEntryDropHighlight();
     setDropTargetPath(null);
     setDropOperation("move");
     setIsListingDropTarget(false);
-  };
-
-  const setPointerTabDropElement = (element: HTMLElement | null) => {
-    if (pointerTabDropElementRef.current === element) {
-      return;
-    }
-
-    if (pointerTabDropElementRef.current) {
-      pointerTabDropElementRef.current.classList.remove("is-entry-drop-target");
-    }
-    pointerTabDropElementRef.current = element;
-    if (element) {
-      element.classList.add("is-entry-drop-target");
-    }
   };
 
   const applyPointerDropTarget = (target: EntryPointerDropTarget | null) => {
@@ -668,17 +689,16 @@ export function FileListingShell({
       return;
     }
 
-    setDropOperation(target.operation);
+    clearDropState();
+    applyPointerEntryDropHighlight(target);
     if (target.kind === "tab") {
-      setPointerTabDropElement(target.element);
       setDropTargetPath(null);
       setIsListingDropTarget(false);
       return;
     }
 
-    setPointerTabDropElement(null);
-    setDropTargetPath(target.kind === "folder" ? target.path : null);
-    setIsListingDropTarget(target.kind === "listing");
+    setDropTargetPath(null);
+    setIsListingDropTarget(false);
   };
 
   const getDragPaths = (entry: EntryViewModel) => {
@@ -812,6 +832,8 @@ export function FileListingShell({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerCancel);
       document.body.classList.remove("is-entry-pointer-dragging");
+      document.body.style.removeProperty("--entry-pointer-drag-x");
+      document.body.style.removeProperty("--entry-pointer-drag-y");
       cleanupEntryPointerDragRef.current = null;
     };
 
@@ -889,6 +911,8 @@ export function FileListingShell({
       }
 
       document.body.classList.add("is-entry-pointer-dragging");
+      document.body.style.setProperty("--entry-pointer-drag-x", `${moveEvent.clientX}px`);
+      document.body.style.setProperty("--entry-pointer-drag-y", `${moveEvent.clientY}px`);
       applyPointerDropTarget(
         getPointerEntryDropTarget(
           getElementFromClientPoint(moveEvent.clientX, moveEvent.clientY),

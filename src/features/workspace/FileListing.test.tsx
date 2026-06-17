@@ -756,6 +756,158 @@ export const completion = (async () => {
       assert.deepEqual(dropped, [{ paths: ["D:\\report.txt"], destination: "D:\\", operation: "move" }]);
     });
 
+    await assertTest("FileListingShell highlights and drops onto the listing when pointer drag hovers a plain file row", async () => {
+      await act(async () => {
+        render("details", undefined, "panel-1", ["folder-target"]);
+        await flushEffects();
+      });
+
+      dropped.length = 0;
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const sourceRow = rows[0];
+      const plainFileRow = rows[1];
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(sourceRow);
+      assert.ok(plainFileRow);
+      assert.ok(scroll);
+
+      const restoreElementFromPoint = stubElementFromPoint(plainFileRow);
+      try {
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 24, clientY: 8 }));
+          await flushEffects();
+        });
+
+        assert.equal(scroll.classList.contains("is-drop-target"), true);
+        assert.equal((scroll as HTMLElement).dataset.dropOperation, "move");
+        assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-x"), "24px");
+        assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-y"), "8px");
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 80, clientY: 90, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+
+      assert.deepEqual(dropped, [{ paths: ["D:\\Archive"], destination: "D:\\", operation: "move" }]);
+      assert.equal(scroll.classList.contains("is-drop-target"), false);
+      assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-x"), "");
+      assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-y"), "");
+    });
+
+    await assertTest("FileListingShell transfers pointer-drag listing highlight between file lists", async () => {
+      dropped.length = 0;
+      await act(async () => {
+        root.render(
+          React.createElement(
+            "div",
+            null,
+            React.createElement(FileListingShell, {
+              panelId: "panel-1",
+              tabId: "panel-1-tab-1",
+              entries,
+              columns,
+              sort: { columnId: "name", direction: "asc" },
+              currentPath: "D:\\",
+              selectedEntryIds: ["file-source"],
+              viewMode: "details",
+              detailsRowHeight: 42,
+              onSort: () => undefined,
+              onResizeColumn: () => undefined,
+              onSelect: () => undefined,
+              onOpen: () => undefined,
+              onOpenContextMenu: () => undefined,
+              onOpenNativeContextMenu: () => undefined,
+              onDropEntries: (paths, destination, operation) => {
+                dropped.push({ paths, destination, operation });
+              },
+              onInlineEditChange: () => undefined,
+              onInlineEditCommit: () => undefined,
+              onInlineEditCancel: () => undefined
+            }),
+            React.createElement(FileListingShell, {
+              panelId: "panel-2",
+              tabId: "panel-2-tab-1",
+              entries,
+              columns,
+              sort: { columnId: "name", direction: "asc" },
+              currentPath: "E:\\",
+              selectedEntryIds: [],
+              viewMode: "details",
+              detailsRowHeight: 42,
+              onSort: () => undefined,
+              onResizeColumn: () => undefined,
+              onSelect: () => undefined,
+              onOpen: () => undefined,
+              onOpenContextMenu: () => undefined,
+              onOpenNativeContextMenu: () => undefined,
+              onDropEntries: (paths, destination, operation) => {
+                dropped.push({ paths, destination, operation });
+              },
+              onInlineEditChange: () => undefined,
+              onInlineEditCommit: () => undefined,
+              onInlineEditCancel: () => undefined
+            })
+          )
+        );
+        await flushEffects();
+      });
+
+      const scrolls = Array.from(container.querySelectorAll(".file-listing__scroll")) as HTMLElement[];
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const sourceRow = rows[1];
+      const sourceScroll = scrolls[0];
+      const targetScroll = scrolls[1];
+      assert.ok(sourceRow);
+      assert.ok(sourceScroll);
+      assert.ok(targetScroll);
+
+      let pointedElement: Element | null = sourceScroll;
+      const restoreElementFromPoint = stubElementFromPoint(null);
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: () => pointedElement
+      });
+      try {
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 24, clientY: 8 }));
+          await flushEffects();
+        });
+        assert.equal(sourceScroll.classList.contains("is-drop-target"), true);
+        assert.equal(targetScroll.classList.contains("is-drop-target"), false);
+
+        pointedElement = targetScroll;
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 80, clientY: 14 }));
+          await flushEffects();
+        });
+        assert.equal(sourceScroll.classList.contains("is-drop-target"), false);
+        assert.equal(targetScroll.classList.contains("is-drop-target"), true);
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 80, clientY: 14, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+
+      assert.deepEqual(dropped, [{ paths: ["D:\\report.txt"], destination: "E:\\", operation: "copy" }]);
+      assert.equal(sourceScroll.classList.contains("is-drop-target"), false);
+      assert.equal(targetScroll.classList.contains("is-drop-target"), false);
+    });
+
+    await assertTest("workspace file drag cursor uses a Windows-style pointer badge instead of a grabbing hand", async () => {
+      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      assert.match(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*default\s*!important;/);
+      assert.match(css, /body\.is-entry-pointer-dragging::after[\s\S]*border:\s*1px\s+dashed/);
+      assert.doesNotMatch(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*grabbing\s*!important;/);
+    });
+
     await assertTest("FileListingShell accepts external file drags over folder rows and listing blank space", async () => {
       await act(async () => {
         render("details");

@@ -1162,12 +1162,22 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     parentPath: string,
     selectionReplacements: SelectionPathReplacement[] = []
   ) => {
+    await refreshPathsAfterOperationResult(task, [parentPath], selectionReplacements);
+  });
+
+  const refreshPathsAfterOperationResult = useEffectEvent(async (
+    task: OperationTaskSnapshot | void,
+    refreshPaths: string[],
+    selectionReplacements: SelectionPathReplacement[] = []
+  ) => {
     if (!task) {
-      await refreshPanelsForPaths([parentPath], selectionReplacements);
+      await refreshPanelsForPaths(refreshPaths, selectionReplacements);
       return;
     }
 
-    addPendingInlineRefreshPath(task.taskId, parentPath);
+    for (const path of refreshPaths) {
+      addPendingInlineRefreshPath(task.taskId, path);
+    }
     addPendingInlineSelectionReplacements(task.taskId, selectionReplacements);
     await projectOperationResult(task);
     if (!isTerminalOperationTask(task) && pendingInlineRefreshPathsRef.current.has(task.taskId)) {
@@ -1415,11 +1425,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         operation === "copy"
           ? await workspaceGateway.copyEntries(operablePaths, normalizedDestination, operationOptions)
           : await workspaceGateway.moveEntries(operablePaths, normalizedDestination, operationOptions);
-      await projectOperationResult(task);
-      if (!task) {
-        const refreshPaths = operation === "copy" ? [normalizedDestination] : [...sourceParents, normalizedDestination];
-        await refreshPanelsForPaths(refreshPaths);
-      }
+      const refreshPaths = operation === "copy" ? [normalizedDestination] : [...sourceParents, normalizedDestination];
+      await refreshPathsAfterOperationResult(task, refreshPaths);
       return;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : `${operation === "copy" ? "复制" : "移动"}失败`);
@@ -1658,11 +1665,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       if (clipboard.mode === "cut" && task?.status !== "waitingConflict") {
         dispatch({ type: "clipboardSet", payload: undefined });
       }
-      await projectOperationResult(task);
-      if (!task) {
-        const refreshPaths = clipboard.mode === "copy" ? [destination] : [...sourceParents, destination];
-        await refreshPanelsForPaths(refreshPaths);
-      }
+      const refreshPaths = clipboard.mode === "copy" ? [destination] : [...sourceParents, destination];
+      await refreshPathsAfterOperationResult(task, refreshPaths);
       return;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : "粘贴失败");
@@ -1946,10 +1950,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId: activeTab.id
         }
       );
-      await projectOperationResult(task);
-      if (!task) {
-        await refreshPanelsForPaths(sourceParents.length > 0 ? sourceParents : [activeTab.snapshot.location.path]);
-      }
+      await refreshPathsAfterOperationResult(
+        task,
+        sourceParents.length > 0 ? sourceParents : [activeTab.snapshot.location.path]
+      );
       return;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : "删除失败");
@@ -2306,7 +2310,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       }
       if (!opened) {
         openFallbackMenu();
+        return;
       }
+      await refreshPanelsForPaths([directoryPath]);
       return;
     }
 
@@ -2323,6 +2329,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     if (!opened) {
       openFallbackMenu();
+      return;
+    }
+    const parentPaths = Array.from(
+      new Set(
+        request.paths
+          .map((path) => getParentPathForRefresh(path))
+          .filter((path): path is string => Boolean(path))
+      )
+    );
+    if (parentPaths.length > 0) {
+      await refreshPanelsForPaths(parentPaths);
     }
   });
 

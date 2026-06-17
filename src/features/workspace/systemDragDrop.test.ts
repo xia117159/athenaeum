@@ -124,6 +124,63 @@ export const systemDragDropTests = (() => {
     assert.equal(listing.dataset.dropOperation, undefined);
   });
 
+  assertTest("updateSystemFileDropHighlight falls back from plain file rows to their listing", () => {
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "D:\\Inbox";
+    const fileRow = document.createElement("div");
+    fileRow.dataset.entryPath = "D:\\Inbox\\report.txt";
+    listing.appendChild(fileRow);
+    document.body.appendChild(listing);
+
+    const restore = stubElementFromPoint(fileRow);
+    try {
+      const target = updateSystemFileDropHighlight({ x: 20, y: 20 });
+      assert.equal(target?.path, "D:\\Inbox");
+      assert.equal(target?.kind, "listing");
+      assert.equal(listing.classList.contains("is-drop-target"), true);
+      assert.equal(listing.dataset.dropOperation, "copy");
+    } finally {
+      restore();
+      clearSystemFileDropHighlight();
+      listing.remove();
+    }
+
+    assert.equal(listing.classList.contains("is-drop-target"), false);
+    assert.equal(listing.dataset.dropOperation, undefined);
+  });
+
+  assertTest("updateSystemFileDropHighlight recovers when a highlighted listing was removed before the next drag", () => {
+    const staleListing = document.createElement("div");
+    staleListing.dataset.entryDropKind = "listing";
+    staleListing.dataset.entryDropPath = "D:\\Deleted";
+    const nextListing = document.createElement("div");
+    nextListing.dataset.entryDropKind = "listing";
+    nextListing.dataset.entryDropPath = "E:\\Target";
+    document.body.append(staleListing, nextListing);
+
+    let restore = stubElementFromPoint(staleListing);
+    try {
+      updateSystemFileDropHighlight({ x: 10, y: 10 });
+      assert.equal(staleListing.classList.contains("is-drop-target"), true);
+    } finally {
+      restore();
+    }
+
+    staleListing.remove();
+    restore = stubElementFromPoint(nextListing);
+    try {
+      const target = updateSystemFileDropHighlight({ x: 12, y: 12 });
+      assert.equal(target?.path, "E:\\Target");
+      assert.equal(nextListing.classList.contains("is-drop-target"), true);
+      assert.equal(nextListing.dataset.dropOperation, "copy");
+    } finally {
+      restore();
+      clearSystemFileDropHighlight();
+      nextListing.remove();
+    }
+  });
+
   assertTest("createSystemFileDropPayloadHandler drops external files on the highlighted target", () => {
     const listing = document.createElement("div");
     listing.dataset.entryDropKind = "listing";

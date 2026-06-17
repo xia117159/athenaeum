@@ -72,6 +72,7 @@ function createTestGateway(
     resolveDirectory?: WorkspaceGateway["resolveDirectory"];
     loadTreeChildren?: (path: string) => DirectoryNode[] | Promise<DirectoryNode[]>;
     getItemProperties?: WorkspaceGateway["getItemProperties"];
+    deleteEntries?: WorkspaceGateway["deleteEntries"];
     renameEntry?: WorkspaceGateway["renameEntry"];
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
@@ -243,6 +244,9 @@ function createTestGateway(
       interactions.moveCalls.push({ paths: [...paths], destination });
     },
     async deleteEntries(paths) {
+      if (overrides.deleteEntries) {
+        return overrides.deleteEntries(paths);
+      }
       interactions.deleteCalls.push({ paths: [...paths] });
     },
     async renameEntry(source, newName) {
@@ -2308,6 +2312,197 @@ export const completion = (async () => {
           await flushEffects();
         });
         multiContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController polls non-terminal delete tasks and refreshes affected tabs", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const deletePath = "C:\\Users\\Admin\\Downloads\\desktop-build.msi";
+      const pollingInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let pollingController: ReturnType<typeof useWorkspaceController> | undefined;
+      let listTasksCalls = 0;
+      const taskBase: OperationTaskSnapshot = {
+        taskId: "delete-running-task",
+        requestId: "delete-running-request",
+        kind: "delete",
+        label: "Delete",
+        status: "running",
+        createdAt: "2026-06-10T08:00:00Z",
+        startedAt: "2026-06-10T08:00:00Z",
+        finishedAt: null,
+        totalEntries: 1,
+        completedEntries: 0,
+        failedEntries: 0,
+        totalBytes: null,
+        completedBytes: null,
+        currentPath: deletePath,
+        message: null,
+        cancelable: true,
+        undoable: false,
+        affectedRoots: [{ kind: "local", path: sharedPath }],
+        entryResults: [],
+        sequence: 1,
+        updatedAt: "2026-06-10T08:00:00Z"
+      };
+      const pollingBootstrap = createMockWorkspaceBootstrap("tauri");
+      pollingBootstrap.layoutMode = "dual";
+      pollingBootstrap.panels["panel-1"] = {
+        ...pollingBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(sharedPath, "panel-1-delete", {
+            selectedEntryIds: ["C:\\Users\\Admin\\Downloads:desktop-build.msi"]
+          })
+        ],
+        activeTabId: "panel-1-delete"
+      };
+      pollingBootstrap.panels["panel-2"] = {
+        ...pollingBootstrap.panels["panel-2"],
+        tabs: [createTabState(sharedPath, "panel-2-delete")],
+        activeTabId: "panel-2-delete"
+      };
+
+      const pollingGateway = createTestGateway(() => undefined, pollingInteractions, {
+        loadBootstrap: () => pollingBootstrap,
+        deleteEntries: async (paths) => {
+          pollingInteractions.deleteCalls.push({ paths: [...paths] });
+          return taskBase;
+        },
+        listOperationTasks: async () => {
+          listTasksCalls += 1;
+          return {
+            tasks: [{ ...taskBase, status: "succeeded", completedEntries: 1, cancelable: false, undoable: true, sequence: 2 }],
+            taskSequence: 2
+          };
+        }
+      });
+
+      function PollingHarness() {
+        pollingController = useWorkspaceController(pollingGateway);
+        return React.createElement("div", null, pollingController.state.status);
+      }
+
+      const pollingContainer = document.createElement("div");
+      document.body.appendChild(pollingContainer);
+      const pollingRoot = ReactDOM.createRoot(pollingContainer);
+      const originalConfirm = window.confirm;
+      window.confirm = () => true;
+
+      try {
+        await act(async () => {
+          pollingRoot.render(React.createElement(PollingHarness));
+          await flushEffects();
+        });
+        await waitFor(() => pollingController?.state.status === "ready", "polling controller did not bootstrap");
+
+        await act(async () => {
+          pollingController?.actions.deleteSelection("panel-1");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => pollingInteractions.resolvedPaths.filter((path) => path === sharedPath).length === 2,
+          "non-terminal delete task did not refresh every affected tab"
+        );
+        assert.equal(listTasksCalls > 0, true);
+      } finally {
+        window.confirm = originalConfirm;
+        await act(async () => {
+          pollingRoot.unmount();
+          await flushEffects();
+        });
+        pollingContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes local parent folders after native context menu closes", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const nativeRefreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let nativeRefreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const nativeRefreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      nativeRefreshBootstrap.layoutMode = "dual";
+      nativeRefreshBootstrap.panels["panel-1"] = {
+        ...nativeRefreshBootstrap.panels["panel-1"],
+        tabs: [createTabState(sharedPath, "panel-1-native-menu")],
+        activeTabId: "panel-1-native-menu"
+      };
+      nativeRefreshBootstrap.panels["panel-2"] = {
+        ...nativeRefreshBootstrap.panels["panel-2"],
+        tabs: [createTabState(sharedPath, "panel-2-native-menu")],
+        activeTabId: "panel-2-native-menu"
+      };
+      const nativeRefreshGateway = createTestGateway(() => undefined, nativeRefreshInteractions, {
+        loadBootstrap: () => nativeRefreshBootstrap
+      });
+
+      function NativeRefreshHarness() {
+        nativeRefreshController = useWorkspaceController(nativeRefreshGateway);
+        return React.createElement("div", null, nativeRefreshController.state.status);
+      }
+
+      const nativeRefreshContainer = document.createElement("div");
+      document.body.appendChild(nativeRefreshContainer);
+      const nativeRefreshRoot = ReactDOM.createRoot(nativeRefreshContainer);
+
+      try {
+        await act(async () => {
+          nativeRefreshRoot.render(React.createElement(NativeRefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeRefreshController?.state.status === "ready", "native refresh controller did not bootstrap");
+
+        await act(async () => {
+          nativeRefreshController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-native-menu",
+            target: "selection",
+            paths: ["C:\\Users\\Admin\\Downloads\\desktop-build.msi"],
+            clientX: 10,
+            clientY: 12,
+            screenX: 100,
+            screenY: 120
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativeRefreshInteractions.resolvedPaths.filter((path) => path === sharedPath).length === 2,
+          "native context menu did not refresh every open parent folder tab"
+        );
+        assert.deepEqual(nativeRefreshInteractions.nativeContextMenus, [
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\desktop-build.msi"],
+            x: 100,
+            y: 120
+          }
+        ]);
+      } finally {
+        await act(async () => {
+          nativeRefreshRoot.unmount();
+          await flushEffects();
+        });
+        nativeRefreshContainer.remove();
       }
     });
 
