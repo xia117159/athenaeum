@@ -88,7 +88,10 @@ export type WorkspaceAction =
   | { type: "tabReconnectStarted"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionChanged"; payload: { panelId: PanelId; tabId: string; entryId: string; multi: boolean } }
   | { type: "entrySelectionSet"; payload: { panelId: PanelId; tabId: string; entryIds: string[] } }
-  | { type: "entryRangeSelected"; payload: { panelId: PanelId; tabId: string; fromEntryId: string; toEntryId: string } }
+  | {
+      type: "entryRangeSelected";
+      payload: { panelId: PanelId; tabId: string; fromEntryId: string; toEntryId: string; orderedEntryIds?: string[] };
+    }
   | { type: "allEntriesSelected"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionCleared"; payload: { panelId: PanelId; tabId: string } }
   | { type: "tabSortChanged"; payload: { panelId: PanelId; tabId: string; columnId: ColumnId } }
@@ -988,9 +991,13 @@ function selectEntries(selectedEntryIds: string[], entryId: string, multi: boole
     : [...selectedEntryIds, entryId];
 }
 
-function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntryId: string): string[] {
-  const fromIndex = entries.findIndex((entry) => entry.id === fromEntryId);
-  const toIndex = entries.findIndex((entry) => entry.id === toEntryId);
+function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntryId: string, orderedEntryIds?: string[]): string[] {
+  const validEntryIds = new Set(entries.map((entry) => entry.id));
+  const orderedEntries = orderedEntryIds
+    ? orderedEntryIds.filter((entryId) => validEntryIds.has(entryId)).map((id) => ({ id }))
+    : entries;
+  const fromIndex = orderedEntries.findIndex((entry) => entry.id === fromEntryId);
+  const toIndex = orderedEntries.findIndex((entry) => entry.id === toEntryId);
 
   if (fromIndex === -1 || toIndex === -1) {
     return [];
@@ -999,7 +1006,7 @@ function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntr
   const startIndex = Math.min(fromIndex, toIndex);
   const endIndex = Math.max(fromIndex, toIndex);
 
-  return entries.slice(startIndex, endIndex + 1).map((entry) => entry.id);
+  return orderedEntries.slice(startIndex, endIndex + 1).map((entry) => entry.id);
 }
 
 function clearActiveTabSelectionForPanel(panel: PanelState): PanelState {
@@ -1619,7 +1626,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                   selectedEntryIds: selectEntryRange(
                     tab.snapshot.entries,
                     action.payload.fromEntryId,
-                    action.payload.toEntryId
+                    action.payload.toEntryId,
+                    action.payload.orderedEntryIds
                   )
                 }
           )

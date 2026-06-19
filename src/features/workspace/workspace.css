@@ -890,6 +890,7 @@
 .file-listing {
   --file-icon-size: 16px;
   --details-row-height: 24px;
+  --details-header-height: 24px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -941,10 +942,15 @@
 }
 
 .file-listing__header {
-  min-height: 24px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: var(--details-header-height);
+  min-height: var(--details-header-height);
   padding: 0 6px;
   border-bottom: 1px solid #cfcfcf;
   background: #ffffff;
+  box-sizing: border-box;
 }
 
 .file-header-button {
@@ -982,7 +988,7 @@
   bottom: 4px;
   left: 3px;
   width: 1px;
-  background: transparent;
+  background: #d8dde3;
 }
 
 .file-header-resizer:hover::after {
@@ -1070,7 +1076,11 @@
 
 .file-listing__body--details {
   gap: 0;
+  height: auto;
+  min-height: calc(100% - var(--details-header-height));
   padding: 0;
+  width: max-content;
+  min-width: 0;
 }
 
 .file-listing__body--extra-large-icons {
@@ -1107,6 +1117,10 @@
   text-align: center;
 }
 
+.file-listing--details .file-row {
+  width: max-content;
+}
+
 .file-row {
   border-radius: 0;
   cursor: default;
@@ -1129,18 +1143,45 @@ body.is-entry-pointer-dragging * {
   user-select: none;
 }
 
-body.is-entry-pointer-dragging::after {
-  content: "";
+.entry-drag-follower {
   position: fixed;
-  left: calc(var(--entry-pointer-drag-x, -32px) + 12px);
-  top: calc(var(--entry-pointer-drag-y, -32px) + 12px);
-  width: 15px;
-  height: 12px;
-  border: 1px dashed rgba(35, 35, 35, 0.82);
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 1px 1px 0 rgba(255, 255, 255, 0.9);
   pointer-events: none;
   z-index: 2147483647;
+}
+
+.entry-drag-follower__content {
+  display: grid;
+  grid-template-columns: 20px minmax(0, auto) auto;
+  align-items: center;
+  max-width: 320px;
+  min-height: 28px;
+  gap: 7px;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  color: #1f1f1f;
+  font-size: 12px;
+}
+
+.entry-drag-follower__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-drag-follower__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #0f6cbd;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
 }
 
 .file-row__grid {

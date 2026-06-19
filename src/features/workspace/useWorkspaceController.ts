@@ -2614,9 +2614,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         devLog("[useWorkspaceController] selectAllEntries called for panelId:", panelId, "tabId:", tabId);
         dispatch({ type: "allEntriesSelected", payload: { panelId, tabId } });
       },
-      selectEntryRange: (panelId: PanelId, tabId: string, fromEntryId: string, toEntryId: string) => {
+      selectEntryRange: (panelId: PanelId, tabId: string, fromEntryId: string, toEntryId: string, orderedEntryIds?: string[]) => {
         devLog("[useWorkspaceController] selectEntryRange called from:", fromEntryId, "to:", toEntryId);
-        dispatch({ type: "entryRangeSelected", payload: { panelId, tabId, fromEntryId, toEntryId } });
+        dispatch({ type: "entryRangeSelected", payload: { panelId, tabId, fromEntryId, toEntryId, orderedEntryIds } });
       },
       clearSelection: (panelId: PanelId, tabId: string) => {
         devLog("[useWorkspaceController] clearSelection called for panelId:", panelId, "tabId:", tabId);

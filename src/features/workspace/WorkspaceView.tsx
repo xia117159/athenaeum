@@ -988,8 +988,8 @@ function PanelSurface({
   }, [actions, panel.id, activeTab.id]);
 
   const handleSelectRange = useCallback(
-    (fromId: string, toId: string) => {
-      actions.selectEntryRange(panel.id, activeTab.id, fromId, toId);
+    (fromId: string, toId: string, orderedEntryIds?: string[]) => {
+      actions.selectEntryRange(panel.id, activeTab.id, fromId, toId, orderedEntryIds);
     },
     [actions, panel.id, activeTab.id]
   );

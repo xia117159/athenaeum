@@ -318,6 +318,31 @@ assertTest("workspaceReducer selects range of entries with entryRangeSelected ac
   assert.deepEqual(selectedIds, [entries[0].id, entries[1].id, entries[2].id]);
 });
 
+assertTest("workspaceReducer selects ranges by the caller-provided visible entry order", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const visibleOrder = [entries[2].id, entries[0].id, "missing-entry", entries[1].id];
+  const selected = workspaceReducer(state, {
+    type: "entryRangeSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      fromEntryId: entries[2].id,
+      toEntryId: entries[1].id,
+      orderedEntryIds: visibleOrder
+    }
+  } as WorkspaceAction);
+
+  const selectedIds = getActiveTab(selected.panels["panel-1"]).selectedEntryIds;
+  assert.deepEqual(selectedIds, [entries[2].id, entries[0].id, entries[1].id]);
+});
+
 assertTest("workspaceReducer sets specific entry ids with entrySelectionSet action", () => {
   const state = createState();
   const activeTab = getActiveTab(state.panels["panel-1"]);

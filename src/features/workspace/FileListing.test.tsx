@@ -11,7 +11,7 @@ import {
   type SystemIconRequest
 } from "./systemIconGateway";
 import { installLegacyInputEventPatch } from "./testDom";
-import type { ClipboardState, ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId } from "./types";
+import type { ClipboardState, ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId, SortState } from "./types";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -293,6 +293,7 @@ export const completion = (async () => {
     screenY: number;
   }> = [];
   const selectedEntries: Array<{ entryId: string; multi: boolean }> = [];
+  const rangeSelections: Array<{ fromEntryId: string; toEntryId: string; orderedEntryIds: string[] }> = [];
   const resizedColumns: Array<{ columnId: ColumnDefinition["id"]; width: string }> = [];
   const columnVisibilityChanges: Array<{ columnId: ColumnId; visible: boolean }> = [];
   let showAllColumnsCalls = 0;
@@ -317,15 +318,17 @@ export const completion = (async () => {
     renderColumns: ColumnDefinition[] = columns,
     contextMenuDefault: "native" | "custom" = "native",
     contextMenuToggleBinding = "Shift",
-    clipboard?: ClipboardState
+    clipboard?: ClipboardState,
+    renderEntries: EntryViewModel[] = entries,
+    renderSort: SortState = { columnId: "name", direction: "asc" }
   ) {
     root.render(
       React.createElement(FileListingShell, {
         panelId: renderPanelId,
         tabId: "panel-1-tab-1",
-        entries,
+        entries: renderEntries,
         columns: renderColumns,
-        sort: { columnId: "name", direction: "asc" },
+        sort: renderSort,
         currentPath: "D:\\",
         selectedEntryIds: selectedIds,
         viewMode,
@@ -347,6 +350,9 @@ export const completion = (async () => {
         },
         onSelect: (entry, multi) => {
           selectedEntries.push({ entryId: entry.id, multi });
+        },
+        onSelectRange: (fromEntryId, toEntryId, orderedEntryIds) => {
+          rangeSelections.push({ fromEntryId, toEntryId, orderedEntryIds });
         },
         onOpen: () => undefined,
         onOpenContextMenu: (payload) => {
@@ -384,7 +390,7 @@ export const completion = (async () => {
   }
 
   try {
-    await assertTest("FileListingShell keeps the details header outside the scrollable content region", async () => {
+    await assertTest("FileListingShell keeps the details header and rows in one horizontal scroll region", async () => {
       await act(async () => {
         render("details");
         await flushEffects();
@@ -392,10 +398,102 @@ export const completion = (async () => {
 
       const header = container.querySelector(".file-listing__header");
       const scroll = container.querySelector(".file-listing__scroll");
+      const body = container.querySelector(".file-listing__body");
 
       assert.ok(header);
       assert.ok(scroll);
-      assert.equal(scroll.contains(header), false);
+      assert.ok(body);
+      assert.equal(scroll.contains(header), true);
+      assert.equal(scroll.contains(body), true);
+      assert.equal(header?.getAttribute("data-details-scroll-header"), "true");
+    });
+
+    await assertTest("workspace details listing body reserves only the space below the sticky header", async () => {
+      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const listingRule = css.match(/\.file-listing\s*\{([^}]*)\}/)?.[1] ?? "";
+      const detailsBodyRule = css.match(/\.file-listing__body--details\s*\{([^}]*)\}/)?.[1] ?? "";
+
+      assert.match(listingRule, /--details-header-height:\s*24px;/);
+      assert.match(detailsBodyRule, /min-height:\s*calc\(100%\s*-\s*var\(--details-header-height\)\);/);
+      assert.match(detailsBodyRule, /height:\s*auto;/);
+    });
+
+    await assertTest("FileListingShell sends the current visible sorted order for Shift range selection", async () => {
+      rangeSelections.length = 0;
+      selectedEntries.length = 0;
+      const sortableEntries: EntryViewModel[] = [
+        { ...entries[1], id: "alpha", name: "alpha.txt", path: "D:\\alpha.txt", modifiedLabel: "2026-04-21 12:00" },
+        { ...entries[1], id: "bravo", name: "bravo.txt", path: "D:\\bravo.txt", modifiedLabel: "2026-04-21 09:00" },
+        { ...entries[1], id: "charlie", name: "charlie.txt", path: "D:\\charlie.txt", modifiedLabel: "2026-04-21 10:00" }
+      ];
+
+      await act(async () => {
+        render(
+          "details",
+          undefined,
+          "panel-1",
+          [],
+          "Shift",
+          columns,
+          "native",
+          "Shift",
+          undefined,
+          sortableEntries,
+          { columnId: "modified", direction: "asc" }
+        );
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".file-row"));
+      assert.equal(rows.length, 3);
+      assert.deepEqual(rows.map((row) => row.dataset.entryPath), ["D:\\bravo.txt", "D:\\charlie.txt", "D:\\alpha.txt"]);
+
+      await act(async () => {
+        rows[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        rows[2].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(selectedEntries, [{ entryId: "bravo", multi: false }]);
+      assert.deepEqual(rangeSelections, [
+        { fromEntryId: "bravo", toEntryId: "alpha", orderedEntryIds: ["bravo", "charlie", "alpha"] }
+      ]);
+    });
+
+    await assertTest("FileListingShell falls back to a normal click when the Shift anchor is no longer visible", async () => {
+      rangeSelections.length = 0;
+      selectedEntries.length = 0;
+      const visibleEntries: EntryViewModel[] = [
+        { ...entries[1], id: "alpha", name: "alpha.txt", path: "D:\\alpha.txt", modifiedLabel: "2026-04-21 12:00" },
+        { ...entries[1], id: "bravo", name: "bravo.txt", path: "D:\\bravo.txt", modifiedLabel: "2026-04-21 09:00" },
+        { ...entries[1], id: "charlie", name: "charlie.txt", path: "D:\\charlie.txt", modifiedLabel: "2026-04-21 10:00" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", [], "Shift", columns, "native", "Shift", undefined, visibleEntries);
+        await flushEffects();
+      });
+      let rows = Array.from(container.querySelectorAll<HTMLElement>(".file-row"));
+      await act(async () => {
+        rows[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+
+      await act(async () => {
+        render("details", undefined, "panel-1", [], "Shift", columns, "native", "Shift", undefined, visibleEntries.slice(1));
+        await flushEffects();
+      });
+      rows = Array.from(container.querySelectorAll<HTMLElement>(".file-row"));
+      await act(async () => {
+        rows[1].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(rangeSelections, []);
+      assert.deepEqual(selectedEntries, [
+        { entryId: "alpha", multi: false },
+        { entryId: "charlie", multi: false }
+      ]);
     });
 
     await assertTest("FileListingShell opens a Windows-style column menu from the details header", async () => {
@@ -782,8 +880,10 @@ export const completion = (async () => {
 
         assert.equal(scroll.classList.contains("is-drop-target"), true);
         assert.equal((scroll as HTMLElement).dataset.dropOperation, "move");
-        assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-x"), "24px");
-        assert.equal(document.body.style.getPropertyValue("--entry-pointer-drag-y"), "8px");
+        const follower = container.querySelector<HTMLElement>(".entry-drag-follower");
+        assert.ok(follower);
+        assert.equal(follower.style.left, "36px");
+        assert.equal(follower.style.top, "20px");
 
         await act(async () => {
           window.dispatchEvent(createPointerEvent("pointerup", { clientX: 80, clientY: 90, buttons: 0 }));
@@ -951,10 +1051,50 @@ export const completion = (async () => {
       assert.equal(scroll!.classList.contains("is-system-drop-target"), false);
     });
 
-    await assertTest("workspace file drag cursor uses a Windows-style pointer badge instead of a grabbing hand", async () => {
+    await assertTest("FileListingShell shows an icon and name follower while pointer-dragging entries", async () => {
+      await act(async () => {
+        render("details", undefined, "panel-1", ["folder-target", "file-source"]);
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".file-row"));
+      const sourceRow = rows[1];
+      const scroll = container.querySelector(".file-listing__scroll");
+      assert.ok(sourceRow);
+      assert.ok(scroll);
+      const restoreElementFromPoint = stubElementFromPoint(scroll);
+      try {
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 28, clientY: 18 }));
+          await flushEffects();
+        });
+
+        const follower = container.querySelector<HTMLElement>(".entry-drag-follower");
+        assert.ok(follower);
+        assert.equal(follower.style.left, "40px");
+        assert.equal(follower.style.top, "30px");
+        assert.equal(follower.textContent?.includes("report.txt"), true);
+        assert.equal(follower.textContent?.includes("2"), true);
+        assert.equal(follower.querySelector(".entry-icon")?.getAttribute("data-kind"), "file");
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 28, clientY: 18, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+
+      assert.equal(container.querySelector(".entry-drag-follower"), null);
+    });
+
+    await assertTest("workspace file drag preview uses a DOM follower instead of a pseudo badge", async () => {
       const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
       assert.match(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*default\s*!important;/);
-      assert.match(css, /body\.is-entry-pointer-dragging::after[\s\S]*border:\s*1px\s+dashed/);
+      assert.match(css, /\.entry-drag-follower\s*\{/);
+      assert.match(css, /\.entry-drag-follower__name\s*\{/);
+      assert.doesNotMatch(css, /body\.is-entry-pointer-dragging::after/);
       assert.doesNotMatch(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*grabbing\s*!important;/);
     });
 
@@ -1280,6 +1420,83 @@ export const completion = (async () => {
       });
 
       assert.deepEqual(resizedColumns, [{ columnId: "name", width: "280px" }]);
+    });
+
+    await assertTest("workspace details header resize dividers are visible by default", async () => {
+      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const defaultDividerRule = css.match(/\.file-header-resizer::after\s*\{([^}]*)\}/)?.[1] ?? "";
+
+      assert.notEqual(defaultDividerRule, "");
+      assert.match(defaultDividerRule, /background:\s*[^;]+;/);
+      assert.doesNotMatch(defaultDividerRule, /background:\s*transparent\b/);
+      assert.match(css, /\.file-header-resizer:hover::after\s*\{[\s\S]*background:\s*#8a8a8a;/);
+    });
+
+    await assertTest("FileListingShell materializes detail columns as fixed pixel tracks without resizing sibling columns", async () => {
+      const mixedColumns: ColumnDefinition[] = [
+        { id: "name", label: "name", visible: true, width: "360px", align: "left" },
+        { id: "type", label: "type", visible: true, width: "1fr", align: "left" },
+        { id: "size", label: "size", visible: true, width: "1fr", align: "right" },
+        { id: "modified", label: "modified", visible: true, width: "1.2fr", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", mixedColumns);
+        await flushEffects();
+      });
+
+      const header = container.querySelector<HTMLElement>(".file-listing__header");
+      const rowGrid = container.querySelector<HTMLElement>(".file-row__grid");
+      assert.ok(header);
+      assert.ok(rowGrid);
+      assert.doesNotMatch(header.style.gridTemplateColumns, /fr/);
+      assert.doesNotMatch(rowGrid.style.gridTemplateColumns, /fr/);
+      assert.match(header.style.gridTemplateColumns, /^360px\s+\d+px\s+\d+px\s+\d+px$/);
+      assert.equal(rowGrid.style.gridTemplateColumns, header.style.gridTemplateColumns);
+      assert.equal(rowGrid.style.width, header.style.width);
+
+      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      assert.match(css, /\.file-listing--details\s+\.file-row\s*\{[^}]*width:\s*max-content;/);
+      assert.doesNotMatch(css, /\.file-row__grid\s*\{[^}]*min-width:\s*100%;/);
+    });
+
+    await assertTest("FileListingShell clamps column resizing to at least the header text width", async () => {
+      resizedColumns.length = 0;
+      const narrowColumns: ColumnDefinition[] = [
+        { id: "modified", label: "modified", visible: true, width: "160px", align: "left" }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"], "Shift", narrowColumns);
+        await flushEffects();
+      });
+
+      const resizeHandle = container.querySelector(".file-header-resizer");
+      assert.ok(resizeHandle);
+      const headerCell = resizeHandle.closest(".file-header-cell") as HTMLElement | null;
+      assert.ok(headerCell);
+      headerCell.getBoundingClientRect = () =>
+        ({
+          width: 160,
+          height: 24,
+          top: 0,
+          right: 160,
+          bottom: 24,
+          left: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({})
+        }) as DOMRect;
+
+      await act(async () => {
+        dispatchPointerLikeMouseEvent(resizeHandle, "mousedown", 160);
+        dispatchPointerLikeMouseEvent(window, "mousemove", -100);
+        dispatchPointerLikeMouseEvent(window, "mouseup", -100);
+        await flushEffects();
+      });
+
+      assert.equal(resizedColumns[0]?.columnId, "modified");
+      assert.ok(Number.parseInt(resizedColumns[0]?.width ?? "0", 10) >= 80);
     });
 
     await assertTest("FileListingShell opens the native background context menu when blank space is right-clicked", async () => {

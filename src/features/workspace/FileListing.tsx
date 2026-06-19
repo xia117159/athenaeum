@@ -37,6 +37,16 @@ type DropOperation = "copy" | "move";
 
 const ICON_VIEW_MODES: TabViewMode[] = ["extra-large-icons", "large-icons", "medium-icons", "small-icons"];
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
+const ENTRY_DRAG_FOLLOWER_OFFSET_PX = 12;
+const DETAILS_GRID_COLUMN_GAP_PX = 6;
+const DEFAULT_DETAILS_COLUMN_WIDTHS: Record<ColumnId, number> = {
+  name: 240,
+  type: 112,
+  size: 96,
+  modified: 148,
+  tags: 120,
+  location: 220
+};
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
 const DETAILS_HEADER_MENU_COLUMN_IDS: ColumnId[] = ["name", "type", "size", "modified", "tags"];
 
@@ -91,7 +101,17 @@ type ActiveEntryPointerDrag = {
   startX: number;
   startY: number;
   paths: string[];
+  previewEntry: Pick<EntryViewModel, "kind" | "path" | "extension" | "name">;
+  previewCount: number;
   dragging: boolean;
+};
+
+type EntryDragFollower = {
+  visible: boolean;
+  x: number;
+  y: number;
+  entry: Pick<EntryViewModel, "kind" | "path" | "extension" | "name"> | null;
+  count: number;
 };
 
 type MarqueeSelection = {
@@ -485,6 +505,37 @@ function estimateAutoFitColumnWidth(column: ColumnDefinition, entries: EntryView
   return `${width}px`;
 }
 
+function getColumnHeaderMinWidth(column: ColumnDefinition) {
+  const label = getLocalizedColumnLabel(column) || column.label || column.id;
+  return Math.max(48, Math.ceil(getTextMeasureUnits(label) * 10));
+}
+
+function parsePixelColumnWidth(width: string) {
+  const trimmed = width.trim();
+  if (!trimmed.endsWith("px")) {
+    return Number.NaN;
+  }
+  const parsed = Number.parseFloat(trimmed);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function getColumnPixelWidth(column: ColumnDefinition) {
+  const parsedWidth = parsePixelColumnWidth(column.width);
+  const fallbackWidth = DEFAULT_DETAILS_COLUMN_WIDTHS[column.id] ?? 120;
+  return Math.max(getColumnHeaderMinWidth(column), Math.round(Number.isFinite(parsedWidth) ? parsedWidth : fallbackWidth));
+}
+
+function getDetailsGridMetrics(columns: ColumnDefinition[]) {
+  const widths = columns.map(getColumnPixelWidth);
+  const gridTemplateColumns = widths.map((width) => `${width}px`).join(" ");
+  const totalGapWidth = Math.max(0, widths.length - 1) * DETAILS_GRID_COLUMN_GAP_PX;
+  const width = widths.reduce((sum, columnWidth) => sum + columnWidth, 0) + totalGapWidth;
+  return {
+    gridTemplateColumns,
+    width
+  };
+}
+
 export function FileListingShell({
   panelId,
   tabId,
@@ -532,7 +583,7 @@ export function FileListingShell({
   onSelect: (entry: EntryViewModel, multi: boolean) => void;
   onSelectMultiple?: (entryIds: string[]) => void;
   onSelectAll?: () => void;
-  onSelectRange?: (fromEntryId: string, toEntryId: string) => void;
+  onSelectRange?: (fromEntryId: string, toEntryId: string, orderedEntryIds: string[]) => void;
   onClearSelection?: () => void;
   onOpen: (entry: EntryViewModel) => void;
   detailsRowHeight: number;
@@ -590,6 +641,13 @@ export function FileListingShell({
     startY: 0,
     currentX: 0,
     currentY: 0
+  });
+  const [entryDragFollower, setEntryDragFollower] = useState<EntryDragFollower>({
+    visible: false,
+    x: 0,
+    y: 0,
+    entry: null,
+    count: 0
   });
   const lastClickedEntryIdRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -668,9 +726,11 @@ export function FileListingShell({
     };
   }, [onSelectAll]);
 
+  const visibleOrderedEntryIds = sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id);
+  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns);
   const gridStyle = {
-    gridTemplateColumns: visibleColumns.map((column) => column.width).join(" "),
-    minWidth: "100%"
+    gridTemplateColumns: detailsGridMetrics.gridTemplateColumns,
+    width: `${detailsGridMetrics.width}px`
   } as CSSProperties;
   const listingStyle = {
     "--details-row-height": `${detailsRowHeight}px`
@@ -815,6 +875,10 @@ export function FileListingShell({
     }
 
     cleanupEntryPointerDragRef.current?.();
+    const previewEntries = selectedEntryIds.includes(entry.id)
+      ? sortedEntries.filter((candidate) => !candidate.inlineCreate && selectedEntryIds.includes(candidate.id))
+      : [entry];
+    const previewEntry = previewEntries.find((candidate) => candidate.id === entry.id) ?? previewEntries[0] ?? entry;
     const pointerDrag: ActiveEntryPointerDrag = {
       sourcePanelId: panelId,
       sourceTabId: tabId,
@@ -823,6 +887,8 @@ export function FileListingShell({
       startX: event.clientX,
       startY: event.clientY,
       paths: getDragPaths(entry),
+      previewEntry,
+      previewCount: previewEntries.length,
       dragging: false
     };
     activeEntryPointerDragRef.current = pointerDrag;
@@ -832,8 +898,13 @@ export function FileListingShell({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerCancel);
       document.body.classList.remove("is-entry-pointer-dragging");
-      document.body.style.removeProperty("--entry-pointer-drag-x");
-      document.body.style.removeProperty("--entry-pointer-drag-y");
+      setEntryDragFollower({
+        visible: false,
+        x: 0,
+        y: 0,
+        entry: null,
+        count: 0
+      });
       cleanupEntryPointerDragRef.current = null;
     };
 
@@ -911,8 +982,13 @@ export function FileListingShell({
       }
 
       document.body.classList.add("is-entry-pointer-dragging");
-      document.body.style.setProperty("--entry-pointer-drag-x", `${moveEvent.clientX}px`);
-      document.body.style.setProperty("--entry-pointer-drag-y", `${moveEvent.clientY}px`);
+      setEntryDragFollower({
+        visible: true,
+        x: moveEvent.clientX + ENTRY_DRAG_FOLLOWER_OFFSET_PX,
+        y: moveEvent.clientY + ENTRY_DRAG_FOLLOWER_OFFSET_PX,
+        entry: activeDrag.previewEntry,
+        count: activeDrag.previewCount
+      });
       applyPointerDropTarget(
         getPointerEntryDropTarget(
           getElementFromClientPoint(moveEvent.clientX, moveEvent.clientY),
@@ -973,13 +1049,16 @@ export function FileListingShell({
           devLog("[FileListing] Shift+Click detected, from:", lastClickedEntryIdRef.current, "to:", entry.id, "onSelectRange:", onSelectRange);
           event.preventDefault();
           event.stopPropagation();
-          if (onSelectRange) {
+          const anchorIsVisible = visibleOrderedEntryIds.includes(lastClickedEntryIdRef.current);
+          const targetIsVisible = visibleOrderedEntryIds.includes(entry.id);
+          if (onSelectRange && anchorIsVisible && targetIsVisible) {
             devLog("[FileListing] Calling onSelectRange");
-            onSelectRange(lastClickedEntryIdRef.current, entry.id);
-          } else {
+            onSelectRange(lastClickedEntryIdRef.current, entry.id, visibleOrderedEntryIds);
+            return;
+          }
+          if (!onSelectRange) {
             devWarn("[FileListing] onSelectRange is undefined");
           }
-          return;
         }
 
         lastClickedEntryIdRef.current = entry.id;
@@ -1381,6 +1460,9 @@ export function FileListingShell({
   const handleListingMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     const isBlankListingTarget = () => {
+      if (target.closest(".file-listing__header")) {
+        return false;
+      }
       if (target.closest("[data-entry-path]") || target.closest(".inline-edit-input")) {
         return false;
       }
@@ -1543,10 +1625,11 @@ export function FileListingShell({
     const pixelWidth = Number.parseFloat(column.width);
     const startWidth = measuredWidth > 0 ? measuredWidth : Number.isFinite(pixelWidth) ? pixelWidth : 160;
     const startX = event.clientX;
+    const minWidth = getColumnHeaderMinWidth(column);
 
     const handleMove = (moveEvent: MouseEvent) => {
       moveEvent.preventDefault();
-      const nextWidth = Math.max(48, Math.round(startWidth + moveEvent.clientX - startX));
+      const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
       onResizeColumn(column.id, `${nextWidth}px`);
     };
 
@@ -1589,30 +1672,6 @@ export function FileListingShell({
       style={listingStyle}
       onContextMenu={handleBlankContextMenu}
     >
-      {viewMode === "details" ? (
-        <div className="file-listing__header" style={gridStyle} onContextMenu={openColumnHeaderMenu}>
-          {visibleColumns.map((column) => (
-            <div key={column.id} className={`file-header-cell file-cell--${column.align}`} onContextMenu={openColumnHeaderMenu}>
-              <button
-                type="button"
-                className={`file-header-button file-cell file-cell--header file-cell--${column.align}`}
-                onClick={() => onSort(column.id)}
-              >
-                <span>{getLocalizedColumnLabel(column)}</span>
-                <span className="file-header-button__indicator">{getSortIndicator(sort, column.id)}</span>
-              </button>
-              <span
-                className="file-header-resizer"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={`resize ${getLocalizedColumnLabel(column)} column`}
-                onMouseDown={(event) => handleColumnResizeStart(column, event)}
-              />
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       {columnMenuPosition && viewMode === "details" ? (
         <div
           ref={columnMenuRef}
@@ -1681,6 +1740,34 @@ export function FileListingShell({
         onDrop={handleListingDrop}
         onMouseDown={handleListingMouseDown}
       >
+        {viewMode === "details" ? (
+          <div
+            className="file-listing__header"
+            data-details-scroll-header="true"
+            style={gridStyle}
+            onContextMenu={openColumnHeaderMenu}
+          >
+            {visibleColumns.map((column) => (
+              <div key={column.id} className={`file-header-cell file-cell--${column.align}`} onContextMenu={openColumnHeaderMenu}>
+                <button
+                  type="button"
+                  className={`file-header-button file-cell file-cell--header file-cell--${column.align}`}
+                  onClick={() => onSort(column.id)}
+                >
+                  <span>{getLocalizedColumnLabel(column)}</span>
+                  <span className="file-header-button__indicator">{getSortIndicator(sort, column.id)}</span>
+                </button>
+                <span
+                  className="file-header-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`resize ${getLocalizedColumnLabel(column)} column`}
+                  onMouseDown={(event) => handleColumnResizeStart(column, event)}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
 
         {/* 框选矩形 */}
@@ -1702,6 +1789,27 @@ export function FileListingShell({
           />
         )}
       </div>
+      {entryDragFollower.visible && entryDragFollower.entry ? (
+        <div
+          className="entry-drag-follower"
+          style={{
+            left: entryDragFollower.x,
+            top: entryDragFollower.y
+          }}
+        >
+          <div className="entry-drag-follower__content">
+            <FileSystemIcon
+              kind={entryDragFollower.entry.kind}
+              path={entryDragFollower.entry.path}
+              extension={entryDragFollower.entry.extension}
+              size={20}
+              imageList="sys-small"
+            />
+            <span className="entry-drag-follower__name">{entryDragFollower.entry.name}</span>
+            {entryDragFollower.count > 1 ? <span className="entry-drag-follower__count">{entryDragFollower.count}</span> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
