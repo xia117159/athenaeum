@@ -206,6 +206,9 @@ export interface UiLayout {
 
 export interface UiTheme {
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
 }
 

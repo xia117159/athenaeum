@@ -1754,15 +1754,57 @@ assertTest("workspaceReducer stores a valid panel focus accent in theme settings
 
   const updated = workspaceReducer(state, {
     type: "themePanelFocusAccentSet",
-    payload: { color: "#c02f7a" }
+    payload: { color: "#c02f7a80" }
   } as unknown as WorkspaceAction);
   const rejected = workspaceReducer(updated, {
     type: "themePanelFocusAccentSet",
     payload: { color: "not-a-color" }
   } as unknown as WorkspaceAction);
 
-  assert.equal(updated.settings.model.theme.panelFocusAccent, "#c02f7a");
-  assert.equal(rejected.settings.model.theme.panelFocusAccent, "#c02f7a");
+  assert.equal(updated.settings.model.theme.panelFocusAccent, "#c02f7a80");
+  assert.equal(rejected.settings.model.theme.panelFocusAccent, "#c02f7a80");
+});
+
+assertTest("workspaceReducer stores a valid active tab background in theme settings", () => {
+  const state = createState();
+
+  const updated = workspaceReducer(state, {
+    type: "themeActiveTabBackgroundSet",
+    payload: { color: "#FFFFFF80" }
+  } as unknown as WorkspaceAction);
+  const rejected = workspaceReducer(updated, {
+    type: "themeActiveTabBackgroundSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+
+  assert.equal(updated.settings.model.theme.activeTabBackground, "#ffffff80");
+  assert.equal(rejected.settings.model.theme.activeTabBackground, "#ffffff80");
+});
+
+assertTest("workspaceReducer stores valid drag highlight colors in theme settings", () => {
+  const state = createState();
+
+  const fillUpdated = workspaceReducer(state, {
+    type: "themeDropHighlightFillSet",
+    payload: { color: "#ABCDEF80" }
+  } as unknown as WorkspaceAction);
+  const fillRejected = workspaceReducer(fillUpdated, {
+    type: "themeDropHighlightFillSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+  const borderUpdated = workspaceReducer(fillRejected, {
+    type: "themeDropHighlightBorderSet",
+    payload: { color: "#336699CC" }
+  } as unknown as WorkspaceAction);
+  const borderRejected = workspaceReducer(borderUpdated, {
+    type: "themeDropHighlightBorderSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+
+  assert.equal(fillUpdated.settings.model.theme.dropHighlightFill, "#abcdef80");
+  assert.equal(fillRejected.settings.model.theme.dropHighlightFill, "#abcdef80");
+  assert.equal(borderUpdated.settings.model.theme.dropHighlightBorder, "#336699cc");
+  assert.equal(borderRejected.settings.model.theme.dropHighlightBorder, "#336699cc");
 });
 
 assertTest("workspaceReducer stores tab minimum width with a 1px floor and no upper cap", () => {

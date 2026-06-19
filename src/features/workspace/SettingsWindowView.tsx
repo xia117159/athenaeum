@@ -230,6 +230,33 @@ export function SettingsWindowView() {
             }
           }))
         }
+        onUpdateActiveTabBackground={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              activeTabBackground: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
+        onUpdateDropHighlightFill={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              dropHighlightFill: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
+        onUpdateDropHighlightBorder={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              dropHighlightBorder: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
         onUpdateTabMinWidth={(value) =>
           updateDraftModel((model) => ({
             ...model,

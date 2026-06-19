@@ -80,6 +80,9 @@ function createProps(state: WorkspaceState) {
     onUpdateShortcut: () => undefined,
     onUpdateColorRule: () => undefined,
     onUpdatePanelFocusAccent: () => undefined,
+    onUpdateActiveTabBackground: () => undefined,
+    onUpdateDropHighlightFill: () => undefined,
+    onUpdateDropHighlightBorder: () => undefined,
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
     onUpdateContextMenuDefault: () => undefined,
@@ -378,15 +381,29 @@ export const completion = (async () => {
 
     await assertTest("SettingsSurface exposes appearance, menu, file-list, color, and tag pages without per-shortcut cards", async () => {
       const accentUpdates: string[] = [];
+      const activeTabBackgroundUpdates: string[] = [];
+      const dropFillUpdates: string[] = [];
+      const dropBorderUpdates: string[] = [];
       const rowHeightUpdates: number[] = [];
       const menuUpdates: string[] = [];
       const colorUpdates: string[] = [];
 
       await act(async () => {
+        const appearanceState = createSettingsState("appearance");
+        appearanceState.settings.model.theme = {
+          ...appearanceState.settings.model.theme,
+          panelFocusAccent: "#c02f7a80",
+          activeTabBackground: "#ffffffcc",
+          dropHighlightFill: "#abcdef80",
+          dropHighlightBorder: "#33669940"
+        };
         root.render(
           React.createElement(SettingsSurface, {
-            ...createProps(createSettingsState("appearance")),
+            ...createProps(appearanceState),
             onUpdatePanelFocusAccent: (color: string) => accentUpdates.push(color),
+            onUpdateActiveTabBackground: (color: string) => activeTabBackgroundUpdates.push(color),
+            onUpdateDropHighlightFill: (color: string) => dropFillUpdates.push(color),
+            onUpdateDropHighlightBorder: (color: string) => dropBorderUpdates.push(color),
             onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value),
             onUpdateContextMenuDefault: (value: "native" | "custom") => menuUpdates.push(value),
             onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
@@ -396,13 +413,58 @@ export const completion = (async () => {
       });
 
       const accentInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent']");
+      const accentOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent-opacity']");
       assert.ok(accentInput);
+      assert.ok(accentOpacityInput);
+      assert.equal(accentInput.value, "#c02f7a");
+      assert.equal(accentOpacityInput.value, "50");
       await act(async () => {
-        accentInput!.value = "#c02f7a";
+        accentInput!.value = "#112233";
         accentInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        accentOpacityInput!.value = "25";
+        accentOpacityInput!.dispatchEvent(new Event("input", { bubbles: true }));
         await flushEffects();
       });
-      assert.deepEqual(accentUpdates, ["#c02f7a"]);
+      assert.deepEqual(accentUpdates, ["#11223380", "#c02f7a40"]);
+
+      const activeTabBackgroundInput = container.querySelector<HTMLInputElement>("[data-setting-id='active-tab-background']");
+      const activeTabBackgroundOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='active-tab-background-opacity']");
+      assert.ok(activeTabBackgroundInput);
+      assert.ok(activeTabBackgroundOpacityInput);
+      assert.equal(activeTabBackgroundInput.value, "#ffffff");
+      assert.equal(activeTabBackgroundOpacityInput.value, "80");
+      await act(async () => {
+        activeTabBackgroundInput!.value = "#ddeeff";
+        activeTabBackgroundInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        activeTabBackgroundOpacityInput!.value = "40";
+        activeTabBackgroundOpacityInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(activeTabBackgroundUpdates, ["#ddeeffcc", "#ffffff66"]);
+
+      const dropFillInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-fill']");
+      const dropFillOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-fill-opacity']");
+      const dropBorderInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border']");
+      const dropBorderOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border-opacity']");
+      assert.ok(dropFillInput);
+      assert.ok(dropFillOpacityInput);
+      assert.ok(dropBorderInput);
+      assert.ok(dropBorderOpacityInput);
+      assert.equal(dropFillInput.value, "#abcdef");
+      assert.equal(dropFillOpacityInput.value, "50");
+      assert.equal(dropBorderInput.value, "#336699");
+      assert.equal(dropBorderOpacityInput.value, "25");
+      await act(async () => {
+        dropFillInput!.value = "#123456";
+        dropFillInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        dropBorderOpacityInput!.value = "75";
+        dropBorderOpacityInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        dropBorderInput!.value = "#654321";
+        dropBorderInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(dropFillUpdates, ["#12345680"]);
+      assert.deepEqual(dropBorderUpdates, ["#336699bf", "#65432140"]);
 
       await act(async () => {
         root.render(

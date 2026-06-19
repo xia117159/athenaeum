@@ -47,6 +47,9 @@ function createSettingsSnapshot(overrides: Partial<BackendSettingsSnapshot> = {}
     detailsRowHeight: 36,
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#0f6cbd",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 96
     },
     layout: {
@@ -179,17 +182,37 @@ export const workspaceSettingsGatewayTests = (async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return createSettingsSnapshot({ theme: { panelFocusAccent: "#c02f7a", tabMinWidth: 132 } }) as T;
+      return createSettingsSnapshot({
+        theme: {
+          panelFocusAccent: "#c02f7a80",
+          activeTabBackground: "#ffffffcc",
+          dropHighlightFill: "#abcdef66",
+          dropHighlightBorder: "#336699",
+          tabMinWidth: 132
+        }
+      }) as T;
     };
 
-    await saveWorkspaceTheme({ panelFocusAccent: "#c02f7a", tabMinWidth: 132 }, { invoke, runtimeHost });
+    await saveWorkspaceTheme(
+      {
+        panelFocusAccent: "#c02f7a80",
+        activeTabBackground: "#ffffffcc",
+        dropHighlightFill: "#abcdef66",
+        dropHighlightBorder: "#336699",
+        tabMinWidth: 132
+      },
+      { invoke, runtimeHost }
+    );
 
     assert.deepEqual(invocations, [
       {
         command: "save_ui_theme",
         args: {
           theme: {
-            panelFocusAccent: "#c02f7a",
+            panelFocusAccent: "#c02f7a80",
+            activeTabBackground: "#ffffffcc",
+            dropHighlightFill: "#abcdef66",
+            dropHighlightBorder: "#336699",
             tabMinWidth: 132
           }
         }
@@ -201,7 +224,15 @@ export const workspaceSettingsGatewayTests = (async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return createSettingsSnapshot({ theme: { panelFocusAccent: "#c02f7a", tabMinWidth: 4096 } }) as T;
+      return createSettingsSnapshot({
+        theme: {
+          panelFocusAccent: "#c02f7a",
+          activeTabBackground: "#ffffff80",
+          dropHighlightFill: "#abcdef",
+          dropHighlightBorder: "#336699",
+          tabMinWidth: 4096
+        }
+      }) as T;
     };
     const model: SettingsModel = {
       shortcuts: [
@@ -230,6 +261,9 @@ export const workspaceSettingsGatewayTests = (async () => {
       },
       theme: {
         panelFocusAccent: "#c02f7a",
+        activeTabBackground: "#ffffff80",
+        dropHighlightFill: "#abcdef",
+        dropHighlightBorder: "#336699",
         tabMinWidth: 4096
       }
     };
@@ -259,6 +293,9 @@ export const workspaceSettingsGatewayTests = (async () => {
             },
             theme: {
               panelFocusAccent: "#c02f7a",
+              activeTabBackground: "#ffffff80",
+              dropHighlightFill: "#abcdef",
+              dropHighlightBorder: "#336699",
               tabMinWidth: 4096
             }
           }
@@ -302,6 +339,9 @@ export const workspaceSettingsGatewayTests = (async () => {
     const unlisten = await listenWorkspaceSettingsChanged(
       (payload) => {
         assert.equal(payload.settingsModel.theme.tabMinWidth, 4096);
+        assert.equal(payload.settingsModel.theme.activeTabBackground, "#ffffff80");
+        assert.equal(payload.settingsModel.theme.dropHighlightFill, "#0f6cbd");
+        assert.equal(payload.settingsModel.theme.dropHighlightBorder, "#0f6cbd");
         assert.equal(payload.settingsModel.shortcuts.find((shortcut) => shortcut.id === "navigate-up")?.binding, "Alt+Up");
         assert.equal(payload.navigationItems.length, 0);
       },
@@ -312,7 +352,13 @@ export const workspaceSettingsGatewayTests = (async () => {
           handler({
             payload: createSettingsSnapshot({
               shortcuts: [{ id: "navigate-up", action: "navigate-up", accelerator: "Alt+Up", scope: "panel" }],
-              theme: { panelFocusAccent: "#0f6cbd", tabMinWidth: 4096 }
+              theme: {
+                panelFocusAccent: "#0f6cbd",
+                activeTabBackground: "#ffffff80",
+                dropHighlightFill: "#0f6cbd",
+                dropHighlightBorder: "#0f6cbd",
+                tabMinWidth: 4096
+              }
             }) as unknown as T
           });
           return () => listened.push("unlisten");

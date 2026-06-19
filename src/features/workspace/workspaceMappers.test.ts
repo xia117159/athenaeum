@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { normalizeLocationPath } from "./mockData";
 import {
+  DEFAULT_THEME,
   createTabFromSnapshot,
   mapDirectoryListingToSnapshot,
   mapFavoriteCollections,
-  mapWorkspaceBootstrap
+  mapSettingsModel,
+  mapWorkspaceBootstrap,
+  normalizeSettingsModel
 } from "./workspaceMappers";
 
 function assertTest(name: string, fn: () => void) {
@@ -16,6 +19,77 @@ function assertTest(name: string, fn: () => void) {
     throw error;
   }
 }
+
+assertTest("DEFAULT_THEME includes configurable drag highlight colors", () => {
+  assert.deepEqual(DEFAULT_THEME, {
+    panelFocusAccent: "#0f6cbd",
+    activeTabBackground: "#ffffff",
+    dropHighlightFill: "#0f6cbd",
+    dropHighlightBorder: "#0f6cbd",
+    tabMinWidth: 96
+  });
+});
+
+assertTest("mapSettingsModel normalizes configurable drag highlight colors", () => {
+  const model = mapSettingsModel({
+    bookmarks: [],
+    hotlist: [],
+    navigationItems: [],
+    tagDefinitions: [],
+    entryTags: [],
+    colorRules: [],
+    shortcuts: [],
+    detailsRowHeight: 24,
+    contextMenu: {
+      defaultMenu: "native"
+    },
+    theme: {
+      panelFocusAccent: "#C02F7A80",
+      activeTabBackground: "#FFFFFFCC",
+      dropHighlightFill: "#ABCDEF66",
+      dropHighlightBorder: "not-a-color",
+      tabMinWidth: 96
+    },
+    layout: {
+      layoutMode: "single",
+      panelProportions: [1],
+      sidebarWidth: 280,
+      showTree: true,
+      showSearch: false
+    },
+    remoteProfiles: []
+  });
+
+  assert.equal(model.theme.panelFocusAccent, "#c02f7a80");
+  assert.equal(model.theme.activeTabBackground, "#ffffffcc");
+  assert.equal(model.theme.dropHighlightFill, "#abcdef66");
+  assert.equal(model.theme.dropHighlightBorder, "#0f6cbd");
+});
+
+assertTest("normalizeSettingsModel normalizes configurable drag highlight colors", () => {
+  const model = normalizeSettingsModel({
+    shortcuts: [],
+    colorRules: [],
+    tagRules: [],
+    columns: [],
+    detailsRowHeight: 24,
+    contextMenu: {
+      defaultMenu: "native"
+    },
+    theme: {
+      panelFocusAccent: "#C02F7A",
+      activeTabBackground: "not-a-color",
+      dropHighlightFill: "not-a-color",
+      dropHighlightBorder: "#ABC12399",
+      tabMinWidth: 96
+    }
+  });
+
+  assert.equal(model.theme.panelFocusAccent, "#c02f7a");
+  assert.equal(model.theme.activeTabBackground, "#ffffff");
+  assert.equal(model.theme.dropHighlightFill, "#0f6cbd");
+  assert.equal(model.theme.dropHighlightBorder, "#abc12399");
+});
 
 assertTest("mapDirectoryListingToSnapshot translates backend entries into rich listing cells", () => {
   const snapshot = mapDirectoryListingToSnapshot({
@@ -151,6 +225,9 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
       },
       theme: {
         panelFocusAccent: "#c02f7a",
+        activeTabBackground: "#ffffff",
+        dropHighlightFill: "#0f6cbd",
+        dropHighlightBorder: "#0f6cbd",
         tabMinWidth: 128
       },
       layout: {
@@ -192,6 +269,9 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
   assert.equal(bootstrap.settingsModel.detailsRowHeight, 44);
   assert.equal(bootstrap.settingsModel.contextMenu.defaultMenu, "custom");
   assert.equal(bootstrap.settingsModel.theme.panelFocusAccent, "#c02f7a");
+  assert.equal(bootstrap.settingsModel.theme.activeTabBackground, "#ffffff");
+  assert.equal(bootstrap.settingsModel.theme.dropHighlightFill, "#0f6cbd");
+  assert.equal(bootstrap.settingsModel.theme.dropHighlightBorder, "#0f6cbd");
   assert.equal(bootstrap.settingsModel.theme.tabMinWidth, 128);
   assert.ok(bootstrap.panels["panel-1"].tabs[0]);
 });
@@ -220,6 +300,9 @@ assertTest("mapWorkspaceBootstrap preserves configured drag move shortcut bindin
       detailsRowHeight: 24,
       theme: {
         panelFocusAccent: "#0f6cbd",
+        activeTabBackground: "#ffffff",
+        dropHighlightFill: "#0f6cbd",
+        dropHighlightBorder: "#0f6cbd",
         tabMinWidth: 96
       },
       layout: {
@@ -284,6 +367,9 @@ assertTest("mapWorkspaceBootstrap gives panels independent snapshot and entry re
       detailsRowHeight: 24,
       theme: {
         panelFocusAccent: "#0f6cbd",
+        activeTabBackground: "#ffffff",
+        dropHighlightFill: "#0f6cbd",
+        dropHighlightBorder: "#0f6cbd",
         tabMinWidth: 96
       },
       layout: {
@@ -345,6 +431,9 @@ assertTest("mapFavoriteCollections converts settings snapshot collections into b
     detailsRowHeight: 36,
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#0f6cbd",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 96
     },
     layout: {

@@ -151,6 +151,9 @@ export type WorkspaceAction =
   | { type: "detailsRowHeightSet"; payload: { value: number } }
   | { type: "contextMenuDefaultSet"; payload: { value: SettingsModel["contextMenu"]["defaultMenu"] } }
   | { type: "themePanelFocusAccentSet"; payload: { color: string } }
+  | { type: "themeActiveTabBackgroundSet"; payload: { color: string } }
+  | { type: "themeDropHighlightFillSet"; payload: { color: string } }
+  | { type: "themeDropHighlightBorderSet"; payload: { color: string } }
   | { type: "themeTabMinWidthSet"; payload: { value: number } }
   | { type: "settingsModelApplied"; payload: { model: SettingsModel; section?: SettingsSection } }
   | {
@@ -2258,6 +2261,42 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return updateSettingsModel(state, "theme", (theme) => ({
           ...theme,
           panelFocusAccent: nextColor
+        }));
+      }
+
+    case "themeActiveTabBackgroundSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          activeTabBackground: nextColor
+        }));
+      }
+
+    case "themeDropHighlightFillSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          dropHighlightFill: nextColor
+        }));
+      }
+
+    case "themeDropHighlightBorderSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          dropHighlightBorder: nextColor
         }));
       }
 

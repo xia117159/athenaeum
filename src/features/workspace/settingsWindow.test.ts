@@ -163,6 +163,12 @@ export const completion = (async () => {
     assert.equal(settingsWindowSource.includes("onCancel"), true);
     assert.equal(settingsWindowSource.includes("onUpdateTagRule"), false);
     assert.equal(settingsWindowSource.includes("onToggleColumn"), false);
+    assert.equal(settingsWindowSource.includes("onUpdateActiveTabBackground"), true);
+    assert.equal(settingsWindowSource.includes("activeTabBackground: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("onUpdateDropHighlightFill"), true);
+    assert.equal(settingsWindowSource.includes("onUpdateDropHighlightBorder"), true);
+    assert.equal(settingsWindowSource.includes("dropHighlightFill: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("dropHighlightBorder: normalizeThemeAccentColor(color)"), true);
 
     const remoteUpsertsIndex = settingsWindowSource.indexOf("await applyRemoteProfileUpserts()");
     const settingsModelIndex = settingsWindowSource.indexOf("await actions.applySettingsModel");

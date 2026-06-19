@@ -13,12 +13,13 @@ function assertTest(name: string, fn: () => void) {
 }
 
 const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
 const panelChromeSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspacePanelChrome.tsx"), "utf8");
 const treeBranchSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceTreeBranch.tsx"), "utf8");
 
 function getCssBlock(selector: string) {
-  const blocks = Array.from(css.matchAll(/([^{}]+)\{([^}]*)\}/gm));
+  const blocks = Array.from(cssWithoutComments.matchAll(/([^{}]+)\{([^}]*)\}/gm));
   const matches = blocks.filter(([, selectorList]) =>
     selectorList
       .split(",")
@@ -66,6 +67,42 @@ assertTest("workspace tabs and breadcrumbs match the compact Windows target chro
   assertDeclaration(getCssBlock(".panel-breadcrumbs__segment--future"), "color", "#9ca3af");
   assertDeclaration(getCssBlock(".tab-strip__tab"), "min-width", "var\\(--tab-min-width, 96px\\)");
   assertNoDeclaration(getCssBlock(".tab-strip__tab"), "max-width");
+});
+
+assertTest("focused panel active tab uses the configurable focus accent", () => {
+  // The active-tab underline of the currently focused panel must follow the
+  // user-configured 焦点强调色 (--panel-focus-accent), not the fixed theme accent.
+  assertDeclaration(
+    getCssBlock(".panel-surface.is-focused .tab-strip__tab.is-active"),
+    "box-shadow",
+    "inset 0 -2px 0 var\\(--panel-focus-accent, var\\(--accent\\)\\)"
+  );
+  assertDeclaration(
+    getCssBlock(".panel-surface.is-focused .tab-strip__tab.is-active"),
+    "background",
+    "var\\(--active-tab-background, #ffffff\\)"
+  );
+  assert.equal(workspaceViewSource.includes("activeTabBackground={state.settings.model.theme.activeTabBackground}"), true);
+  assert.equal(workspaceViewSource.includes("\"--active-tab-background\": activeTabBackground"), true);
+});
+
+assertTest("drop target highlights use configurable theme variables", () => {
+  const fillMix = "color-mix\\(in srgb, var\\(--drop-highlight-fill, #0f6cbd\\) 12%, transparent\\)";
+  const borderMix = "color-mix\\(in srgb, var\\(--drop-highlight-border, #0f6cbd\\) 55%, transparent\\)";
+
+  assert.equal(workspaceViewSource.includes("dropHighlightFill={state.settings.model.theme.dropHighlightFill}"), true);
+  assert.equal(workspaceViewSource.includes("dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}"), true);
+  assert.equal(workspaceViewSource.includes("\"--drop-highlight-fill\": dropHighlightFill"), true);
+  assert.equal(workspaceViewSource.includes("\"--drop-highlight-border\": dropHighlightBorder"), true);
+
+  assertDeclaration(getCssBlock(".file-listing__scroll.is-drop-target"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-listing:has(> .file-listing__scroll.is-drop-target)::after"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-listing:has(> .file-listing__scroll.is-drop-target)::after"), "box-shadow", `inset 0 0 0 2px ${borderMix}`);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "border-color", borderMix);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "box-shadow", `inset 0 0 0 1px ${borderMix}`);
+  assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "background", fillMix);
+  assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "border-color", borderMix);
 });
 
 assertTest("workspace view no longer renders a bottom status bar", () => {

@@ -28,6 +28,9 @@ export type SettingsSurfaceProps = {
   onUpdateShortcut: (id: string, binding: string) => void;
   onUpdateColorRule: (id: string, color: string) => void;
   onUpdatePanelFocusAccent: (color: string) => void;
+  onUpdateActiveTabBackground: (color: string) => void;
+  onUpdateDropHighlightFill: (color: string) => void;
+  onUpdateDropHighlightBorder: (color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
@@ -192,6 +195,9 @@ export function SettingsSurface({
   onUpdateShortcut,
   onUpdateColorRule,
   onUpdatePanelFocusAccent,
+  onUpdateActiveTabBackground,
+  onUpdateDropHighlightFill,
+  onUpdateDropHighlightBorder,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
   onUpdateContextMenuDefault,
@@ -301,9 +307,15 @@ export function SettingsSurface({
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}
+              activeTabBackground={settings.model.theme.activeTabBackground}
+              dropHighlightFill={settings.model.theme.dropHighlightFill}
+              dropHighlightBorder={settings.model.theme.dropHighlightBorder}
               tabMinWidth={settings.model.theme.tabMinWidth}
               disabled={controlsDisabled}
               onUpdatePanelFocusAccent={onUpdatePanelFocusAccent}
+              onUpdateActiveTabBackground={onUpdateActiveTabBackground}
+              onUpdateDropHighlightFill={onUpdateDropHighlightFill}
+              onUpdateDropHighlightBorder={onUpdateDropHighlightBorder}
               onUpdateTabMinWidth={onUpdateTabMinWidth}
             />
           ) : settings.section === "color-rules" ? (
@@ -747,17 +759,118 @@ function MenuMousePage({
   );
 }
 
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const HEX_BASE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeRenderableThemeColor(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (HEX_COLOR_PATTERN.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return fallback;
+}
+
+function clampOpacityPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function getThemeColorBase(value: string, fallback: string) {
+  return normalizeRenderableThemeColor(value, fallback).slice(0, 7);
+}
+
+function getThemeColorOpacityPercent(value: string, fallback: string) {
+  const normalized = normalizeRenderableThemeColor(value, fallback);
+  if (normalized.length !== 9) {
+    return 100;
+  }
+  return clampOpacityPercent((Number.parseInt(normalized.slice(7, 9), 16) / 255) * 100);
+}
+
+function formatThemeColor(baseColor: string, opacityPercent: number) {
+  const normalizedBase = HEX_BASE_COLOR_PATTERN.test(baseColor.trim()) ? baseColor.trim().toLowerCase() : "#0f6cbd";
+  const alpha = Math.round((clampOpacityPercent(opacityPercent) / 100) * 255)
+    .toString(16)
+    .padStart(2, "0");
+  return `${normalizedBase}${alpha}`;
+}
+
+function ThemeColorControl({
+  value,
+  fallback,
+  settingId,
+  disabled,
+  onUpdate
+}: {
+  value: string;
+  fallback: string;
+  settingId: string;
+  disabled: boolean;
+  onUpdate: (color: string) => void;
+}) {
+  const colorBase = getThemeColorBase(value, fallback);
+  const opacity = getThemeColorOpacityPercent(value, fallback);
+
+  return (
+    <div className="theme-color-control">
+      <input
+        type="color"
+        value={colorBase}
+        data-setting-id={settingId}
+        onInput={(event) => onUpdate(formatThemeColor(event.currentTarget.value, opacity))}
+        disabled={disabled}
+      />
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={String(opacity)}
+        data-setting-id={`${settingId}-opacity`}
+        onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
+        disabled={disabled}
+      />
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step={1}
+        value={String(opacity)}
+        data-setting-id={`${settingId}-opacity-value`}
+        onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
+        disabled={disabled}
+      />
+      <span>%</span>
+      <span className="theme-color-control__value">{normalizeRenderableThemeColor(value, fallback)}</span>
+    </div>
+  );
+}
+
 function AppearancePage({
   panelFocusAccent,
+  activeTabBackground,
+  dropHighlightFill,
+  dropHighlightBorder,
   tabMinWidth,
   disabled,
   onUpdatePanelFocusAccent,
+  onUpdateActiveTabBackground,
+  onUpdateDropHighlightFill,
+  onUpdateDropHighlightBorder,
   onUpdateTabMinWidth
 }: {
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
   disabled: boolean;
   onUpdatePanelFocusAccent: (color: string) => void;
+  onUpdateActiveTabBackground: (color: string) => void;
+  onUpdateDropHighlightFill: (color: string) => void;
+  onUpdateDropHighlightBorder: (color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
 }) {
   return (
@@ -774,16 +887,52 @@ function AppearancePage({
             <strong>焦点强调色</strong>
             <span>用于活动面板顶部强调线。</span>
           </div>
-          <label className="settings-control-inline">
-            <input
-              type="color"
-              value={panelFocusAccent}
-              data-setting-id="panel-focus-accent"
-              onInput={(event) => onUpdatePanelFocusAccent(event.currentTarget.value)}
-              disabled={disabled}
-            />
-            <span>{panelFocusAccent}</span>
-          </label>
+          <ThemeColorControl
+            value={panelFocusAccent}
+            fallback="#0f6cbd"
+            settingId="panel-focus-accent"
+            disabled={disabled}
+            onUpdate={onUpdatePanelFocusAccent}
+          />
+        </div>
+        <div className="settings-row">
+          <div>
+            <strong>活动选项卡背景色</strong>
+            <span>与焦点强调色配对，用于当前焦点面板的活动选项卡背景。</span>
+          </div>
+          <ThemeColorControl
+            value={activeTabBackground}
+            fallback="#ffffff"
+            settingId="active-tab-background"
+            disabled={disabled}
+            onUpdate={onUpdateActiveTabBackground}
+          />
+        </div>
+        <div className="settings-row">
+          <div>
+            <strong>拖拽填充色</strong>
+            <span>用于列表、文件夹行和标签页的拖拽高亮底色。</span>
+          </div>
+          <ThemeColorControl
+            value={dropHighlightFill}
+            fallback="#0f6cbd"
+            settingId="drop-highlight-fill"
+            disabled={disabled}
+            onUpdate={onUpdateDropHighlightFill}
+          />
+        </div>
+        <div className="settings-row">
+          <div>
+            <strong>拖拽描边色</strong>
+            <span>用于拖拽目标边框和强调线。</span>
+          </div>
+          <ThemeColorControl
+            value={dropHighlightBorder}
+            fallback="#0f6cbd"
+            settingId="drop-highlight-border"
+            disabled={disabled}
+            onUpdate={onUpdateDropHighlightBorder}
+          />
         </div>
       </section>
 

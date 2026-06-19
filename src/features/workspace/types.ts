@@ -209,6 +209,9 @@ export interface NavigationState {
 
 export interface ThemeSettings {
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
 }
 

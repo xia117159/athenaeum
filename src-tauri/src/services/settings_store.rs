@@ -154,20 +154,32 @@ fn normalize_tab_min_width(tab_min_width: u32) -> u32 {
     tab_min_width.max(1)
 }
 
-fn normalize_theme(mut theme: UiTheme) -> UiTheme {
-    let value = theme.panel_focus_accent.trim();
-    let valid_hex = value.len() == 7
-        && value.starts_with('#')
-        && value
+fn normalize_hex_color(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    let valid_hex = (trimmed.len() == 7 || trimmed.len() == 9)
+        && trimmed.starts_with('#')
+        && trimmed
             .chars()
             .skip(1)
             .all(|character| character.is_ascii_hexdigit());
 
-    theme.panel_focus_accent = if valid_hex {
-        value.to_ascii_lowercase()
+    if valid_hex {
+        trimmed.to_ascii_lowercase()
     } else {
-        UiTheme::default().panel_focus_accent
-    };
+        fallback.to_string()
+    }
+}
+
+fn normalize_theme(mut theme: UiTheme) -> UiTheme {
+    let defaults = UiTheme::default();
+    theme.panel_focus_accent =
+        normalize_hex_color(&theme.panel_focus_accent, &defaults.panel_focus_accent);
+    theme.active_tab_background =
+        normalize_hex_color(&theme.active_tab_background, &defaults.active_tab_background);
+    theme.drop_highlight_fill =
+        normalize_hex_color(&theme.drop_highlight_fill, &defaults.drop_highlight_fill);
+    theme.drop_highlight_border =
+        normalize_hex_color(&theme.drop_highlight_border, &defaults.drop_highlight_border);
     theme.tab_min_width = normalize_tab_min_width(theme.tab_min_width);
     theme
 }
@@ -286,14 +298,43 @@ mod tests {
         let mut store = SettingsStore::load_default();
         store.attach_path(file_path.clone());
         store.set_theme(UiTheme {
-            panel_focus_accent: "#c02f7a".into(),
+            panel_focus_accent: "#c02f7a80".into(),
+            active_tab_background: "#ffffffcc".into(),
+            drop_highlight_fill: "#1f9d5566".into(),
+            drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
         });
         store.persist().expect("failed to persist settings");
 
         let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
-        assert_eq!(reloaded.theme.panel_focus_accent, "#c02f7a");
+        assert_eq!(reloaded.theme.panel_focus_accent, "#c02f7a80");
+        assert_eq!(reloaded.theme.active_tab_background, "#ffffffcc");
+        assert_eq!(reloaded.theme.drop_highlight_fill, "#1f9d5566");
+        assert_eq!(reloaded.theme.drop_highlight_border, "#b91c1c40");
         assert_eq!(reloaded.theme.tab_min_width, 132);
+    }
+
+    #[test]
+    fn theme_normalizes_invalid_drop_highlight_colors_to_defaults() {
+        let mut store = SettingsStore::load_default();
+        store.set_theme(UiTheme {
+            panel_focus_accent: "#0f6cbd".into(),
+            active_tab_background: "#12345".into(),
+            drop_highlight_fill: "not-a-color".into(),
+            drop_highlight_border: "#ZZZZZZ".into(),
+            tab_min_width: 96,
+        });
+
+        let defaults = UiTheme::default();
+        assert_eq!(
+            store.theme.active_tab_background,
+            defaults.active_tab_background
+        );
+        assert_eq!(store.theme.drop_highlight_fill, defaults.drop_highlight_fill);
+        assert_eq!(
+            store.theme.drop_highlight_border,
+            defaults.drop_highlight_border
+        );
     }
 
     #[test]
@@ -303,12 +344,14 @@ mod tests {
         store.set_theme(UiTheme {
             panel_focus_accent: "#0f6cbd".into(),
             tab_min_width: 0,
+            ..UiTheme::default()
         });
         assert_eq!(store.theme.tab_min_width, 1);
 
         store.set_theme(UiTheme {
             panel_focus_accent: "#0f6cbd".into(),
             tab_min_width: 4096,
+            ..UiTheme::default()
         });
         assert_eq!(store.theme.tab_min_width, 4096);
     }

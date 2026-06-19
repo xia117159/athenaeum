@@ -2707,6 +2707,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "tagRuleUpdated", payload: { id, quickFilter } }),
       updatePanelFocusAccent: (color: string) =>
         dispatch({ type: "themePanelFocusAccentSet", payload: { color } }),
+      updateActiveTabBackground: (color: string) =>
+        dispatch({ type: "themeActiveTabBackgroundSet", payload: { color } }),
+      updateDropHighlightFill: (color: string) =>
+        dispatch({ type: "themeDropHighlightFillSet", payload: { color } }),
+      updateDropHighlightBorder: (color: string) =>
+        dispatch({ type: "themeDropHighlightBorderSet", payload: { color } }),
       updateTabMinWidth: (value: number) =>
         dispatch({ type: "themeTabMinWidthSet", payload: { value } }),
       toggleColumnVisibility: (id: string) => dispatch({ type: "columnVisibilityToggled", payload: { id } }),

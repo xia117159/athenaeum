@@ -828,6 +828,9 @@ function PanelLayout({
       contextMenuDefault={state.settings.model.contextMenu.defaultMenu}
       contextMenuToggleBinding={getShortcutBinding(state.settings.model.shortcuts, "context-menu-toggle")}
       panelFocusAccent={state.settings.model.theme.panelFocusAccent}
+      activeTabBackground={state.settings.model.theme.activeTabBackground}
+      dropHighlightFill={state.settings.model.theme.dropHighlightFill}
+      dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       navigation={state.navigation}
       actions={actions}
@@ -938,6 +941,9 @@ function PanelSurface({
   contextMenuDefault,
   contextMenuToggleBinding,
   panelFocusAccent,
+  activeTabBackground,
+  dropHighlightFill,
+  dropHighlightBorder,
   tabMinWidth,
   navigation,
   actions
@@ -952,6 +958,9 @@ function PanelSurface({
   contextMenuDefault: ContextMenuDefault;
   contextMenuToggleBinding: string;
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
   navigation: WorkspaceState["navigation"];
   actions: WorkspaceActions;
@@ -992,7 +1001,15 @@ function PanelSurface({
   return (
     <section
       className={`panel-surface${isFocused ? " is-focused" : ""}`}
-      style={{ "--panel-focus-accent": panelFocusAccent, "--tab-min-width": `${tabMinWidth}px` } as CSSProperties}
+      style={
+        {
+          "--panel-focus-accent": panelFocusAccent,
+          "--active-tab-background": activeTabBackground,
+          "--drop-highlight-fill": dropHighlightFill,
+          "--drop-highlight-border": dropHighlightBorder,
+          "--tab-min-width": `${tabMinWidth}px`
+        } as CSSProperties
+      }
       onMouseDown={() => actions.focusPanel(panel.id)}
     >
       <WorkspacePanelChrome

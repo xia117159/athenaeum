@@ -151,6 +151,9 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
 export const DEFAULT_DETAILS_ROW_HEIGHT = 24;
 export const DEFAULT_THEME: SettingsModel["theme"] = {
   panelFocusAccent: "#0f6cbd",
+  activeTabBackground: "#ffffff",
+  dropHighlightFill: "#0f6cbd",
+  dropHighlightBorder: "#0f6cbd",
   tabMinWidth: 96
 };
 export const DEFAULT_CONTEXT_MENU_SETTINGS: SettingsModel["contextMenu"] = {
@@ -193,9 +196,9 @@ export function normalizeTabMinWidth(value?: number | null) {
   return Math.max(1, Math.round(value));
 }
 
-export function normalizeThemeAccentColor(value?: string | null) {
-  if (!value || !/^#[0-9a-fA-F]{6}$/.test(value.trim())) {
-    return DEFAULT_THEME.panelFocusAccent;
+export function normalizeThemeAccentColor(value?: string | null, fallback = DEFAULT_THEME.panelFocusAccent) {
+  if (!value || !/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value.trim())) {
+    return fallback;
   }
 
   return value.trim().toLowerCase();
@@ -657,6 +660,9 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settings.theme?.panelFocusAccent),
+      activeTabBackground: normalizeThemeAccentColor(settings.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+      dropHighlightFill: normalizeThemeAccentColor(settings.theme?.dropHighlightFill),
+      dropHighlightBorder: normalizeThemeAccentColor(settings.theme?.dropHighlightBorder),
       tabMinWidth: normalizeTabMinWidth(settings.theme?.tabMinWidth)
     }
   };
@@ -684,6 +690,9 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settingsModel.theme?.panelFocusAccent),
+      activeTabBackground: normalizeThemeAccentColor(settingsModel.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+      dropHighlightFill: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightFill),
+      dropHighlightBorder: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightBorder),
       tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)
     }
   };

@@ -383,6 +383,12 @@ impl UiLayout {
 #[serde(rename_all = "camelCase")]
 pub struct UiTheme {
     pub panel_focus_accent: String,
+    #[serde(default = "default_active_tab_background")]
+    pub active_tab_background: String,
+    #[serde(default = "default_drop_highlight_color")]
+    pub drop_highlight_fill: String,
+    #[serde(default = "default_drop_highlight_color")]
+    pub drop_highlight_border: String,
     #[serde(default = "default_tab_min_width")]
     pub tab_min_width: u32,
 }
@@ -391,9 +397,20 @@ impl Default for UiTheme {
     fn default() -> Self {
         Self {
             panel_focus_accent: "#0f6cbd".into(),
+            active_tab_background: default_active_tab_background(),
+            drop_highlight_fill: default_drop_highlight_color(),
+            drop_highlight_border: default_drop_highlight_color(),
             tab_min_width: default_tab_min_width(),
         }
     }
+}
+
+fn default_active_tab_background() -> String {
+    "#ffffff".into()
+}
+
+fn default_drop_highlight_color() -> String {
+    "#0f6cbd".into()
 }
 
 fn default_tab_min_width() -> u32 {
@@ -1227,13 +1244,19 @@ mod tests {
     #[test]
     fn ui_theme_contract_uses_camel_case_focus_accent() {
         let theme = UiTheme {
-            panel_focus_accent: "#c02f7a".into(),
+            panel_focus_accent: "#c02f7a80".into(),
+            active_tab_background: "#ffffffcc".into(),
+            drop_highlight_fill: "#1f9d5566".into(),
+            drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
         };
 
         let value = serde_json::to_value(&theme).expect("theme should serialize");
 
-        assert_eq!(value["panelFocusAccent"], "#c02f7a");
+        assert_eq!(value["panelFocusAccent"], "#c02f7a80");
+        assert_eq!(value["activeTabBackground"], "#ffffffcc");
+        assert_eq!(value["dropHighlightFill"], "#1f9d5566");
+        assert_eq!(value["dropHighlightBorder"], "#b91c1c40");
         assert_eq!(value["tabMinWidth"], 132);
     }
 

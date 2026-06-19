@@ -62,6 +62,9 @@ export function toBackendColorRule(rule: SettingsModel["colorRules"][number], in
 export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
   return {
     panelFocusAccent: normalizeThemeAccentColor(theme.panelFocusAccent),
+    activeTabBackground: normalizeThemeAccentColor(theme.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+    dropHighlightFill: normalizeThemeAccentColor(theme.dropHighlightFill),
+    dropHighlightBorder: normalizeThemeAccentColor(theme.dropHighlightBorder),
     tabMinWidth: normalizeTabMinWidth(theme.tabMinWidth)
   };
 }

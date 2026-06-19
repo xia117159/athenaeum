@@ -1030,6 +1030,9 @@ function createSettingsModel(): SettingsModel {
     },
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#0f6cbd",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 96
     }
   };
