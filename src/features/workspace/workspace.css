@@ -880,6 +880,7 @@
 .file-listing {
   --file-icon-size: 16px;
   --details-row-height: 24px;
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -896,10 +897,30 @@
   overflow: auto;
 }
 
+/* Base tint, visible in the empty area below the rows and as a graceful
+   fallback if the overlay selector below is unsupported. */
 .file-listing__scroll.is-drop-target,
 .file-listing__scroll.is-system-drop-target {
   background: #f4f9ff;
-  box-shadow: inset 0 0 0 1px rgba(15, 108, 189, 0.18);
+}
+
+/* The listing-level drop highlight must read as covering the whole content area.
+   The scroll body's file rows paint an opaque white background over the
+   container tint, so a background alone only shows in the empty space below the
+   rows. Anchor an overlay to the non-scrolling .file-listing panel (not the
+   scroll viewport) so it covers every row plus the header as one surface and
+   stays put while the list scrolls. pointer-events: none keeps it clear of the
+   drag/drop hit-testing. Covers both pointer (is-drop-target) and system
+   (is-system-drop-target) drags. */
+.file-listing:has(> .file-listing__scroll.is-drop-target)::after,
+.file-listing:has(> .file-listing__scroll.is-system-drop-target)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(15, 108, 189, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(15, 108, 189, 0.45);
+  z-index: 3;
 }
 
 .file-listing__header,

@@ -48,65 +48,6 @@ const recentSystemDropKeys = new Map<string, number>();
 let highlightedSystemDropElement: HTMLElement | null = null;
 let highlightedSystemDropClass: string | null = null;
 
-// --- BEGIN removable drag-drop instrumentation (remove after diagnosis) ---
-// Toggle from the WebView DevTools console: `window.__SFM_DRAG_DEBUG__ = true`.
-// Then reproduce the drag; read the captured sequence with
-// `copy(JSON.stringify(window.__SFM_DRAG_LOG__, null, 2))`.
-declare global {
-  interface Window {
-    __SFM_DRAG_DEBUG__?: boolean;
-    __SFM_DRAG_LOG__?: unknown[];
-  }
-}
-
-function isSystemDragDebugEnabled() {
-  return typeof window !== "undefined" && window.__SFM_DRAG_DEBUG__ === true;
-}
-
-function describeDropElement(element: Element | null) {
-  if (!element) {
-    return null;
-  }
-  const dropElement = element.closest("[data-entry-drop-kind][data-entry-drop-path]") as HTMLElement | null;
-  const target = dropElement ?? (element as HTMLElement);
-  const rect = target.getBoundingClientRect?.();
-  return {
-    tag: target.tagName,
-    classes: target.className,
-    panelId: target.dataset?.panelId,
-    dropKind: target.dataset?.entryDropKind,
-    dropPath: target.dataset?.entryDropPath,
-    rect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null
-  };
-}
-
-function recordSystemDragDebug(record: Record<string, unknown>) {
-  if (!isSystemDragDebugEnabled()) {
-    return;
-  }
-  const scale = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  const position = record.position as { x: number; y: number } | undefined;
-  let coordinateProbe: Record<string, unknown> | undefined;
-  if (position && typeof document !== "undefined" && typeof document.elementFromPoint === "function") {
-    const rawHit = document.elementFromPoint(position.x, position.y);
-    const scaledHit = document.elementFromPoint(position.x / scale, position.y / scale);
-    coordinateProbe = {
-      scale,
-      viewport: {
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight
-      },
-      raw: { x: position.x, y: position.y, hit: describeDropElement(rawHit) },
-      scaled: { x: position.x / scale, y: position.y / scale, hit: describeDropElement(scaledHit) }
-    };
-  }
-  const entry = { t: Date.now(), ...record, coordinateProbe };
-  (window.__SFM_DRAG_LOG__ ??= []).push(entry);
-  // eslint-disable-next-line no-console
-  console.info("[sfm-drag]", entry);
-}
-// --- END removable drag-drop instrumentation ---
-
 function normalizeSystemDropKeyPath(path: string) {
   return path.trim().replace(/\//g, "\\").toLowerCase();
 }
@@ -235,7 +176,6 @@ function shouldDeferToSystemDragPositionFeed(now = Date.now()) {
 }
 
 export function handleSystemDragPosition(position: { x: number; y: number }, now = Date.now()) {
-  recordSystemDragDebug({ event: "feed-position", position, systemDragFeedActive: systemDragPositionFeedActive });
   if (!systemDragPositionFeedActive) {
     return null;
   }
@@ -253,13 +193,6 @@ export function createSystemFileDropPayloadHandler(onDrop: SystemFileDropHandler
   let systemDragActive = false;
 
   return (payload: SystemFileDropPayload) => {
-    recordSystemDragDebug({
-      event: payload.type,
-      pathsLength: "paths" in payload ? payload.paths.length : undefined,
-      position: "position" in payload ? payload.position : undefined,
-      systemDragActiveBefore: systemDragActive
-    });
-
     if (payload.type === "leave") {
       systemDragActive = false;
       clearSystemFileDropHighlight();
