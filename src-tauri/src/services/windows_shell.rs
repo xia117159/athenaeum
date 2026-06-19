@@ -16,7 +16,7 @@ mod imp {
         WindowsDragDropEnvironment,
     };
     use anyhow::{anyhow, bail, Context, Result};
-    use tauri::{Runtime, Window};
+    use tauri::{Emitter, Runtime, Window};
     use windows::{
         core::{implement, PCSTR, PCWSTR},
         Win32::{
@@ -25,6 +25,7 @@ mod imp {
                 DRAGDROP_S_USEDEFAULTCURSORS, ERROR_SUCCESS, HANDLE, HGLOBAL, HWND, LPARAM, POINT,
                 S_OK, WIN32_ERROR, WPARAM,
             },
+            Graphics::Gdi::ScreenToClient,
             Security::{
                 GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
                 TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenElevation,
@@ -730,7 +731,16 @@ mod imp {
     }
 
     #[implement(IDropSource)]
-    struct FileDragSource;
+    struct FileDragSource {
+        hwnd: HWND,
+        // Emits the live client-space cursor position to the WebView during the
+        // drag. SHDoDragDrop runs a modal loop on the main thread, so WRY's
+        // native drag-drop events are queued on the (idle) tao event loop and
+        // only flush in a burst at drop. GiveFeedback is the one callback OLE
+        // invokes live on every mouse move, so it is the only place that can
+        // drive an in-app drop highlight while an App-origin drag is airborne.
+        emit_position: Box<dyn Fn(i32, i32)>,
+    }
 
     #[allow(non_snake_case)]
     impl windows::Win32::System::Ole::IDropSource_Impl for FileDragSource_Impl {
@@ -749,6 +759,14 @@ mod imp {
         }
 
         fn GiveFeedback(&self, _effect: DROPEFFECT) -> windows::core::HRESULT {
+            let mut point = POINT::default();
+            unsafe {
+                if GetCursorPos(&mut point).is_ok()
+                    && ScreenToClient(self.hwnd, &mut point).as_bool()
+                {
+                    (self.emit_position)(point.x, point.y);
+                }
+            }
             DRAGDROP_S_USEDEFAULTCURSORS
         }
     }
@@ -1423,6 +1441,7 @@ mod imp {
     fn start_system_file_drag_inner(
         paths: Vec<String>,
         hwnd_raw: isize,
+        emit_position: Box<dyn Fn(i32, i32)>,
     ) -> Result<SystemFileClipboardMode> {
         let _com = ComGuard::init()?;
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
@@ -1438,7 +1457,11 @@ mod imp {
                 .GetUIObjectOf(hwnd, &selection.child_pidls, None)
                 .context("failed to bind shell selection to drag data object")?
         };
-        let drop_source: IDropSource = FileDragSource.into();
+        let drop_source: IDropSource = FileDragSource {
+            hwnd,
+            emit_position,
+        }
+        .into();
         let allowed_effects = system_file_drag_allowed_effects();
         let effect = unsafe {
             SHDoDragDrop(Some(hwnd), &data_object, &drop_source, allowed_effects)
@@ -1524,11 +1547,19 @@ mod imp {
             .hwnd()
             .context("failed to resolve Tauri window handle")?;
         let hwnd_raw = hwnd.0 as isize;
+        let emit_window = window.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
         window
             .run_on_main_thread(move || {
-                let _ = sender.send(start_system_file_drag_inner(paths, hwnd_raw));
+                // Bridges the live OLE drag cursor position back to the WebView.
+                // `emit` evaluates through WebView2 ExecuteScript, which does not
+                // depend on the tao event loop that SHDoDragDrop has blocked, so
+                // these reach JS live (unlike the buffered onDragDropEvent stream).
+                let emit_position: Box<dyn Fn(i32, i32)> = Box::new(move |x, y| {
+                    let _ = emit_window.emit("system_drag_position", [x, y]);
+                });
+                let _ = sender.send(start_system_file_drag_inner(paths, hwnd_raw, emit_position));
             })
             .context("failed to schedule system file drag on the Tauri main thread")?;
 

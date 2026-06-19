@@ -4,6 +4,7 @@ import path from "node:path";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { FileListingShell, TAB_VIEW_MODE_OPTIONS } from "./FileListing";
+import { clearSystemFileDropHighlight, updateSystemFileDropHighlight } from "./systemDragDrop";
 import {
   clearSystemIconCacheForTests,
   setSystemIconResolverForTests,
@@ -899,6 +900,55 @@ export const completion = (async () => {
       assert.deepEqual(dropped, [{ paths: ["D:\\report.txt"], destination: "E:\\", operation: "copy" }]);
       assert.equal(sourceScroll.classList.contains("is-drop-target"), false);
       assert.equal(targetScroll.classList.contains("is-drop-target"), false);
+    });
+
+    await assertTest("FileListingShell pointer-drag cleanup keeps an active system drop highlight", async () => {
+      dropped.length = 0;
+      await act(async () => {
+        render("details", undefined, "panel-1", ["file-source"]);
+        await flushEffects();
+      });
+
+      const scroll = container.querySelector(".file-listing__scroll") as HTMLElement | null;
+      const rows = Array.from(container.querySelectorAll(".file-row"));
+      const sourceRow = rows[1];
+      assert.ok(scroll);
+      assert.ok(sourceRow);
+
+      // A system (Tauri native) drag is hovering this listing.
+      const restoreSystemPoint = stubElementFromPoint(scroll);
+      updateSystemFileDropHighlight({ x: 24, y: 8 });
+      restoreSystemPoint();
+      assert.equal(scroll!.classList.contains("is-system-drop-target"), true);
+      assert.equal(scroll!.dataset.systemDropOperation, "copy");
+
+      // An internal pointer drag over the same listing applies/clears its own
+      // highlight without touching the system highlight class/data.
+      const restoreElementFromPoint = stubElementFromPoint(scroll);
+      try {
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 24, clientY: 8 }));
+          await flushEffects();
+        });
+
+        assert.equal(scroll!.classList.contains("is-drop-target"), true);
+        assert.equal(scroll!.classList.contains("is-system-drop-target"), true);
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 24, clientY: 8, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+
+      // Internal pointer cleanup cleared its own class but kept the system one.
+      assert.equal(scroll!.classList.contains("is-drop-target"), false);
+      assert.equal(scroll!.classList.contains("is-system-drop-target"), true);
+      assert.equal(scroll!.dataset.systemDropOperation, "copy");
+      clearSystemFileDropHighlight();
+      assert.equal(scroll!.classList.contains("is-system-drop-target"), false);
     });
 
     await assertTest("workspace file drag cursor uses a Windows-style pointer badge instead of a grabbing hand", async () => {

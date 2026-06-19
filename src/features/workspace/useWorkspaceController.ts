@@ -7,6 +7,7 @@ import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "
 import { isDirectoryTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
+import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
 import type { OperationPathRef } from "../../app/types";
@@ -1655,9 +1656,18 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    void workspaceGateway.startSystemFileDrag(localPaths).catch((error) => {
-      pushNotification("warning", getErrorMessage(error, "Unable to start system file drag."));
-    });
+    // Mark the App-origin drag so the system-drop highlight is driven by the
+    // live GiveFeedback position feed instead of the buffered native events,
+    // and always release that ownership when SHDoDragDrop returns.
+    beginAppOriginSystemDrag();
+    void workspaceGateway
+      .startSystemFileDrag(localPaths)
+      .catch((error) => {
+        pushNotification("warning", getErrorMessage(error, "Unable to start system file drag."));
+      })
+      .finally(() => {
+        endAppOriginSystemDrag();
+      });
   });
 
   const pasteIntoPanel = useEffectEvent(async (panelId: PanelId) => {

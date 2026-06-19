@@ -48,6 +48,65 @@ const recentSystemDropKeys = new Map<string, number>();
 let highlightedSystemDropElement: HTMLElement | null = null;
 let highlightedSystemDropClass: string | null = null;
 
+// --- BEGIN removable drag-drop instrumentation (remove after diagnosis) ---
+// Toggle from the WebView DevTools console: `window.__SFM_DRAG_DEBUG__ = true`.
+// Then reproduce the drag; read the captured sequence with
+// `copy(JSON.stringify(window.__SFM_DRAG_LOG__, null, 2))`.
+declare global {
+  interface Window {
+    __SFM_DRAG_DEBUG__?: boolean;
+    __SFM_DRAG_LOG__?: unknown[];
+  }
+}
+
+function isSystemDragDebugEnabled() {
+  return typeof window !== "undefined" && window.__SFM_DRAG_DEBUG__ === true;
+}
+
+function describeDropElement(element: Element | null) {
+  if (!element) {
+    return null;
+  }
+  const dropElement = element.closest("[data-entry-drop-kind][data-entry-drop-path]") as HTMLElement | null;
+  const target = dropElement ?? (element as HTMLElement);
+  const rect = target.getBoundingClientRect?.();
+  return {
+    tag: target.tagName,
+    classes: target.className,
+    panelId: target.dataset?.panelId,
+    dropKind: target.dataset?.entryDropKind,
+    dropPath: target.dataset?.entryDropPath,
+    rect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null
+  };
+}
+
+function recordSystemDragDebug(record: Record<string, unknown>) {
+  if (!isSystemDragDebugEnabled()) {
+    return;
+  }
+  const scale = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const position = record.position as { x: number; y: number } | undefined;
+  let coordinateProbe: Record<string, unknown> | undefined;
+  if (position && typeof document !== "undefined" && typeof document.elementFromPoint === "function") {
+    const rawHit = document.elementFromPoint(position.x, position.y);
+    const scaledHit = document.elementFromPoint(position.x / scale, position.y / scale);
+    coordinateProbe = {
+      scale,
+      viewport: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight
+      },
+      raw: { x: position.x, y: position.y, hit: describeDropElement(rawHit) },
+      scaled: { x: position.x / scale, y: position.y / scale, hit: describeDropElement(scaledHit) }
+    };
+  }
+  const entry = { t: Date.now(), ...record, coordinateProbe };
+  (window.__SFM_DRAG_LOG__ ??= []).push(entry);
+  // eslint-disable-next-line no-console
+  console.info("[sfm-drag]", entry);
+}
+// --- END removable drag-drop instrumentation ---
+
 function normalizeSystemDropKeyPath(path: string) {
   return path.trim().replace(/\//g, "\\").toLowerCase();
 }
@@ -146,44 +205,106 @@ export function updateSystemFileDropHighlight(position?: { x: number; y: number 
   return target;
 }
 
+// App-origin system drags run through a modal SHDoDragDrop loop on the native
+// main thread, which starves WRY's drag-drop event delivery: the native
+// enter/over/drop payloads are queued and only flush in a burst at drop. So the
+// live drop highlight for an App-origin drag cannot come from those payloads —
+// it is driven by a separate position feed the Rust IDropSource emits from
+// GiveFeedback on every mouse move. These flags let the native payload handler
+// step aside while the feed is the source of truth, and suppress the stale
+// enter/over burst (which would otherwise flash the highlight along the replayed
+// cursor path) right after the drag ends.
+let systemDragPositionFeedActive = false;
+let lastSystemDragPositionAt = 0;
+const SYSTEM_DRAG_FEED_SUPPRESS_WINDOW_MS = 1000;
+
+export function beginAppOriginSystemDrag() {
+  systemDragPositionFeedActive = true;
+}
+
+export function endAppOriginSystemDrag() {
+  systemDragPositionFeedActive = false;
+  clearSystemFileDropHighlight();
+}
+
+function shouldDeferToSystemDragPositionFeed(now = Date.now()) {
+  return (
+    systemDragPositionFeedActive ||
+    now - lastSystemDragPositionAt <= SYSTEM_DRAG_FEED_SUPPRESS_WINDOW_MS
+  );
+}
+
+export function handleSystemDragPosition(position: { x: number; y: number }, now = Date.now()) {
+  recordSystemDragDebug({ event: "feed-position", position, systemDragFeedActive: systemDragPositionFeedActive });
+  if (!systemDragPositionFeedActive) {
+    return null;
+  }
+  lastSystemDragPositionAt = now;
+  return updateSystemFileDropHighlight(position);
+}
+
+export function resetSystemDragStateForTests() {
+  systemDragPositionFeedActive = false;
+  lastSystemDragPositionAt = 0;
+  clearSystemFileDropHighlight();
+}
+
 export function createSystemFileDropPayloadHandler(onDrop: SystemFileDropHandler) {
   let systemDragActive = false;
 
   return (payload: SystemFileDropPayload) => {
+    recordSystemDragDebug({
+      event: payload.type,
+      pathsLength: "paths" in payload ? payload.paths.length : undefined,
+      position: "position" in payload ? payload.position : undefined,
+      systemDragActiveBefore: systemDragActive
+    });
+
     if (payload.type === "leave") {
       systemDragActive = false;
       clearSystemFileDropHighlight();
       return;
     }
 
-    if (payload.type === "enter") {
-      systemDragActive = payload.paths.length > 0;
-      if (systemDragActive) {
+    if (payload.type === "enter" || payload.type === "over") {
+      // `enter`/`over` are hover signals. The Tauri file-drop listener only
+      // fires for an in-flight file drag, so any hover means a drag is active
+      // over this WebView. App-origin system drags returning through
+      // SHDoDragDrop can skip `enter` (or send it without paths), so we must
+      // not gate hover highlight on a prior `enter` carrying paths — otherwise
+      // the drop works but the target never shows a highlight.
+      systemDragActive = true;
+      // For App-origin drags the live highlight comes from the position feed;
+      // the buffered enter/over burst that flushes at drop is stale and would
+      // flash the highlight along the replayed cursor path, so skip it here.
+      if (!shouldDeferToSystemDragPositionFeed()) {
         updateSystemFileDropHighlight(payload.position);
       }
       return;
     }
 
-    if (payload.type === "over") {
-      if (systemDragActive) {
-        updateSystemFileDropHighlight(payload.position);
-      }
-      return;
-    }
-
+    // Drop execution stays gated on an active drag and is driven solely by the
+    // native `drop.paths`, so a stale drop after `leave` is ignored.
     if (!systemDragActive || payload.paths.length === 0) {
       clearSystemFileDropHighlight();
       systemDragActive = false;
       return;
     }
 
-    const target = updateSystemFileDropHighlight(payload.position);
+    // When the position feed owns the highlight, resolve the drop target without
+    // re-applying a one-frame highlight; otherwise (Explorer-origin) keep the
+    // existing behavior.
+    const target = shouldDeferToSystemDragPositionFeed()
+      ? findSystemFileDropTargetFromPoint(payload.position)
+      : updateSystemFileDropHighlight(payload.position);
     clearSystemFileDropHighlight();
     systemDragActive = false;
     if (!target) {
       return;
     }
 
+    // Dedupe only suppresses duplicate drop execution; it never blocks the
+    // enter/over hover highlight above.
     if (wasSystemDropRecentlyHandled(payload.paths, target.path)) {
       return;
     }
@@ -239,8 +360,36 @@ export async function listenSystemFileDrops(
   const unlisten = await webview.onDragDropEvent((event: Event<DragDropEvent>) => {
     handlePayload(event.payload);
   });
+
+  // Live cursor feed emitted by the Rust IDropSource during App-origin drags
+  // (see beginAppOriginSystemDrag/handleSystemDragPosition). This is the only
+  // channel that reaches JS while SHDoDragDrop blocks the main thread.
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlistenPosition = await listen<[number, number]>("system_drag_position", (event) => {
+    const [x, y] = event.payload;
+    handleSystemDragPosition({ x, y });
+  });
+
   return () => {
     clearSystemFileDropHighlight();
-    unlisten();
+    // Tauri's internal unlisten can throw/reject during teardown races (e.g. an
+    // unmount or HMR swap before its handler bookkeeping settles, surfacing as
+    // "Cannot read properties of undefined (reading 'handlerId')"). That is
+    // teardown noise, not a drag fault, so isolate each disposer: a failure to
+    // detach one listener must not leave the other attached or bubble out of
+    // cleanup.
+    void disposeQuietly(unlisten);
+    void disposeQuietly(unlistenPosition);
   };
+}
+
+function disposeQuietly(unlisten: () => void) {
+  try {
+    const result = unlisten() as unknown;
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      void (result as Promise<unknown>).catch(() => undefined);
+    }
+  } catch {
+    // Listener already disposed or torn down mid-flight; nothing to do.
+  }
 }

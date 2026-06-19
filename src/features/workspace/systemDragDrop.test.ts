@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  beginAppOriginSystemDrag,
   clearSystemFileDropHighlight,
   createSystemFileDropPayloadHandler,
+  endAppOriginSystemDrag,
   findSystemFileDropTargetFromPoint,
+  handleSystemDragPosition,
+  resetSystemDragStateForTests,
   updateSystemFileDropHighlight,
   warnIfExplorerFileDropsAreBlocked
 } from "./systemDragDrop";
@@ -305,6 +309,293 @@ export const systemDragDropTests = (() => {
 
     assert.deepEqual(received, []);
   });
+
+  assertTest(
+    "createSystemFileDropPayloadHandler highlights an App-origin re-entry that only delivers over/drop",
+    () => {
+      const listing = document.createElement("div");
+      listing.dataset.entryDropKind = "listing";
+      listing.dataset.entryDropPath = "E:\\Target";
+      document.body.appendChild(listing);
+
+      const received: Array<{ paths: string[]; destination: string }> = [];
+      const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+        received.push({ paths, destination });
+      });
+      const restore = stubElementFromPoint(listing);
+      const paths = ["D:\\Archive\\report.txt"];
+      try {
+        // App-origin system drag re-entering the WebView may skip `enter`
+        // (or send it without paths), so the first reliable payload is `over`.
+        handlePayload({
+          type: "over",
+          position: { x: 30, y: 30 }
+        });
+        assert.equal(listing.classList.contains("is-system-drop-target"), true);
+        assert.equal(listing.dataset.systemDropOperation, "copy");
+
+        handlePayload({
+          type: "drop",
+          paths,
+          position: { x: 30, y: 30 }
+        });
+      } finally {
+        restore();
+        listing.remove();
+        clearSystemFileDropHighlight();
+      }
+
+      assert.deepEqual(received, [
+        {
+          paths,
+          destination: "E:\\Target"
+        }
+      ]);
+      assert.equal(listing.classList.contains("is-system-drop-target"), false);
+    }
+  );
+
+  assertTest(
+    "createSystemFileDropPayloadHandler highlights after an enter that arrives without paths",
+    () => {
+      const listing = document.createElement("div");
+      listing.dataset.entryDropKind = "listing";
+      listing.dataset.entryDropPath = "E:\\Resumed";
+      document.body.appendChild(listing);
+
+      const handlePayload = createSystemFileDropPayloadHandler(() => undefined);
+      const restore = stubElementFromPoint(listing);
+      try {
+        handlePayload({
+          type: "enter",
+          paths: [],
+          position: { x: 12, y: 12 }
+        });
+        handlePayload({
+          type: "over",
+          position: { x: 12, y: 12 }
+        });
+        assert.equal(listing.classList.contains("is-system-drop-target"), true);
+        assert.equal(listing.dataset.systemDropOperation, "copy");
+      } finally {
+        restore();
+        listing.remove();
+        clearSystemFileDropHighlight();
+      }
+    }
+  );
+
+  assertTest(
+    "createSystemFileDropPayloadHandler keeps hovering after a duplicate drop is deduped",
+    () => {
+      const listing = document.createElement("div");
+      listing.dataset.entryDropKind = "listing";
+      listing.dataset.entryDropPath = "D:\\DedupeHover";
+      document.body.appendChild(listing);
+
+      const received: Array<{ paths: string[]; destination: string }> = [];
+      const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+        received.push({ paths, destination });
+      });
+      const restore = stubElementFromPoint(listing);
+      const paths = ["C:\\Users\\me\\Desktop\\dedupe.txt"];
+      try {
+        handlePayload({ type: "enter", paths, position: { x: 20, y: 20 } });
+        handlePayload({ type: "drop", paths, position: { x: 20, y: 20 } });
+
+        // A duplicate drop is deduped, but the next hover must still highlight.
+        handlePayload({ type: "enter", paths, position: { x: 20, y: 20 } });
+        assert.equal(listing.classList.contains("is-system-drop-target"), true);
+        assert.equal(listing.dataset.systemDropOperation, "copy");
+        handlePayload({ type: "over", position: { x: 20, y: 20 } });
+        assert.equal(listing.classList.contains("is-system-drop-target"), true);
+
+        handlePayload({ type: "drop", paths, position: { x: 20, y: 20 } });
+      } finally {
+        restore();
+        listing.remove();
+        clearSystemFileDropHighlight();
+      }
+
+      assert.deepEqual(received, [
+        {
+          paths,
+          destination: "D:\\DedupeHover"
+        }
+      ]);
+    }
+  );
+
+  assertTest("clearSystemFileDropHighlight leaves internal pointer highlight classes untouched", () => {
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "D:\\Mixed";
+    listing.classList.add("is-drop-target");
+    listing.dataset.dropOperation = "move";
+    document.body.appendChild(listing);
+
+    const restore = stubElementFromPoint(listing);
+    try {
+      updateSystemFileDropHighlight({ x: 10, y: 10 });
+      assert.equal(listing.classList.contains("is-system-drop-target"), true);
+      assert.equal(listing.classList.contains("is-drop-target"), true);
+
+      clearSystemFileDropHighlight();
+      assert.equal(listing.classList.contains("is-system-drop-target"), false);
+      assert.equal(listing.dataset.systemDropOperation, undefined);
+      // Internal pointer-drag highlight must survive a system cleanup.
+      assert.equal(listing.classList.contains("is-drop-target"), true);
+      assert.equal(listing.dataset.dropOperation, "move");
+    } finally {
+      restore();
+      listing.remove();
+    }
+  });
+
+  assertTest("handleSystemDragPosition drives the system highlight only while an App-origin drag is active", () => {
+    resetSystemDragStateForTests();
+    const listing = document.createElement("div");
+    listing.dataset.entryDropKind = "listing";
+    listing.dataset.entryDropPath = "E:\\Feed";
+    document.body.appendChild(listing);
+
+    const restore = stubElementFromPoint(listing);
+    try {
+      // Without an active App-origin drag the feed is inert: position events from
+      // a stale GiveFeedback burst must not paint a highlight.
+      const before = handleSystemDragPosition({ x: 10, y: 10 });
+      assert.equal(before, null);
+      assert.equal(listing.classList.contains("is-system-drop-target"), false);
+
+      beginAppOriginSystemDrag();
+      const target = handleSystemDragPosition({ x: 10, y: 10 });
+      assert.equal(target?.path, "E:\\Feed");
+      assert.equal(listing.classList.contains("is-system-drop-target"), true);
+      assert.equal(listing.dataset.systemDropOperation, "copy");
+
+      endAppOriginSystemDrag();
+      assert.equal(listing.classList.contains("is-system-drop-target"), false);
+      assert.equal(listing.dataset.systemDropOperation, undefined);
+
+      // After the drag ends the feed is inert again.
+      assert.equal(handleSystemDragPosition({ x: 10, y: 10 }), null);
+      assert.equal(listing.classList.contains("is-system-drop-target"), false);
+    } finally {
+      restore();
+      listing.remove();
+      resetSystemDragStateForTests();
+    }
+  });
+
+  assertTest(
+    "createSystemFileDropPayloadHandler lets the position feed own the highlight during an App-origin drag",
+    () => {
+      resetSystemDragStateForTests();
+      const listingA = document.createElement("div");
+      listingA.dataset.entryDropKind = "listing";
+      listingA.dataset.entryDropPath = "D:\\Source";
+      const listingB = document.createElement("div");
+      listingB.dataset.entryDropKind = "listing";
+      listingB.dataset.entryDropPath = "E:\\Target";
+      document.body.append(listingA, listingB);
+
+      let pointed: Element | null = listingB;
+      const original = document.elementFromPoint;
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: () => pointed
+      });
+
+      const received: Array<{ paths: string[]; destination: string }> = [];
+      const handlePayload = createSystemFileDropPayloadHandler((paths, destination) => {
+        received.push({ paths, destination });
+      });
+      const paths = ["D:\\Source\\report.txt"];
+      try {
+        beginAppOriginSystemDrag();
+
+        // The live feed paints B as the cursor moves over it.
+        pointed = listingB;
+        handleSystemDragPosition({ x: 30, y: 30 });
+        assert.equal(listingB.classList.contains("is-system-drop-target"), true);
+
+        // The buffered native enter/over burst flushes at drop time replaying the
+        // A->B cursor path. While the feed owns the highlight these stale events
+        // must NOT move the highlight back onto A.
+        pointed = listingA;
+        handlePayload({ type: "enter", paths, position: { x: 5, y: 5 } });
+        handlePayload({ type: "over", position: { x: 5, y: 5 } });
+        assert.equal(listingA.classList.contains("is-system-drop-target"), false);
+        assert.equal(listingB.classList.contains("is-system-drop-target"), true);
+
+        // The drop resolves against its own position (B), not the stale burst.
+        pointed = listingB;
+        handlePayload({ type: "drop", paths, position: { x: 30, y: 30 } });
+      } finally {
+        if (original) {
+          Object.defineProperty(document, "elementFromPoint", {
+            configurable: true,
+            value: original
+          });
+        } else {
+          Reflect.deleteProperty(document, "elementFromPoint");
+        }
+        listingA.remove();
+        listingB.remove();
+        resetSystemDragStateForTests();
+      }
+
+      assert.deepEqual(received, [
+        {
+          paths,
+          destination: "E:\\Target"
+        }
+      ]);
+      assert.equal(listingB.classList.contains("is-system-drop-target"), false);
+    }
+  );
+
+  assertTest(
+    "createSystemFileDropPayloadHandler keeps deferring to the feed within the post-drag suppression window",
+    () => {
+      resetSystemDragStateForTests();
+      const listingA = document.createElement("div");
+      listingA.dataset.entryDropKind = "listing";
+      listingA.dataset.entryDropPath = "D:\\Replay";
+      document.body.appendChild(listingA);
+
+      const original = document.elementFromPoint;
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: () => listingA
+      });
+
+      const handlePayload = createSystemFileDropPayloadHandler(() => undefined);
+      try {
+        // A feed position arrived "just now"; even after the drag flag is cleared
+        // the timestamp window keeps the stale enter/over burst suppressed. Seed
+        // with the real clock so the handler's Date.now()-based window check sees
+        // the feed position as recent.
+        beginAppOriginSystemDrag();
+        handleSystemDragPosition({ x: 30, y: 30 }, Date.now());
+        endAppOriginSystemDrag();
+
+        handlePayload({ type: "enter", paths: ["D:\\Replay\\a.txt"], position: { x: 5, y: 5 } });
+        assert.equal(listingA.classList.contains("is-system-drop-target"), false);
+      } finally {
+        if (original) {
+          Object.defineProperty(document, "elementFromPoint", {
+            configurable: true,
+            value: original
+          });
+        } else {
+          Reflect.deleteProperty(document, "elementFromPoint");
+        }
+        listingA.remove();
+        resetSystemDragStateForTests();
+      }
+    }
+  );
 
   assertTest("warnIfExplorerFileDropsAreBlocked reports elevated Windows drop blocking", () => {
     const warnings: unknown[][] = [];
