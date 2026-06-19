@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { HexAlphaColorPicker } from "react-colorful";
 import type {
   ColumnDefinition,
   RemoteConnectionProfile,
@@ -802,48 +803,144 @@ function ThemeColorControl({
   fallback,
   settingId,
   disabled,
+  isOpen,
+  onOpenChange,
   onUpdate
 }: {
   value: string;
   fallback: string;
   settingId: string;
   disabled: boolean;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   onUpdate: (color: string) => void;
 }) {
+  const normalizedColor = normalizeRenderableThemeColor(value, fallback);
   const colorBase = getThemeColorBase(value, fallback);
   const opacity = getThemeColorOpacityPercent(value, fallback);
+  const [hexDraft, setHexDraft] = useState(normalizedColor);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const panelId = `${settingId}-color-panel`;
+
+  useEffect(() => {
+    setHexDraft(normalizedColor);
+  }, [normalizedColor]);
+
+  useEffect(() => {
+    if (disabled && isOpen) {
+      onOpenChange(false);
+    }
+  }, [disabled, isOpen, onOpenChange]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && controlRef.current?.contains(target)) {
+        return;
+      }
+      onOpenChange(false);
+    };
+
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onOpenChange(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+    };
+  }, [isOpen, onOpenChange]);
+
+  const handlePickerChange = (color: string) => {
+    if (disabled) {
+      return;
+    }
+    onUpdate(normalizeRenderableThemeColor(color, fallback));
+  };
+
+  const handleHexInput = (nextValue: string) => {
+    setHexDraft(nextValue);
+    const trimmed = nextValue.trim();
+    if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) {
+      onUpdate(trimmed.toLowerCase());
+      return;
+    }
+    if (HEX_BASE_COLOR_PATTERN.test(trimmed)) {
+      onUpdate(formatThemeColor(trimmed, opacity));
+    }
+  };
+
+  const handleHexBlur = () => {
+    if (!HEX_COLOR_PATTERN.test(hexDraft.trim()) && !HEX_BASE_COLOR_PATTERN.test(hexDraft.trim())) {
+      setHexDraft(normalizedColor);
+    }
+  };
 
   return (
-    <div className="theme-color-control">
-      <input
-        type="color"
-        value={colorBase}
+    <div className={isOpen ? "theme-color-control is-open" : "theme-color-control"} ref={controlRef}>
+      <button
+        type="button"
+        className="theme-color-control__trigger"
         data-setting-id={settingId}
-        onInput={(event) => onUpdate(formatThemeColor(event.currentTarget.value, opacity))}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? panelId : undefined}
+        title={normalizedColor}
+        onClick={() => {
+          if (!disabled) {
+            onOpenChange(!isOpen);
+          }
+        }}
         disabled={disabled}
-      />
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={String(opacity)}
-        data-setting-id={`${settingId}-opacity`}
-        onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
-        disabled={disabled}
-      />
-      <input
-        type="number"
-        min={0}
-        max={100}
-        step={1}
-        value={String(opacity)}
-        data-setting-id={`${settingId}-opacity-value`}
-        onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
-        disabled={disabled}
-      />
-      <span>%</span>
-      <span className="theme-color-control__value">{normalizeRenderableThemeColor(value, fallback)}</span>
+      >
+        <span className="theme-color-control__swatch-frame" aria-hidden="true">
+          <span className="theme-color-control__swatch" style={{ backgroundColor: normalizedColor }} />
+        </span>
+        <span className="theme-color-control__value">{normalizedColor}</span>
+      </button>
+      {isOpen ? (
+        <div className="theme-color-control__panel" id={panelId} role="dialog" aria-label="Color picker">
+          <HexAlphaColorPicker
+            color={normalizedColor}
+            onChange={handlePickerChange}
+            className="theme-color-control__picker"
+          />
+          <div className="theme-color-control__fields">
+            <label>
+              <span>HEX</span>
+              <input
+                type="text"
+                value={hexDraft}
+                data-setting-id={`${settingId}-hex`}
+                spellCheck={false}
+                onInput={(event) => handleHexInput(event.currentTarget.value)}
+                onBlur={handleHexBlur}
+              />
+            </label>
+            <label>
+              <span>Alpha</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={String(opacity)}
+                data-setting-id={`${settingId}-opacity`}
+                onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
+              />
+            </label>
+            <span className="theme-color-control__panel-value">{normalizedColor}</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -873,6 +970,11 @@ function AppearancePage({
   onUpdateDropHighlightBorder: (color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
 }) {
+  const [openThemeColorId, setOpenThemeColorId] = useState<string | null>(null);
+  const setThemeColorOpen = useCallback((settingId: string, open: boolean) => {
+    setOpenThemeColorId(open ? settingId : null);
+  }, []);
+
   return (
     <div className="settings-page">
       <section className="settings-group">
@@ -892,6 +994,8 @@ function AppearancePage({
             fallback="#0f6cbd"
             settingId="panel-focus-accent"
             disabled={disabled}
+            isOpen={openThemeColorId === "panel-focus-accent"}
+            onOpenChange={(open) => setThemeColorOpen("panel-focus-accent", open)}
             onUpdate={onUpdatePanelFocusAccent}
           />
         </div>
@@ -905,6 +1009,8 @@ function AppearancePage({
             fallback="#ffffff"
             settingId="active-tab-background"
             disabled={disabled}
+            isOpen={openThemeColorId === "active-tab-background"}
+            onOpenChange={(open) => setThemeColorOpen("active-tab-background", open)}
             onUpdate={onUpdateActiveTabBackground}
           />
         </div>
@@ -918,6 +1024,8 @@ function AppearancePage({
             fallback="#0f6cbd"
             settingId="drop-highlight-fill"
             disabled={disabled}
+            isOpen={openThemeColorId === "drop-highlight-fill"}
+            onOpenChange={(open) => setThemeColorOpen("drop-highlight-fill", open)}
             onUpdate={onUpdateDropHighlightFill}
           />
         </div>
@@ -931,6 +1039,8 @@ function AppearancePage({
             fallback="#0f6cbd"
             settingId="drop-highlight-border"
             disabled={disabled}
+            isOpen={openThemeColorId === "drop-highlight-border"}
+            onOpenChange={(open) => setThemeColorOpen("drop-highlight-border", open)}
             onUpdate={onUpdateDropHighlightBorder}
           />
         </div>

@@ -41,6 +41,10 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
+  Object.defineProperty(globalThis, "self", {
+    configurable: true,
+    value: dom.window
+  });
   installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
@@ -412,11 +416,24 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      const accentInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent']");
+      assert.equal(container.querySelectorAll(".theme-color-control .react-colorful").length, 0);
+      assert.equal(container.querySelectorAll<HTMLButtonElement>(".theme-color-control__trigger").length, 4);
+
+      const accentTrigger = container.querySelector<HTMLButtonElement>("[data-setting-id='panel-focus-accent']");
+      assert.ok(accentTrigger);
+      assert.equal(accentTrigger.getAttribute("aria-expanded"), "false");
+      await act(async () => {
+        accentTrigger!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.equal(accentTrigger.getAttribute("aria-expanded"), "true");
+      assert.equal(container.querySelectorAll(".theme-color-control .react-colorful").length, 1);
+
+      const accentInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent-hex']");
       const accentOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='panel-focus-accent-opacity']");
       assert.ok(accentInput);
       assert.ok(accentOpacityInput);
-      assert.equal(accentInput.value, "#c02f7a");
+      assert.equal(accentInput.value, "#c02f7a80");
       assert.equal(accentOpacityInput.value, "50");
       await act(async () => {
         accentInput!.value = "#112233";
@@ -427,11 +444,17 @@ export const completion = (async () => {
       });
       assert.deepEqual(accentUpdates, ["#11223380", "#c02f7a40"]);
 
-      const activeTabBackgroundInput = container.querySelector<HTMLInputElement>("[data-setting-id='active-tab-background']");
+      const activeTabBackgroundTrigger = container.querySelector<HTMLButtonElement>("[data-setting-id='active-tab-background']");
+      assert.ok(activeTabBackgroundTrigger);
+      await act(async () => {
+        activeTabBackgroundTrigger!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+      const activeTabBackgroundInput = container.querySelector<HTMLInputElement>("[data-setting-id='active-tab-background-hex']");
       const activeTabBackgroundOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='active-tab-background-opacity']");
       assert.ok(activeTabBackgroundInput);
       assert.ok(activeTabBackgroundOpacityInput);
-      assert.equal(activeTabBackgroundInput.value, "#ffffff");
+      assert.equal(activeTabBackgroundInput.value, "#ffffffcc");
       assert.equal(activeTabBackgroundOpacityInput.value, "80");
       await act(async () => {
         activeTabBackgroundInput!.value = "#ddeeff";
@@ -442,28 +465,44 @@ export const completion = (async () => {
       });
       assert.deepEqual(activeTabBackgroundUpdates, ["#ddeeffcc", "#ffffff66"]);
 
-      const dropFillInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-fill']");
+      const dropFillTrigger = container.querySelector<HTMLButtonElement>("[data-setting-id='drop-highlight-fill']");
+      const dropBorderTrigger = container.querySelector<HTMLButtonElement>("[data-setting-id='drop-highlight-border']");
+      assert.ok(dropFillTrigger);
+      assert.ok(dropBorderTrigger);
+      await act(async () => {
+        dropFillTrigger!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+      const dropFillInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-fill-hex']");
       const dropFillOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-fill-opacity']");
-      const dropBorderInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border']");
-      const dropBorderOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border-opacity']");
       assert.ok(dropFillInput);
       assert.ok(dropFillOpacityInput);
-      assert.ok(dropBorderInput);
-      assert.ok(dropBorderOpacityInput);
-      assert.equal(dropFillInput.value, "#abcdef");
+      assert.equal(dropFillInput.value, "#abcdef80");
       assert.equal(dropFillOpacityInput.value, "50");
-      assert.equal(dropBorderInput.value, "#336699");
-      assert.equal(dropBorderOpacityInput.value, "25");
       await act(async () => {
         dropFillInput!.value = "#123456";
         dropFillInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(dropFillUpdates, ["#12345680"]);
+
+      await act(async () => {
+        dropBorderTrigger!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+      const dropBorderInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border-hex']");
+      const dropBorderOpacityInput = container.querySelector<HTMLInputElement>("[data-setting-id='drop-highlight-border-opacity']");
+      assert.ok(dropBorderInput);
+      assert.ok(dropBorderOpacityInput);
+      assert.equal(dropBorderInput.value, "#33669940");
+      assert.equal(dropBorderOpacityInput.value, "25");
+      await act(async () => {
         dropBorderOpacityInput!.value = "75";
         dropBorderOpacityInput!.dispatchEvent(new Event("input", { bubbles: true }));
         dropBorderInput!.value = "#654321";
         dropBorderInput!.dispatchEvent(new Event("input", { bubbles: true }));
         await flushEffects();
       });
-      assert.deepEqual(dropFillUpdates, ["#12345680"]);
       assert.deepEqual(dropBorderUpdates, ["#336699bf", "#65432140"]);
 
       await act(async () => {
