@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use tauri::{State, Window};
+use tauri::{AppHandle, State, Window};
 
 use crate::{
     domain::models::{
@@ -8,7 +8,7 @@ use crate::{
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
         SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WindowsDragDropEnvironment,
-        WorkspaceBootstrap,
+        WorkspaceBootstrap, WorkspaceWatchRootsRequest,
     },
     services::{fs_service, icon_service, remote_service, windows_shell, AppState},
 };
@@ -64,6 +64,16 @@ pub fn list_directory(
         metadata.tags_for_path(entry_path)
     })
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_workspace_watch_roots(
+    request: WorkspaceWatchRootsRequest,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    state.file_watcher.update_roots(app, request);
+    Ok(())
 }
 
 #[tauri::command]

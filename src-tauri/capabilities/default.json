@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "default",
+    "core:event:allow-listen",
     "core:webview:allow-create-webview-window",
     "core:window:allow-close",
     "core:window:allow-show",

@@ -1,4 +1,5 @@
 pub mod fs_service;
+pub mod file_watcher;
 pub mod icon_service;
 pub mod metadata_store;
 pub mod operation_service;
@@ -20,7 +21,8 @@ use anyhow::{Context, Result};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 use self::{
-    metadata_store::MetadataStore, operation_service::OperationStore, settings_store::SettingsStore,
+    file_watcher::FileWatchService, metadata_store::MetadataStore,
+    operation_service::OperationStore, settings_store::SettingsStore,
 };
 use crate::domain::models::SystemIconBitmap;
 
@@ -31,6 +33,7 @@ pub struct AppState {
     pub search_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub system_icon_cache: Mutex<HashMap<String, SystemIconBitmap>>,
     pub operations: Mutex<OperationStore>,
+    pub file_watcher: FileWatchService,
 }
 
 impl AppState {
@@ -42,6 +45,7 @@ impl AppState {
             search_cancellations: Mutex::new(HashMap::new()),
             system_icon_cache: Mutex::new(HashMap::new()),
             operations: Mutex::new(OperationStore::default()),
+            file_watcher: FileWatchService::default(),
         }
     }
 

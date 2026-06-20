@@ -81,6 +81,24 @@ pub struct DirectoryListing {
     pub can_go_up: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceWatchRootsRequest {
+    #[serde(default)]
+    pub directory_paths: Vec<String>,
+    #[serde(default)]
+    pub navigation_parent_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFsChangedEvent {
+    pub roots: Vec<String>,
+    pub directory_roots: Vec<String>,
+    pub navigation_parent_roots: Vec<String>,
+    pub sequence: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ItemPropertyField {
@@ -1177,7 +1195,7 @@ mod tests {
         NativeBackgroundContextMenuViewMode, NavigationItem, NavigationItemUpsertRequest,
         NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus, RemoteHostKeyInfo,
         RemoteHostKeyTrustState, RemoteTransferOperation, RemoteTransferRequest,
-        RemoteTrustHostKeyRequest, UiTheme, WindowsDragDropEnvironment,
+        RemoteTrustHostKeyRequest, UiTheme, WindowsDragDropEnvironment, WorkspaceFsChangedEvent,
     };
 
     #[test]
@@ -1351,6 +1369,26 @@ mod tests {
         assert_eq!(request.display_name.as_deref(), Some("Docs"));
         assert_eq!(request.description, "Pinned docs");
         assert_eq!(request.path, "C:\\Docs");
+    }
+
+    #[test]
+    fn workspace_fs_changed_event_uses_camel_case_contract_fields() {
+        let event = WorkspaceFsChangedEvent {
+            roots: vec!["D:\\Projects\\Atlas".into()],
+            directory_roots: vec!["D:\\Projects\\Atlas".into()],
+            navigation_parent_roots: vec!["C:\\Users\\Admin\\Documents".into()],
+            sequence: 7,
+        };
+
+        let value = serde_json::to_value(&event).expect("fs changed event should serialize");
+
+        assert_eq!(value["roots"][0], "D:\\Projects\\Atlas");
+        assert_eq!(value["directoryRoots"][0], "D:\\Projects\\Atlas");
+        assert_eq!(
+            value["navigationParentRoots"][0],
+            "C:\\Users\\Admin\\Documents"
+        );
+        assert_eq!(value["sequence"], 7);
     }
 
     #[test]

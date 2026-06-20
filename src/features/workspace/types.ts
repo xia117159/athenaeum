@@ -422,6 +422,18 @@ export interface NativeBackgroundContextMenuResult {
   action?: NativeBackgroundContextMenuAction;
 }
 
+export interface WorkspaceWatchRootsRequest {
+  directoryPaths: string[];
+  navigationParentPaths: string[];
+}
+
+export interface WorkspaceFsChangedEvent {
+  roots: string[];
+  directoryRoots: string[];
+  navigationParentRoots: string[];
+  sequence: number;
+}
+
 export interface RemoteConnectionProfile {
   id: string;
   name: string;

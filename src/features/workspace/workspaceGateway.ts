@@ -71,6 +71,10 @@ import {
   resolveWorkspaceNavigationTargets
 } from "./workspaceNavigationGateway";
 import {
+  listenWorkspaceFsChanges,
+  setWorkspaceWatchRoots
+} from "./workspaceLiveRefreshGateway";
+import {
   mapWorkspaceBootstrap
 } from "./workspaceMappers";
 import {
@@ -102,6 +106,8 @@ import type {
   SearchProgressState,
   SettingsModel,
   SystemFileClipboard,
+  WorkspaceFsChangedEvent,
+  WorkspaceWatchRootsRequest,
   WorkspaceBootstrap,
   WorkspaceState,
   ItemProperties
@@ -145,6 +151,8 @@ export interface WorkspaceGateway {
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
+  setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
+  listenFileSystemChanges(handler: (event: WorkspaceFsChangedEvent) => void): Promise<() => void>;
   copyEntries(
     paths: string[],
     destination: string,
@@ -205,6 +213,9 @@ export {
 } from "./workspaceMappers";
 
 export function createWorkspaceGateway(): WorkspaceGateway {
+  // 防护：维护当前 watch roots 状态，防止频繁调用后端
+  let currentWatchRootsKey = "";
+
   return {
     async loadBootstrap() {
       if (!hasTauriRuntime()) {
@@ -381,6 +392,23 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
+    },
+    async setWatchRoots(request) {
+      // 防护：只在 roots 真正变化时才调用后端
+      const key = JSON.stringify({
+        dir: request.directoryPaths.sort(),
+        nav: request.navigationParentPaths.sort()
+      });
+      if (currentWatchRootsKey === key) {
+        console.log("[Gateway] Watch roots unchanged, skipping backend call");
+        return;
+      }
+      console.log("[Gateway] Watch roots changed, calling backend");
+      currentWatchRootsKey = key;
+      return setWorkspaceWatchRoots(request);
+    },
+    async listenFileSystemChanges(handler) {
+      return listenWorkspaceFsChanges(handler);
     },
 
     async copyEntries(paths, destination, options) {

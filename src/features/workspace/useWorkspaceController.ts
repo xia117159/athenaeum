@@ -10,6 +10,7 @@ import { createDefaultSearchId } from "./workspaceSearch";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
+import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import type { OperationPathRef } from "../../app/types";
 import type {
   ColumnId,
@@ -34,6 +35,7 @@ import type {
   SortState,
   TabState,
   TabViewMode,
+  WorkspaceFsChangedEvent,
   WorkspaceState
 } from "./types";
 
@@ -371,6 +373,70 @@ function pathsEqual(left: string, right: string) {
   return getPathComparisonKey(left) === getPathComparisonKey(right);
 }
 
+function isLocalWatchPath(path: string) {
+  const normalized = normalizeLocationPath(path);
+  return !isRemotePath(normalized) && !normalized.startsWith(NAVIGATION_VIRTUAL_PATH);
+}
+
+function getVisibleWatchRoots(state: WorkspaceState) {
+  const directoryPaths = new Set<string>();
+  let navigationVisible = false;
+
+  for (const panelId of getVisiblePanelIds(state.layoutMode)) {
+    const activeTab = getActiveTab(state.panels[panelId]);
+    if (isDirectoryTab(activeTab) && activeTab.snapshot.location.kind === "local" && isLocalWatchPath(activeTab.snapshot.location.path)) {
+      directoryPaths.add(normalizeLocationPath(activeTab.snapshot.location.path));
+    }
+    if (isNavigationTab(activeTab)) {
+      navigationVisible = true;
+    }
+  }
+
+  const navigationParentPaths = new Set<string>();
+  if (navigationVisible) {
+    for (const item of state.navigation.items) {
+      if (!isLocalWatchPath(item.path)) {
+        continue;
+      }
+      const parentPath = getParentLocationPath(item.path);
+      if (parentPath) {
+        navigationParentPaths.add(normalizeLocationPath(parentPath));
+      }
+    }
+  }
+
+  return {
+    directoryPaths: Array.from(directoryPaths).sort((left, right) => left.localeCompare(right)),
+    navigationParentPaths: Array.from(navigationParentPaths).sort((left, right) => left.localeCompare(right))
+  };
+}
+
+function getVisibleDirectoryRefreshTargets(state: WorkspaceState, roots: string[]) {
+  const normalizedRoots = roots.map((root) => normalizeLocationPath(root));
+  return getVisiblePanelIds(state.layoutMode)
+    .map((panelId) => {
+      const tab = getActiveTab(state.panels[panelId]);
+      if (!isDirectoryTab(tab)) {
+        return null;
+      }
+      const tabPath = normalizeLocationPath(tab.snapshot.location.path);
+      if (!normalizedRoots.some((root) => pathsEqual(root, tabPath))) {
+        return null;
+      }
+      return {
+        panelId,
+        tabId: tab.id,
+        path: tab.snapshot.location.path,
+        historyIndex: tab.historyIndex
+      };
+    })
+    .filter((target): target is NonNullable<typeof target> => Boolean(target));
+}
+
+function hasVisibleNavigationTab(state: WorkspaceState) {
+  return getVisiblePanelIds(state.layoutMode).some((panelId) => isNavigationTab(getActiveTab(state.panels[panelId])));
+}
+
 function getNavigationFolderMatchPanelOrder(state: WorkspaceState, navigationPanelId: PanelId) {
   const visiblePanelIds = getVisiblePanelIds(state.layoutMode);
   return [
@@ -571,6 +637,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pendingDragDropRequestKeysRef = useRef<Set<string>>(new Set());
   const nextDragDropRequestIdRef = useRef(0);
   const delayedRefreshTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const liveRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLiveDirectoryRootsRef = useRef<Set<string>>(new Set());
+  const pendingLiveNavigationRefreshRef = useRef(false);
+
+  // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
+  const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
+
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
     colorRules: false,
@@ -609,6 +682,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         clearTimeout(timeout);
       }
       delayedRefreshTimeoutsRef.current = [];
+      if (liveRefreshTimeoutRef.current) {
+        clearTimeout(liveRefreshTimeoutRef.current);
+        liveRefreshTimeoutRef.current = null;
+      }
     },
     []
   );
@@ -1091,6 +1168,31 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     });
   });
 
+  const refreshVisibleTabOnce = useEffectEvent(async (
+    panelId: PanelId,
+    tabId: string,
+    visibleLayoutMode = state.layoutMode
+  ) => {
+    if (!getVisiblePanelIds(visibleLayoutMode).includes(panelId)) {
+      return;
+    }
+
+    const tab = findTab(state, panelId, tabId);
+    if (isNavigationTab(tab)) {
+      await refreshNavigationTargets();
+      return;
+    }
+    if (!isDirectoryTab(tab) || tab.snapshot.location.kind !== "local" || !isLocalWatchPath(tab.snapshot.location.path)) {
+      return;
+    }
+
+    await commitNavigation(panelId, tab.snapshot.location.path, false, {
+      tabId: tab.id,
+      activatePanel: false,
+      historyIndex: tab.historyIndex
+    });
+  });
+
   const refreshPanelsForPaths = useEffectEvent(async (
     paths: string[],
     selectionReplacements: SelectionPathReplacement[] = []
@@ -1116,6 +1218,137 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       )
     );
   });
+
+  const refreshVisiblePanelsForPaths = useEffectEvent(async (paths: string[]) => {
+    const targets = getVisibleDirectoryRefreshTargets(state, paths);
+    console.log("[LiveRefresh] refreshVisiblePanelsForPaths:", { paths, targets });
+    await Promise.all(
+      targets.map((target) =>
+        commitNavigation(target.panelId, target.path, false, {
+          tabId: target.tabId,
+          activatePanel: false,
+          historyIndex: target.historyIndex
+        })
+      )
+    );
+  });
+
+  const flushLiveRefresh = useEffectEvent(() => {
+    const directoryRoots = Array.from(pendingLiveDirectoryRootsRef.current);
+    const refreshNavigation = pendingLiveNavigationRefreshRef.current;
+    pendingLiveDirectoryRootsRef.current.clear();
+    pendingLiveNavigationRefreshRef.current = false;
+    liveRefreshTimeoutRef.current = null;
+
+    console.log("[LiveRefresh] flushLiveRefresh:", { directoryRoots, refreshNavigation });
+
+    if (directoryRoots.length > 0) {
+      void refreshVisiblePanelsForPaths(directoryRoots);
+    }
+    if (refreshNavigation && hasVisibleNavigationTab(state)) {
+      void refreshNavigationTargets();
+    }
+  });
+
+  const handleWorkspaceFsChanged = useEffectEvent((event: WorkspaceFsChangedEvent) => {
+    console.log("[LiveRefresh] handleWorkspaceFsChanged called:", event);
+    for (const root of event.directoryRoots) {
+      pendingLiveDirectoryRootsRef.current.add(root);
+    }
+    if (event.navigationParentRoots.length > 0) {
+      pendingLiveNavigationRefreshRef.current = true;
+    }
+    if (liveRefreshTimeoutRef.current) {
+      clearTimeout(liveRefreshTimeoutRef.current);
+    }
+    liveRefreshTimeoutRef.current = setTimeout(() => {
+      console.log("[LiveRefresh] Debounce timeout expired, flushing refresh");
+      flushLiveRefresh();
+    }, 350);
+  });
+
+  // ===== WatchRootsManager 初始化和清理 =====
+
+  useEffect(() => {
+    // 创建 Manager
+    watchRootsManagerRef.current = createWatchRootsManager(workspaceGateway, {
+      enableLogging: true,
+      maxHistorySize: 50
+    });
+
+    console.log("[Controller] WatchRootsManager created");
+
+    return () => {
+      // 清理
+      if (watchRootsManagerRef.current) {
+        console.log("[Controller] Disposing WatchRootsManager");
+        void watchRootsManagerRef.current.dispose();
+        watchRootsManagerRef.current = null;
+      }
+    };
+  }, [workspaceGateway]);
+
+  // 当状态变化时更新 watch roots
+  const updateWatchRoots = useEffectEvent(() => {
+    if (state.status !== "ready" || !watchRootsManagerRef.current) {
+      return;
+    }
+    const roots = getVisibleWatchRoots(state);
+    void watchRootsManagerRef.current.update(roots);
+  });
+
+  // 只在关键状态变化时触发更新
+  useEffect(() => {
+    if (state.status === "ready") {
+      updateWatchRoots();
+    }
+  }, [state.status]);
+
+  useEffect(() => {
+    if (state.status === "ready") {
+      updateWatchRoots();
+    }
+  }, [state.layoutMode, state.activePanelId]);
+
+  useEffect(() => {
+    if (state.status === "ready") {
+      updateWatchRoots();
+    }
+  }, [
+    state.panels["panel-1"]?.activeTabId,
+    state.panels["panel-2"]?.activeTabId,
+    state.panels["panel-3"]?.activeTabId,
+    state.panels["panel-4"]?.activeTabId
+  ]);
+
+  useEffect(() => {
+    if (state.status === "ready") {
+      updateWatchRoots();
+    }
+  }, [state.navigation.items]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void workspaceGateway
+      .listenFileSystemChanges((event) => handleWorkspaceFsChanged(event))
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch((error) => {
+        pushNotification("warning", getErrorMessage(error, "Unable to initialize live refresh events"));
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+      // ❌ 移除：不在这里清空 watch roots
+      // WatchRootsManager.dispose() 会负责清理
+    };
+  }, [handleWorkspaceFsChanged, pushNotification, workspaceGateway]);
 
   const scheduleDelayedRefreshPanelsForPaths = useEffectEvent((paths: string[]) => {
     const uniquePaths = Array.from(new Set(paths.map((path) => normalizeLocationPath(path))));
@@ -2610,14 +2843,26 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const actions = useMemo(
     () => ({
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
-        dispatch({ type: "layoutModeSet", payload: layoutMode }),
+        {
+          const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
+          const newlyVisiblePanelIds = getVisiblePanelIds(layoutMode).filter((panelId) => !currentVisiblePanelIds.has(panelId));
+          dispatch({ type: "layoutModeSet", payload: layoutMode });
+          for (const panelId of newlyVisiblePanelIds) {
+            void refreshVisibleTabOnce(panelId, getActiveTab(state.panels[panelId]).id, layoutMode);
+          }
+        },
       setSplitRatio: (key: keyof WorkspaceState["layoutRatios"], value: number) =>
         dispatch({ type: "splitRatioSet", payload: { key, value } }),
       setTreeVisible: (visible: boolean) => dispatch({ type: "treeVisibilitySet", payload: visible }),
       focusPanel: (panelId: PanelId) => dispatch({ type: "panelFocused", payload: { panelId } }),
       focusNextPanel: () => dispatch({ type: "focusNextPanel" }),
-      activateTab: (panelId: PanelId, tabId: string) =>
-        dispatch({ type: "tabActivated", payload: { panelId, tabId } }),
+      activateTab: (panelId: PanelId, tabId: string) => {
+        const wasActive = state.panels[panelId].activeTabId === tabId;
+        dispatch({ type: "tabActivated", payload: { panelId, tabId } });
+        if (!wasActive) {
+          void refreshVisibleTabOnce(panelId, tabId);
+        }
+      },
       closeTab: (panelId: PanelId, tabId: string) => void closeTabGuarded(panelId, tabId),
       closeOtherTabs: (panelId: PanelId, tabId: string, includeLocked = false) =>
         dispatch({ type: "otherTabsClosed", payload: { panelId, tabId, includeLocked } }),

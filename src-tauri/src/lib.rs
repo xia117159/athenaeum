@@ -30,7 +30,7 @@ use commands::{
         initialize_workspace, list_directory, open_path_with_system_default,
         perform_system_file_operation, read_system_file_clipboard, resolve_navigation_targets,
         resolve_system_icon, set_system_file_clipboard, show_native_background_context_menu,
-        show_native_context_menu, start_system_file_drag,
+        set_workspace_watch_roots, show_native_context_menu, start_system_file_drag,
     },
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
@@ -51,6 +51,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize_workspace,
             list_directory,
+            set_workspace_watch_roots,
             get_item_properties,
             get_tree_children,
             resolve_system_icon,

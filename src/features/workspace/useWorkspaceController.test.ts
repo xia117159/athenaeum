@@ -12,7 +12,9 @@ import type {
   OperationTaskSnapshot,
   RemoteConnectionProfile,
   SettingsModel,
-  WorkspaceBootstrap
+  WorkspaceBootstrap,
+  WorkspaceFsChangedEvent,
+  WorkspaceWatchRootsRequest
 } from "./types";
 import type { WorkspaceGateway } from "./workspaceGateway";
 
@@ -53,6 +55,8 @@ function createTestGateway(
     savedSettingsModels?: SettingsModel[];
     nativeContextMenus: Array<{ paths: string[]; x: number; y: number }>;
     nativeBackgroundContextMenus?: Array<{ directoryPath: string; x: number; y: number }>;
+    watchRootUpdates?: WorkspaceWatchRootsRequest[];
+    fileSystemChangeListeners?: Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>;
     navigationSaves?: Array<{ displayName?: string; description: string; path: string; id?: string }>;
     navigationDeletes?: string[];
     navigationReorders?: string[][];
@@ -190,6 +194,16 @@ function createTestGateway(
       return () => undefined;
     },
     async listenSettingsChanged() {
+      return () => undefined;
+    },
+    async setWatchRoots(request) {
+      interactions.watchRootUpdates?.push({
+        directoryPaths: [...request.directoryPaths],
+        navigationParentPaths: [...request.navigationParentPaths]
+      });
+    },
+    async listenFileSystemChanges(handler) {
+      interactions.fileSystemChangeListeners?.push(handler);
       return () => undefined;
     },
     async saveBookmark() {
@@ -1028,6 +1042,280 @@ export const completion = (async () => {
           await flushEffects();
         });
         explicitContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController watches the visible active directory tab and refreshes it after file changes", async () => {
+      const liveInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>
+      };
+      const liveBootstrap = createMockWorkspaceBootstrap("tauri");
+      liveBootstrap.layoutMode = "single";
+      liveBootstrap.panels["panel-1"] = {
+        ...liveBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState("D:\\Projects\\Atlas", "live-atlas"),
+          createTabState("C:\\Users\\Admin\\Documents", "live-documents")
+        ],
+        activeTabId: "live-atlas"
+      };
+      let liveController: ReturnType<typeof useWorkspaceController> | undefined;
+      const liveGateway = createTestGateway(() => undefined, liveInteractions, {
+        loadBootstrap: () => liveBootstrap
+      });
+
+      function LiveHarness() {
+        liveController = useWorkspaceController(liveGateway);
+        return React.createElement("div", null, liveController.state.status);
+      }
+
+      const liveContainer = document.createElement("div");
+      document.body.appendChild(liveContainer);
+      const liveRoot = ReactDOM.createRoot(liveContainer);
+
+      try {
+        await act(async () => {
+          liveRoot.render(React.createElement(LiveHarness));
+          await flushEffects();
+        });
+        await waitFor(() => liveController?.state.status === "ready", "live controller did not bootstrap");
+        await waitFor(() => liveInteractions.watchRootUpdates.length > 0, "visible watch roots were not registered");
+        assert.deepEqual(liveInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: ["D:\\Projects\\Atlas"],
+          navigationParentPaths: []
+        });
+
+        liveInteractions.resolvedPaths.length = 0;
+        await act(async () => {
+          liveController?.actions.activateTab("panel-1", "live-documents");
+          await flushEffects();
+        });
+        await waitFor(
+          () => liveInteractions.watchRootUpdates.at(-1)?.directoryPaths[0] === "C:\\Users\\Admin\\Documents",
+          "watch roots did not move to the newly visible tab"
+        );
+        await waitFor(
+          () => liveInteractions.resolvedPaths.includes("C:\\Users\\Admin\\Documents"),
+          "newly visible tab was not refreshed once"
+        );
+
+        liveInteractions.resolvedPaths.length = 0;
+        const listener = liveInteractions.fileSystemChangeListeners[0];
+        assert.ok(listener);
+        await act(async () => {
+          await listener({
+            roots: ["d:\\projects\\atlas", "c:\\users\\admin\\documents"],
+            directoryRoots: ["d:\\projects\\atlas", "c:\\users\\admin\\documents"],
+            navigationParentRoots: [],
+            sequence: 1
+          });
+          await new Promise((resolve) => setTimeout(resolve, 420));
+          await flushEffects();
+        });
+
+        assert.deepEqual(liveInteractions.resolvedPaths, ["C:\\Users\\Admin\\Documents"]);
+      } finally {
+        await act(async () => {
+          liveRoot.unmount();
+          await flushEffects();
+        });
+        liveContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes a directory tab once when its panel becomes visible", async () => {
+      const visibilityInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>
+      };
+      const visibilityBootstrap = createMockWorkspaceBootstrap("tauri");
+      visibilityBootstrap.layoutMode = "single";
+      visibilityBootstrap.panels["panel-1"] = {
+        ...visibilityBootstrap.panels["panel-1"],
+        tabs: [createTabState("D:\\Projects\\Atlas", "visible-atlas")],
+        activeTabId: "visible-atlas"
+      };
+      visibilityBootstrap.panels["panel-2"] = {
+        ...visibilityBootstrap.panels["panel-2"],
+        tabs: [createTabState("C:\\Users\\Admin\\Downloads", "hidden-downloads")],
+        activeTabId: "hidden-downloads"
+      };
+      let visibilityController: ReturnType<typeof useWorkspaceController> | undefined;
+      const visibilityGateway = createTestGateway(() => undefined, visibilityInteractions, {
+        loadBootstrap: () => visibilityBootstrap
+      });
+
+      function VisibilityHarness() {
+        visibilityController = useWorkspaceController(visibilityGateway);
+        return React.createElement("div", null, visibilityController.state.status);
+      }
+
+      const visibilityContainer = document.createElement("div");
+      document.body.appendChild(visibilityContainer);
+      const visibilityRoot = ReactDOM.createRoot(visibilityContainer);
+
+      try {
+        await act(async () => {
+          visibilityRoot.render(React.createElement(VisibilityHarness));
+          await flushEffects();
+        });
+        await waitFor(() => visibilityController?.state.status === "ready", "visibility controller did not bootstrap");
+        await waitFor(() => visibilityInteractions.watchRootUpdates.length > 0, "initial visible roots were not registered");
+        assert.deepEqual(visibilityInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: ["D:\\Projects\\Atlas"],
+          navigationParentPaths: []
+        });
+
+        visibilityInteractions.resolvedPaths.length = 0;
+        await act(async () => {
+          visibilityController?.actions.setLayoutMode("dual");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => visibilityInteractions.watchRootUpdates.at(-1)?.directoryPaths.includes("C:\\Users\\Admin\\Downloads") === true,
+          "newly visible panel was not registered for live refresh"
+        );
+        await waitFor(
+          () => visibilityInteractions.resolvedPaths.includes("C:\\Users\\Admin\\Downloads"),
+          "newly visible directory tab was not refreshed once"
+        );
+        assert.deepEqual(visibilityInteractions.resolvedPaths, ["C:\\Users\\Admin\\Downloads"]);
+      } finally {
+        await act(async () => {
+          visibilityRoot.unmount();
+          await flushEffects();
+        });
+        visibilityContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController watches navigation parents only while the navigation tab is visible", async () => {
+      const liveNavigationInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>,
+        navigationResolves: [] as string[][]
+      };
+      const liveNavigationBootstrap = createMockWorkspaceBootstrap("tauri");
+      const navigationTab = createNavigationTab("live-navigation-tab");
+      liveNavigationBootstrap.layoutMode = "single";
+      liveNavigationBootstrap.panels["panel-1"] = {
+        ...liveNavigationBootstrap.panels["panel-1"],
+        tabs: [navigationTab, createTabState("D:\\Projects\\Atlas", "live-navigation-directory")],
+        activeTabId: navigationTab.id
+      };
+      liveNavigationBootstrap.navigationItems = [
+        {
+          id: "nav-report",
+          displayName: "Report",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\report.txt",
+          targetKind: "file",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        },
+        {
+          id: "nav-remote",
+          displayName: "Remote",
+          description: "",
+          path: "sftp://deploy@edge-01/releases/manifest.yml",
+          targetKind: "remoteUnsupported",
+          targetStatus: "unsupportedRemote",
+          sortOrder: 2,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+      let liveNavigationController: ReturnType<typeof useWorkspaceController> | undefined;
+      const liveNavigationGateway = createTestGateway(() => undefined, liveNavigationInteractions, {
+        loadBootstrap: () => liveNavigationBootstrap
+      });
+
+      function LiveNavigationHarness() {
+        liveNavigationController = useWorkspaceController(liveNavigationGateway);
+        return React.createElement("div", null, liveNavigationController.state.status);
+      }
+
+      const liveNavigationContainer = document.createElement("div");
+      document.body.appendChild(liveNavigationContainer);
+      const liveNavigationRoot = ReactDOM.createRoot(liveNavigationContainer);
+
+      try {
+        await act(async () => {
+          liveNavigationRoot.render(React.createElement(LiveNavigationHarness));
+          await flushEffects();
+        });
+        await waitFor(() => liveNavigationController?.state.status === "ready", "live navigation controller did not bootstrap");
+        await waitFor(() => liveNavigationInteractions.watchRootUpdates.length > 0, "navigation watch roots were not registered");
+        assert.deepEqual(liveNavigationInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: [],
+          navigationParentPaths: ["C:\\Users\\Admin\\Documents"]
+        });
+
+        liveNavigationInteractions.navigationResolves.length = 0;
+        const listener = liveNavigationInteractions.fileSystemChangeListeners[0];
+        assert.ok(listener);
+        await act(async () => {
+          await listener({
+            roots: ["C:\\Users\\Admin\\Documents"],
+            directoryRoots: [],
+            navigationParentRoots: ["C:\\Users\\Admin\\Documents"],
+            sequence: 1
+          });
+          await new Promise((resolve) => setTimeout(resolve, 420));
+          await flushEffects();
+        });
+        assert.deepEqual(liveNavigationInteractions.navigationResolves, [["C:\\Users\\Admin\\Documents\\report.txt", "sftp://deploy@edge-01/releases/manifest.yml"]]);
+
+        liveNavigationInteractions.navigationResolves.length = 0;
+        await act(async () => {
+          liveNavigationController?.actions.activateTab("panel-1", "live-navigation-directory");
+          await flushEffects();
+        });
+        await waitFor(
+          () => liveNavigationInteractions.watchRootUpdates.at(-1)?.directoryPaths[0] === "D:\\Projects\\Atlas",
+          "navigation watch roots were not cleared after hiding the navigation tab"
+        );
+        assert.deepEqual(liveNavigationInteractions.watchRootUpdates.at(-1)?.navigationParentPaths, []);
+      } finally {
+        await act(async () => {
+          liveNavigationRoot.unmount();
+          await flushEffects();
+        });
+        liveNavigationContainer.remove();
       }
     });
 

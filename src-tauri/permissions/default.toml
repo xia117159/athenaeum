@@ -3,6 +3,7 @@ description = "Allows SimpleFileManager workspace commands required by the main 
 permissions = [
   "allow-initialize-workspace",
   "allow-list-directory",
+  "allow-set-workspace-watch-roots",
   "allow-get-item-properties",
   "allow-get-tree-children",
   "allow-resolve-system-icon",
@@ -74,6 +75,11 @@ commands.allow = ["initialize_workspace"]
 identifier = "allow-list-directory"
 description = "Allows listing local directories."
 commands.allow = ["list_directory"]
+
+[[permission]]
+identifier = "allow-set-workspace-watch-roots"
+description = "Allows replacing the visible local directories watched for live refresh events."
+commands.allow = ["set_workspace_watch_roots"]
 
 [[permission]]
 identifier = "allow-get-item-properties"
