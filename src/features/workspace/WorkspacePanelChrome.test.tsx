@@ -493,6 +493,79 @@ export const completion = (async () => {
       ]);
     });
 
+    await assertTest("WorkspacePanelChrome shows the tab drop indicator in the target panel during cross-panel drags", async () => {
+      movedTabs.length = 0;
+      const targetTabs = [
+        createTab("panel-2-tab-1", "B", "F:\\B"),
+        createTab("panel-2-tab-2", "C", "F:\\C")
+      ];
+
+      await act(async () => {
+        root.render(
+          React.createElement(
+            "div",
+            null,
+            React.createElement(WorkspacePanelChrome, {
+              panelId: "panel-1",
+              tabs,
+              activeTabId: "panel-1-tab-2",
+              breadcrumbs,
+              onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+              onCloseTab: (tabId: string) => closedTabs.push(tabId),
+              onMoveTab: recordMovedTab(movedTabs),
+              onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+              onOpenNewTab: () => {
+                openCount += 1;
+              },
+              onNavigateToPath: (path: string) => navigatedPaths.push(path)
+            }),
+            React.createElement(WorkspacePanelChrome, {
+              panelId: "panel-2",
+              tabs: targetTabs,
+              activeTabId: "panel-2-tab-1",
+              breadcrumbs: targetTabs[0].snapshot.breadcrumbs,
+              onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+              onCloseTab: (tabId: string) => closedTabs.push(tabId),
+              onMoveTab: recordMovedTab(movedTabs),
+              onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+              onOpenNewTab: () => {
+                openCount += 1;
+              },
+              onNavigateToPath: (path: string) => navigatedPaths.push(path)
+            })
+          )
+        );
+        await flushEffects();
+      });
+
+      const sourceTab = container.querySelector(".tab-strip__tab");
+      const strips = container.querySelectorAll(".tab-strip");
+      const sourceStrip = strips[0];
+      const targetStrip = strips[1];
+      assert.ok(sourceTab);
+      assert.ok(sourceStrip);
+      assert.ok(targetStrip);
+
+      const restoreElementFromPoint = stubElementFromPoint(targetStrip);
+      try {
+        await act(async () => {
+          sourceTab.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 520, clientY: 8 }));
+          await flushEffects();
+        });
+
+        assert.equal(sourceStrip.querySelector(".tab-strip__drop-indicator"), null);
+        assert.ok(targetStrip.querySelector(".tab-strip__drop-indicator"));
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 520, clientY: 8, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+    });
+
     await assertTest("WorkspacePanelChrome copies dragged entries onto directory tabs and uses the configured move modifier", async () => {
       droppedEntries.length = 0;
 

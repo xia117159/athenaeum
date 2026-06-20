@@ -1296,7 +1296,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
 
         const sourceTab = sourcePanel.tabs[sourceIndex];
-        if (isNavigationTab(sourceTab) && state.panels[action.payload.targetPanelId].tabs.some(isNavigationTab)) {
+        if (
+          isNavigationTab(sourceTab) &&
+          action.payload.sourcePanelId !== action.payload.targetPanelId &&
+          state.panels[action.payload.targetPanelId].tabs.some(isNavigationTab)
+        ) {
           return state;
         }
         if (action.payload.sourcePanelId === action.payload.targetPanelId) {

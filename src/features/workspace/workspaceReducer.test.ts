@@ -603,6 +603,32 @@ assertTest("workspaceReducer moves tabs within and across panels without moving 
   assert.equal(blocked, moved);
 });
 
+assertTest("workspaceReducer reorders the navigation tab within its current panel", () => {
+  const state = createState();
+  const first = state.panels["panel-1"].tabs[0];
+  const second = state.panels["panel-1"].tabs[1];
+  const navigationTab = createNavigationTab("navigation-tab");
+  const withNavigation = {
+    ...state,
+    panels: {
+      ...state.panels,
+      "panel-1": {
+        ...state.panels["panel-1"],
+        tabs: [first, second, navigationTab],
+        activeTabId: navigationTab.id
+      }
+    }
+  };
+
+  const reordered = workspaceReducer(withNavigation, {
+    type: "tabMoved",
+    payload: { sourcePanelId: "panel-1", targetPanelId: "panel-1", tabId: navigationTab.id, targetIndex: 1 }
+  });
+
+  assert.deepEqual(reordered.panels["panel-1"].tabs.map((tab) => tab.id), [first.id, navigationTab.id, second.id]);
+  assert.equal(reordered.panels["panel-1"].activeTabId, navigationTab.id);
+});
+
 assertTest("workspaceReducer ignores activation requests for missing tab ids", () => {
   const state = createState();
   const panel = state.panels["panel-1"];

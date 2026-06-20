@@ -22,6 +22,22 @@ type TabDropTarget = {
   targetIndex: number;
 };
 
+let sharedTabDropIndicator: TabDropTarget | null = null;
+const tabDropIndicatorListeners = new Set<(target: TabDropTarget | null) => void>();
+
+function publishTabDropIndicator(target: TabDropTarget | null) {
+  sharedTabDropIndicator = target;
+  tabDropIndicatorListeners.forEach((listener) => listener(target));
+}
+
+function subscribeTabDropIndicator(listener: (target: TabDropTarget | null) => void) {
+  tabDropIndicatorListeners.add(listener);
+  listener(sharedTabDropIndicator);
+  return () => {
+    tabDropIndicatorListeners.delete(listener);
+  };
+}
+
 type DropOperation = "copy" | "move";
 
 type BreadcrumbRenderItem = BreadcrumbItem & {
@@ -210,7 +226,7 @@ export function WorkspacePanelChrome({
     tabTitle: "",
     tabIcon: "none"
   });
-  const [dropIndicator, setDropIndicator] = useState<TabDropTarget | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<TabDropTarget | null>(sharedTabDropIndicator);
 
   const breadcrumbItems: BreadcrumbRenderItem[] = [
     ...breadcrumbs,
@@ -224,6 +240,8 @@ export function WorkspacePanelChrome({
     },
     []
   );
+
+  useEffect(() => subscribeTabDropIndicator(setDropIndicator), []);
 
   const startTabPointerDrag = (event: ReactPointerEvent<HTMLButtonElement>, tabId: string) => {
     if (event.button !== 0 || tabs.length <= 1) {
@@ -256,7 +274,7 @@ export function WorkspacePanelChrome({
       cleanupPointerDragRef.current = null;
       // 清除拖动跟随效果和插入指示器
       setDragFollower({ visible: false, x: 0, y: 0, tabTitle: "", tabIcon: "none" });
-      setDropIndicator(null);
+      publishTabDropIndicator(null);
     };
 
     const finishDrag = (finishEvent: PointerEvent) => {
@@ -325,7 +343,7 @@ export function WorkspacePanelChrome({
         document.elementFromPoint(moveEvent.clientX, moveEvent.clientY),
         moveEvent.clientX
       );
-      setDropIndicator(target);
+      publishTabDropIndicator(target);
     }
 
     function handlePointerUp(upEvent: PointerEvent) {

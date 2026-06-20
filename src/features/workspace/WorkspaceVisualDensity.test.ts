@@ -48,6 +48,7 @@ assertTest("workspace chrome uses a flat high-density split-pane layout", () => 
 });
 
 assertTest("workspace tabs and breadcrumbs match the compact Windows target chrome", () => {
+  assertDeclaration(getCssBlock(".tab-strip"), "position", "relative");
   assertDeclaration(getCssBlock(".panel-chrome"), "gap", "0");
   assertDeclaration(getCssBlock(".tab-strip__tab"), "height", "24px");
   assertDeclaration(getCssBlock(".tab-strip__tab.is-active"), "background", "#ffffff");
