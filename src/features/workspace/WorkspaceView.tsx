@@ -1092,6 +1092,7 @@ function PanelSurface({
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
             onDropEntries={(paths, destination, operation) => actions.dropEntries(paths, destination, operation)}
+            onAddEntriesToNavigation={(paths) => actions.addPathsToNavigation(paths)}
             onStartSystemFileDrag={(paths) => actions.startSystemFileDrag(paths)}
             entryDropMoveBinding={entryDropMoveBinding}
             contextMenuDefault={contextMenuDefault}

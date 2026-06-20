@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
+import { ENTRY_DRAG_MIME } from "./entryDrag";
 import { NavigationTabView } from "./NavigationTabView";
 import { installLegacyInputEventPatch } from "./testDom";
 import type { EntryViewModel, NavigationItem, NavigationState } from "./types";
@@ -41,6 +42,7 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
   globalThis.MouseEvent = dom.window.MouseEvent;
+  globalThis.PointerEvent = dom.window.PointerEvent ?? (dom.window.MouseEvent as unknown as typeof PointerEvent);
   installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
@@ -86,6 +88,55 @@ function getButton(container: HTMLElement, label: string) {
   const button = container.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null;
   assert.ok(button, `missing button ${label}`);
   return button;
+}
+
+function createNavigationItem(id: string, path: string, kind: NavigationItem["targetKind"] = "file"): NavigationItem {
+  return {
+    id,
+    displayName: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+    description: "",
+    path,
+    targetKind: kind,
+    targetStatus: "ok",
+    sortOrder: 1,
+    createdAt: "2026-06-08T09:00:00Z",
+    updatedAt: "2026-06-08T09:00:00Z"
+  };
+}
+
+function createDropEvent(type: string, data: Record<string, string>) {
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: true
+  }) as Event & {
+    dataTransfer: {
+      dropEffect: string;
+      types: string[];
+      getData: (type: string) => string;
+    };
+  };
+
+  Object.defineProperty(event, "dataTransfer", {
+    configurable: true,
+    value: {
+      dropEffect: "none",
+      types: Object.keys(data),
+      getData: (type: string) => data[type] ?? ""
+    }
+  });
+
+  return event;
+}
+
+function dispatchPointerLikeMouseEvent(target: EventTarget, type: string, clientX: number) {
+  target.dispatchEvent(
+    new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      screenX: clientX
+    })
+  );
 }
 
 export const completion = (async () => {
@@ -339,6 +390,198 @@ export const completion = (async () => {
         await dispatchEditableKey(editorInput, init);
       }
       assert.deepEqual(calls, []);
+    });
+
+    await assertTest("NavigationTabView closes its context menu on outside pointer and Escape", async () => {
+      const item = createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt");
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const row = container.querySelector<HTMLElement>(".navigation-table__item");
+      assert.ok(row);
+
+      await act(async () => {
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 18 }));
+        await flushEffects();
+      });
+      assert.ok(container.querySelector(".navigation-menu"));
+
+      await act(async () => {
+        document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.equal(container.querySelector(".navigation-menu"), null);
+
+      await act(async () => {
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 18 }));
+        await flushEffects();
+      });
+      assert.ok(container.querySelector(".navigation-menu"));
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+        await flushEffects();
+      });
+      assert.equal(container.querySelector(".navigation-menu"), null);
+    });
+
+    await assertTest("NavigationTabView materializes resizable fixed column tracks", async () => {
+      const item = createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt");
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const header = container.querySelector<HTMLElement>(".navigation-table__row--header");
+      const row = container.querySelector<HTMLElement>(".navigation-table__item");
+      const resizeHandles = Array.from(container.querySelectorAll(".navigation-header-resizer"));
+      const tableInFillRow = container.querySelector(".navigation-tab__content > .navigation-tab__editor-slot + .navigation-table");
+      assert.ok(tableInFillRow);
+      assert.ok(header);
+      assert.ok(row);
+      assert.equal(resizeHandles.length, 6);
+      assert.doesNotMatch(header.style.gridTemplateColumns, /fr/);
+      assert.equal(row.style.gridTemplateColumns, header.style.gridTemplateColumns);
+
+      const firstHeaderCell = resizeHandles[0].closest(".navigation-header-cell") as HTMLElement | null;
+      assert.ok(firstHeaderCell);
+      firstHeaderCell.getBoundingClientRect = () =>
+        ({
+          width: 240,
+          height: 24,
+          top: 0,
+          right: 240,
+          bottom: 24,
+          left: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({})
+        }) as DOMRect;
+
+      await act(async () => {
+        dispatchPointerLikeMouseEvent(resizeHandles[0], "mousedown", 240);
+        dispatchPointerLikeMouseEvent(window, "mousemove", 312);
+        dispatchPointerLikeMouseEvent(window, "mouseup", 312);
+        await flushEffects();
+      });
+
+      assert.match(header.style.gridTemplateColumns, /^312px\s+\d+px\s+\d+px\s+\d+px\s+\d+px\s+\d+px$/);
+      assert.equal(row.style.gridTemplateColumns, header.style.gridTemplateColumns);
+      assert.equal(row.style.width, header.style.width);
+    });
+
+    await assertTest("NavigationTabView adds dropped entry-drag payload paths to navigation", async () => {
+      const addedPaths: string[][] = [];
+      const savedPaths: string[] = [];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem(item: { path: string }) {
+          savedPaths.push(item.path);
+        },
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation(paths: string[]) {
+          addedPaths.push([...paths]);
+        },
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState(),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const navigationRoot = container.querySelector<HTMLElement>(".navigation-tab");
+      assert.ok(navigationRoot);
+      const payload = {
+        sourcePanelId: "panel-1",
+        sourceTabId: "panel-1-tab-1",
+        paths: ["C:\\Users\\Admin\\Documents\\report.txt", "D:\\Archive"]
+      };
+
+      await act(async () => {
+        const dragOver = createDropEvent("dragover", {
+          [ENTRY_DRAG_MIME]: JSON.stringify(payload)
+        });
+        navigationRoot.dispatchEvent(dragOver);
+        assert.equal(dragOver.defaultPrevented, true);
+        const drop = createDropEvent("drop", {
+          [ENTRY_DRAG_MIME]: JSON.stringify(payload)
+        });
+        navigationRoot.dispatchEvent(drop);
+        await flushEffects();
+      });
+
+      assert.deepEqual(addedPaths, [["C:\\Users\\Admin\\Documents\\report.txt", "D:\\Archive"]]);
+      assert.deepEqual(savedPaths, []);
     });
   } finally {
     await act(async () => {

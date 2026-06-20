@@ -2,7 +2,7 @@ import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef
 import { createMockWorkspaceBootstrap, getParentLocationPath, nextGeneratedTabId, normalizeLocationPath } from "./mockData";
 import { createRemoteUri, resolveRemotePath } from "./remoteUri";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
-import { createWorkspaceState, getActiveTab, workspaceReducer } from "./workspaceReducer";
+import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
@@ -369,6 +369,26 @@ function getPathComparisonKey(path: string) {
 
 function pathsEqual(left: string, right: string) {
   return getPathComparisonKey(left) === getPathComparisonKey(right);
+}
+
+function getNavigationFolderMatchPanelOrder(state: WorkspaceState, navigationPanelId: PanelId) {
+  const visiblePanelIds = getVisiblePanelIds(state.layoutMode);
+  return [
+    ...visiblePanelIds.filter((panelId) => panelId !== navigationPanelId),
+    ...(visiblePanelIds.includes(navigationPanelId) ? [navigationPanelId] : [])
+  ];
+}
+
+function findDirectoryTabForNavigationFolder(state: WorkspaceState, navigationPanelId: PanelId, path: string) {
+  for (const panelId of getNavigationFolderMatchPanelOrder(state, navigationPanelId)) {
+    for (const tab of state.panels[panelId].tabs) {
+      if (isDirectoryTab(tab) && pathsEqual(tab.snapshot.location.path, path)) {
+        return { panelId, tabId: tab.id };
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function isSameOrDescendantPath(source: string, destination: string) {
@@ -1792,6 +1812,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   });
 
+  const addPathsToNavigation = useEffectEvent(async (paths: string[]) => {
+    const uniquePaths = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+    if (uniquePaths.length === 0) {
+      pushNotification("warning", "Navigation path cannot be empty.");
+      return;
+    }
+
+    dispatch({ type: "navigationStatusSet", payload: "saving" });
+    try {
+      let latestItems = state.navigation.items;
+      for (const path of uniquePaths) {
+        const payload = await workspaceGateway.saveNavigationItem({ description: "", path });
+        latestItems = payload.navigationItems;
+      }
+      dispatch({ type: "navigationItemsUpdated", payload: latestItems });
+      pushNotification("success", uniquePaths.length === 1 ? "Navigation item saved." : "Navigation items saved.");
+    } catch (error) {
+      dispatch({ type: "navigationStatusSet", payload: "idle" });
+      pushNotification("danger", getErrorMessage(error, "Unable to save navigation item."));
+    }
+  });
+
   const deleteNavigationItems = useEffectEvent(async (ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids));
     if (uniqueIds.length === 0) {
@@ -1863,6 +1905,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     if (item.targetKind === "folder") {
+      const existingTab = findDirectoryTabForNavigationFolder(state, panelId, item.path);
+      if (existingTab) {
+        if (!inBackground) {
+          dispatch({ type: "tabActivated", payload: existingTab });
+        }
+        await markNavigationItemOpened(item.id);
+        return;
+      }
       if (inBackground) {
         const previousActiveTabId = state.panels[panelId].activeTabId;
         await handleOpenNewTab(panelId, item.path);
@@ -2667,6 +2717,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
       },
       saveNavigationItem: (item: NavigationItem | NavigationItemUpsertRequest) => void saveNavigationItem(item),
+      addPathsToNavigation: (paths: string[]) => void addPathsToNavigation(paths),
       deleteNavigationItems: (ids: string[]) => void deleteNavigationItems(ids),
       reorderNavigationItem: (itemId: string, direction: -1 | 1) => void reorderNavigationItem(itemId, direction),
       selectNavigationItem: (itemId: string, multi = false) =>
@@ -2759,6 +2810,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }),
     [
       addCurrentFolderToNavigation,
+      addPathsToNavigation,
       addSelectedEntriesToNavigation,
       applySettingsModel,
       cancelOperation,

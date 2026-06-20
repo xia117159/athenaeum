@@ -1,8 +1,11 @@
 import {
+  type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import {
@@ -17,9 +20,11 @@ import {
   Search,
   Trash2
 } from "lucide-react";
+import { hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { EntryViewModel, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
+import { NAVIGATION_TAB_ID } from "./workspaceTabs";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
 
@@ -35,6 +40,27 @@ type CurrentFolderContext = {
   displayName?: string;
   path: string;
 };
+
+type NavigationColumnId = "name" | "kind" | "path" | "description" | "status" | "lastOpened";
+
+const NAVIGATION_GRID_COLUMN_GAP_PX = 6;
+const NAVIGATION_COLUMNS: Array<{
+  id: NavigationColumnId;
+  label: string;
+  width: number;
+  minWidth: number;
+}> = [
+  { id: "name", label: "\u540d\u79f0", width: 240, minWidth: 96 },
+  { id: "kind", label: "\u7c7b\u578b", width: 112, minWidth: 72 },
+  { id: "path", label: "\u8def\u5f84", width: 220, minWidth: 120 },
+  { id: "description", label: "\u63cf\u8ff0", width: 148, minWidth: 88 },
+  { id: "status", label: "\u72b6\u6001", width: 120, minWidth: 72 },
+  { id: "lastOpened", label: "\u6700\u8fd1\u6253\u5f00", width: 148, minWidth: 112 }
+];
+
+function createDefaultNavigationColumnWidths() {
+  return Object.fromEntries(NAVIGATION_COLUMNS.map((column) => [column.id, column.width])) as Record<NavigationColumnId, number>;
+}
 
 const STATUS_LABELS: Record<NavigationItem["targetStatus"], string> = {
   ok: "正常",
@@ -123,13 +149,65 @@ export function NavigationTabView({
   const [draft, setDraft] = useState<NavigationItemUpsertRequest | null>(null);
   const [nameDraft, setNameDraft] = useState<{ id: string; displayName: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [navigationColumnWidths, setNavigationColumnWidths] = useState<Record<NavigationColumnId, number>>(createDefaultNavigationColumnWidths);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const visibleItems = useMemo(() => filterItems(navigation.items, navigation.filterText), [navigation.items, navigation.filterText]);
   const selectedItems = navigation.items.filter((item) => navigation.selectedItemIds.includes(item.id));
   const primarySelected = selectedItems[0];
+  const menuSelectedItems = menu?.itemId
+    ? navigation.selectedItemIds.includes(menu.itemId)
+      ? selectedItems
+      : navigation.items.filter((item) => item.id === menu.itemId)
+    : [];
+  const menuPrimarySelected = menuSelectedItems[0];
+  const menuSelectedItemIds = menuSelectedItems.map((item) => item.id);
   const canMoveUp = primarySelected ? navigation.items.findIndex((item) => item.id === primarySelected.id) > 0 : false;
   const canMoveDown = primarySelected
     ? navigation.items.findIndex((item) => item.id === primarySelected.id) < navigation.items.length - 1
     : false;
+  const navigationGridTemplateColumns = NAVIGATION_COLUMNS.map((column) => `${navigationColumnWidths[column.id]}px`).join(" ");
+  const navigationGridWidth =
+    NAVIGATION_COLUMNS.reduce((sum, column) => sum + navigationColumnWidths[column.id], 0) +
+    Math.max(0, NAVIGATION_COLUMNS.length - 1) * NAVIGATION_GRID_COLUMN_GAP_PX;
+  const navigationGridStyle = {
+    gridTemplateColumns: navigationGridTemplateColumns,
+    width: `${navigationGridWidth}px`
+  } as CSSProperties;
+
+  useEffect(() => {
+    if (!menu) {
+      return;
+    }
+
+    let armed = false;
+    const timer = window.setTimeout(() => {
+      armed = true;
+    }, 0);
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!armed || !(event.target instanceof Node)) {
+        return;
+      }
+      if (menuRef.current?.contains(event.target)) {
+        return;
+      }
+      setMenu(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenu(null);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menu]);
 
   const submitDraft = () => {
     if (!draft?.path.trim()) {
@@ -259,19 +337,28 @@ export function NavigationTabView({
     }
   };
 
+  const getDroppedNavigationPaths = (event: ReactDragEvent<HTMLElement>) => {
+    const payload = readEntryDragPayload(event.dataTransfer, panelId, NAVIGATION_TAB_ID);
+    if (payload?.paths.length) {
+      return payload.paths;
+    }
+    return getDroppedPaths(event);
+  };
+
   const handleDrop = (event: ReactDragEvent<HTMLElement>) => {
-    const paths = getDroppedPaths(event);
+    const paths = getDroppedNavigationPaths(event);
     if (paths.length === 0) {
       return;
     }
     event.preventDefault();
-    for (const path of paths) {
-      actions.saveNavigationItem({ description: "", path });
-    }
+    event.stopPropagation();
+    setDragActive(false);
+    actions.addPathsToNavigation(paths);
   };
 
   const openMenu = (event: ReactMouseEvent<HTMLElement>, item?: NavigationItem) => {
     event.preventDefault();
+    event.stopPropagation();
     if (item && !navigation.selectedItemIds.includes(item.id)) {
       actions.setNavigationSelection([item.id]);
     }
@@ -286,7 +373,7 @@ export function NavigationTabView({
 
   const handleWindowsFileOperations = () => {
     void actions
-      .openNavigationNativeContextMenu(navigation.selectedItemIds, menu?.x ?? 0, menu?.y ?? 0, menu?.screenX ?? 0, menu?.screenY ?? 0)
+      .openNavigationNativeContextMenu(menuSelectedItemIds, menu?.x ?? 0, menu?.y ?? 0, menu?.screenX ?? 0, menu?.screenY ?? 0)
       .then((opened) => {
         if (opened) {
           setMenu(null);
@@ -294,17 +381,56 @@ export function NavigationTabView({
       });
   };
 
+  const handleNavigationColumnResizeStart = (columnId: NavigationColumnId, event: ReactMouseEvent<HTMLSpanElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const column = NAVIGATION_COLUMNS.find((candidate) => candidate.id === columnId);
+    const headerCell = event.currentTarget.closest(".navigation-header-cell");
+    const measuredWidth = headerCell instanceof HTMLElement ? headerCell.getBoundingClientRect().width : 0;
+    const startWidth = measuredWidth > 0 ? measuredWidth : navigationColumnWidths[columnId];
+    const startX = event.clientX;
+    const minWidth = column?.minWidth ?? 72;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
+      setNavigationColumnWidths((current) => ({
+        ...current,
+        [columnId]: nextWidth
+      }));
+    };
+
+    const handleStop = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleStop);
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleStop);
+  };
+
   return (
     <div
-      className="navigation-tab"
+      className={`navigation-tab${dragActive ? " is-entry-drop-target" : ""}`}
+      data-entry-drop-kind="navigation"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onContextMenu={(event) => openMenu(event)}
       onDragOver={(event) => {
-        if (event.dataTransfer?.types.includes("text/plain")) {
+        if (hasEntryDragPayload(event.dataTransfer) || event.dataTransfer?.types.includes("text/plain")) {
           event.preventDefault();
+          event.stopPropagation();
           event.dataTransfer.dropEffect = "copy";
+          setDragActive(true);
         }
+      }}
+      onDragLeave={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+          return;
+        }
+        setDragActive(false);
       }}
       onDrop={handleDrop}
     >
@@ -351,54 +477,63 @@ export function NavigationTabView({
         </button>
       </div>
 
-      {draft ? (
-        <div className="navigation-editor" role="dialog" aria-label="编辑导航项">
-          <label>
-            <span>名称</span>
-            <input value={draft.displayName ?? ""} onChange={(event) => setDraft({ ...draft, displayName: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>描述</span>
-            <input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.currentTarget.value })} />
-          </label>
-          <label className="navigation-editor__path">
-            <span>完整路径</span>
-            <input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.currentTarget.value })} autoFocus />
-          </label>
-          <div className="navigation-editor__actions">
-            <button type="button" className="toolbar-button" onClick={submitDraft} disabled={!draft.path.trim()}>
-              保存
-            </button>
-            <button type="button" className="toolbar-button toolbar-button--flat" onClick={() => setDraft(null)}>
-              取消
-            </button>
+      <div className="navigation-tab__content">
+      <div className="navigation-tab__editor-slot">
+        {draft ? (
+          <div className="navigation-editor" role="dialog" aria-label="编辑导航项">
+            <label>
+              <span>名称</span>
+              <input value={draft.displayName ?? ""} onChange={(event) => setDraft({ ...draft, displayName: event.currentTarget.value })} />
+            </label>
+            <label>
+              <span>描述</span>
+              <input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.currentTarget.value })} />
+            </label>
+            <label className="navigation-editor__path">
+              <span>完整路径</span>
+              <input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.currentTarget.value })} autoFocus />
+            </label>
+            <div className="navigation-editor__actions">
+              <button type="button" className="toolbar-button" onClick={submitDraft} disabled={!draft.path.trim()}>
+                保存
+              </button>
+              <button type="button" className="toolbar-button toolbar-button--flat" onClick={() => setDraft(null)}>
+                取消
+              </button>
+            </div>
           </div>
-        </div>
-      ) : nameDraft ? (
-        <div className="navigation-editor navigation-editor--name" role="dialog" aria-label="编辑导航项名称">
-          <label>
-            <span>名称</span>
-            <input value={nameDraft.displayName} onChange={(event) => setNameDraft({ ...nameDraft, displayName: event.currentTarget.value })} autoFocus />
-          </label>
-          <div className="navigation-editor__actions">
-            <button type="button" className="toolbar-button" onClick={submitNameDraft}>
-              保存
-            </button>
-            <button type="button" className="toolbar-button toolbar-button--flat" onClick={() => setNameDraft(null)}>
-              取消
-            </button>
+        ) : nameDraft ? (
+          <div className="navigation-editor navigation-editor--name" role="dialog" aria-label="编辑导航项名称">
+            <label>
+              <span>名称</span>
+              <input value={nameDraft.displayName} onChange={(event) => setNameDraft({ ...nameDraft, displayName: event.currentTarget.value })} autoFocus />
+            </label>
+            <div className="navigation-editor__actions">
+              <button type="button" className="toolbar-button" onClick={submitNameDraft}>
+                保存
+              </button>
+              <button type="button" className="toolbar-button toolbar-button--flat" onClick={() => setNameDraft(null)}>
+                取消
+              </button>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <div className="navigation-table" role="table" aria-label="导航页快捷入口">
-        <div className="navigation-table__row navigation-table__row--header" role="row">
-          <span role="columnheader">名称</span>
-          <span role="columnheader">类型</span>
-          <span role="columnheader">路径</span>
-          <span role="columnheader">描述</span>
-          <span role="columnheader">状态</span>
-          <span role="columnheader">最近打开</span>
+        <div className="navigation-table__row navigation-table__row--header" role="row" style={navigationGridStyle}>
+          {NAVIGATION_COLUMNS.map((column) => (
+            <div key={column.id} className="navigation-header-cell" role="columnheader">
+              <span className="navigation-header-cell__label">{column.label}</span>
+              <span
+                className="navigation-header-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={`resize ${column.id} column`}
+                onMouseDown={(event) => handleNavigationColumnResizeStart(column.id, event)}
+              />
+            </div>
+          ))}
         </div>
         <div className="navigation-table__body">
           {visibleItems.length === 0 ? (
@@ -422,6 +557,7 @@ export function NavigationTabView({
                   type="button"
                   className={`navigation-table__row navigation-table__item${selected ? " is-selected" : ""}`}
                   role="row"
+                  style={navigationGridStyle}
                   title={item.path}
                   onClick={(event) => actions.selectNavigationItem(item.id, event.ctrlKey || event.metaKey)}
                   onDoubleClick={() => actions.openNavigationItem(panelId, item.id)}
@@ -442,31 +578,32 @@ export function NavigationTabView({
           )}
         </div>
       </div>
+      </div>
 
       {menu ? (
-        <div className="navigation-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
+        <div ref={menuRef} className="navigation-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" onClick={() => { openDraft(); setMenu(null); }}>
             添加导航项
           </button>
-          <button type="button" onClick={() => { if (primarySelected) actions.openNavigationItem(panelId, primarySelected.id); setMenu(null); }}>
+          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItem(panelId, menuPrimarySelected.id); setMenu(null); }}>
             打开
           </button>
-          <button type="button" onClick={() => { if (primarySelected) actions.openNavigationItemParent(panelId, primarySelected.id); setMenu(null); }}>
+          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItemParent(panelId, menuPrimarySelected.id); setMenu(null); }}>
             打开所在文件夹
           </button>
-          <button type="button" onClick={() => { if (primarySelected) openDraft(primarySelected); setMenu(null); }}>
+          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) openDraft(menuPrimarySelected); setMenu(null); }}>
             编辑导航项
           </button>
-          <button type="button" onClick={() => { actions.deleteNavigationItems(navigation.selectedItemIds); setMenu(null); }}>
+          <button type="button" disabled={menuSelectedItemIds.length === 0} onClick={() => { actions.deleteNavigationItems(menuSelectedItemIds); setMenu(null); }}>
             从导航页移除
           </button>
-          <button type="button" onClick={() => { void navigator.clipboard?.writeText(selectedItems.map((item) => item.path).join("\n")).catch(() => undefined); setMenu(null); }}>
+          <button type="button" disabled={menuSelectedItems.length === 0} onClick={() => { void navigator.clipboard?.writeText(menuSelectedItems.map((item) => item.path).join("\n")).catch(() => undefined); setMenu(null); }}>
             复制路径
           </button>
           <button type="button" onClick={() => { actions.refreshNavigationTargets(); setMenu(null); }}>
             刷新状态
           </button>
-          <button type="button" onClick={handleWindowsFileOperations}>
+          <button type="button" disabled={menuSelectedItemIds.length === 0} onClick={handleWindowsFileOperations}>
             Windows 文件操作...
           </button>
         </div>

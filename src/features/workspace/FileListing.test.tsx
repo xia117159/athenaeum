@@ -303,6 +303,7 @@ export const completion = (async () => {
   const inlineCommitValues: Array<string | undefined> = [];
   const inlineCancels: string[] = [];
   const systemDragStarts: string[][] = [];
+  const navigationAdds: string[][] = [];
 
   setSystemIconResolverForTests(async (request) => {
     resolvedIconRequests.push(request);
@@ -371,6 +372,9 @@ export const completion = (async () => {
         },
         onDropEntries: (paths, destination, operation) => {
           dropped.push({ paths, destination, operation });
+        },
+        onAddEntriesToNavigation: (paths) => {
+          navigationAdds.push([...paths]);
         },
         onStartSystemFileDrag: (paths) => {
           systemDragStarts.push([...paths]);
@@ -705,6 +709,39 @@ export const completion = (async () => {
       assert.deepEqual(dropped, [
         { paths: ["D:\\Archive", "D:\\report.txt"], destination: "E:\\Target", operation: "copy" }
       ]);
+    });
+
+    await assertTest("FileListingShell adds pointer-dragged entries to navigation drop targets without file operations", async () => {
+      dropped.length = 0;
+      navigationAdds.length = 0;
+
+      await act(async () => {
+        render("details");
+        await flushEffects();
+      });
+
+      const navigationTarget = document.createElement("div");
+      navigationTarget.dataset.entryDropKind = "navigation";
+      document.body.appendChild(navigationTarget);
+      const restoreElementFromPoint = stubElementFromPoint(navigationTarget);
+      try {
+        const rows = Array.from(container.querySelectorAll(".file-row"));
+        const sourceRow = rows[1];
+        assert.ok(sourceRow);
+
+        await act(async () => {
+          sourceRow.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 28, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 420, clientY: 8, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+        navigationTarget.remove();
+      }
+
+      assert.deepEqual(navigationAdds, [["D:\\report.txt"]]);
+      assert.deepEqual(dropped, []);
     });
 
     await assertTest("FileListingShell starts a native system drag when a pointer drag leaves the window", async () => {

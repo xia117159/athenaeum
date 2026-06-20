@@ -1213,9 +1213,9 @@ export const completion = (async () => {
       openedBootstrap.navigationItems = [
         {
           id: "nav-folder",
-          displayName: "Archive",
+          displayName: "Helix",
           description: "",
-          path: "D:\\Archive",
+          path: "D:\\Projects\\Helix",
           targetKind: "folder",
           targetStatus: "ok",
           sortOrder: 1,
@@ -1251,13 +1251,100 @@ export const completion = (async () => {
         });
 
         await waitFor(() => openedInteractions.navigationMarks.includes("nav-folder"), "navigation open was not marked");
-        assert.equal(openedInteractions.resolvedPaths.includes("D:\\Archive"), true);
+        assert.equal(openedInteractions.resolvedPaths.includes("D:\\Projects\\Helix"), true);
       } finally {
         await act(async () => {
           openedRoot.unmount();
           await flushEffects();
         });
         openedContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController opens navigation folders by reusing matching visible tabs and checks the navigation panel last", async () => {
+      const reuseInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        navigationMarks: [] as string[]
+      };
+      const reuseBootstrap = createMockWorkspaceBootstrap("tauri");
+      const navigationTab = createNavigationTab("navigation-tab");
+      const samePathInNavigationPanel = createTabState("D:\\Archive", "panel-1-archive");
+      const samePathInTopLeftSearch = createTabState("D:\\Archive", "panel-2-archive");
+      reuseBootstrap.layoutMode = "dual";
+      reuseBootstrap.activePanelId = "panel-1";
+      reuseBootstrap.panels["panel-1"] = {
+        ...reuseBootstrap.panels["panel-1"],
+        tabs: [navigationTab, samePathInNavigationPanel],
+        activeTabId: navigationTab.id
+      };
+      reuseBootstrap.panels["panel-2"] = {
+        ...reuseBootstrap.panels["panel-2"],
+        tabs: [samePathInTopLeftSearch],
+        activeTabId: samePathInTopLeftSearch.id
+      };
+      reuseBootstrap.navigationItems = [
+        {
+          id: "nav-archive",
+          displayName: "Archive",
+          description: "",
+          path: "D:\\Archive",
+          targetKind: "folder",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+
+      let reuseController: ReturnType<typeof useWorkspaceController> | undefined;
+      const reuseGateway = createTestGateway(() => undefined, reuseInteractions, {
+        loadBootstrap: () => reuseBootstrap
+      });
+
+      function ReuseHarness() {
+        reuseController = useWorkspaceController(reuseGateway);
+        return React.createElement("div", null, reuseController.state.status);
+      }
+
+      const reuseContainer = document.createElement("div");
+      document.body.appendChild(reuseContainer);
+      const reuseRoot = ReactDOM.createRoot(reuseContainer);
+
+      try {
+        await act(async () => {
+          reuseRoot.render(React.createElement(ReuseHarness));
+          await flushEffects();
+        });
+        await waitFor(() => reuseController?.state.status === "ready", "reuse controller did not bootstrap");
+
+        await act(async () => {
+          reuseController?.actions.openNavigationItem("panel-1", "nav-archive");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => reuseInteractions.navigationMarks.includes("nav-archive"),
+          "reused navigation open was not marked"
+        );
+        assert.equal(reuseController!.state.activePanelId, "panel-2");
+        assert.equal(reuseController!.state.panels["panel-2"].activeTabId, "panel-2-archive");
+        assert.equal(reuseController!.state.panels["panel-1"].activeTabId, "navigation-tab");
+        assert.equal(reuseInteractions.resolvedPaths.includes("D:\\Archive"), false);
+      } finally {
+        await act(async () => {
+          reuseRoot.unmount();
+          await flushEffects();
+        });
+        reuseContainer.remove();
       }
     });
 

@@ -15,6 +15,7 @@ function assertTest(name: string, fn: () => void) {
 const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
 const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
+const navigationTabSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/NavigationTabView.tsx"), "utf8");
 const panelChromeSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspacePanelChrome.tsx"), "utf8");
 const treeBranchSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceTreeBranch.tsx"), "utf8");
 
@@ -168,6 +169,25 @@ assertTest("directory tree and details list use desktop file-manager density", (
   assertDeclaration(getCssBlock(".file-content-item"), "user-select", "none");
   assertDeclaration(getCssBlock(".inline-edit-input"), "user-select", "text");
   assertDeclaration(getCssBlock(".file-row__grid"), "border-radius", "0");
+});
+
+assertTest("navigation page uses the details-list density and fill contract", () => {
+  assertDeclaration(getCssBlock(".navigation-tab"), "--details-row-height", "24px");
+  assertDeclaration(getCssBlock(".navigation-tab"), "--details-header-height", "24px");
+  assertDeclaration(getCssBlock(".navigation-tab"), "grid-template-rows", "auto minmax\\(0, 1fr\\)");
+  assertDeclaration(getCssBlock(".navigation-tab__content"), "height", "100%");
+  assertDeclaration(getCssBlock(".navigation-tab__editor-slot"), "min-height", "0");
+  assertDeclaration(getCssBlock(".navigation-table"), "height", "100%");
+  assertDeclaration(getCssBlock(".navigation-table"), "overflow", "auto");
+  assertDeclaration(getCssBlock(".navigation-table__body"), "min-height", "calc\\(100% - var\\(--details-header-height\\)\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "min-height", "var\\(--details-row-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row--header"), "min-height", "var\\(--details-header-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "width", "max-content");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "min-width", "100%");
+  assert.equal(navigationTabSource.includes("navigation-header-resizer"), true);
+  assert.equal(navigationTabSource.includes("navigation-tab__editor-slot"), true);
+  assert.equal(navigationTabSource.includes("gridTemplateColumns: navigationGridTemplateColumns"), true);
+  assert.equal(navigationTabSource.includes('data-entry-drop-kind="navigation"'), true);
 });
 
 assertTest("tab chrome does not render legacy text glyph controls", () => {

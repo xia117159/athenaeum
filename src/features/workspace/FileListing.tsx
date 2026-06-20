@@ -127,12 +127,17 @@ type EntryPointerDropTarget = {
   path: string;
   operation: DropOperation;
   element: HTMLElement;
+} | {
+  kind: "navigation";
+  operation: "copy";
+  element: HTMLElement;
 };
 
 const POINTER_DROP_CLASS_BY_KIND: Record<EntryPointerDropTarget["kind"], string> = {
   tab: "is-entry-drop-target",
   folder: "is-drop-target",
-  listing: "is-drop-target"
+  listing: "is-drop-target",
+  navigation: "is-entry-drop-target"
 };
 
 let highlightedPointerDropElement: HTMLElement | null = null;
@@ -386,14 +391,14 @@ function getPointerEntryDropTarget(
     };
   }
 
-  const dropElement = element?.closest("[data-entry-drop-kind][data-entry-drop-path]") as HTMLElement | null;
+  const dropElement = element?.closest("[data-entry-drop-kind]") as HTMLElement | null;
   const path = dropElement?.dataset.entryDropPath;
   const kind = dropElement?.dataset.entryDropKind;
-  if (!dropElement || !path) {
+  if (!dropElement) {
     return null;
   }
 
-  if (kind === "tab") {
+  if (kind === "tab" && path) {
     return {
       kind,
       path,
@@ -402,7 +407,15 @@ function getPointerEntryDropTarget(
     };
   }
 
-  if (kind === "folder" || kind === "listing") {
+  if (kind === "navigation") {
+    return {
+      kind,
+      operation: "copy",
+      element: dropElement
+    };
+  }
+
+  if ((kind === "folder" || kind === "listing") && path) {
     const targetPanelId = parsePanelId(dropElement.dataset.panelId, fallbackPanelId);
     return {
       kind,
@@ -561,6 +574,7 @@ export function FileListingShell({
   onSetColumnVisibility,
   onShowAllColumns,
   onDropEntries,
+  onAddEntriesToNavigation,
   onStartSystemFileDrag,
   entryDropMoveBinding = "Shift",
   contextMenuDefault = "native",
@@ -593,6 +607,7 @@ export function FileListingShell({
   onSetColumnVisibility?: (columnId: ColumnId, visible: boolean) => void;
   onShowAllColumns?: (columnIds: ColumnId[]) => void;
   onDropEntries: (paths: string[], destination: string, operation: DropOperation) => void;
+  onAddEntriesToNavigation?: (paths: string[]) => void;
   onStartSystemFileDrag?: (paths: string[]) => void;
   entryDropMoveBinding?: string;
   contextMenuDefault?: ContextMenuDefault;
@@ -939,7 +954,11 @@ export function FileListingShell({
         entryDropMoveBinding
       );
       if (dropTarget) {
-        onDropEntries(activeDrag.paths, dropTarget.path, dropTarget.operation);
+        if (dropTarget.kind === "navigation") {
+          onAddEntriesToNavigation?.(activeDrag.paths);
+        } else {
+          onDropEntries(activeDrag.paths, dropTarget.path, dropTarget.operation);
+        }
       }
       clearEntryDrag();
       clearDropState();
