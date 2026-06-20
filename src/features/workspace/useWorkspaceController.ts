@@ -1221,7 +1221,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const refreshVisiblePanelsForPaths = useEffectEvent(async (paths: string[]) => {
     const targets = getVisibleDirectoryRefreshTargets(state, paths);
-    console.log("[LiveRefresh] refreshVisiblePanelsForPaths:", { paths, targets });
     await Promise.all(
       targets.map((target) =>
         commitNavigation(target.panelId, target.path, false, {
@@ -1240,8 +1239,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     pendingLiveNavigationRefreshRef.current = false;
     liveRefreshTimeoutRef.current = null;
 
-    console.log("[LiveRefresh] flushLiveRefresh:", { directoryRoots, refreshNavigation });
-
     if (directoryRoots.length > 0) {
       void refreshVisiblePanelsForPaths(directoryRoots);
     }
@@ -1251,7 +1248,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const handleWorkspaceFsChanged = useEffectEvent((event: WorkspaceFsChangedEvent) => {
-    console.log("[LiveRefresh] handleWorkspaceFsChanged called:", event);
     for (const root of event.directoryRoots) {
       pendingLiveDirectoryRootsRef.current.add(root);
     }
@@ -1262,7 +1258,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       clearTimeout(liveRefreshTimeoutRef.current);
     }
     liveRefreshTimeoutRef.current = setTimeout(() => {
-      console.log("[LiveRefresh] Debounce timeout expired, flushing refresh");
       flushLiveRefresh();
     }, 350);
   });
@@ -1272,16 +1267,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   useEffect(() => {
     // 创建 Manager
     watchRootsManagerRef.current = createWatchRootsManager(workspaceGateway, {
-      enableLogging: true,
+      enableLogging: false, // 生产环境关闭日志
       maxHistorySize: 50
     });
-
-    console.log("[Controller] WatchRootsManager created");
 
     return () => {
       // 清理
       if (watchRootsManagerRef.current) {
-        console.log("[Controller] Disposing WatchRootsManager");
         void watchRootsManagerRef.current.dispose();
         watchRootsManagerRef.current = null;
       }

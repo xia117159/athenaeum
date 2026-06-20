@@ -400,10 +400,8 @@ export function createWorkspaceGateway(): WorkspaceGateway {
         nav: request.navigationParentPaths.sort()
       });
       if (currentWatchRootsKey === key) {
-        console.log("[Gateway] Watch roots unchanged, skipping backend call");
         return;
       }
-      console.log("[Gateway] Watch roots changed, calling backend");
       currentWatchRootsKey = key;
       return setWorkspaceWatchRoots(request);
     },

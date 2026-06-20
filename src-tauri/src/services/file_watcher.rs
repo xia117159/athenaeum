@@ -71,18 +71,8 @@ impl Default for FileWatchService {
 
 impl FileWatchService {
     pub fn update_roots(&self, app: AppHandle, request: WorkspaceWatchRootsRequest) {
-        eprintln!(
-            "[FileWatcher] update_roots called: directory_paths={:?}, navigation_parent_paths={:?}",
-            request.directory_paths, request.navigation_parent_paths
-        );
-
         let directory_roots = normalize_roots(request.directory_paths);
         let navigation_parent_roots = normalize_roots(request.navigation_parent_paths);
-
-        eprintln!(
-            "[FileWatcher] normalized: directory_roots={:?}, navigation_parent_roots={:?}",
-            directory_roots, navigation_parent_roots
-        );
 
         #[cfg(windows)]
         let has_roots = {
@@ -106,8 +96,6 @@ impl FileWatchService {
             !active_roots(&state).is_empty()
         };
 
-        eprintln!("[FileWatcher] has_roots={}, will_start={}", has_roots, !self.started.load(Ordering::SeqCst));
-
         if has_roots {
             self.ensure_started(app);
         }
@@ -126,7 +114,6 @@ impl FileWatchService {
 
 #[cfg(windows)]
 fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<AtomicU64>) {
-    eprintln!("[FileWatcher] Watch loop started on Windows");
     let mut watches = Vec::<NativeDirectoryWatch>::new();
     let mut watched_roots = BTreeSet::<String>::new();
 
@@ -137,9 +124,7 @@ fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<A
         };
 
         if active_roots != watched_roots {
-            eprintln!("[FileWatcher] Roots changed: old={:?}, new={:?}", watched_roots, active_roots);
             watches = create_native_directory_watches(&active_roots);
-            eprintln!("[FileWatcher] Created {} native watch handles", watches.len());
             watched_roots = active_roots;
         }
 
@@ -153,18 +138,12 @@ fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<A
             continue;
         }
 
-        eprintln!("[FileWatcher] Detected changes in roots: {:?}", changed_roots);
-
         let event = {
             let guard = state.lock().expect("file watch state lock poisoned");
             event_for_changed_roots(&guard, changed_roots, &sequence)
         };
-        if let Some(ref evt) = event {
-            eprintln!("[FileWatcher] Emitting event: sequence={}, directory_roots={:?}, navigation_parent_roots={:?}",
-                      evt.sequence, evt.directory_roots, evt.navigation_parent_roots);
-            emit_workspace_fs_changed(&app, evt.clone());
-        } else {
-            eprintln!("[FileWatcher] No event generated for changed roots");
+        if let Some(event) = event {
+            emit_workspace_fs_changed(&app, event);
         }
     }
 }
@@ -181,10 +160,8 @@ fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<A
 }
 
 fn emit_workspace_fs_changed(app: &AppHandle, event: WorkspaceFsChangedEvent) {
-    eprintln!("[FileWatcher] Attempting to emit workspace_fs_changed event");
-    match app.emit("workspace_fs_changed", event) {
-        Ok(_) => eprintln!("[FileWatcher] Event emitted successfully"),
-        Err(error) => eprintln!("[FileWatcher] Failed to emit workspace_fs_changed: {error}"),
+    if let Err(error) = app.emit("workspace_fs_changed", event) {
+        eprintln!("Failed to emit workspace_fs_changed event: {error}");
     }
 }
 
@@ -425,25 +402,10 @@ impl Drop for NativeDirectoryWatch {
 
 #[cfg(windows)]
 fn create_native_directory_watches(roots: &BTreeSet<String>) -> Vec<NativeDirectoryWatch> {
-    eprintln!("[FileWatcher] create_native_directory_watches: attempting to create {} watches", roots.len());
-    let watches: Vec<NativeDirectoryWatch> = roots
+    roots
         .iter()
-        .filter_map(|root| {
-            eprintln!("[FileWatcher] Attempting to create watch for: {}", root);
-            match create_native_directory_watch(root) {
-                Some(watch) => {
-                    eprintln!("[FileWatcher] ✓ Successfully created watch for: {}", root);
-                    Some(watch)
-                }
-                None => {
-                    eprintln!("[FileWatcher] ✗ Failed to create watch for: {}", root);
-                    None
-                }
-            }
-        })
-        .collect();
-    eprintln!("[FileWatcher] Created {} out of {} requested watches", watches.len(), roots.len());
-    watches
+        .filter_map(|root| create_native_directory_watch(root))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -454,32 +416,17 @@ fn create_native_directory_watch(root: &str) -> Option<NativeDirectoryWatch> {
     };
     use windows_core::HSTRING;
 
-    eprintln!("[FileWatcher] create_native_directory_watch: root={}", root);
-
     let filter = FILE_NOTIFY_CHANGE_FILE_NAME
         | FILE_NOTIFY_CHANGE_DIR_NAME
         | FILE_NOTIFY_CHANGE_SIZE
         | FILE_NOTIFY_CHANGE_LAST_WRITE
         | FILE_NOTIFY_CHANGE_CREATION;
-
     let path = HSTRING::from(root);
-    eprintln!("[FileWatcher] Calling FindFirstChangeNotificationW with path: {:?}, bWatchSubtree: false", root);
-
-    let handle_result = unsafe { FindFirstChangeNotificationW(&path, false, filter) };
-
-    match handle_result {
-        Ok(handle) => {
-            eprintln!("[FileWatcher] FindFirstChangeNotificationW succeeded for: {}", root);
-            Some(NativeDirectoryWatch {
-                root: root.to_string(),
-                handle,
-            })
-        }
-        Err(err) => {
-            eprintln!("[FileWatcher] FindFirstChangeNotificationW FAILED for: {} - Error: {:?}", root, err);
-            None
-        }
-    }
+    let handle = unsafe { FindFirstChangeNotificationW(&path, false, filter) }.ok()?;
+    Some(NativeDirectoryWatch {
+        root: root.to_string(),
+        handle,
+    })
 }
 
 #[cfg(windows)]
