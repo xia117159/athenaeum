@@ -1952,6 +1952,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const openNavigationNativeContextMenu = useEffectEvent(async (itemIds: string[], clientX: number, clientY: number, screenX: number, screenY: number) => {
+    if (itemIds.length !== 1) {
+      void clientX;
+      void clientY;
+      void screenX;
+      void screenY;
+      return false;
+    }
     const paths = itemIds
       .map((id) => state.navigation.items.find((item) => item.id === id)?.path)
       .filter((path): path is string => Boolean(path));

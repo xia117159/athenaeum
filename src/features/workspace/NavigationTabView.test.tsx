@@ -428,7 +428,7 @@ export const completion = (async () => {
       assert.ok(row);
 
       await act(async () => {
-        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 18 }));
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, shiftKey: true, clientX: 16, clientY: 18 }));
         await flushEffects();
       });
       assert.ok(container.querySelector(".navigation-menu"));
@@ -440,7 +440,7 @@ export const completion = (async () => {
       assert.equal(container.querySelector(".navigation-menu"), null);
 
       await act(async () => {
-        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 18 }));
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, shiftKey: true, clientX: 16, clientY: 18 }));
         await flushEffects();
       });
       assert.ok(container.querySelector(".navigation-menu"));
@@ -450,6 +450,175 @@ export const completion = (async () => {
         await flushEffects();
       });
       assert.equal(container.querySelector(".navigation-menu"), null);
+    });
+
+    await assertTest("NavigationTabView opens the native menu for a normal right-click on one selected item", async () => {
+      const item = createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt");
+      const nativeMenus: Array<{ ids: string[]; clientX: number; clientY: number; screenX: number; screenY: number }> = [];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu(ids: string[], clientX: number, clientY: number, screenX: number, screenY: number) {
+          nativeMenus.push({ ids: [...ids], clientX, clientY, screenX, screenY });
+          return Promise.resolve(true);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const row = container.querySelector<HTMLElement>(".navigation-table__item");
+      assert.ok(row);
+
+      await act(async () => {
+        row.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 16,
+            clientY: 18,
+            screenX: 116,
+            screenY: 118
+          })
+        );
+        await flushEffects();
+      });
+
+      assert.deepEqual(nativeMenus, [
+        {
+          ids: ["nav-report"],
+          clientX: 16,
+          clientY: 18,
+          screenX: 116,
+          screenY: 118
+        }
+      ]);
+      assert.equal(container.querySelector(".navigation-menu"), null);
+    });
+
+    await assertTest("NavigationTabView uses its custom menu for Shift right-clicks", async () => {
+      const item = createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt");
+      const nativeMenus: string[][] = [];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu(ids: string[]) {
+          nativeMenus.push([...ids]);
+          return Promise.resolve(true);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const row = container.querySelector<HTMLElement>(".navigation-table__item");
+      assert.ok(row);
+
+      await act(async () => {
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, shiftKey: true, clientX: 16, clientY: 18 }));
+        await flushEffects();
+      });
+
+      assert.deepEqual(nativeMenus, []);
+      assert.ok(container.querySelector(".navigation-menu"));
+    });
+
+    await assertTest("NavigationTabView keeps multi-selection on the custom menu and disables native file operations", async () => {
+      const items = [
+        createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt"),
+        createNavigationItem("nav-archive", "C:\\Users\\Admin\\Documents\\Archive", "folder")
+      ];
+      const nativeMenus: string[][] = [];
+      const selections: string[][] = [];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection(ids: string[]) {
+          selections.push([...ids]);
+        },
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu(ids: string[]) {
+          nativeMenus.push([...ids]);
+          return Promise.resolve(true);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: {
+              ...createNavigationState(items),
+              selectedItemIds: items.map((item) => item.id)
+            },
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".navigation-table__item"));
+      assert.ok(rows[1]);
+
+      await act(async () => {
+        rows[1].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 24 }));
+        await flushEffects();
+      });
+
+      const nativeButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".navigation-menu button")).find((button) =>
+        button.textContent?.includes("Windows")
+      );
+      assert.ok(nativeButton);
+      assert.equal(nativeButton.disabled, true);
+      assert.deepEqual(nativeMenus, []);
+      assert.deepEqual(selections, []);
     });
 
     await assertTest("NavigationTabView materializes resizable fixed column tracks", async () => {

@@ -1031,6 +1031,90 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController refuses native navigation context menus for multiple items", async () => {
+      const nativeNavigationInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        navigationResolves: [] as string[][]
+      };
+      const nativeNavigationBootstrap = createMockWorkspaceBootstrap("tauri");
+      nativeNavigationBootstrap.navigationItems = [
+        {
+          id: "nav-report",
+          displayName: "Report",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\report.txt",
+          targetKind: "file",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        },
+        {
+          id: "nav-archive",
+          displayName: "Archive",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\Archive",
+          targetKind: "folder",
+          targetStatus: "ok",
+          sortOrder: 2,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+      let nativeNavigationController: ReturnType<typeof useWorkspaceController> | undefined;
+      const nativeNavigationGateway = createTestGateway(() => undefined, nativeNavigationInteractions, {
+        loadBootstrap: () => nativeNavigationBootstrap
+      });
+
+      function NativeNavigationHarness() {
+        nativeNavigationController = useWorkspaceController(nativeNavigationGateway);
+        return React.createElement("div", null, nativeNavigationController.state.status);
+      }
+
+      const nativeNavigationContainer = document.createElement("div");
+      document.body.appendChild(nativeNavigationContainer);
+      const nativeNavigationRoot = ReactDOM.createRoot(nativeNavigationContainer);
+
+      try {
+        await act(async () => {
+          nativeNavigationRoot.render(React.createElement(NativeNavigationHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeNavigationController?.state.status === "ready", "native navigation controller did not bootstrap");
+
+        let opened = true;
+        await act(async () => {
+          opened = await nativeNavigationController!.actions.openNavigationNativeContextMenu(
+            ["nav-report", "nav-archive"],
+            10,
+            12,
+            100,
+            120
+          );
+          await flushEffects();
+        });
+
+        assert.equal(opened, false);
+        assert.deepEqual(nativeNavigationInteractions.navigationResolves, []);
+        assert.deepEqual(nativeNavigationInteractions.nativeContextMenus, []);
+      } finally {
+        await act(async () => {
+          nativeNavigationRoot.unmount();
+          await flushEffects();
+        });
+        nativeNavigationContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController moves a single navigation tab after creating a fallback directory tab", async () => {
       const moveInteractions = {
         resolvedPaths: [] as string[],

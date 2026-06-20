@@ -36,6 +36,8 @@ type MenuState = {
   itemId?: string;
 };
 
+type MenuPosition = Omit<MenuState, "itemId">;
+
 type CurrentFolderContext = {
   displayName?: string;
   path: string;
@@ -356,22 +358,77 @@ export function NavigationTabView({
     actions.addPathsToNavigation(paths);
   };
 
-  const openMenu = (event: ReactMouseEvent<HTMLElement>, item?: NavigationItem) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const getContextMenuItemIds = (item?: NavigationItem) => {
+    if (!item) {
+      return [];
+    }
+    return navigation.selectedItemIds.includes(item.id) ? navigation.selectedItemIds : [item.id];
+  };
+
+  const canOpenNativeContextMenu = (item: NavigationItem | undefined, itemIds: string[]) =>
+    Boolean(item) &&
+    itemIds.length === 1 &&
+    item?.targetStatus === "ok" &&
+    (item.targetKind === "file" || item.targetKind === "folder");
+
+  const openAppMenuAt = (position: MenuPosition, item?: NavigationItem) => {
     if (item && !navigation.selectedItemIds.includes(item.id)) {
       actions.setNavigationSelection([item.id]);
     }
     setMenu({
-      x: event.clientX,
-      y: event.clientY,
-      screenX: event.screenX,
-      screenY: event.screenY,
+      x: position.x,
+      y: position.y,
+      screenX: position.screenX,
+      screenY: position.screenY,
       itemId: item?.id
     });
   };
 
+  const openAppMenu = (event: ReactMouseEvent<HTMLElement>, item?: NavigationItem) => {
+    openAppMenuAt(
+      {
+        x: event.clientX,
+        y: event.clientY,
+        screenX: event.screenX,
+        screenY: event.screenY
+      },
+      item
+    );
+  };
+
+  const openMenu = (event: ReactMouseEvent<HTMLElement>, item?: NavigationItem) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const position = {
+      x: event.clientX,
+      y: event.clientY,
+      screenX: event.screenX,
+      screenY: event.screenY
+    };
+    const itemIds = getContextMenuItemIds(item);
+    if (!event.shiftKey && canOpenNativeContextMenu(item, itemIds)) {
+      if (item && !navigation.selectedItemIds.includes(item.id)) {
+        actions.setNavigationSelection([item.id]);
+      }
+      setMenu(null);
+      void actions
+        .openNavigationNativeContextMenu(itemIds, event.clientX, event.clientY, event.screenX, event.screenY)
+        .then((opened) => {
+          if (!opened) {
+            openAppMenuAt(position, item);
+          }
+        });
+      return;
+    }
+
+    openAppMenu(event, item);
+  };
+
   const handleWindowsFileOperations = () => {
+    if (menuSelectedItemIds.length !== 1) {
+      return;
+    }
     void actions
       .openNavigationNativeContextMenu(menuSelectedItemIds, menu?.x ?? 0, menu?.y ?? 0, menu?.screenX ?? 0, menu?.screenY ?? 0)
       .then((opened) => {
@@ -603,7 +660,7 @@ export function NavigationTabView({
           <button type="button" onClick={() => { actions.refreshNavigationTargets(); setMenu(null); }}>
             刷新状态
           </button>
-          <button type="button" disabled={menuSelectedItemIds.length === 0} onClick={handleWindowsFileOperations}>
+          <button type="button" disabled={menuSelectedItemIds.length !== 1} onClick={handleWindowsFileOperations}>
             Windows 文件操作...
           </button>
         </div>
