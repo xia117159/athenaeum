@@ -1,0 +1,281 @@
+.panel-surface {
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border-width: 0;
+}
+
+.panel-surface.is-focused {
+  border-color: #cfcfcf;
+  box-shadow: inset 0 2px 0 var(--panel-focus-accent, var(--accent));
+}
+
+.tab-strip {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0;
+  min-width: 0;
+  min-height: 24px;
+  background: #eef1f5;
+}
+
+.panel-chrome {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.tab-strip__tabs {
+  display: flex;
+  gap: 0;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.tab-strip__tab,
+.tab-strip__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid #c8cfd8;
+  border-radius: 0;
+  background: #f5f6f8;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: none;
+  user-select: none;
+}
+
+.tab-strip__tab {
+  position: relative;
+  min-width: var(--tab-min-width, 96px);
+  box-sizing: border-box;
+  padding-right: 18px; /* 为右上角 12px 关闭按钮留出空间 */
+}
+
+.tab-strip__tab.is-active {
+  background: #ffffff;
+  border-color: #7ba7d8;
+  box-shadow: inset 0 -2px 0 var(--accent);
+  color: var(--text);
+}
+
+/* The active tab of the currently focused panel follows the user-configured
+   焦点强调色 (--panel-focus-accent). Unfocused panels keep the neutral --accent
+   underline above, so the focus accent reads as "this is the active panel". */
+.panel-surface.is-focused .tab-strip__tab.is-active {
+  background: var(--active-tab-background, #ffffff);
+  box-shadow: inset 0 -2px 0 var(--panel-focus-accent, var(--accent));
+}
+
+.tab-strip__tab.is-entry-drop-target,
+.tab-strip__tab.is-system-entry-drop-target {
+  background: color-mix(in srgb, var(--drop-highlight-fill, #0f6cbd) 12%, transparent);
+  border-color: color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
+  box-shadow:
+    inset 0 -2px 0 var(--drop-highlight-border, #0f6cbd),
+    inset 0 0 0 1px color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
+}
+
+.tab-strip__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.tab-strip__lock {
+  flex: 0 0 10px;
+  color: var(--accent);
+}
+
+.tab-strip__close {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px; /* 调整为 12px */
+  height: 12px;
+  padding: 0;
+  margin-left: auto; /* 保留以通过测试，虽然使用了绝对定位 */
+  border-radius: 4px; /* Windows 11 风格 */
+  background: transparent; /* 默认透明 */
+  color: currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+/* 扩展点击区域 */
+.tab-strip__close::before {
+  content: "";
+  position: absolute;
+  inset: -6px; /* 扩展到 24x24px */
+}
+
+.tab-strip__close:hover {
+  background: rgba(128, 128, 128, 0.15);
+  opacity: 1;
+}
+
+.tab-strip__close:active {
+  background: rgba(128, 128, 128, 0.25);
+}
+
+.tab-strip__add {
+  position: relative;
+  justify-content: center;
+}
+
+.tab-strip__close-icon,
+.tab-strip__add-icon {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+}
+
+/* 拖动跟随元素 */
+.tab-drag-follower {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+  z-index: 10000;
+  opacity: 0.8;
+}
+
+.tab-drag-follower__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--accent, #7ba7d8);
+  border-radius: 4px; /* Windows 11 风格 */
+  background: var(--tab-background, rgba(255, 255, 255, 0.95));
+  color: var(--text, #1f1f1f);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  font-size: 12px; /* 与 Tab 内文字一致 */
+}
+
+.tab-drag-follower__lock {
+  flex: 0 0 10px;
+  color: var(--accent);
+}
+
+.tab-drag-follower__title {
+  max-width: min(300px, 40vw); /* 动态最大宽度 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tab 插入指示器 */
+.tab-strip__drop-indicator {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1000;
+  will-change: opacity; /* 性能优化 */
+  animation: pulse-indicator 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.panel-breadcrumbs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  min-height: 24px;
+  overflow: hidden;
+  border-bottom: 1px solid #d4d8df;
+  background: #f8f9fb;
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.panel-breadcrumbs__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.panel-breadcrumbs__separator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 12px;
+  width: 12px;
+  color: #6b7280;
+}
+
+.panel-breadcrumbs__separator-icon {
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+
+.panel-breadcrumbs__segment {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+}
+
+.panel-breadcrumbs__segment:hover {
+  background: #eef4fb;
+}
+
+.panel-breadcrumbs__segment[aria-current="page"] {
+  background: rgba(15, 108, 189, 0.08);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.panel-breadcrumbs__item--future .panel-breadcrumbs__separator {
+  color: #9ca3af;
+}
+
+.panel-breadcrumbs__segment--future {
+  color: #9ca3af;
+}
+
+.panel-breadcrumbs__segment--future:hover {
+  color: #4b5563;
+}

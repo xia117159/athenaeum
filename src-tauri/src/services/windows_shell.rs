@@ -1,3 +1,8 @@
+mod navigation;
+
+#[cfg(not(windows))]
+use navigation::NavigationOpenValidationError;
+
 #[cfg(windows)]
 mod imp {
     use std::{
@@ -27,9 +32,8 @@ mod imp {
             },
             Graphics::Gdi::ScreenToClient,
             Security::{
-                GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
-                TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenElevation,
-                TokenIntegrityLevel,
+                GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenElevation,
+                TokenIntegrityLevel, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
             },
             System::{
                 Com::{
@@ -70,6 +74,11 @@ mod imp {
         },
     };
 
+    use super::navigation::{
+        has_unsupported_url_scheme, is_remote_path, normalize_local_path, path_display_name,
+        NavigationOpenValidationError,
+    };
+
     const CMD_FIRST: u32 = 1;
     const CMD_LAST: u32 = 0x7FFF;
     const BACKGROUND_SHELL_CMD_FIRST: u32 = 1000;
@@ -104,48 +113,6 @@ mod imp {
                 }
             }
         }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum NavigationOpenValidationError {
-        InvalidPath,
-        UnsupportedRemote,
-        Missing,
-        PermissionDenied,
-        Unknown,
-    }
-
-    fn is_remote_path(path: &str) -> bool {
-        let lowered = path.to_ascii_lowercase();
-        lowered.starts_with("ftp://") || lowered.starts_with("sftp://")
-    }
-
-    fn has_unsupported_url_scheme(path: &str) -> bool {
-        let Some(index) = path.find(':') else {
-            return false;
-        };
-        if index == 1 && path.as_bytes()[0].is_ascii_alphabetic() {
-            return false;
-        }
-        path[..index].chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
-        })
-    }
-
-    fn normalize_local_path(path: &Path) -> String {
-        let mut rendered = path.to_string_lossy().replace('/', "\\");
-        while rendered.len() > 3 && rendered.ends_with('\\') {
-            rendered.pop();
-        }
-        rendered
-    }
-
-    fn path_display_name(path: &Path, fallback: &str) -> String {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.trim().is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| fallback.trim().to_string())
     }
 
     fn integrity_level_name(integrity_rid: u32) -> &'static str {
@@ -1628,8 +1595,8 @@ mod imp {
         use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS};
         use windows::Win32::System::Ole::{DROPEFFECT_COPY, DROPEFFECT_MOVE};
         use windows::Win32::System::SystemServices::{
-            SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_LOW_RID,
-            SECURITY_MANDATORY_MEDIUM_RID, SECURITY_MANDATORY_SYSTEM_RID,
+            SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_LOW_RID, SECURITY_MANDATORY_MEDIUM_RID,
+            SECURITY_MANDATORY_SYSTEM_RID,
         };
         use windows::Win32::UI::Shell::DROPFILES;
 
@@ -1638,9 +1605,9 @@ mod imp {
             did_native_menu_open, explorer_to_app_drag_blocked, integrity_level_name,
             mode_from_drop_effect, resolve_navigation_target, system_file_drag_allowed_effects,
             validate_background_path, validate_paths, validate_shell_execute_result,
-            validate_system_default_open_path,
-            NavigationOpenValidationError, BACKGROUND_CMD_CREATE_FILE, BACKGROUND_CMD_PASTE,
-            BACKGROUND_CMD_SORT_DESC, BACKGROUND_CMD_SORT_SIZE, BACKGROUND_CMD_VIEW_TILES,
+            validate_system_default_open_path, NavigationOpenValidationError,
+            BACKGROUND_CMD_CREATE_FILE, BACKGROUND_CMD_PASTE, BACKGROUND_CMD_SORT_DESC,
+            BACKGROUND_CMD_SORT_SIZE, BACKGROUND_CMD_VIEW_TILES,
         };
 
         #[test]
@@ -2014,9 +1981,10 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{
-    get_windows_drag_drop_environment, open_path_with_system_default, perform_system_file_operation,
-    read_system_file_clipboard, resolve_navigation_target, set_system_file_clipboard,
-    show_native_background_context_menu, show_native_context_menu, start_system_file_drag,
+    get_windows_drag_drop_environment, open_path_with_system_default,
+    perform_system_file_operation, read_system_file_clipboard, resolve_navigation_target,
+    set_system_file_clipboard, show_native_background_context_menu, show_native_context_menu,
+    start_system_file_drag,
 };
 
 #[cfg(not(windows))]
@@ -2041,16 +2009,6 @@ pub async fn show_native_background_context_menu<R: tauri::Runtime>(
 }
 
 #[cfg(not(windows))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NavigationOpenValidationError {
-    InvalidPath,
-    UnsupportedRemote,
-    Missing,
-    PermissionDenied,
-    Unknown,
-}
-
-#[cfg(not(windows))]
 pub fn resolve_navigation_target(
     raw: &str,
 ) -> anyhow::Result<crate::domain::models::NavigationTargetInfo> {
@@ -2059,8 +2017,7 @@ pub fn resolve_navigation_target(
     };
 
     let trimmed = raw.trim();
-    let lowered = trimmed.to_ascii_lowercase();
-    if lowered.starts_with("ftp://") || lowered.starts_with("sftp://") {
+    if navigation::is_remote_path(trimmed) {
         return Ok(NavigationTargetInfo {
             path: trimmed.into(),
             normalized_path: None,

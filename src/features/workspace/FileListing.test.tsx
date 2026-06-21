@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { FileListingShell, TAB_VIEW_MODE_OPTIONS } from "./FileListing";
@@ -12,6 +10,7 @@ import {
 } from "./systemIconGateway";
 import { installLegacyInputEventPatch } from "./testDom";
 import type { ClipboardState, ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId, SortState } from "./types";
+import { readWorkspaceCss } from "./workspaceCssTestUtils";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -413,7 +412,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace details listing body reserves only the space below the sticky header", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       const listingRule = css.match(/\.file-listing\s*\{([^}]*)\}/)?.[1] ?? "";
       const detailsBodyRule = css.match(/\.file-listing__body--details\s*\{([^}]*)\}/)?.[1] ?? "";
 
@@ -1127,7 +1126,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace file drag preview uses a DOM follower instead of a pseudo badge", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       assert.match(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*default\s*!important;/);
       assert.match(css, /\.entry-drag-follower\s*\{/);
       assert.match(css, /\.entry-drag-follower__name\s*\{/);
@@ -1135,7 +1134,7 @@ export const completion = (async () => {
       assert.doesNotMatch(css, /body\.is-entry-pointer-dragging[\s\S]*cursor:\s*grabbing\s*!important;/);
     });
 
-    await assertTest("FileListingShell accepts external file drags over folder rows and listing blank space", async () => {
+    await assertTest("FileListingShell accepts external file drags over folder rows, file rows, and listing blank space", async () => {
       await act(async () => {
         render("details");
         await flushEffects();
@@ -1143,25 +1142,25 @@ export const completion = (async () => {
 
       dropped.length = 0;
       const rows = Array.from(container.querySelectorAll(".file-row"));
-      const targetRow = rows[0];
+      const [targetRow, fileRow] = rows;
       const scroll = container.querySelector(".file-listing__scroll");
       assert.ok(targetRow);
+      assert.ok(fileRow);
       assert.ok(scroll);
 
-      const folderTransfer = createExternalFileDataTransfer();
-      const listingTransfer = createExternalFileDataTransfer();
-      let folderOverEvent: Event | undefined;
-      let listingOverEvent: Event | undefined;
+      const targets = [targetRow, fileRow, scroll].map((target) => [target, createExternalFileDataTransfer()] as const);
+      const overEvents: Event[] = [];
+      const dropEvents: Event[] = [];
       await act(async () => {
-        folderOverEvent = dispatchDragEvent(targetRow, "dragover", folderTransfer);
-        listingOverEvent = dispatchDragEvent(scroll, "dragover", listingTransfer);
+        for (const [target, transfer] of targets) {
+          overEvents.push(dispatchDragEvent(target, "dragover", transfer));
+          dropEvents.push(dispatchDragEvent(target, "drop", createExternalFileDataTransfer()));
+        }
         await flushEffects();
       });
 
-      assert.equal(folderOverEvent?.defaultPrevented, true);
-      assert.equal(listingOverEvent?.defaultPrevented, true);
-      assert.equal(folderTransfer.dropEffect, "copy");
-      assert.equal(listingTransfer.dropEffect, "copy");
+      assert.deepEqual([overEvents, dropEvents].map((events) => events.map((event) => event.defaultPrevented)), [[true, true, true], [true, true, true]]);
+      assert.deepEqual(targets.map(([, transfer]) => transfer.dropEffect), ["copy", "copy", "copy"]);
       assert.deepEqual(dropped, []);
     });
 
@@ -1313,7 +1312,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace file listing styles no longer draw accent left borders", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       assert.equal(css.includes("border-left: 2px solid var(--row-accent);"), false);
     });
 
@@ -1460,7 +1459,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace details header resize dividers are visible by default", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       const defaultDividerRule = css.match(/\.file-header-resizer::after\s*\{([^}]*)\}/)?.[1] ?? "";
 
       assert.notEqual(defaultDividerRule, "");
@@ -1492,7 +1491,7 @@ export const completion = (async () => {
       assert.equal(rowGrid.style.gridTemplateColumns, header.style.gridTemplateColumns);
       assert.equal(rowGrid.style.width, header.style.width);
 
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       assert.match(css, /\.file-listing--details\s+\.file-row\s*\{[^}]*width:\s*max-content;/);
       assert.doesNotMatch(css, /\.file-row__grid\s*\{[^}]*min-width:\s*100%;/);
     });
@@ -2004,7 +2003,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace details rename input fills the available name column width", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       assert.match(
         css,
         /\.file-listing--details\s+\.file-row\.is-inline-editing\s+\.entry-name\s*\{[^}]*width:\s*100%;/s

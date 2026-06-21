@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { readWorkspaceCss } from "./workspaceCssTestUtils";
 
 function assertTest(name: string, fn: () => void) {
   try {
@@ -12,7 +13,7 @@ function assertTest(name: string, fn: () => void) {
   }
 }
 
-const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+const css = readWorkspaceCss();
 const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
 const navigationTabSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/NavigationTabView.tsx"), "utf8");

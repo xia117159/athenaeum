@@ -1413,10 +1413,6 @@ export function FileListingShell({
   };
 
   const handleListingDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
-      return;
-    }
-
     if (isExternalFileDrag(event.dataTransfer)) {
       event.preventDefault();
       if (event.dataTransfer) {
@@ -1425,6 +1421,10 @@ export function FileListingShell({
       setDropTargetPath(null);
       setIsListingDropTarget(true);
       setDropOperation("copy");
+      return;
+    }
+
+    if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
       return;
     }
 
@@ -1454,13 +1454,13 @@ export function FileListingShell({
   };
 
   const handleListingDrop = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
-      return;
-    }
-
     if (isExternalFileDrag(event.dataTransfer)) {
       event.preventDefault();
       clearDropState();
+      return;
+    }
+
+    if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
       return;
     }
 

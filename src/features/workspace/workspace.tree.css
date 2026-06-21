@@ -1,0 +1,107 @@
+.tree-pane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-width: 160px;
+  overflow: hidden;
+  border-width: 0 1px 0 0;
+}
+
+.tree-pane__header {
+  display: none;
+  gap: 2px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f7f7f7;
+}
+
+.tree-pane__header strong {
+  font-size: 14px;
+}
+
+.tree-pane__header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.directory-tree {
+  overflow: auto;
+  padding: 3px 0 3px 3px;
+}
+
+.tree-node {
+  --tree-depth: 0;
+}
+
+.tree-node__row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding-left: calc(var(--tree-depth) * 16px);
+  border-radius: 0;
+}
+
+.tree-node__row.is-active {
+  background: rgba(15, 108, 189, 0.1);
+}
+
+.tree-node__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid #9fb6ca;
+  border-radius: 0;
+  background: #ffffff;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tree-node__toggle:disabled {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.tree-node__toggle-icon {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+}
+
+.tree-node__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 22px;
+  padding: 2px 4px 2px 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-node__icon {
+  --file-icon-size: 16px;
+  height: 16px;
+}
+
+.tree-node__label > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-node__children {
+  display: grid;
+  gap: 1px;
+}

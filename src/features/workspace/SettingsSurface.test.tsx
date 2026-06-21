@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { createMockWorkspaceBootstrap } from "./mockData";
 import { SettingsSurface } from "./SettingsSurface";
 import { installLegacyInputEventPatch, patchLegacyInputEventTarget } from "./testDom";
 import { createWorkspaceState } from "./workspaceReducer";
+import { readWorkspaceCss } from "./workspaceCssTestUtils";
 import type { RemoteConnectionProfile, SettingsSection, WorkspaceState } from "./types";
 
 const { JSDOM } = require("jsdom") as {
@@ -166,7 +165,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace settings styles keep the settings navigation on the left at the 920px default width", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
 
       assert.equal(css.includes(".settings-modal"), false);
       assert.equal(css.includes(".settings-dialog"), false);

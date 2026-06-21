@@ -1,17 +1,29 @@
 import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
 import { createMockWorkspaceBootstrap, getParentLocationPath, nextGeneratedTabId, normalizeLocationPath } from "./mockData";
-import { createRemoteUri, resolveRemotePath } from "./remoteUri";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
-import { isDirectoryTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
+import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
-import type { OperationPathRef } from "../../app/types";
+import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
+import {
+  getLocationPathSeparator,
+  getOperationRefreshPaths,
+  getParentPathForRefresh,
+  getPathComparisonKey,
+  getVisibleDirectoryRefreshTargets,
+  getVisibleWatchRoots,
+  hasSameParentPath,
+  isLocalWatchPath,
+  isRemotePath,
+  isTerminalOperationTask,
+  pathsEqual
+} from "./workspaceRefreshPlanner";
 import type {
   ColumnId,
   ColumnDefinition,
@@ -41,10 +53,6 @@ import type {
 
 const defaultWorkspaceGateway = createWorkspaceGateway();
 
-function isRemotePath(path: string) {
-  return path.startsWith("ftp://") || path.startsWith("sftp://");
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
     return error.message;
@@ -69,57 +77,6 @@ function createDragDropRequestKey(paths: string[], destination: string, operatio
 
 function createDragDropRequestId(operation: "copy" | "move", sequence: number) {
   return `drag-drop-${operation}-${Date.now().toString(36)}-${sequence.toString(36)}`;
-}
-
-function isUntrustedSftpHostKeyError(message: string) {
-  return message.includes("SFTP host key is not trusted yet");
-}
-
-function createHostKeyConfirmationMessage(info: Awaited<ReturnType<WorkspaceGateway["getRemoteHostKey"]>>) {
-  return [
-    `是否信任此 SFTP 主机密钥？`,
-    ``,
-    `主机：${info.host}:${info.port}`,
-    `算法：${info.algorithm}`,
-    `指纹：${info.fingerprintSha256}`,
-    ``,
-    `known_hosts 条目：`,
-    info.knownHostsEntry,
-    ``,
-    `仅在你确认这是目标服务器时选择“确定”。`
-  ].join("\n");
-}
-
-async function confirmAndTrustRemoteHostKey(
-  workspaceGateway: WorkspaceGateway,
-  profiles: RemoteConnectionProfile[],
-  path: string,
-  message: string
-) {
-  if (!isUntrustedSftpHostKeyError(message)) {
-    return false;
-  }
-
-  const remote = resolveRemotePath(path, profiles);
-  if (!remote || remote.profile.protocol !== "sftp") {
-    return false;
-  }
-
-  const info = await workspaceGateway.getRemoteHostKey(remote.profile.id);
-  const confirmed =
-    typeof window === "undefined" ? false : window.confirm(createHostKeyConfirmationMessage(info));
-  if (!confirmed) {
-    return false;
-  }
-
-  await workspaceGateway.trustRemoteHostKey({
-    profileId: info.profileId,
-    host: info.host,
-    port: info.port,
-    algorithm: info.algorithm,
-    keyBase64: info.keyBase64
-  });
-  return true;
 }
 
 function createTabFromSnapshot(
@@ -360,79 +317,6 @@ function getFallbackDirectoryPath(state: WorkspaceState, preferredPanelId: Panel
   return "C:\\";
 }
 
-function getLocationPathSeparator(path: string) {
-  return isRemotePath(path) ? "/" : "\\";
-}
-
-function getPathComparisonKey(path: string) {
-  const normalized = normalizeLocationPath(path);
-  return isRemotePath(normalized) ? normalized : normalized.toLowerCase();
-}
-
-function pathsEqual(left: string, right: string) {
-  return getPathComparisonKey(left) === getPathComparisonKey(right);
-}
-
-function isLocalWatchPath(path: string) {
-  const normalized = normalizeLocationPath(path);
-  return !isRemotePath(normalized) && !normalized.startsWith(NAVIGATION_VIRTUAL_PATH);
-}
-
-function getVisibleWatchRoots(state: WorkspaceState) {
-  const directoryPaths = new Set<string>();
-  let navigationVisible = false;
-
-  for (const panelId of getVisiblePanelIds(state.layoutMode)) {
-    const activeTab = getActiveTab(state.panels[panelId]);
-    if (isDirectoryTab(activeTab) && activeTab.snapshot.location.kind === "local" && isLocalWatchPath(activeTab.snapshot.location.path)) {
-      directoryPaths.add(normalizeLocationPath(activeTab.snapshot.location.path));
-    }
-    if (isNavigationTab(activeTab)) {
-      navigationVisible = true;
-    }
-  }
-
-  const navigationParentPaths = new Set<string>();
-  if (navigationVisible) {
-    for (const item of state.navigation.items) {
-      if (!isLocalWatchPath(item.path)) {
-        continue;
-      }
-      const parentPath = getParentLocationPath(item.path);
-      if (parentPath) {
-        navigationParentPaths.add(normalizeLocationPath(parentPath));
-      }
-    }
-  }
-
-  return {
-    directoryPaths: Array.from(directoryPaths).sort((left, right) => left.localeCompare(right)),
-    navigationParentPaths: Array.from(navigationParentPaths).sort((left, right) => left.localeCompare(right))
-  };
-}
-
-function getVisibleDirectoryRefreshTargets(state: WorkspaceState, roots: string[]) {
-  const normalizedRoots = roots.map((root) => normalizeLocationPath(root));
-  return getVisiblePanelIds(state.layoutMode)
-    .map((panelId) => {
-      const tab = getActiveTab(state.panels[panelId]);
-      if (!isDirectoryTab(tab)) {
-        return null;
-      }
-      const tabPath = normalizeLocationPath(tab.snapshot.location.path);
-      if (!normalizedRoots.some((root) => pathsEqual(root, tabPath))) {
-        return null;
-      }
-      return {
-        panelId,
-        tabId: tab.id,
-        path: tab.snapshot.location.path,
-        historyIndex: tab.historyIndex
-      };
-    })
-    .filter((target): target is NonNullable<typeof target> => Boolean(target));
-}
-
 function hasVisibleNavigationTab(state: WorkspaceState) {
   return getVisiblePanelIds(state.layoutMode).some((panelId) => isNavigationTab(getActiveTab(state.panels[panelId])));
 }
@@ -550,73 +434,8 @@ function createForwardPreservingNavigationHistory(tab: TabState, targetPath: str
   };
 }
 
-function isTerminalOperationTask(task: OperationTaskSnapshot) {
-  return (
-    task.status === "succeeded" ||
-    task.status === "failed" ||
-    task.status === "partialSucceeded" ||
-    task.status === "cancelled"
-  );
-}
-
-function pathRefToWorkspacePath(pathRef: OperationPathRef, profiles: RemoteConnectionProfile[]) {
-  if (pathRef.kind === "local") {
-    return normalizeLocationPath(pathRef.path);
-  }
-
-  const profile = profiles.find((item) => item.id === pathRef.profileId);
-  if (!profile) {
-    return null;
-  }
-  return createRemoteUri(profile, pathRef.remotePath);
-}
-
-function getOperationRefreshPaths(task: OperationTaskSnapshot, profiles: RemoteConnectionProfile[]) {
-  const roots = task.affectedRoots
-    .map((pathRef) => pathRefToWorkspacePath(pathRef, profiles))
-    .filter((path): path is string => Boolean(path));
-  const resultParents = task.entryResults.flatMap((result) =>
-    [result.source, result.destination]
-      .map((pathRef) => (pathRef ? pathRefToWorkspacePath(pathRef, profiles) : null))
-      .filter((path): path is string => Boolean(path))
-      .map((path) => getParentPathForRefresh(path) ?? path)
-  );
-  return Array.from(new Set([...roots, ...resultParents].map((path) => normalizeLocationPath(path))));
-}
-
 function waitForMilliseconds(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-export function getParentPathForRefresh(path: string): string | null {
-  const normalized = normalizeLocationPath(path);
-  if (!isRemotePath(normalized)) {
-    return getParentLocationPath(normalized);
-  }
-
-  const match = /^(ftp|sftp):\/\/([^/]+)(\/.*)?$/.exec(normalized);
-  if (!match) {
-    return null;
-  }
-
-  const [, scheme, authority, remotePath = "/"] = match;
-  const root = `${scheme}://${authority}`;
-  const trimmedPath = remotePath.length > 1 ? remotePath.replace(/\/+$/, "") : remotePath;
-  if (trimmedPath === "/") {
-    return null;
-  }
-
-  const separatorIndex = trimmedPath.lastIndexOf("/");
-  if (separatorIndex <= 0) {
-    return `${root}/`;
-  }
-
-  return `${root}${trimmedPath.slice(0, separatorIndex)}`;
-}
-
-function hasSameParentPath(source: string, destination: string) {
-  const parent = getParentPathForRefresh(source);
-  return Boolean(parent && pathsEqual(parent, destination));
 }
 
 export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {

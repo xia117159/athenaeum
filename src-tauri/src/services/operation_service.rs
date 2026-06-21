@@ -1,3 +1,6 @@
+mod journal;
+mod local_fs_ops;
+
 use std::{
     collections::HashMap,
     fs,
@@ -24,38 +27,13 @@ use crate::{
     services::fs_service,
 };
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum UndoAction {
-    DeleteCreated {
-        path: PathBuf,
-    },
-    RecreateDirectory {
-        path: PathBuf,
-    },
-    MoveBack {
-        from: PathBuf,
-        to: PathBuf,
-    },
-    RestoreTrash {
-        trash_path: PathBuf,
-        original_path: PathBuf,
-    },
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UndoPayload {
-    actions: Vec<UndoAction>,
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OperationJournalDisk {
-    history: Vec<OperationHistoryRecord>,
-    history_sequence: u64,
-    undo_payloads: HashMap<String, UndoPayload>,
-}
+use self::journal::{
+    corrupt_journal_path, normalize_reloaded_journal, OperationJournalDisk, UndoAction, UndoPayload,
+};
+use self::local_fs_ops::{
+    check_cancelled, copy_recursively_exact, ensure_not_descendant, entry_kind_snapshot,
+    merge_directory_exact, move_entry_exact, remove_path, trash_destination,
+};
 
 #[derive(Debug, Clone)]
 struct PendingConflict {
@@ -786,80 +764,6 @@ impl OperationStore {
         let _ = self.persist_journal();
         envelope
     }
-}
-
-fn normalize_reloaded_journal(
-    mut records: Vec<OperationHistoryRecord>,
-    mut undo_payloads: HashMap<String, UndoPayload>,
-) -> (Vec<OperationHistoryRecord>, HashMap<String, UndoPayload>) {
-    let mut undoable_record_ids = Vec::new();
-    for record in &mut records {
-        if matches!(
-            record.status,
-            OperationHistoryStatus::Undoing | OperationHistoryStatus::PendingConfirmation
-        ) {
-            record.status = OperationHistoryStatus::Failed;
-            record.blocked_reason = Some("Operation did not finish before the app closed.".into());
-            record.undo_task_id = None;
-            record.updated_at = Utc::now();
-        } else if matches!(record.status, OperationHistoryStatus::Undoable) {
-            match undo_payloads
-                .get(&record.record_id)
-                .and_then(validate_undo_payload_entities)
-            {
-                Some(reason) => {
-                    record.status = OperationHistoryStatus::Blocked;
-                    record.blocked_reason = Some(reason);
-                    record.updated_at = Utc::now();
-                }
-                None if undo_payloads.contains_key(&record.record_id) => {
-                    undoable_record_ids.push(record.record_id.clone());
-                }
-                None => {
-                    record.status = OperationHistoryStatus::Blocked;
-                    record.blocked_reason = Some("Undo payload is no longer available.".into());
-                    record.updated_at = Utc::now();
-                }
-            }
-        }
-    }
-    undo_payloads.retain(|record_id, _| undoable_record_ids.iter().any(|id| id == record_id));
-    records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-    (records, undo_payloads)
-}
-
-fn validate_undo_payload_entities(payload: &UndoPayload) -> Option<String> {
-    for action in &payload.actions {
-        match action {
-            UndoAction::DeleteCreated { path } => {
-                if !path.exists() {
-                    return Some(format!("Undo target no longer exists: {}", path.display()));
-                }
-            }
-            UndoAction::RecreateDirectory { .. } => {}
-            UndoAction::MoveBack { from, .. } => {
-                if !from.exists() {
-                    return Some(format!(
-                        "Moved item is no longer available: {}",
-                        from.display()
-                    ));
-                }
-            }
-            UndoAction::RestoreTrash { trash_path, .. } => {
-                if !trash_path.exists() {
-                    return Some(format!(
-                        "Trash payload is no longer available: {}",
-                        trash_path.display()
-                    ));
-                }
-            }
-        }
-    }
-    None
-}
-
-fn corrupt_journal_path(file_path: &Path) -> PathBuf {
-    file_path.with_extension(format!("json.corrupt-{}", Uuid::new_v4()))
 }
 
 pub(crate) fn execute_operation_task(
@@ -1606,14 +1510,6 @@ fn create_conflict_request(
     }
 }
 
-fn entry_kind_snapshot(path: &Path) -> OperationEntryKindSnapshot {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => OperationEntryKindSnapshot::Directory,
-        Ok(metadata) if metadata.is_file() => OperationEntryKindSnapshot::File,
-        _ => OperationEntryKindSnapshot::Unknown,
-    }
-}
-
 fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryResult> {
     match action {
         UndoAction::DeleteCreated { path } => {
@@ -1689,26 +1585,6 @@ fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryResult> {
     }
 }
 
-fn remove_path(path: &Path) -> Result<()> {
-    let metadata =
-        fs::symlink_metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(path)
-            .with_context(|| format!("failed to remove directory {}", path.display()))?;
-    } else {
-        fs::remove_file(path)
-            .with_context(|| format!("failed to remove file {}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn check_cancelled(cancellation: &AtomicBool) -> Result<()> {
-    if cancellation.load(Ordering::SeqCst) {
-        bail!("operation cancelled");
-    }
-    Ok(())
-}
-
 fn cancelled_execution(
     intent: &OperationIntent,
     entry_results: Vec<OperationEntryResult>,
@@ -1727,166 +1603,6 @@ fn cancelled_execution(
     }
 }
 
-fn copy_recursively_exact(
-    source: &Path,
-    destination: &Path,
-    cancellation: &AtomicBool,
-) -> Result<PathBuf> {
-    check_cancelled(cancellation)?;
-    let metadata = fs::symlink_metadata(source)
-        .with_context(|| format!("failed to stat {}", source.display()))?;
-    if destination.exists() {
-        bail!("destination already exists: {}", destination.display());
-    }
-
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::create_dir_all(destination)
-            .with_context(|| format!("failed to create directory {}", destination.display()))?;
-        for entry in
-            fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
-        {
-            check_cancelled(cancellation)?;
-            let entry = entry.context("failed to read recursive directory entry")?;
-            copy_recursively_exact(
-                &entry.path(),
-                &destination.join(entry.file_name()),
-                cancellation,
-            )?;
-        }
-    } else {
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::copy(source, destination).with_context(|| {
-            format!(
-                "failed to copy {} to {}",
-                source.display(),
-                destination.display()
-            )
-        })?;
-    }
-
-    Ok(destination.to_path_buf())
-}
-
-fn merge_directory_exact(
-    source: &Path,
-    destination: &Path,
-    move_source: bool,
-    cancellation: &AtomicBool,
-) -> Result<Vec<UndoAction>> {
-    check_cancelled(cancellation)?;
-    let source_metadata = fs::symlink_metadata(source)
-        .with_context(|| format!("failed to stat {}", source.display()))?;
-    let destination_metadata = fs::symlink_metadata(destination)
-        .with_context(|| format!("failed to stat {}", destination.display()))?;
-    if !source_metadata.is_dir()
-        || source_metadata.file_type().is_symlink()
-        || !destination_metadata.is_dir()
-        || destination_metadata.file_type().is_symlink()
-    {
-        bail!("merge directory conflict resolution requires two real directories");
-    }
-
-    let mut undo_actions = Vec::new();
-    for entry in
-        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
-    {
-        check_cancelled(cancellation)?;
-        let entry = entry.context("failed to read merge directory entry")?;
-        let source_child = entry.path();
-        let destination_child = destination.join(entry.file_name());
-        if destination_child.exists() {
-            let source_child_metadata = fs::symlink_metadata(&source_child)
-                .with_context(|| format!("failed to stat {}", source_child.display()))?;
-            let destination_child_metadata = fs::symlink_metadata(&destination_child)
-                .with_context(|| format!("failed to stat {}", destination_child.display()))?;
-            if source_child_metadata.is_dir()
-                && !source_child_metadata.file_type().is_symlink()
-                && destination_child_metadata.is_dir()
-                && !destination_child_metadata.file_type().is_symlink()
-            {
-                undo_actions.extend(merge_directory_exact(
-                    &source_child,
-                    &destination_child,
-                    move_source,
-                    cancellation,
-                )?);
-                continue;
-            }
-            bail!(
-                "merge conflict requires another decision for {}",
-                destination_child.display()
-            );
-        }
-
-        if move_source {
-            let moved = move_entry_exact(&source_child, &destination_child, cancellation)?;
-            undo_actions.push(UndoAction::MoveBack {
-                from: moved,
-                to: source_child,
-            });
-        } else {
-            let copied = copy_recursively_exact(&source_child, &destination_child, cancellation)?;
-            undo_actions.push(UndoAction::DeleteCreated { path: copied });
-        }
-    }
-
-    if move_source {
-        fs::remove_dir(source).with_context(|| {
-            format!(
-                "failed to remove merged source directory {}",
-                source.display()
-            )
-        })?;
-        undo_actions.push(UndoAction::RecreateDirectory {
-            path: source.to_path_buf(),
-        });
-    }
-
-    Ok(undo_actions)
-}
-
-fn move_entry_exact(
-    source: &Path,
-    destination: &Path,
-    cancellation: &AtomicBool,
-) -> Result<PathBuf> {
-    check_cancelled(cancellation)?;
-    if destination.exists() {
-        bail!("destination already exists: {}", destination.display());
-    }
-
-    match fs::rename(source, destination) {
-        Ok(_) => Ok(destination.to_path_buf()),
-        Err(_) => {
-            let copied = copy_recursively_exact(source, destination, cancellation)?;
-            remove_path(source)?;
-            Ok(copied)
-        }
-    }
-}
-
-fn trash_destination(
-    task_id: &str,
-    app_data_dir: Option<&PathBuf>,
-    source: &Path,
-) -> Result<PathBuf> {
-    let root = app_data_dir
-        .cloned()
-        .unwrap_or_else(|| std::env::temp_dir().join("SimpleFileManager"))
-        .join("operation-trash")
-        .join(task_id);
-    fs::create_dir_all(&root)
-        .with_context(|| format!("failed to create trash root {}", root.display()))?;
-    let file_name = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("entry");
-    Ok(fs_service::available_conflict_path(&root.join(file_name)))
-}
-
 fn required_sources(intent: &OperationIntent) -> Result<&Vec<OperationPathRef>> {
     let sources = intent.sources.as_ref().context("sources are required")?;
     if sources.is_empty() {
@@ -1899,19 +1615,6 @@ fn local_path<'a>(path_ref: Option<&'a OperationPathRef>, label: &str) -> Result
     path_ref
         .and_then(OperationPathRef::local_path)
         .with_context(|| format!("{label} must be a local path"))
-}
-
-fn ensure_not_descendant(source: &Path, destination_root: &Path) -> Result<()> {
-    let source = source
-        .canonicalize()
-        .unwrap_or_else(|_| source.to_path_buf());
-    let destination = destination_root
-        .canonicalize()
-        .unwrap_or_else(|_| destination_root.to_path_buf());
-    if destination == source || destination.starts_with(&source) {
-        bail!("cannot copy or move a directory into itself or its descendants");
-    }
-    Ok(())
 }
 
 fn failed_result(

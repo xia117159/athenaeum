@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { installLegacyInputEventPatch } from "./testDom";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
+import { readWorkspaceCss } from "./workspaceCssTestUtils";
 import type { EntryViewModel, WorkspaceState } from "./types";
 
 const { JSDOM } = require("jsdom") as {
@@ -773,7 +772,7 @@ export const completion = (async () => {
     });
 
     await assertTest("workspace information panel styles define the shell, tabs, and compact summary bar", async () => {
-      const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+      const css = readWorkspaceCss();
       const propertiesGridBlock = css.match(/\.properties-panel__grid\s*\{[^}]*\}/u)?.[0] ?? "";
       assert.equal(css.includes(".workspace-main__right--with-summary"), true);
       assert.equal(css.includes(".information-panel__content-shell"), true);

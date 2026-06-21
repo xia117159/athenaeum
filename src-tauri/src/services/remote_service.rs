@@ -1,30 +1,50 @@
+mod adapter_factory;
+mod host_key;
+mod remote_path;
 mod windows_credentials;
 
 use std::{
-    env, fs, io,
+    fs, io,
     net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use base64::{
-    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
-    Engine as _,
-};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{TimeZone, Utc};
-use sha2::{Digest, Sha256};
-use ssh2::{
-    CheckResult, FileStat, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session, Sftp,
-};
+use ssh2::{FileStat, Session, Sftp};
 
 use crate::domain::models::{
     DirectorySizeAvailability, DirectorySizeState, EntryDecoration, EntryKind, EntryViewModel,
     ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField,
     ItemPropertyFieldAvailability, ItemPropertyFieldState, LocationDescriptor, LocationKind,
-    RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteHostKeyTrustState, RemoteProfile,
+    RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteProfile,
     RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest,
+};
+
+use self::{
+    adapter_factory::{preferred_curl_executable, select_adapter},
+    host_key::{
+        create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key,
+        write_known_host_entry,
+    },
+    remote_path::{
+        available_local_conflict_path, available_sftp_conflict_path, build_url,
+        create_remote_transfer_temp_dir, ensure_remote_not_inside_source, join_remote_path,
+        normalize_remote_path, remote_file_name, remote_parent_path, split_remote_file_name,
+        validate_remote_entry_name, validate_remote_operation_source, validate_remote_path,
+        validate_remote_path_within_root,
+    },
+};
+
+#[cfg(test)]
+use self::{
+    host_key::{host_key_algorithm, host_key_fingerprint_sha256, known_hosts_host},
+    remote_path::{
+        available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root,
+    },
 };
 
 pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
@@ -1231,24 +1251,6 @@ impl RemoteAdapter for UnsupportedRemoteAdapter {
     }
 }
 
-fn select_adapter(profile: &RemoteProfile) -> Box<dyn RemoteAdapter + Send + Sync> {
-    match profile.protocol {
-        LocationKind::Sftp => Box::new(SftpRemoteAdapter),
-        LocationKind::Ftp if preferred_curl_executable().is_some() => Box::new(CurlRemoteAdapter),
-        _ => Box::new(UnsupportedRemoteAdapter),
-    }
-}
-
-fn preferred_curl_executable() -> Option<&'static str> {
-    if cfg!(target_os = "windows") && Command::new("curl.exe").arg("--version").output().is_ok() {
-        Some("curl.exe")
-    } else if Command::new("curl").arg("--version").output().is_ok() {
-        Some("curl")
-    } else {
-        None
-    }
-}
-
 fn normalize_profile(mut profile: RemoteProfile) -> RemoteProfile {
     profile.id = profile.id.trim().to_string();
     profile.name = profile.name.trim().to_string();
@@ -1650,404 +1652,6 @@ fn authenticate_sftp_session(
     Ok(())
 }
 
-fn verify_sftp_host_key(session: &Session, profile: &RemoteProfile) -> Result<()> {
-    if profile.ignore_host_key {
-        return Ok(());
-    }
-
-    let known_hosts_path = known_hosts_path()?;
-    if !known_hosts_path.exists() {
-        bail!(
-      "SFTP host key is not trusted yet; add {}:{} to known_hosts or enable ignoreHostKey for this profile",
-      profile.host,
-      profile.port
-    );
-    }
-
-    let mut known_hosts = session
-        .known_hosts()
-        .context("failed to initialize known_hosts checker")?;
-    known_hosts
-        .read_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
-        .with_context(|| format!("failed to read {}", known_hosts_path.display()))?;
-    let (key, _) = session
-        .host_key()
-        .context("SFTP server did not provide a host key")?;
-    match known_hosts.check_port(&profile.host, profile.port, key) {
-    CheckResult::Match => Ok(()),
-    CheckResult::NotFound => bail!(
-      "SFTP host key is not trusted yet; add {}:{} to known_hosts or enable ignoreHostKey for this profile",
-      profile.host,
-      profile.port
-    ),
-    CheckResult::Mismatch => bail!("SFTP host key mismatch for {}:{}", profile.host, profile.port),
-    CheckResult::Failure => bail!("failed to verify SFTP host key for {}:{}", profile.host, profile.port)
-  }
-}
-
-fn known_hosts_path() -> Result<PathBuf> {
-    Ok(dirs::home_dir()
-        .map(|home| home.join(".ssh").join("known_hosts"))
-        .context("failed to locate home directory for known_hosts")?)
-}
-
-fn known_hosts_host(profile: &RemoteProfile) -> String {
-    let default_port = match profile.protocol {
-        LocationKind::Sftp => 22,
-        LocationKind::Ftp => 21,
-        LocationKind::Local => 0,
-    };
-    if profile.port == default_port {
-        profile.host.clone()
-    } else {
-        format!("[{}]:{}", profile.host, profile.port)
-    }
-}
-
-fn host_key_algorithm(key_type: HostKeyType) -> &'static str {
-    match key_type {
-        HostKeyType::Rsa => "ssh-rsa",
-        HostKeyType::Dss => "ssh-dss",
-        HostKeyType::Ecdsa256 => "ecdsa-sha2-nistp256",
-        HostKeyType::Ecdsa384 => "ecdsa-sha2-nistp384",
-        HostKeyType::Ecdsa521 => "ecdsa-sha2-nistp521",
-        HostKeyType::Ed25519 => "ssh-ed25519",
-        HostKeyType::Unknown => "unknown",
-    }
-}
-
-fn host_key_type_from_algorithm(algorithm: &str) -> Option<HostKeyType> {
-    match algorithm {
-        "ssh-rsa" => Some(HostKeyType::Rsa),
-        "ssh-dss" => Some(HostKeyType::Dss),
-        "ecdsa-sha2-nistp256" => Some(HostKeyType::Ecdsa256),
-        "ecdsa-sha2-nistp384" => Some(HostKeyType::Ecdsa384),
-        "ecdsa-sha2-nistp521" => Some(HostKeyType::Ecdsa521),
-        "ssh-ed25519" => Some(HostKeyType::Ed25519),
-        _ => None,
-    }
-}
-
-fn host_key_fingerprint_sha256(key: &[u8]) -> String {
-    let digest = Sha256::digest(key);
-    format!("SHA256:{}", STANDARD_NO_PAD.encode(digest))
-}
-
-fn host_key_trust_state(
-    session: &Session,
-    profile: &RemoteProfile,
-    key: &[u8],
-) -> Result<RemoteHostKeyTrustState> {
-    let path = known_hosts_path()?;
-    if !path.exists() {
-        return Ok(RemoteHostKeyTrustState::Unknown);
-    }
-
-    let mut known_hosts = session
-        .known_hosts()
-        .context("failed to initialize known_hosts checker")?;
-    known_hosts
-        .read_file(&path, KnownHostFileKind::OpenSSH)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-
-    Ok(
-        match known_hosts.check_port(&profile.host, profile.port, key) {
-            CheckResult::Match => RemoteHostKeyTrustState::Trusted,
-            CheckResult::Mismatch => RemoteHostKeyTrustState::Mismatch,
-            CheckResult::NotFound | CheckResult::Failure => RemoteHostKeyTrustState::Unknown,
-        },
-    )
-}
-
-fn create_remote_host_key_info(
-    profile: &RemoteProfile,
-    session: &Session,
-) -> Result<RemoteHostKeyInfo> {
-    let (key, key_type) = session
-        .host_key()
-        .context("SFTP server did not provide a host key")?;
-    let algorithm = host_key_algorithm(key_type).to_string();
-    if algorithm == "unknown" {
-        bail!("SFTP server provided an unsupported host key type");
-    }
-
-    let key_base64 = STANDARD.encode(key);
-    let known_hosts_entry = format!("{} {} {}", known_hosts_host(profile), algorithm, key_base64);
-    Ok(RemoteHostKeyInfo {
-        profile_id: profile.id.clone(),
-        host: profile.host.clone(),
-        port: profile.port,
-        algorithm,
-        fingerprint_sha256: host_key_fingerprint_sha256(key),
-        key_base64,
-        known_hosts_entry,
-        trust_state: host_key_trust_state(session, profile, key)?,
-    })
-}
-
-fn write_known_host_entry(
-    profile: &RemoteProfile,
-    key: &[u8],
-    key_type: HostKeyType,
-) -> Result<()> {
-    let path = known_hosts_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
-    let session = connect_ssh_session(profile)?;
-    let (current_key, current_key_type) = session
-        .host_key()
-        .context("SFTP server did not provide a host key")?;
-    if current_key != key || !matches_host_key_type(current_key_type, key_type) {
-        bail!("SFTP host key changed before it could be trusted");
-    }
-
-    let mut known_hosts = session
-        .known_hosts()
-        .context("failed to initialize known_hosts writer")?;
-    if path.exists() {
-        known_hosts
-            .read_file(&path, KnownHostFileKind::OpenSSH)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-    }
-
-    known_hosts
-        .add(
-            &known_hosts_host(profile),
-            key,
-            &format!("SimpleFileManager {}", profile.name),
-            KnownHostKeyFormat::from(key_type),
-        )
-        .context("failed to add SFTP host key to known_hosts")?;
-    known_hosts
-        .write_file(&path, KnownHostFileKind::OpenSSH)
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
-}
-
-fn matches_host_key_type(left: HostKeyType, right: HostKeyType) -> bool {
-    host_key_algorithm(left) == host_key_algorithm(right)
-}
-
-fn build_url(profile: &RemoteProfile, path: Option<&str>) -> String {
-    let scheme = match profile.protocol {
-        LocationKind::Ftp => "ftp",
-        LocationKind::Sftp => "sftp",
-        LocationKind::Local => "file",
-    };
-    let remote_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
-    let suffix = encode_remote_url_path(&remote_path);
-    if suffix.is_empty() {
-        format!("{scheme}://{}:{}/", profile.host, profile.port)
-    } else {
-        format!("{scheme}://{}:{}/{}", profile.host, profile.port, suffix)
-    }
-}
-
-fn encode_remote_url_path(path: &str) -> String {
-    normalize_remote_path(path)
-        .trim_start_matches('/')
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .map(percent_encode_path_segment)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn percent_encode_path_segment(segment: &str) -> String {
-    let mut encoded = String::new();
-    for byte in segment.as_bytes() {
-        match *byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                encoded.push(*byte as char)
-            }
-            value => encoded.push_str(&format!("%{value:02X}")),
-        }
-    }
-    encoded
-}
-
-fn normalize_remote_path(path: &str) -> String {
-    let normalized = path
-        .trim()
-        .replace('\\', "/")
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
-    if normalized.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{normalized}")
-    }
-}
-
-fn validate_remote_entry_name(name: &str) -> Result<()> {
-    let candidate = name.trim();
-    if candidate.is_empty() {
-        bail!("remote entry name cannot be empty");
-    }
-    if candidate == "." || candidate == ".." {
-        bail!("remote entry name must not be a dot segment");
-    }
-    if candidate.contains('/') || candidate.contains('\\') {
-        bail!("remote entry name must not include path separators");
-    }
-    if candidate.chars().any(|character| character.is_control()) {
-        bail!("remote entry name must not include control characters");
-    }
-    Ok(())
-}
-
-fn validate_remote_path(path: &str) -> Result<()> {
-    if path.chars().any(|character| character.is_control()) {
-        bail!("remote path must not include control characters");
-    }
-
-    for segment in path
-        .replace('\\', "/")
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-    {
-        if segment == "." || segment == ".." {
-            bail!("remote path must not include dot segments");
-        }
-    }
-
-    Ok(())
-}
-
-fn remote_path_is_within_root(profile: &RemoteProfile, path: &str) -> bool {
-    let root = normalize_remote_path(&profile.root_path);
-    let path = normalize_remote_path(path);
-    root == "/" || path == root || path.starts_with(&format!("{}/", root.trim_end_matches('/')))
-}
-
-fn validate_remote_path_within_root(profile: &RemoteProfile, path: &str) -> Result<()> {
-    validate_remote_path(path)?;
-    if !remote_path_is_within_root(profile, path) {
-        bail!("remote path must be within the profile root");
-    }
-    Ok(())
-}
-
-fn validate_remote_operation_source(profile: &RemoteProfile, path: &str) -> Result<()> {
-    validate_remote_path_within_root(profile, path)?;
-    let normalized = normalize_remote_path(path);
-    if normalized == normalize_remote_path(&profile.root_path) {
-        bail!("remote profile root cannot be used as a file operation source");
-    }
-    Ok(())
-}
-
-fn remote_parent_path(path: &str) -> Option<String> {
-    let normalized = normalize_remote_path(path);
-    if normalized == "/" {
-        return None;
-    }
-    let trimmed = normalized.trim_end_matches('/');
-    let index = trimmed.rfind('/')?;
-    if index == 0 {
-        Some("/".to_string())
-    } else {
-        Some(trimmed[..index].to_string())
-    }
-}
-
-fn remote_file_name(path: &str) -> Option<String> {
-    normalize_remote_path(path)
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .map(ToOwned::to_owned)
-        .filter(|value| !value.is_empty())
-}
-
-fn available_remote_conflict_path<F>(destination: &str, exists: F) -> String
-where
-    F: Fn(&str) -> bool,
-{
-    let destination = normalize_remote_path(destination);
-    if !exists(&destination) {
-        return destination;
-    }
-
-    let parent = remote_parent_path(&destination).unwrap_or_else(|| "/".to_string());
-    let file_name = remote_file_name(&destination).unwrap_or_else(|| "item".to_string());
-    let (stem, extension) = split_remote_file_name(&file_name);
-    for index in 1.. {
-        let candidate_name = match extension {
-            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
-            _ => format!("{stem} ({index})"),
-        };
-        let candidate = join_remote_path(&parent, &candidate_name);
-        if !exists(&candidate) {
-            return candidate;
-        }
-    }
-
-    unreachable!("conflict index iteration is unbounded")
-}
-
-fn split_remote_file_name(file_name: &str) -> (&str, Option<&str>) {
-    match file_name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
-        _ => (file_name, None),
-    }
-}
-
-fn available_sftp_conflict_path(sftp: &Sftp, destination: &str) -> String {
-    available_remote_conflict_path(destination, |candidate| {
-        sftp.lstat(Path::new(candidate)).is_ok()
-    })
-}
-
-fn available_local_conflict_path(destination: &Path) -> PathBuf {
-    if !destination.exists() {
-        return destination.to_path_buf();
-    }
-
-    let parent = destination.parent().unwrap_or_else(|| Path::new(""));
-    let stem = destination
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .or_else(|| destination.file_name().and_then(|value| value.to_str()))
-        .unwrap_or("item");
-    let extension = destination.extension().and_then(|value| value.to_str());
-    for index in 1.. {
-        let file_name = match extension {
-            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
-            _ => format!("{stem} ({index})"),
-        };
-        let candidate = parent.join(file_name);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-
-    unreachable!("conflict index iteration is unbounded")
-}
-
-fn create_remote_transfer_temp_dir() -> Result<PathBuf> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let path = env::temp_dir().join(format!(
-        "sfm-remote-transfer-{}-{nanos}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).with_context(|| {
-        format!(
-            "failed to create remote transfer temp directory {}",
-            path.display()
-        )
-    })?;
-    Ok(path)
-}
-
 fn parse_listing_entries(
     profile: &RemoteProfile,
     path: Option<&str>,
@@ -2358,29 +1962,6 @@ fn ensure_remote_stat_is_not_symlink(stat: &FileStat, path: &str, operation: &st
         bail!("remote symbolic link {operation} is not supported: {path}");
     }
     Ok(())
-}
-
-fn ensure_remote_not_inside_source(source: &str, destination: &str) -> Result<()> {
-    let source = normalize_remote_path(source);
-    let destination = normalize_remote_path(destination);
-    if destination == source
-        || destination.starts_with(&format!("{}/", source.trim_end_matches('/')))
-    {
-        bail!("remote destination must not be inside the source path");
-    }
-    Ok(())
-}
-
-fn join_remote_path(base_path: &str, name: &str) -> String {
-    if base_path == "/" {
-        format!("/{}", name.trim_start_matches('/'))
-    } else {
-        format!(
-            "{}/{}",
-            base_path.trim_end_matches('/'),
-            name.trim_start_matches('/')
-        )
-    }
 }
 
 fn stderr_message(output: &Output, fallback: &str) -> String {

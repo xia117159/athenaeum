@@ -1,0 +1,113 @@
+.context-menu {
+  position: fixed;
+  min-width: 188px;
+  padding: 3px 0;
+  z-index: 60;
+  border-color: #c8c8c8;
+  border-radius: 2px;
+  color: #1f1f1f;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.context-menu__header {
+  display: none;
+}
+
+.context-menu__header span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.context-menu__item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 18px 0 0;
+  border-radius: 0;
+  cursor: default;
+  text-align: left;
+}
+
+.context-menu__item--submenu-trigger {
+  position: relative;
+  padding-right: 26px;
+}
+
+.context-menu__item--submenu-trigger::after {
+  content: ">";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #444;
+  font-size: 11px;
+}
+
+.context-menu__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  color: #1f1f1f;
+  text-align: center;
+  flex: 0 0 24px;
+}
+
+.context-menu__item span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu__separator {
+  height: 1px;
+  margin: 3px 0 3px 24px;
+  background: #e5e5e5;
+}
+
+.context-menu__submenu {
+  position: relative;
+}
+
+.context-menu__submenu-label {
+  min-height: 22px;
+  padding: 4px 10px 0 24px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.context-menu__submenu-items {
+  position: absolute;
+  left: calc(100% - 1px);
+  top: -3px;
+  display: none;
+  min-width: 168px;
+  padding: 3px 0;
+  border: 1px solid #c8c8c8;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  z-index: 1;
+}
+
+.context-menu__submenu:not(.is-disabled):hover > .context-menu__submenu-items,
+.context-menu__submenu:not(.is-disabled):focus-within > .context-menu__submenu-items {
+  display: grid;
+}
+
+.context-menu__item:hover:not(:disabled),
+.context-menu__item:focus-visible {
+  background: #e5f1fb;
+  outline: none;
+}
+
+.context-menu__item:disabled {
+  color: #8a8a8a;
+  cursor: default;
+}
