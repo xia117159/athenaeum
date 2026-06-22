@@ -789,16 +789,25 @@ function mapDirectoryTree(drives: BackendWorkspaceBootstrap["drives"], remotePro
     children: []
   }));
 
-  const remoteRoots: DirectoryNode[] = remoteProfiles.map((profile) => ({
-    id: profile.id,
-    label: profile.name,
-    path: createRemoteRootUri(profile),
-    kind: "remote-root",
-    badge: `${profile.protocol.toUpperCase()} 远程`,
-    expandable: true,
-    loaded: false,
-    children: []
-  }));
+  const remoteRoots: DirectoryNode[] = remoteProfiles.map((profile) => {
+    const path = createRemoteRootUri(profile);
+    console.log(`[DEBUG] Creating remote tree node for ${profile.name}:`, {
+      profileId: profile.id,
+      host: profile.host,
+      port: profile.port,
+      generatedPath: path
+    });
+    return {
+      id: profile.id,
+      label: profile.name,
+      path,
+      kind: "remote-root",
+      badge: `${profile.protocol.toUpperCase()} 远程`,
+      expandable: true,
+      loaded: false,
+      children: []
+    };
+  });
 
   return [...localRoots, ...remoteRoots];
 }

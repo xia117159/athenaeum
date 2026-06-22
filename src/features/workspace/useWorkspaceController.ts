@@ -11,6 +11,7 @@ import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
+import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
 import {
   getLocationPathSeparator,
   getOperationRefreshPaths,
@@ -902,9 +903,43 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         });
       } catch (error) {
         const message = getErrorMessage(error, `无法打开 ${path}`);
+        const isProfileNotFound = message.includes("未找到远程连接配置");
         const latestRequestId = navigationRequestsRef.current.get(requestKey);
         const tabStillCurrent =
           latestRequestId === requestId && state.panels[panelId].tabs.some((tab) => tab.id === tabId);
+
+        // Profile-not-found retry: fuzzy match + renormalize path
+        if (tabStillCurrent && isRemotePath(path) && isProfileNotFound) {
+          const matchedProfile = fuzzyMatchRemoteProfile(path, state.remoteProfiles);
+          if (matchedProfile) {
+            const renormalizedPath = renormalizeRemotePath(path, matchedProfile);
+            try {
+              const snapshot = await workspaceGateway.resolveDirectory(renormalizedPath);
+              const latestRetryRequestId = navigationRequestsRef.current.get(requestKey);
+              if (latestRetryRequestId !== requestId || !state.panels[panelId].tabs.some((tab) => tab.id === tabId)) {
+                return;
+              }
+
+              dispatch({
+                type: "tabSnapshotCommitted",
+                payload: {
+                  panelId,
+                  tabId,
+                  snapshot,
+                  pushHistory,
+                  activatePanel: options.activatePanel,
+                  historyIndex: options.historyIndex,
+                  history: options.history,
+                  selectionReplacements: options.selectionReplacements
+                }
+              });
+              return;
+            } catch (renormalizeError) {
+              // Fall through to reconnect-required below
+            }
+          }
+        }
+
         if (tabStillCurrent && isRemotePath(path)) {
           try {
             const shouldRetry = await confirmAndTrustRemoteHostKey(workspaceGateway, state.remoteProfiles, path, message);
@@ -1548,12 +1583,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const openTreeNode = useEffectEvent((panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => {
+    console.log(`[DEBUG] openTreeNode called:`, { panelId, path, kind });
     const activeTab = getActiveTab(state.panels[panelId]);
     if (isNavigationTab(activeTab)) {
       void handleOpenNewTab(panelId, path);
       return;
     }
     if (kind === "remote-root") {
+      console.log(`[DEBUG] Opening remote-root tab with path:`, path);
       void handleOpenNewTab(panelId, path);
       return;
     }

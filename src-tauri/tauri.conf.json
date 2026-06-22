@@ -3,7 +3,7 @@
   "productName": "Athenaeum",
   "mainBinaryName": "Athenaeum",
   "version": "0.0.1",
-  "identifier": "com.openai.simplefilemanager",
+  "identifier": "com.athenaeum.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",

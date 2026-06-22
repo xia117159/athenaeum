@@ -28,7 +28,7 @@ function remoteKindFromPath(path: string) {
   return path.startsWith("ftp://") ? "ftp" : "sftp";
 }
 
-function fuzzyMatchRemoteProfile(path: string, profiles: BackendRemoteProfile[]): BackendRemoteProfile | undefined {
+export function fuzzyMatchRemoteProfile(path: string, profiles: BackendRemoteProfile[]): BackendRemoteProfile | undefined {
   // Exact match with port (current behavior)
   const exactMatch = profiles.find((profile) => {
     const rootUri = createRemoteRootUri(profile);
@@ -55,7 +55,7 @@ function fuzzyMatchRemoteProfile(path: string, profiles: BackendRemoteProfile[])
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-function renormalizeRemotePath(stalePath: string, profile: BackendRemoteProfile): string {
+export function renormalizeRemotePath(stalePath: string, profile: BackendRemoteProfile): string {
   // Extract the remote path portion after the authority
   // stalePath might be: sftp://user@host/path/to/file or sftp://user@host:port/path/to/file
   const authorityEndMatch = stalePath.match(/^[^:]+:\/\/[^@]+@[^/]+(\/.*)?$/);
