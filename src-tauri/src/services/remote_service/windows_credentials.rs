@@ -52,7 +52,7 @@ pub fn write_secret(target: &str, secret: &str) -> Result<()> {
     unsafe {
         let mut target_wide = wide_null(target);
         let secret_bytes = secret.as_bytes().to_vec();
-        let mut user_wide = wide_null("SimpleFileManager");
+        let mut user_wide = wide_null("Athenaeum");
 
         let credential = CREDENTIALW {
             Flags: CRED_FLAGS(0),

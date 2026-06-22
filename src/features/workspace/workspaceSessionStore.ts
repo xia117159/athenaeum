@@ -12,7 +12,8 @@ import type {
 } from "./types";
 import { isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
-export const WORKSPACE_SESSION_STORAGE_KEY = "SimpleFileManager.workspace.session.v1";
+export const WORKSPACE_SESSION_STORAGE_KEY = "Athenaeum.workspace.session.v1";
+const LEGACY_SESSION_STORAGE_KEY = "SimpleFileManager.workspace.session.v1";
 
 export type PersistedTab = {
   id: string;
@@ -54,7 +55,7 @@ export type PersistedWorkspaceSession = {
   settingsModel: SettingsModel;
 };
 
-type WorkspaceStorage = Pick<Storage, "getItem" | "setItem">;
+type WorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function getDefaultStorage(): WorkspaceStorage | undefined {
   if (typeof window === "undefined") {
@@ -65,6 +66,22 @@ function getDefaultStorage(): WorkspaceStorage | undefined {
     return window.localStorage;
   } catch {
     return undefined;
+  }
+}
+
+export function migrateLegacyWorkspaceSession(storage: WorkspaceStorage | null | undefined = getDefaultStorage()) {
+  if (!storage) {
+    return;
+  }
+
+  try {
+    const legacyValue = storage.getItem(LEGACY_SESSION_STORAGE_KEY);
+    if (legacyValue && !storage.getItem(WORKSPACE_SESSION_STORAGE_KEY)) {
+      storage.setItem(WORKSPACE_SESSION_STORAGE_KEY, legacyValue);
+      storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Migration is best-effort
   }
 }
 

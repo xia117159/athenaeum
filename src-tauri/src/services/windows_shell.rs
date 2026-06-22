@@ -1769,7 +1769,7 @@ mod imp {
         #[test]
         fn validate_background_path_accepts_existing_local_directories_only() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-background-menu-{}",
+                "athenaeum-background-menu-{}",
                 uuid::Uuid::new_v4()
             ));
             std::fs::create_dir_all(&temp)?;
@@ -1828,7 +1828,7 @@ mod imp {
         #[test]
         fn resolve_navigation_target_reports_existing_files_and_folders() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-navigation-target-{}",
+                "athenaeum-navigation-target-{}",
                 uuid::Uuid::new_v4()
             ));
             let folder = temp.join("docs");
@@ -1891,7 +1891,7 @@ mod imp {
         #[test]
         fn validate_paths_rejects_mixed_remote_and_local_inputs() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-native-menu-{}",
+                "athenaeum-native-menu-{}",
                 uuid::Uuid::new_v4()
             ));
             std::fs::create_dir_all(&temp)?;
@@ -1911,7 +1911,7 @@ mod imp {
         #[test]
         fn validate_paths_rejects_mixed_parent_directories() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-native-menu-{}",
+                "athenaeum-native-menu-{}",
                 uuid::Uuid::new_v4()
             ));
             let left = temp.join("left");
@@ -1936,7 +1936,7 @@ mod imp {
         #[test]
         fn validate_paths_accepts_multiple_items_from_same_parent() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-native-menu-{}",
+                "athenaeum-native-menu-{}",
                 uuid::Uuid::new_v4()
             ));
             std::fs::create_dir_all(&temp)?;
@@ -1958,7 +1958,7 @@ mod imp {
         #[test]
         fn validate_paths_keeps_shell_friendly_non_verbatim_paths() -> Result<()> {
             let temp = std::env::temp_dir().join(format!(
-                "simplefilemanager-native-menu-{}",
+                "athenaeum-native-menu-{}",
                 uuid::Uuid::new_v4()
             ));
             std::fs::create_dir_all(&temp)?;

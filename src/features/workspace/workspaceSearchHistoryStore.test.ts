@@ -27,6 +27,9 @@ function createStorage(seed: Record<string, string> = {}) {
     setItem(key: string, value: string) {
       values.set(key, value);
     },
+    removeItem(key: string) {
+      values.delete(key);
+    },
     snapshot() {
       return Object.fromEntries(values.entries());
     }

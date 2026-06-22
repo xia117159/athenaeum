@@ -1,6 +1,6 @@
 import type { EntryDragPayload, PanelId } from "./types";
 
-export const ENTRY_DRAG_MIME = "application/x-simplefilemanager-entry-list";
+export const ENTRY_DRAG_MIME = "application/x-athenaeum-entry-list";
 
 let activeEntryDragPayload: EntryDragPayload | null = null;
 

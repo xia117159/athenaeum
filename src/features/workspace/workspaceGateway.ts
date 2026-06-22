@@ -24,6 +24,7 @@ import {
   showNativeContextMenu as openNativeContextMenu
 } from "./workspaceIpc";
 import {
+  migrateLegacyWorkspaceSession,
   readPersistedSession,
   writeWorkspaceSession
 } from "./workspaceSessionStore";
@@ -241,6 +242,7 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       ].filter((value): value is string => Boolean(value));
 
       bootstrap = await hydratePanels(bootstrap, seedPaths, remoteProfiles);
+      migrateLegacyWorkspaceSession();
       return mergeBootstrapWithSession(bootstrap, readPersistedSession(), remoteProfiles);
     },
 

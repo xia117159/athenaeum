@@ -5,7 +5,7 @@ import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { cloneColumns } from "./workspaceMappers";
 import type { BreadcrumbItem, TabState } from "./types";
 
-const ENTRY_DRAG_MIME = "application/x-simplefilemanager-entry-list";
+const ENTRY_DRAG_MIME = "application/x-athenaeum-entry-list";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (

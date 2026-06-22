@@ -4,7 +4,7 @@ import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGatewa
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import { readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
+import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { cloneColumns } from "./workspaceMappers";
@@ -568,6 +568,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     searchHistoryHydratedRef.current = true;
+    migrateLegacySearchHistory();
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "content", history: readSearchHistory("content") } });
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "name", history: readSearchHistory("name") } });
   }, []);

@@ -1759,7 +1759,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_nanos();
-        std::env::temp_dir().join(format!("simplefilemanager-operation-{label}-{unique}"))
+        std::env::temp_dir().join(format!("athenaeum-operation-{label}-{unique}"))
     }
 
     fn local(path: &std::path::Path) -> OperationPathRef {

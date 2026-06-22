@@ -186,7 +186,7 @@ pub(super) fn trash_destination(
 ) -> Result<PathBuf> {
     let root = app_data_dir
         .cloned()
-        .unwrap_or_else(|| std::env::temp_dir().join("SimpleFileManager"))
+        .unwrap_or_else(|| std::env::temp_dir().join("Athenaeum"))
         .join("operation-trash")
         .join(task_id);
     fs::create_dir_all(&root)

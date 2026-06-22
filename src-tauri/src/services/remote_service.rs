@@ -1,7 +1,7 @@
 mod adapter_factory;
 mod host_key;
 mod remote_path;
-mod windows_credentials;
+pub(super) mod windows_credentials;
 
 use std::{
     fs, io,
@@ -103,7 +103,7 @@ pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
 }
 
 pub fn credential_target_for_profile(id: &str) -> String {
-    format!("SimpleFileManager.Remote.{}", id.trim())
+    format!("Athenaeum.Remote.{}", id.trim())
 }
 
 pub fn prepare_profile_for_save(
@@ -2130,17 +2130,17 @@ mod tests {
                 profile,
                 password: None,
             },
-            Some("SimpleFileManager.Remote.remote-1"),
+            Some("Athenaeum.Remote.remote-1"),
         )
         .expect("profile should prepare");
 
         assert_eq!(
             prepared.credential_target.as_deref(),
-            Some("SimpleFileManager.Remote.remote-1")
+            Some("Athenaeum.Remote.remote-1")
         );
         assert_eq!(
             credential_target_for_profile(" remote-2 "),
-            "SimpleFileManager.Remote.remote-2"
+            "Athenaeum.Remote.remote-2"
         );
     }
 

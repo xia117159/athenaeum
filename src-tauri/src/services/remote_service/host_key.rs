@@ -183,7 +183,7 @@ pub(super) fn write_known_host_entry(
         .add(
             &known_hosts_host(profile),
             key,
-            &format!("SimpleFileManager {}", profile.name),
+            &format!("Athenaeum {}", profile.name),
             KnownHostKeyFormat::from(key_type),
         )
         .context("failed to add SFTP host key to known_hosts")?;

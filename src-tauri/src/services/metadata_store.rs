@@ -406,7 +406,7 @@ mod tests {
     impl TestDir {
         fn new(name: &str) -> Self {
             let path = env::temp_dir().join(format!(
-                "simplefilemanager-metadata-{name}-{}",
+                "athenaeum-metadata-{name}-{}",
                 uuid::Uuid::new_v4()
             ));
             fs::create_dir_all(&path).expect("failed to create temp directory");
@@ -712,14 +712,14 @@ mod tests {
                 ignore_host_key: false,
                 connect_timeout_secs: 10,
                 command_timeout_secs: 20,
-                credential_target: Some("SimpleFileManager.Remote.remote-1".into()),
+                credential_target: Some("Athenaeum.Remote.remote-1".into()),
             }],
             ..MetadataStore::default()
         };
 
         assert_eq!(
             store.remote_profiles[0].credential_target.as_deref(),
-            Some("SimpleFileManager.Remote.remote-1")
+            Some("Athenaeum.Remote.remote-1")
         );
 
         let snapshot = store.to_settings_snapshot(
@@ -750,7 +750,7 @@ mod tests {
                     ignore_host_key: false,
                     connect_timeout_secs: 10,
                     command_timeout_secs: 20,
-                    credential_target: Some("SimpleFileManager.Remote.remote-1".into()),
+                    credential_target: Some("Athenaeum.Remote.remote-1".into()),
                 },
                 RemoteProfile {
                     id: "remote-2".into(),

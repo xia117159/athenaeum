@@ -205,7 +205,7 @@ mod tests {
     impl TestDir {
         fn new(name: &str) -> Self {
             let path = env::temp_dir().join(format!(
-                "simplefilemanager-settings-{name}-{}",
+                "athenaeum-settings-{name}-{}",
                 uuid::Uuid::new_v4()
             ));
             fs::create_dir_all(&path).expect("failed to create temp directory");

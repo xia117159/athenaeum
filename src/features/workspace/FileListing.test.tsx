@@ -1397,7 +1397,7 @@ export const completion = (async () => {
 
       const copyTransfer = createDataTransfer();
       copyTransfer.setData(
-        "application/x-simplefilemanager-entry-list",
+        "application/x-athenaeum-entry-list",
         JSON.stringify({ sourcePanelId: "panel-1", sourceTabId: "panel-1-tab-1", paths: ["D:\\report.txt"] })
       );
       await act(async () => {
@@ -1408,7 +1408,7 @@ export const completion = (async () => {
 
       const moveTransfer = createDataTransfer();
       moveTransfer.setData(
-        "application/x-simplefilemanager-entry-list",
+        "application/x-athenaeum-entry-list",
         JSON.stringify({ sourcePanelId: "panel-1", sourceTabId: "panel-1-tab-1", paths: ["D:\\report.txt"] })
       );
       await act(async () => {

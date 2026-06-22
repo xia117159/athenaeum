@@ -1,5 +1,5 @@
 [default]
-description = "Allows SimpleFileManager workspace commands required by the main desktop window."
+description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
   "allow-initialize-workspace",
   "allow-list-directory",

@@ -2,6 +2,7 @@ pub mod fs_service;
 pub mod file_watcher;
 pub mod icon_service;
 pub mod metadata_store;
+pub mod migration;
 pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
@@ -52,8 +53,16 @@ impl AppState {
     pub fn initialize_paths(&self, app: &AppHandle) -> Result<()> {
         let data_dir = app
             .path()
-            .resolve("SimpleFileManager", BaseDirectory::AppLocalData)
+            .resolve("Athenaeum", BaseDirectory::AppLocalData)
             .context("failed to resolve app local data directory")?;
+
+        if let Some(local_base) = dirs::data_local_dir() {
+            let legacy_dir = migration::legacy_app_data_dir(&local_base);
+            if let Err(error) = migration::migrate_legacy_data_dir(&legacy_dir, &data_dir) {
+                eprintln!("warning: legacy data dir migration failed: {error:#}");
+            }
+        }
+
         std::fs::create_dir_all(&data_dir).context("failed to create app data directory")?;
         let metadata_path = data_dir.join("metadata.json");
         let settings_path = data_dir.join("layout.toml");
@@ -61,6 +70,9 @@ impl AppState {
 
         let mut metadata = MetadataStore::load_from(metadata_path.clone())?;
         metadata.attach_path(metadata_path);
+        if migration::migrate_legacy_credentials(&mut metadata)? {
+            metadata.persist()?;
+        }
         *self.metadata.write().expect("metadata lock poisoned") = metadata;
 
         let mut settings = SettingsStore::load_from(settings_path.clone())?;

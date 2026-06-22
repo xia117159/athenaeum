@@ -28,20 +28,70 @@ function remoteKindFromPath(path: string) {
   return path.startsWith("ftp://") ? "ftp" : "sftp";
 }
 
+function fuzzyMatchRemoteProfile(path: string, profiles: BackendRemoteProfile[]): BackendRemoteProfile | undefined {
+  // Exact match with port (current behavior)
+  const exactMatch = profiles.find((profile) => {
+    const rootUri = createRemoteRootUri(profile);
+    return path === rootUri || path.startsWith(`${rootUri.replace(/\/$/, "")}/`);
+  });
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  // Fuzzy match: same protocol + host + username, ignore port difference
+  // Extract protocol, username, host from path (may be missing port)
+  const remoteMatch = path.match(/^(sftp|ftp):\/\/([^@]+)@([^/:]+)/);
+  if (!remoteMatch) {
+    return undefined;
+  }
+
+  const [, protocol, username, host] = remoteMatch;
+  const candidates = profiles.filter(
+    (profile) => profile.protocol === protocol && profile.username === username && profile.host === host
+  );
+
+  // Only renormalize if there's exactly one match
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function renormalizeRemotePath(stalePath: string, profile: BackendRemoteProfile): string {
+  // Extract the remote path portion after the authority
+  // stalePath might be: sftp://user@host/path/to/file or sftp://user@host:port/path/to/file
+  const authorityEndMatch = stalePath.match(/^[^:]+:\/\/[^@]+@[^/]+(\/.*)?$/);
+  if (!authorityEndMatch) {
+    return createRemoteRootUri(profile);
+  }
+
+  const remotePath = authorityEndMatch[1] || "/";
+  const rootPath = profile.rootPath.replace(/\/$/, "") || "";
+
+  // If the stale path starts with the profile's root, keep the relative portion
+  if (remotePath === rootPath || remotePath.startsWith(`${rootPath}/`)) {
+    const relativeToRoot = remotePath.slice(rootPath.length) || "/";
+    return `${createRemoteRootUri(profile).replace(/\/$/, "")}${relativeToRoot}`;
+  }
+
+  // Otherwise just use the root
+  return createRemoteRootUri(profile);
+}
+
 function createRemoteReconnectSnapshot(path: string, profiles: BackendRemoteProfile[]): DirectorySnapshot {
-  const matchedProfile = profiles.find((profile) => path === createRemoteRootUri(profile) || path.startsWith(`${createRemoteRootUri(profile).replace(/\/$/, "")}/`));
+  const matchedProfile = fuzzyMatchRemoteProfile(path, profiles);
+  const normalizedPath = matchedProfile ? renormalizeRemotePath(path, matchedProfile) : path;
+
   return {
     location: {
       kind: remoteKindFromPath(path),
       label: matchedProfile?.name ?? labelFromPath(path),
-      path,
+      path: normalizedPath,
       subtitle: matchedProfile ? `${matchedProfile.protocol.toUpperCase()} · ${matchedProfile.host}:${matchedProfile.port}` : "远程位置"
     },
     breadcrumbs: [
       {
-        id: matchedProfile ? createRemoteRootUri(matchedProfile) : path,
+        id: normalizedPath,
         label: matchedProfile?.name ?? labelFromPath(path),
-        path: matchedProfile ? createRemoteRootUri(matchedProfile) : path
+        path: normalizedPath
       }
     ],
     entries: []
@@ -54,12 +104,29 @@ function createReconnectTab(
   message?: string
 ): TabState {
   const snapshot = createRemoteReconnectSnapshot(tab.path, profiles);
-  const profileId = profiles.find((profile) => tab.path === createRemoteRootUri(profile) || tab.path.startsWith(`${createRemoteRootUri(profile).replace(/\/$/, "")}/`))?.id;
+  const matchedProfile = fuzzyMatchRemoteProfile(tab.path, profiles);
+  const normalizedPath = snapshot.location.path;
+
+  // Renormalize history entries that match the stale pattern
+  const normalizedHistory = tab.history.length > 0
+    ? tab.history.map((h) => {
+        if (h === tab.path) {
+          return normalizedPath;
+        }
+        // If h starts with the stale path, renormalize it too
+        if (matchedProfile && h.startsWith(tab.path)) {
+          const suffix = h.slice(tab.path.length);
+          return `${normalizedPath}${suffix}`;
+        }
+        return h;
+      })
+    : [normalizedPath];
+
   return createTabFromSnapshot(snapshot, tab.id, {
     title: tab.titleOverride ?? tab.title,
     titleOverride: tab.titleOverride,
     locked: tab.locked,
-    history: tab.history.length > 0 ? tab.history : [tab.path],
+    history: normalizedHistory,
     historyIndex: tab.historyIndex,
     expandedNodePaths: tab.expandedNodePaths.length > 0 ? tab.expandedNodePaths : snapshot.breadcrumbs.map((breadcrumb) => breadcrumb.path),
     viewMode: tab.viewMode,
@@ -67,8 +134,8 @@ function createReconnectTab(
     columns: tab.columns,
     status: "reconnect-required",
     reconnect: {
-      path: tab.path,
-      profileId,
+      path: normalizedPath,
+      profileId: matchedProfile?.id,
       message
     }
   });
