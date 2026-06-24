@@ -12,10 +12,10 @@ use commands::{
         undo_operation,
     },
     remote::{
-        copy_remote_entries, create_remote_directory, delete_remote_entries, delete_remote_profile,
-        download_remote_entries, get_remote_host_key, list_remote_directory, list_remote_profiles,
-        move_remote_entries, rename_remote_entry, save_remote_profile, test_remote_profile,
-        transfer_remote_entries, trust_remote_host_key, upload_remote_files,
+        copy_remote_entries, create_remote_directory, create_remote_file, delete_remote_entries,
+        delete_remote_profile, download_remote_entries, get_remote_host_key, list_remote_directory,
+        list_remote_profiles, move_remote_entries, rename_remote_entry, save_remote_profile,
+        test_remote_profile, transfer_remote_entries, trust_remote_host_key, upload_remote_files,
     },
     search::{cancel_search, start_search},
     settings::{
@@ -34,7 +34,7 @@ use commands::{
     },
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 pub fn run() {
     tauri::Builder::default()
@@ -42,6 +42,17 @@ pub fn run() {
             MetadataStore::load_default(),
             SettingsStore::load_default(),
         )))
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    for webview in window.app_handle().webview_windows().values() {
+                        if webview.label() != "main" {
+                            let _ = webview.close();
+                        }
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let state = app.state::<Arc<AppState>>().inner().clone();
@@ -96,6 +107,7 @@ pub fn run() {
             trust_remote_host_key,
             list_remote_directory,
             create_remote_directory,
+            create_remote_file,
             delete_remote_entries,
             rename_remote_entry,
             upload_remote_files,

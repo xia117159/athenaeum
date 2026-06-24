@@ -586,7 +586,15 @@ export function mapNavigationItems(settings: Pick<BackendSettingsSnapshot, "navi
 }
 
 export function mapRemoteProfile(profile: BackendRemoteProfile): RemoteConnectionProfile {
-  return {
+  console.log('[mapRemoteProfile] input:', {
+    id: profile.id,
+    name: profile.name,
+    hasCredentialTarget: !!profile.credentialTarget,
+    credentialTarget: profile.credentialTarget,
+    hasPassword: !!profile.password,
+    passwordLength: profile.password?.length
+  });
+  const mapped = {
     id: profile.id,
     name: profile.name,
     protocol: profile.protocol as RemoteConnectionProfile["protocol"],
@@ -599,8 +607,18 @@ export function mapRemoteProfile(profile: BackendRemoteProfile): RemoteConnectio
     passiveMode: profile.passiveMode ?? true,
     ignoreHostKey: profile.ignoreHostKey ?? false,
     connectTimeoutSecs: profile.connectTimeoutSecs ?? 10,
-    commandTimeoutSecs: profile.commandTimeoutSecs ?? 20
+    commandTimeoutSecs: profile.commandTimeoutSecs ?? 20,
+    credentialTarget: profile.credentialTarget ?? undefined,
+    password: profile.password ?? undefined
   };
+  console.log('[mapRemoteProfile] output:', {
+    id: mapped.id,
+    name: mapped.name,
+    hasCredentialTarget: !!mapped.credentialTarget,
+    hasPassword: !!mapped.password,
+    passwordLength: mapped.password?.length
+  });
+  return mapped;
 }
 
 export function mapRemoteProfiles(profiles: BackendRemoteProfile[]) {

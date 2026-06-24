@@ -9,6 +9,7 @@ import {
   listenWorkspaceOperationHistory,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
+  renameWorkspaceEntry,
   resolveWorkspaceOperationConflict,
   runWorkspaceOperationCommands,
   undoLatestWorkspaceOperation,
@@ -138,11 +139,11 @@ export const workspaceOperationsGatewayTests = (async () => {
     assert.deepEqual(invocations, []);
   });
 
-  await assertAsyncTest("createWorkspaceDirectory invokes start_file_operation with canonical path refs", async () => {
+  await assertAsyncTest("remote create, rename, and delete operations bypass task mode", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return { taskId: "task-create" } as T;
+      return { affectedPaths: [] } as T;
     };
 
     await createWorkspaceDirectory(
@@ -155,28 +156,78 @@ export const workspaceOperationsGatewayTests = (async () => {
       },
       { requestId: "create-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
     );
+    await createWorkspaceFile(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox",
+      "notes.txt",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "create-file-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+    await renameWorkspaceEntry(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox/old-name",
+      "new-name",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "rename-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+    await deleteWorkspaceEntries(
+      ["sftp://cheng@127.0.0.1:6666/home/cheng/inbox/new-name"],
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "delete-request", source: "toolbar", panelId: "panel-1", tabId: "tab-1" }
+    );
 
     assert.deepEqual(invocations, [
       {
-        command: "start_file_operation",
+        command: "create_remote_directory",
         args: {
-          intent: {
-            requestId: "create-request",
-            source: "inlineEdit",
-            panelId: "panel-1",
-            tabId: "tab-1",
-            kind: "createDirectory",
-            parent: {
-              kind: "remote",
-              profileId: "remote-test",
-              protocol: "sftp",
-              remotePath: "/home/cheng/inbox"
-            },
-            name: "new-folder",
-            conflictPolicy: {
-              defaultResolution: "ask",
-              allowApplyToAll: false
-            }
+          request: {
+            profileId: "remote-test",
+            password: null,
+            parent: "/home/cheng/inbox",
+            name: "new-folder"
+          }
+        }
+      },
+      {
+        command: "create_remote_file",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            parent: "/home/cheng/inbox",
+            name: "notes.txt"
+          }
+        }
+      },
+      {
+        command: "rename_remote_entry",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            source: "/home/cheng/inbox/old-name",
+            newName: "new-name"
+          }
+        }
+      },
+      {
+        command: "delete_remote_entries",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["/home/cheng/inbox/new-name"],
+            destination: null
           }
         }
       }

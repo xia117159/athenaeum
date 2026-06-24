@@ -44,14 +44,24 @@ where
 
 #[tauri::command]
 pub fn list_remote_profiles(state: State<'_, Arc<AppState>>) -> Result<Vec<RemoteProfile>, String> {
-    Ok(redact_remote_profiles(
+    let profiles = hydrate_remote_profiles(
         state
             .metadata
             .read()
             .expect("metadata lock poisoned")
             .remote_profiles
             .clone(),
-    ))
+    );
+    eprintln!("[list_remote_profiles] Returning {} profiles", profiles.len());
+    for profile in &profiles {
+        eprintln!("[list_remote_profiles] Profile: {}, has_password: {}, has_credential_target: {}",
+            profile.name,
+            profile.password.is_some(),
+            profile.credential_target.is_some()
+        );
+    }
+    eprintln!("[list_remote_profiles] Serialized JSON: {}", serde_json::to_string(&profiles).unwrap_or_else(|e| format!("Error: {}", e)));
+    Ok(profiles)
 }
 
 #[tauri::command]
@@ -196,6 +206,25 @@ pub async fn create_remote_directory(
         let created =
             remote_service::create_directory(&profile, password.as_deref(), &parent, &name)
                 .map_err(|error| error.to_string())?;
+        Ok(OperationResult {
+            affected_paths: vec![created],
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn create_remote_file(
+    request: RemoteCreateDirectoryRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<OperationResult, String> {
+    let profile = remote_profile_by_id(&state, &request.profile_id)?;
+    let password = request.password;
+    let parent = request.parent;
+    let name = request.name;
+    run_remote_blocking(move || {
+        let created = remote_service::create_file(&profile, password.as_deref(), &parent, &name)
+            .map_err(|error| error.to_string())?;
         Ok(OperationResult {
             affected_paths: vec![created],
         })
@@ -381,12 +410,25 @@ fn remote_profile_by_id(
         .ok_or_else(|| format!("remote profile not found: {id}"))
 }
 
-fn redact_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfile> {
+pub fn hydrate_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfile> {
     profiles
         .into_iter()
-        .map(|mut profile| {
-            profile.credential_target = None;
-            profile
+        .map(|profile| {
+            let mut hydrated = profile.clone();
+            if let Some(credential_target) = &profile.credential_target {
+                eprintln!("[hydrate_remote_profiles] Reading password for profile: {}, credential_target: {}", profile.name, credential_target);
+                if let Some(password) = remote_service::read_password_from_credential(credential_target) {
+                    eprintln!("[hydrate_remote_profiles] Successfully read password for profile: {}, password length: {}", profile.name, password.len());
+                    hydrated.password = Some(password);
+                    eprintln!("[hydrate_remote_profiles] After setting password, hydrated.password.is_some(): {}", hydrated.password.is_some());
+                    eprintln!("[hydrate_remote_profiles] hydrated.credential_target: {:?}", hydrated.credential_target);
+                } else {
+                    eprintln!("[hydrate_remote_profiles] Failed to read password for profile: {}", profile.name);
+                }
+            } else {
+                eprintln!("[hydrate_remote_profiles] No credential_target for profile: {}", profile.name);
+            }
+            hydrated
         })
         .collect()
 }

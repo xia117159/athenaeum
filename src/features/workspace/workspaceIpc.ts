@@ -49,7 +49,11 @@ export async function invokeRequired<T>(
   invokeFn: WorkspaceInvoke = invoke,
   runtimeHost: RuntimeHost = getRuntimeHost()
 ): Promise<T> {
-  return invokeWithBrowserFallback(command, args, browserFallback, invokeFn, runtimeHost);
+  const result = await invokeWithBrowserFallback(command, args, browserFallback, invokeFn, runtimeHost);
+  if (command === "list_remote_profiles") {
+    console.log('[invokeRequired] list_remote_profiles raw result:', JSON.stringify(result));
+  }
+  return result;
 }
 
 export async function showNativeContextMenu(

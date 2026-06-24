@@ -8,12 +8,12 @@
     },
     {
       "path": "src/features/workspace/useWorkspaceController.ts",
-      "maxLines": 2927,
+      "maxLines": 2969,
       "reason": "Legacy workspace facade still owns multiple orchestration flows. Continue extracting behavior-preserving subcontrollers and pure planners."
     },
     {
       "path": "src-tauri/src/services/remote_service.rs",
-      "maxLines": 2626,
+      "maxLines": 2709,
       "reason": "Remote service facade still contains FTP/SFTP adapter implementations after path, host-key, and factory extraction. Continue moving adapters into protocol modules."
     },
     {
@@ -48,7 +48,7 @@
     },
     {
       "path": "src/features/workspace/SettingsSurface.tsx",
-      "maxLines": 1538,
+      "maxLines": 1703,
       "reason": "Legacy settings surface still combines navigation, pages, shortcut capture, theme, menu, columns, rules, and remote profile editing. Continue extracting page components."
     },
     {

@@ -681,6 +681,10 @@
   align-items: start;
 }
 
+.settings-group--connections > .settings-group__header .toolbar-button {
+  display: none;
+}
+
 .connections-editor__list,
 .connections-editor__form {
   min-width: 0;
@@ -756,12 +760,151 @@
   font-size: 12px;
 }
 
+.connections-editor__form > .settings-inline-warning {
+  display: none;
+}
+
+.settings-inline-warning-slot {
+  display: grid;
+  align-items: center;
+  min-height: 32px;
+  margin-top: 10px;
+}
+
+.settings-inline-warning-slot .settings-inline-warning {
+  margin-bottom: 0;
+}
+
+.connection-password-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.connection-password-control input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 36px;
+}
+
+.settings-field:has(#remote-password) {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-field:has(#remote-password) label {
+  grid-column: 1 / -1;
+}
+
+#remote-password {
+  min-width: 0;
+}
+
+#remote-password::-ms-reveal,
+#remote-password::-ms-clear {
+  display: none;
+}
+
+#remote-password::-webkit-credentials-auto-fill-button,
+#remote-password::-webkit-contacts-auto-fill-button {
+  visibility: hidden;
+  pointer-events: none;
+  position: absolute;
+}
+
+.connection-password-control__toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.connection-password-control__toggle:hover {
+  color: #1f1f1f;
+}
+
+.connection-password-control__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.connection-password-control__toggle:disabled {
+  color: #d1d5db;
+  cursor: default;
+}
+
 .settings-form-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 12px;
+}
+
+.settings-form-actions-legacy {
+  display: none;
+}
+
+.toolbar-button--danger {
+  border-color: #c42b1c;
+  color: #a4262c;
+}
+
+.toolbar-button--danger:hover {
+  background: #fdf3f4;
+}
+
+.connection-test-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.connection-test-status--loading {
+  color: #005a9e;
+}
+
+.connection-test-status--success {
+  color: #107c10;
+}
+
+.connection-test-status--error {
+  color: #a4262c;
+}
+
+.connection-test-status small {
+  color: inherit;
+}
+
+.connection-test-status__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 90, 158, 0.24);
+  border-top-color: #005a9e;
+  border-radius: 50%;
+  animation: connection-test-spin 0.8s linear infinite;
+}
+
+@keyframes connection-test-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @container settings-content (max-width: 600px) {

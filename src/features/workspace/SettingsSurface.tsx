@@ -4,9 +4,12 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { HexAlphaColorPicker } from "react-colorful";
+import { Eye, EyeOff } from "lucide-react";
+import type { RemoteTestResult } from "../../app/types";
 import type {
   ColumnDefinition,
   RemoteConnectionProfile,
@@ -37,7 +40,7 @@ export type SettingsSurfaceProps = {
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
   onSaveRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void;
   onDeleteRemoteProfile: (id: string) => void;
-  onTestRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void;
+  onTestRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => Promise<RemoteTestResult | void> | RemoteTestResult | void;
   onConfirm: () => void;
   onCancel: () => void;
   applying?: boolean;
@@ -81,6 +84,7 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
 
 const SETTINGS_SECTIONS = SETTINGS_SECTION_GROUPS.flatMap((group) => group.sections);
 const SHORTCUT_SCOPE_ORDER: ShortcutScope[] = ["workspace", "panel", "listing", "context-menu"];
+const SAVED_PASSWORD_MASK = "********";
 
 function getLocalizedColumnLabel(column: ColumnDefinition) {
   switch (column.id) {
@@ -219,6 +223,7 @@ export function SettingsSurface({
   const [localErrorMessage, setLocalErrorMessage] = useState<string | null>(null);
   const [remoteDraftDirty, setRemoteDraftDirty] = useState(false);
   const remoteDraftDirtyRef = useRef(false);
+  const [globalPasswordVisible, setGlobalPasswordVisible] = useState(false);
 
   const updateRemoteDraftDirty = useCallback((dirty: boolean) => {
     remoteDraftDirtyRef.current = dirty;
@@ -334,6 +339,8 @@ export function SettingsSurface({
               onTest={onTestRemoteProfile}
               onDirtyChange={updateRemoteDraftDirty}
               disabled={controlsDisabled}
+              passwordVisible={globalPasswordVisible}
+              onPasswordVisibleChange={setGlobalPasswordVisible}
             />
           )}
         </main>
@@ -1183,74 +1190,185 @@ function isRemoteProfileDraftDirty(draft: RemoteConnectionProfile, baseline: Rem
   return password.length > 0 || !hasSameJsonShape(normalizeRemoteProfileDraft(draft), normalizeRemoteProfileDraft(baseline));
 }
 
+type ConnectionTestState =
+  | { status: "idle" }
+  | { status: "loading"; target: string }
+  | { status: "success"; message: string; latencyMs: number }
+  | { status: "error"; message: string; latencyMs: number };
+
 function ConnectionsEditor({
   profiles,
   onSave,
   onDeleteRemoteProfile,
   onTest,
   onDirtyChange,
-  disabled = false
+  disabled = false,
+  passwordVisible,
+  onPasswordVisibleChange
 }: {
   profiles: RemoteConnectionProfile[];
   onSave: (profile: RemoteConnectionProfile, password?: string) => void;
   onDeleteRemoteProfile: (id: string) => void;
-  onTest: (profile: RemoteConnectionProfile, password?: string) => void;
+  onTest: (profile: RemoteConnectionProfile, password?: string) => Promise<RemoteTestResult | void> | RemoteTestResult | void;
   onDirtyChange: (dirty: boolean) => void;
   disabled?: boolean;
+  passwordVisible: boolean;
+  onPasswordVisibleChange: (visible: boolean) => void;
 }) {
   const initialProfile = profiles[0] ?? createEmptyRemoteProfile();
   const [selectedId, setSelectedId] = useState<string>(profiles[0]?.id ?? "new");
   const [draft, setDraft] = useState<RemoteConnectionProfile>(initialProfile);
   const [baseline, setBaseline] = useState<RemoteConnectionProfile>(initialProfile);
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(initialProfile.password ?? "");
+  const [passwordEdited, setPasswordEdited] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+  const [testState, setTestState] = useState<ConnectionTestState>({ status: "idle" });
+  const testResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const dirty = isRemoteProfileDraftDirty(draft, baseline, password);
+  const effectivePassword = passwordEdited ? password : "";
+  const dirty = isRemoteProfileDraftDirty(draft, baseline, effectivePassword);
+  const displayedPassword = password;
+  const testLoading = testState.status === "loading";
+  const inputType = passwordVisible ? "text" : "password";
 
   const updateDraft = (nextDraft: RemoteConnectionProfile) => {
-    onDirtyChange(isRemoteProfileDraftDirty(nextDraft, baseline, password));
+    onDirtyChange(isRemoteProfileDraftDirty(nextDraft, baseline, effectivePassword));
     setDraft(nextDraft);
   };
 
   const updatePassword = (nextPassword: string) => {
+    setPasswordEdited(true);
     onDirtyChange(isRemoteProfileDraftDirty(draft, baseline, nextPassword));
     setPassword(nextPassword);
   };
+
+  const getPasswordForSubmit = () => (passwordEdited && password.length > 0 ? password : undefined);
+
+  const clearTestResetTimeout = () => {
+    if (testResetTimeoutRef.current) {
+      clearTimeout(testResetTimeoutRef.current);
+      testResetTimeoutRef.current = null;
+    }
+  };
+
+  const scheduleTestResultReset = () => {
+    clearTestResetTimeout();
+    testResetTimeoutRef.current = setTimeout(() => {
+      setTestState({ status: "idle" });
+      testResetTimeoutRef.current = null;
+    }, 4000);
+  };
+
+  const resetPasswordDraft = () => {
+    setPassword(baseline.password ?? "");
+    setPasswordEdited(false);
+  };
+
+  const setSelectedProfileDraft = (profile: RemoteConnectionProfile) => {
+    setDraft(profile);
+    setBaseline(profile);
+    setPassword(profile.password ?? "");
+    setPasswordEdited(false);
+    setTestState({ status: "idle" });
+  };
+
+  const createCommittedProfile = () =>
+    normalizeRemoteProfileDraft({
+      ...draft,
+      id:
+        draft.id ||
+        (typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `remote-${Date.now()}`)
+    });
+
+  const runConnectionTest = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (disabled || testLoading) {
+      return;
+    }
+    const profile = createCommittedProfile();
+    const target = `${profile.host}:${profile.port}`;
+    const startedAt = Date.now();
+    clearTestResetTimeout();
+    setWarning(null);
+    setTestState({ status: "loading", target });
+    try {
+      const result = await onTest(profile, getPasswordForSubmit());
+      const latencyMs = Math.max(0, Date.now() - startedAt);
+      setTestState({
+        status: result?.success === false ? "error" : "success",
+        message: result?.message || "Connection probe completed",
+        latencyMs
+      });
+      scheduleTestResultReset();
+    } catch (error) {
+      const latencyMs = Math.max(0, Date.now() - startedAt);
+      setTestState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Connection probe failed",
+        latencyMs
+      });
+      scheduleTestResultReset();
+    }
+  };
+
+  const renderConnectionTestState = () => {
+    if (testState.status === "idle") {
+      return <div className="connection-test-status" aria-live="polite" />;
+    }
+    if (testState.status === "loading") {
+      return (
+        <div className="connection-test-status connection-test-status--loading" role="status" aria-live="polite">
+          <span className="connection-test-status__spinner" aria-hidden="true" />
+          <span>Connecting to {testState.target}...</span>
+        </div>
+      );
+    }
+    return (
+      <div className={`connection-test-status connection-test-status--${testState.status}`} role="status" aria-live="polite">
+        <span>{testState.message}</span>
+        <small>{testState.latencyMs}ms</small>
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    return () => clearTestResetTimeout();
+  }, []);
 
   useEffect(() => {
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
   useEffect(() => {
-    if (dirty) {
-      return;
-    }
-
     if (selectedId === "new") {
-      const empty = createEmptyRemoteProfile();
-      setDraft(empty);
-      setBaseline(empty);
-      setPassword("");
-      onDirtyChange(false);
+      if (!dirty) {
+        const empty = createEmptyRemoteProfile();
+        setSelectedProfileDraft(empty);
+        onDirtyChange(false);
+      }
       return;
     }
 
     const selectedProfile = profiles.find((profile) => profile.id === selectedId);
     if (selectedProfile) {
-      setDraft(selectedProfile);
-      setBaseline(selectedProfile);
-      setPassword("");
-      onDirtyChange(false);
+      // Only update if the profile reference actually changed or if baseline doesn't match
+      if (selectedProfile !== baseline && !hasSameJsonShape(selectedProfile, baseline)) {
+        setSelectedProfileDraft(selectedProfile);
+        onDirtyChange(false);
+      }
       return;
     }
 
-    const fallback = profiles[0] ?? createEmptyRemoteProfile();
-    setSelectedId(profiles[0]?.id ?? "new");
-    setDraft(fallback);
-    setBaseline(fallback);
-    setPassword("");
-    onDirtyChange(false);
-  }, [profiles, selectedId, dirty, onDirtyChange]);
+    if (!dirty) {
+      const fallback = profiles[0] ?? createEmptyRemoteProfile();
+      setSelectedId(profiles[0]?.id ?? "new");
+      setSelectedProfileDraft(fallback);
+      onDirtyChange(false);
+    }
+  }, [profiles, selectedId, dirty, onDirtyChange, baseline]);
 
   const selectProfile = (id: string) => {
     if (disabled) {
@@ -1264,9 +1382,7 @@ function ConnectionsEditor({
     if (id === "new") {
       const empty = createEmptyRemoteProfile();
       setSelectedId("new");
-      setDraft(empty);
-      setBaseline(empty);
-      setPassword("");
+      setSelectedProfileDraft(empty);
       onDirtyChange(false);
       return;
     }
@@ -1274,38 +1390,27 @@ function ConnectionsEditor({
     const profile = profiles.find((item) => item.id === id);
     if (profile) {
       setSelectedId(profile.id);
-      setDraft(profile);
-      setBaseline(profile);
-      setPassword("");
+      setSelectedProfileDraft(profile);
       onDirtyChange(false);
     }
   };
 
-  const commitProfile = (mode: "save" | "test") => {
+  const commitProfile = () => {
     if (disabled) {
       return;
     }
-    const profile = normalizeRemoteProfileDraft({
-      ...draft,
-      id:
-        draft.id ||
-        (typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `remote-${Date.now()}`)
-    });
-
-    if (mode === "save") {
-      onSave(profile, password || undefined);
-      setSelectedId(profile.id);
-      setDraft(profile);
-      setBaseline(profile);
-      setPassword("");
-      onDirtyChange(false);
-      setWarning(null);
-      return;
-    }
-
-    onTest(profile, password || undefined);
+    const profile = createCommittedProfile();
+    const submittedPassword = getPasswordForSubmit();
+    onSave(profile, submittedPassword);
+    setSelectedId(profile.id);
+    setDraft(profile);
+    setBaseline(profile);
+    // Keep current password if not edited, otherwise use the submitted password
+    const newPassword = passwordEdited ? (submittedPassword ?? "") : password;
+    setPassword(newPassword);
+    setPasswordEdited(false);
+    onDirtyChange(false);
+    setWarning(null);
   };
 
   return (
@@ -1444,14 +1549,35 @@ function ConnectionsEditor({
                 </SettingsField>
               ) : (
                 <SettingsField label="密码" htmlFor="remote-password">
-                  <input
-                    id="remote-password"
-                    type="password"
-                    value={password}
-                    onInput={(event) => updatePassword(event.currentTarget.value)}
-                    placeholder={selectedId === "new" ? "保存或测试时请输入密码" : "留空则保留已存储的凭据"}
-                    disabled={disabled || draft.authKind === "anonymous"}
-                  />
+                  <div className="connection-password-control">
+                    <input
+                      id="remote-password"
+                      type={inputType}
+                      value={displayedPassword}
+                      onInput={(event) => updatePassword(event.currentTarget.value)}
+                      placeholder={selectedId === "new" ? "保存或测试时请输入密码" : "留空则保留已存储的凭据"}
+                      autoComplete="off"
+                      data-form-type="other"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
+                      disabled={disabled || draft.authKind === "anonymous"}
+                    />
+                    <button
+                      type="button"
+                      className="connection-password-control__toggle"
+                      data-action="toggle-remote-password"
+                      aria-label={passwordVisible ? "隐藏密码" : "显示密码"}
+                      title={passwordVisible ? "隐藏密码" : "显示密码"}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onPasswordVisibleChange(!passwordVisible);
+                      }}
+                      disabled={disabled || draft.authKind === "anonymous"}
+                    >
+                      {passwordVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
                 </SettingsField>
               )}
               <SettingsField label="连接超时" htmlFor="remote-connect-timeout">
@@ -1497,8 +1623,47 @@ function ConnectionsEditor({
               </label>
             </div>
 
+            <div className="settings-inline-warning-slot" aria-live="polite">
+              {warning || dirty ? <div className="settings-inline-warning">{warning ?? "当前连接配置尚未暂存。"}</div> : null}
+            </div>
+
             <div className="settings-form-actions">
-              <button type="button" className="toolbar-button" onClick={() => commitProfile("test")} disabled={disabled}>
+              <button
+                type="button"
+                className="toolbar-button toolbar-button--ghost"
+                data-action="new-remote-profile"
+                onClick={() => selectProfile("new")}
+                disabled={disabled || testLoading}
+              >
+                新建配置
+              </button>
+              <button type="button" className="toolbar-button" data-action="test-remote-profile" onClick={runConnectionTest} disabled={disabled || testLoading}>
+                {testLoading ? "测试中..." : "测试连接"}
+              </button>
+              <button type="button" className="toolbar-button" data-action="save-remote-profile" onClick={() => commitProfile()} disabled={disabled || testLoading}>
+                暂存配置
+              </button>
+              <button
+                type="button"
+                className="toolbar-button toolbar-button--danger"
+                data-action="delete-remote-profile"
+                onClick={() => {
+                  const deletingId = draft.id;
+                  if (!deletingId) {
+                    return;
+                  }
+                  onDeleteRemoteProfile(deletingId);
+                  selectProfile("new");
+                }}
+                disabled={disabled || testLoading || !draft.id}
+              >
+                移除配置
+              </button>
+            </div>
+            {renderConnectionTestState()}
+
+            <div className="settings-form-actions-legacy">
+              <button type="button" className="toolbar-button" onClick={runConnectionTest} disabled={disabled || testLoading}>
                 测试连接
               </button>
               <button
@@ -1516,7 +1681,7 @@ function ConnectionsEditor({
               >
                 移除配置
               </button>
-              <button type="button" className="toolbar-button" onClick={() => commitProfile("save")} disabled={disabled}>
+              <button type="button" className="toolbar-button" onClick={() => commitProfile()} disabled={disabled || testLoading}>
                 暂存配置
               </button>
             </div>

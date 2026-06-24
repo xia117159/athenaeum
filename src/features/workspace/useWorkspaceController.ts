@@ -1005,6 +1005,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const infos = await workspaceGateway.resolveNavigationTargets(state.navigation.items.map((item) => item.path));
       dispatch({ type: "navigationTargetStatusUpdated", payload: infos });
     } catch (error) {
+      throw error;
+      throw error;
       dispatch({ type: "navigationStatusSet", payload: "idle" });
       pushNotification("danger", getErrorMessage(error, "无法刷新导航项目标状态。"));
     }
@@ -2355,8 +2357,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       for (const detail of result.details) {
         pushNotification(result.success ? "info" : "warning", detail);
       }
+      return result;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : "远程连接测试失败");
+      throw error;
     }
   });
 
@@ -2901,7 +2905,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       deleteHotlist: (id: string) => void deleteFavorite("hotlist", id),
       saveRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => saveRemoteProfile(profile, password),
       deleteRemoteProfile: (id: string) => deleteRemoteProfile(id),
-      testRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void testRemoteProfile(profile, password),
+      testRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => testRemoteProfile(profile, password),
       openContextMenu: (payload: ContextMenuState) => dispatch({ type: "contextMenuSet", payload }),
       openNativeContextMenu: (payload: NativeContextMenuRequest) => void openNativeContextMenu(payload),
       showNotification: (intent: WorkspaceState["notifications"][number]["intent"], message: string) =>

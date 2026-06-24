@@ -451,3 +451,30 @@ assertTest("mapFavoriteCollections converts settings snapshot collections into b
   assert.equal(favorites.hotlist[0].label, "Remote");
   assert.equal(favorites.hotlist[0].kind, "hotlist");
 });
+
+assertTest("mapRemoteProfile preserves password and credentialTarget from backend", () => {
+  const { mapRemoteProfile } = require("./workspaceMappers");
+  const backendProfile = {
+    id: "test-profile-1",
+    name: "Test Server",
+    protocol: "sftp",
+    host: "example.com",
+    port: 22,
+    username: "testuser",
+    rootPath: "/home/testuser",
+    authKind: "password",
+    passiveMode: true,
+    ignoreHostKey: false,
+    connectTimeoutSecs: 10,
+    commandTimeoutSecs: 20,
+    credentialTarget: "Athenaeum.Remote.test-profile-1",
+    password: "secret-password-123"
+  };
+
+  const mapped = mapRemoteProfile(backendProfile);
+
+  assert.equal(mapped.id, "test-profile-1");
+  assert.equal(mapped.name, "Test Server");
+  assert.equal(mapped.credentialTarget, "Athenaeum.Remote.test-profile-1");
+  assert.equal(mapped.password, "secret-password-123");
+});

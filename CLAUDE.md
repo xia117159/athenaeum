@@ -1,4 +1,4 @@
-# SimpleFileManager - Claude Code Project Instructions
+# Athenaeum - Claude Code Project Instructions
 
 ## 项目目标
 - 基于 `Tauri v2`、`Rust`、`React`、`TypeScript` 实现 Windows 文件管理器桌面应用
@@ -31,17 +31,6 @@
 - 对于问题修复，你必须一步一步分析根因是什么？最佳实践的解决方案有哪些，然后基于最佳实践经验进行编码修改
 - 根因分析包括：bad state transition, contract drift, unsafe path handling, stale async result, UI layout regression, encoding problem, or missing validation
 - 先写失败测试，再实现修复，最后重构
-
-## 项目级 Skills
-
-本项目提供以下专用 skills，使用 `/skill-name` 调用：
-
-- `/sfm-architecture-guard` - 跨模块架构重构守护
-- `/sfm-tdd-bugfix` - TDD 驱动的 bug 修复
-- `/sfm-rust-fs-ops` - Rust 文件系统操作实现
-- `/sfm-react-workspace-ui` - React 工作区 UI 开发
-- `/sfm-tauri-ipc-contract` - Tauri IPC 契约维护
-- `/sfm-windows-desktop-visual-design` - Windows 桌面视觉设计
 
 ## 架构边界
 

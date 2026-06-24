@@ -190,4 +190,13 @@ export const completion = (async () => {
     assert.equal(capability.permissions.includes("core:window:allow-set-focus"), true);
     assert.equal(capability.permissions.includes("core:window:allow-close"), true);
   });
+
+  await assertTest("Tauri runtime closes the settings window when the main window closes", () => {
+    const libSource = fs.readFileSync(path.join(process.cwd(), "src-tauri/src/lib.rs"), "utf8");
+
+    assert.equal(libSource.includes("WindowEvent::CloseRequested"), true);
+    assert.equal(libSource.includes('window.label() == "main"'), true);
+    assert.equal(libSource.includes('webview.label() != "main"'), true);
+    assert.equal(libSource.includes("webview.close()"), true);
+  });
 })();

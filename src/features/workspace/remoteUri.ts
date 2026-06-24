@@ -350,16 +350,28 @@ export function planCreateFile(
   profiles: BackendRemoteProfile[]
 ): WorkspaceOperationCommand[] {
   const remote = requireResolvedRemotePath(parent, profiles);
-  if (remote) {
-    throw new Error("Remote file creation is not supported yet");
+  if (!remote) {
+    return [
+      {
+        command: "create_file",
+        args: {
+          request: {
+            parent: normalizeLocationPath(parent),
+            name
+          }
+        }
+      }
+    ];
   }
 
   return [
     {
-      command: "create_file",
+      command: "create_remote_file",
       args: {
         request: {
-          parent: normalizeLocationPath(parent),
+          profileId: remote.profile.id,
+          password: null,
+          parent: remote.remotePath,
           name
         }
       }

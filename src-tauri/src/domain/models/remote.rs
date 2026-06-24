@@ -48,6 +48,8 @@ pub struct RemoteProfile {
     pub command_timeout_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

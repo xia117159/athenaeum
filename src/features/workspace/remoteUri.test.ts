@@ -296,7 +296,7 @@ assertTest("workspace operation planners route remote mutations by profile id", 
   );
 });
 
-assertTest("workspace operation planners create local files and reject remote file creation explicitly", () => {
+assertTest("workspace operation planners create local and remote files", () => {
   assert.deepEqual(planCreateFile("D:\\Projects", "notes.txt", [sftpProfile]), [
     {
       command: "create_file",
@@ -309,8 +309,17 @@ assertTest("workspace operation planners create local files and reject remote fi
     }
   ]);
 
-  assert.throws(
-    () => planCreateFile("sftp://cheng@127.0.0.1:6666/home/cheng", "notes.txt", [sftpProfile]),
-    /Remote file creation is not supported yet/
-  );
+  assert.deepEqual(planCreateFile("sftp://cheng@127.0.0.1:6666/home/cheng", "notes.txt", [sftpProfile]), [
+    {
+      command: "create_remote_file",
+      args: {
+        request: {
+          profileId: "remote-test",
+          password: null,
+          parent: "/home/cheng",
+          name: "notes.txt"
+        }
+      }
+    }
+  ]);
 });

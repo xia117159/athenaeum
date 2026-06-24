@@ -37,6 +37,7 @@ use self::{
         validate_remote_entry_name, validate_remote_operation_source, validate_remote_path,
         validate_remote_path_within_root,
     },
+    windows_credentials::read_secret,
 };
 
 #[cfg(test)]
@@ -104,6 +105,10 @@ pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
 
 pub fn credential_target_for_profile(id: &str) -> String {
     format!("Athenaeum.Remote.{}", id.trim())
+}
+
+pub fn read_password_from_credential(credential_target: &str) -> Option<String> {
+    read_secret(credential_target)
 }
 
 pub fn prepare_profile_for_save(
@@ -538,6 +543,19 @@ pub fn create_directory(
     select_adapter(&profile).create_directory(&profile, password, parent, name)
 }
 
+pub fn create_file(
+    profile: &RemoteProfile,
+    password: Option<&str>,
+    parent: &str,
+    name: &str,
+) -> Result<String> {
+    let profile = normalize_profile(profile.clone());
+    validate_profile(&profile)?;
+    validate_remote_path_within_root(&profile, parent)?;
+    validate_remote_entry_name(name)?;
+    select_adapter(&profile).create_file(&profile, password, parent, name)
+}
+
 pub fn delete_entries(
     profile: &RemoteProfile,
     password: Option<&str>,
@@ -692,6 +710,13 @@ trait RemoteAdapter {
         parent: &str,
         name: &str,
     ) -> Result<String>;
+    fn create_file(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String>;
     fn delete_entries(
         &self,
         profile: &RemoteProfile,
@@ -804,6 +829,38 @@ impl RemoteAdapter for CurlRemoteAdapter {
         let created = available_curl_conflict_path(profile, password, &created)?;
         run_curl_quotes(profile, password, &[format!("MKD {created}")])?;
         Ok(created)
+    }
+
+    fn create_file(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String> {
+        let created = join_remote_path(&normalize_remote_path(parent), name);
+        let created = available_curl_conflict_path(profile, password, &created)?;
+        let temp_root = create_remote_transfer_temp_dir()?;
+        let temp_file = temp_root.join("empty-file");
+        fs::write(&temp_file, b"").with_context(|| {
+            format!(
+                "failed to create temporary empty file {}",
+                temp_file.display()
+            )
+        })?;
+        let upload_result = run_curl_upload(profile, password, &temp_file, &created);
+        let cleanup_result = fs::remove_dir_all(&temp_root);
+        match (upload_result, cleanup_result) {
+            (Ok(()), Ok(())) => Ok(created),
+            (Ok(()), Err(error)) if error.kind() == io::ErrorKind::NotFound => Ok(created),
+            (Ok(()), Err(error)) => Err(error).with_context(|| {
+                format!(
+                    "failed to clean FTP create-file temp directory {}",
+                    temp_root.display()
+                )
+            }),
+            (Err(error), _) => Err(error),
+        }
     }
 
     fn delete_entries(
@@ -1008,6 +1065,22 @@ impl RemoteAdapter for SftpRemoteAdapter {
         Ok(destination)
     }
 
+    fn create_file(
+        &self,
+        profile: &RemoteProfile,
+        password: Option<&str>,
+        parent: &str,
+        name: &str,
+    ) -> Result<String> {
+        let (_, sftp) = connect_sftp(profile, password)?;
+        let destination = join_remote_path(&normalize_remote_path(parent), name);
+        let destination = available_sftp_conflict_path(&sftp, &destination);
+        let _file = sftp
+            .create(Path::new(&destination))
+            .with_context(|| format!("failed to create remote file {destination}"))?;
+        Ok(destination)
+    }
+
     fn delete_entries(
         &self,
         profile: &RemoteProfile,
@@ -1189,6 +1262,16 @@ impl RemoteAdapter for UnsupportedRemoteAdapter {
         _name: &str,
     ) -> Result<String> {
         bail!("remote directory creation is unavailable because no supported adapter was found")
+    }
+
+    fn create_file(
+        &self,
+        _profile: &RemoteProfile,
+        _password: Option<&str>,
+        _parent: &str,
+        _name: &str,
+    ) -> Result<String> {
+        bail!("remote file creation is unavailable because no supported adapter was found")
     }
 
     fn delete_entries(

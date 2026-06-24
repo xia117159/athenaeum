@@ -55,6 +55,7 @@ permissions = [
   "allow-trust-remote-host-key",
   "allow-list-remote-directory",
   "allow-create-remote-directory",
+  "allow-create-remote-file",
   "allow-delete-remote-entries",
   "allow-rename-remote-entry",
   "allow-upload-remote-files",
@@ -335,6 +336,11 @@ commands.allow = ["list_remote_directory"]
 identifier = "allow-create-remote-directory"
 description = "Allows creating remote directories."
 commands.allow = ["create_remote_directory"]
+
+[[permission]]
+identifier = "allow-create-remote-file"
+description = "Allows creating remote files."
+commands.allow = ["create_remote_file"]
 
 [[permission]]
 identifier = "allow-delete-remote-entries"

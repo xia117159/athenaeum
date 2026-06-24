@@ -344,6 +344,11 @@ export async function deleteWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  if (anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planDeleteEntries(paths, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("delete"),
@@ -364,6 +369,11 @@ export async function renameWorkspaceEntry(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const sourceRef = createPathRef(source, profiles);
+  if (sourceRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planRenameEntry(source, newName, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("rename"),
@@ -385,6 +395,11 @@ export async function createWorkspaceDirectory(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const parentRef = createPathRef(parent, profiles);
+  if (parentRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planCreateDirectory(parent, name, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("create-directory"),
@@ -410,6 +425,11 @@ export async function createWorkspaceFile(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const parentRef = createPathRef(parent, profiles);
+  if (parentRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planCreateFile(parent, name, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("create-file"),

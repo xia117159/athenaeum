@@ -448,6 +448,8 @@ export interface RemoteConnectionProfile {
   ignoreHostKey: boolean;
   connectTimeoutSecs: number;
   commandTimeoutSecs: number;
+  credentialTarget?: string;
+  password?: string;
 }
 
 export interface SearchState {

@@ -80,6 +80,9 @@ impl MetadataStore {
         context_menu: ContextMenuSettings,
         theme: UiTheme,
     ) -> SettingsSnapshot {
+        // Hydrate passwords from credential store BEFORE redacting credential_target
+        let hydrated_profiles = crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
+
         SettingsSnapshot {
             bookmarks: self.bookmarks.clone(),
             hotlist: self.hotlist.clone(),
@@ -92,12 +95,7 @@ impl MetadataStore {
             context_menu,
             theme,
             layout,
-            remote_profiles: self
-                .remote_profiles
-                .iter()
-                .cloned()
-                .map(redact_remote_profile)
-                .collect(),
+            remote_profiles: hydrated_profiles,
         }
     }
 

@@ -267,6 +267,8 @@ export interface RemoteProfile {
   ignoreHostKey?: boolean;
   connectTimeoutSecs?: number;
   commandTimeoutSecs?: number;
+  credentialTarget?: string | null;
+  password?: string | null;
 }
 
 export interface RemoteProfileUpsertRequest {

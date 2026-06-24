@@ -37,7 +37,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         })
         .map_err(|error| error.to_string())?;
 
-    Ok(WorkspaceBootstrap {
+    let mut bootstrap = WorkspaceBootstrap {
         drives,
         initial_path,
         initial_listing,
@@ -47,7 +47,12 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
             settings.context_menu,
             settings.theme,
         ),
-    })
+    };
+
+    // Hydrate remote profile passwords from credential store
+    bootstrap.settings.remote_profiles = super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
+
+    Ok(bootstrap)
 }
 
 #[tauri::command]
