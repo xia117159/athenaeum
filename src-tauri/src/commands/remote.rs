@@ -52,15 +52,6 @@ pub fn list_remote_profiles(state: State<'_, Arc<AppState>>) -> Result<Vec<Remot
             .remote_profiles
             .clone(),
     );
-    eprintln!("[list_remote_profiles] Returning {} profiles", profiles.len());
-    for profile in &profiles {
-        eprintln!("[list_remote_profiles] Profile: {}, has_password: {}, has_credential_target: {}",
-            profile.name,
-            profile.password.is_some(),
-            profile.credential_target.is_some()
-        );
-    }
-    eprintln!("[list_remote_profiles] Serialized JSON: {}", serde_json::to_string(&profiles).unwrap_or_else(|e| format!("Error: {}", e)));
     Ok(profiles)
 }
 
@@ -416,17 +407,9 @@ pub fn hydrate_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfil
         .map(|profile| {
             let mut hydrated = profile.clone();
             if let Some(credential_target) = &profile.credential_target {
-                eprintln!("[hydrate_remote_profiles] Reading password for profile: {}, credential_target: {}", profile.name, credential_target);
                 if let Some(password) = remote_service::read_password_from_credential(credential_target) {
-                    eprintln!("[hydrate_remote_profiles] Successfully read password for profile: {}, password length: {}", profile.name, password.len());
                     hydrated.password = Some(password);
-                    eprintln!("[hydrate_remote_profiles] After setting password, hydrated.password.is_some(): {}", hydrated.password.is_some());
-                    eprintln!("[hydrate_remote_profiles] hydrated.credential_target: {:?}", hydrated.credential_target);
-                } else {
-                    eprintln!("[hydrate_remote_profiles] Failed to read password for profile: {}", profile.name);
                 }
-            } else {
-                eprintln!("[hydrate_remote_profiles] No credential_target for profile: {}", profile.name);
             }
             hydrated
         })

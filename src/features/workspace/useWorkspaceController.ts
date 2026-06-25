@@ -752,7 +752,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
 
         const node = findTreeNode(state.directoryTree, path);
-        return Boolean(node && node.expandable && !node.loaded);
+        return Boolean(node && node.expandable && !node.loaded && node.connectionState !== "error");
       }
     );
 
@@ -1585,14 +1585,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const openTreeNode = useEffectEvent((panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => {
-    console.log(`[DEBUG] openTreeNode called:`, { panelId, path, kind });
     const activeTab = getActiveTab(state.panels[panelId]);
     if (isNavigationTab(activeTab)) {
       void handleOpenNewTab(panelId, path);
       return;
     }
     if (kind === "remote-root") {
-      console.log(`[DEBUG] Opening remote-root tab with path:`, path);
       void handleOpenNewTab(panelId, path);
       return;
     }

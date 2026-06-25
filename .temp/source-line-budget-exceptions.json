@@ -18,7 +18,7 @@
     },
     {
       "path": "src/features/workspace/workspaceReducer.ts",
-      "maxLines": 2492,
+      "maxLines": 2495,
       "reason": "Legacy monolithic reducer. Continue moving action families into domain handlers while preserving the single public reducer entrypoint."
     },
     {

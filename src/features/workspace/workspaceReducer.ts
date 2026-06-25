@@ -896,8 +896,11 @@ function updateTreeNode(nodes: DirectoryNode[], targetPath: string, updater: (no
   const nextNodes = nodes.map((node) => {
     const normalizedNode = normalizeDirectoryNode(node);
     if (normalizeLocationPath(normalizedNode.path) === normalizedTargetPath) {
-      changed = true;
-      return updater(normalizedNode);
+      const updated = updater(normalizedNode);
+      if (updated !== normalizedNode) {
+        changed = true;
+      }
+      return updated;
     }
 
     if (normalizedNode.children.length === 0) {
@@ -1524,11 +1527,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "treeNodeConnectionFailed":
       return {
         ...state,
-        directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) => ({
-          ...node,
-          connectionState: "error",
-          errorMessage: action.payload.message
-        }))
+        directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) =>
+          node.connectionState === "error" && node.errorMessage === action.payload.message
+            ? node
+            : { ...node, connectionState: "error", errorMessage: action.payload.message }
+        )
       };
 
     case "treeNodeExpansionSet":

@@ -586,15 +586,7 @@ export function mapNavigationItems(settings: Pick<BackendSettingsSnapshot, "navi
 }
 
 export function mapRemoteProfile(profile: BackendRemoteProfile): RemoteConnectionProfile {
-  console.log('[mapRemoteProfile] input:', {
-    id: profile.id,
-    name: profile.name,
-    hasCredentialTarget: !!profile.credentialTarget,
-    credentialTarget: profile.credentialTarget,
-    hasPassword: !!profile.password,
-    passwordLength: profile.password?.length
-  });
-  const mapped = {
+  return {
     id: profile.id,
     name: profile.name,
     protocol: profile.protocol as RemoteConnectionProfile["protocol"],
@@ -611,14 +603,6 @@ export function mapRemoteProfile(profile: BackendRemoteProfile): RemoteConnectio
     credentialTarget: profile.credentialTarget ?? undefined,
     password: profile.password ?? undefined
   };
-  console.log('[mapRemoteProfile] output:', {
-    id: mapped.id,
-    name: mapped.name,
-    hasCredentialTarget: !!mapped.credentialTarget,
-    hasPassword: !!mapped.password,
-    passwordLength: mapped.password?.length
-  });
-  return mapped;
 }
 
 export function mapRemoteProfiles(profiles: BackendRemoteProfile[]) {
@@ -809,12 +793,6 @@ function mapDirectoryTree(drives: BackendWorkspaceBootstrap["drives"], remotePro
 
   const remoteRoots: DirectoryNode[] = remoteProfiles.map((profile) => {
     const path = createRemoteRootUri(profile);
-    console.log(`[DEBUG] Creating remote tree node for ${profile.name}:`, {
-      profileId: profile.id,
-      host: profile.host,
-      port: profile.port,
-      generatedPath: path
-    });
     return {
       id: profile.id,
       label: profile.name,

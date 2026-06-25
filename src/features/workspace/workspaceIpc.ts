@@ -50,9 +50,6 @@ export async function invokeRequired<T>(
   runtimeHost: RuntimeHost = getRuntimeHost()
 ): Promise<T> {
   const result = await invokeWithBrowserFallback(command, args, browserFallback, invokeFn, runtimeHost);
-  if (command === "list_remote_profiles") {
-    console.log('[invokeRequired] list_remote_profiles raw result:', JSON.stringify(result));
-  }
   return result;
 }
 

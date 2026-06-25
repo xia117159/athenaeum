@@ -351,11 +351,6 @@ impl MetadataStore {
     }
 }
 
-fn redact_remote_profile(mut profile: RemoteProfile) -> RemoteProfile {
-    profile.credential_target = None;
-    profile
-}
-
 fn upsert_by_id<T>(items: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &str) {
     let id = id_of(&value).to_string();
     if let Some(existing) = items.iter_mut().find(|item| id_of(item) == id) {
