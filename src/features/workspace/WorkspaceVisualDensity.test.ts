@@ -72,6 +72,13 @@ assertTest("workspace tabs and breadcrumbs match the compact Windows target chro
   assertNoDeclaration(getCssBlock(".tab-strip__tab"), "max-width");
 });
 
+assertTest("tab strip add button stays square at any panel width", () => {
+  // The "+" button is sized by its icon and padding. It must never be
+  // width-stretched (e.g. width: 100%), otherwise it fills the right side of the
+  // tab row when the panel is narrow instead of staying a compact square.
+  assertNoDeclaration(getCssBlock(".tab-strip__add"), "width");
+});
+
 assertTest("focused panel active tab uses the configurable focus accent", () => {
   // The active-tab underline of the currently focused panel must follow the
   // user-configured 焦点强调色 (--panel-focus-accent), not the fixed theme accent.

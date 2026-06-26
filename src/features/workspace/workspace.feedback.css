@@ -331,14 +331,6 @@
 }
 
 @container (max-width: 520px) {
-  .tab-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .tab-strip__add {
-    width: 100%;
-  }
-
   .file-content-item {
     grid-template-columns: 1fr;
   }
