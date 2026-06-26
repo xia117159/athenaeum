@@ -2,7 +2,7 @@
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
-import { useWorkspaceController } from "./useWorkspaceController";
+import { useWorkspaceController, planNotificationDismissals } from "./useWorkspaceController";
 import { getParentPathForRefresh } from "./workspaceRefreshPlanner";
 import {
   assertTest,
@@ -96,6 +96,28 @@ export const completion = (async () => {
 
       assert.equal(bootstrapCalls, 1);
       assert.equal(latestController?.state.layoutMode, "dual");
+    });
+
+    await assertTest("planNotificationDismissals schedules non-danger notifications and clears stale timers", async () => {
+      const plan = planNotificationDismissals(
+        [
+          { id: "a", intent: "success" },
+          { id: "b", intent: "danger" },
+          { id: "c", intent: "warning" },
+          { id: "d", intent: "info" }
+        ],
+        new Set(["c", "stale"])
+      );
+      // success/info/warning that are not yet scheduled get a timer; danger never does.
+      assert.deepEqual(plan.toSchedule, ["a", "d"]);
+      // timers for notifications that no longer exist are cleared.
+      assert.deepEqual(plan.toClear, ["stale"]);
+    });
+
+    await assertTest("planNotificationDismissals never schedules danger notifications", async () => {
+      const plan = planNotificationDismissals([{ id: "err", intent: "danger" }], new Set());
+      assert.deepEqual(plan.toSchedule, []);
+      assert.deepEqual(plan.toClear, []);
     });
 
     await assertTest("useWorkspaceController exposes dismissible warning notifications", async () => {

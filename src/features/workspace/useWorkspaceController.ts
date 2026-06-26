@@ -38,6 +38,7 @@ import type {
   NativeContextMenuRequest,
   NavigationItem,
   NavigationItemUpsertRequest,
+  NotificationItem,
   OperationTaskSnapshot,
   PanelId,
   RemoteConnectionProfile,
@@ -439,6 +440,27 @@ function waitForMilliseconds(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+/** How long a non-error notification stays on screen before auto-closing. */
+const NOTIFICATION_AUTO_DISMISS_MS = 5000;
+
+/**
+ * Decide which notifications need an auto-dismiss timer scheduled and which
+ * existing timers should be cleared. Error (`danger`) notifications are never
+ * auto-dismissed so the user can read them; everything else closes after the
+ * timeout. Pure so it can be unit-tested without timers.
+ */
+export function planNotificationDismissals(
+  notifications: readonly { id: string; intent: NotificationItem["intent"] }[],
+  scheduledIds: ReadonlySet<string>
+): { toSchedule: string[]; toClear: string[] } {
+  const activeIds = new Set(notifications.map((notification) => notification.id));
+  const toSchedule = notifications
+    .filter((notification) => notification.intent !== "danger" && !scheduledIds.has(notification.id))
+    .map((notification) => notification.id);
+  const toClear = [...scheduledIds].filter((id) => !activeIds.has(id));
+  return { toSchedule, toClear };
+}
+
 export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () => ({
     ...createWorkspaceState(createMockWorkspaceBootstrap("mock")),
@@ -452,6 +474,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const activeSearchRef = useRef<{ requestId: number; searchId: string } | null>(null);
   const searchHistoryHydratedRef = useRef(false);
   const refreshedOperationTasksRef = useRef<Set<string>>(new Set());
+  const notificationDismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const pendingInlineRefreshPathsRef = useRef<Map<string, Set<string>>>(new Map());
   const pendingInlineSelectionReplacementsRef = useRef<Map<string, SelectionPathReplacement[]>>(new Map());
   const pendingDragDropRequestKeysRef = useRef<Set<string>>(new Set());
@@ -475,6 +498,40 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+
+  // Auto-close non-error notifications after a fixed timeout; error (danger)
+  // notifications persist until dismissed manually so their details aren't missed.
+  useEffect(() => {
+    const timers = notificationDismissTimersRef.current;
+    const { toSchedule, toClear } = planNotificationDismissals(
+      state.notifications,
+      new Set(timers.keys())
+    );
+    for (const id of toClear) {
+      const handle = timers.get(id);
+      if (handle !== undefined) {
+        clearTimeout(handle);
+        timers.delete(id);
+      }
+    }
+    for (const id of toSchedule) {
+      const handle = setTimeout(() => {
+        timers.delete(id);
+        dispatch({ type: "notificationDismissed", payload: { id } });
+      }, NOTIFICATION_AUTO_DISMISS_MS);
+      timers.set(id, handle);
+    }
+  }, [state.notifications]);
+
+  useEffect(() => {
+    const timers = notificationDismissTimersRef.current;
+    return () => {
+      for (const handle of timers.values()) {
+        clearTimeout(handle);
+      }
+      timers.clear();
+    };
+  }, []);
 
   const skipNextSettingsPersistence = () => {
     skipNextSettingsPersistenceRef.current = {

@@ -2107,6 +2107,7 @@ mod tests {
             connect_timeout_secs: 10,
             command_timeout_secs: 20,
             credential_target: None,
+            password: None,
         }
     }
 
@@ -2585,6 +2586,7 @@ mod tests {
             connect_timeout_secs: 10,
             command_timeout_secs: 20,
             credential_target: None,
+            password: None,
         };
 
         let remote_root = join_remote_path(&root_path, &name);

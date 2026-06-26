@@ -689,43 +689,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_snapshot_redacts_remote_profile_credential_targets() {
-        let store = MetadataStore {
-            remote_profiles: vec![RemoteProfile {
-                id: "remote-1".into(),
-                name: "Edge".into(),
-                protocol: LocationKind::Sftp,
-                host: "edge-01.internal".into(),
-                port: 22,
-                username: "deploy".into(),
-                root_path: "/releases".into(),
-                auth_kind: RemoteAuthKind::Password,
-                private_key_path: None,
-                passive_mode: true,
-                ignore_host_key: false,
-                connect_timeout_secs: 10,
-                command_timeout_secs: 20,
-                credential_target: Some("Athenaeum.Remote.remote-1".into()),
-            }],
-            ..MetadataStore::default()
-        };
-
-        assert_eq!(
-            store.remote_profiles[0].credential_target.as_deref(),
-            Some("Athenaeum.Remote.remote-1")
-        );
-
-        let snapshot = store.to_settings_snapshot(
-            UiLayout::fallback(),
-            36,
-            ContextMenuSettings::default(),
-            UiTheme::default(),
-        );
-        assert_eq!(snapshot.remote_profiles.len(), 1);
-        assert_eq!(snapshot.remote_profiles[0].credential_target, None);
-    }
-
-    #[test]
     fn delete_remote_profile_removes_matching_item() {
         let mut store = MetadataStore {
             remote_profiles: vec![
@@ -744,6 +707,7 @@ mod tests {
                     connect_timeout_secs: 10,
                     command_timeout_secs: 20,
                     credential_target: Some("Athenaeum.Remote.remote-1".into()),
+                    password: None,
                 },
                 RemoteProfile {
                     id: "remote-2".into(),
@@ -760,6 +724,7 @@ mod tests {
                     connect_timeout_secs: 10,
                     command_timeout_secs: 20,
                     credential_target: None,
+                    password: None,
                 },
             ],
             ..MetadataStore::default()

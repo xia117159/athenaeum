@@ -23,7 +23,7 @@ mod imp {
     use anyhow::{anyhow, bail, Context, Result};
     use tauri::{Emitter, Runtime, Window};
     use windows::{
-        core::{implement, PCSTR, PCWSTR},
+        core::{implement, Interface, PCSTR, PCWSTR},
         Win32::{
             Foundation::{
                 CloseHandle, GetLastError, SetLastError, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP,
@@ -35,10 +35,12 @@ mod imp {
                 GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenElevation,
                 TokenIntegrityLevel, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
             },
+            Storage::FileSystem::WIN32_FIND_DATAW,
             System::{
                 Com::{
                     CoCreateInstance, CoInitializeEx, CoUninitialize, IBindCtx, IDataObject,
-                    CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+                    IPersistFile, CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+                    STGM_READ,
                 },
                 DataExchange::{
                     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
@@ -59,10 +61,11 @@ mod imp {
             UI::{
                 Shell::{
                     Common::ITEMIDLIST, DragQueryFileW, FileOperation, IContextMenu,
-                    IFileOperation, IFileOperationProgressSink, ILFree, IShellFolder, IShellItem,
-                    SHBindToParent, SHCreateItemFromParsingName, SHDoDragDrop, SHParseDisplayName,
-                    ShellExecuteW, CFSTR_PREFERREDDROPEFFECT, CMF_NORMAL, CMINVOKECOMMANDINFO,
-                    DROPFILES, FOFX_ADDUNDORECORD, FOFX_SHOWELEVATIONPROMPT, FOF_ALLOWUNDO, HDROP,
+                    IFileOperation, IFileOperationProgressSink, IShellFolder, IShellItem,
+                    IShellLinkW, ShellLink, SHBindToParent, SHCreateItemFromParsingName,
+                    SHDoDragDrop, SHParseDisplayName, ShellExecuteW, CFSTR_PREFERREDDROPEFFECT,
+                    CMF_NORMAL, CMINVOKECOMMANDINFO, DROPFILES, FOFX_ADDUNDORECORD,
+                    FOFX_SHOWELEVATIONPROMPT, FOF_ALLOWUNDO, HDROP, ILFree,
                 },
                 WindowsAndMessaging::{
                     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, PostMessageW,
@@ -592,20 +595,161 @@ mod imp {
             NavigationOpenValidationError::PermissionDenied => anyhow!("access was denied"),
             NavigationOpenValidationError::Unknown => anyhow!("path could not be opened"),
         })?;
+
+        if is_windows_shortcut(&target) {
+            return open_windows_shortcut(&target);
+        }
+
+        // For a regular file the working directory is the directory that contains
+        // the file itself, so executables start in their own folder rather than in
+        // the file manager's current location.
+        shell_execute_open(&target, None, target.parent())
+    }
+
+    fn is_windows_shortcut(path: &Path) -> bool {
+        path.extension()
+            .map(|extension| extension.eq_ignore_ascii_case("lnk"))
+            .unwrap_or(false)
+    }
+
+    /// Parsed contents of a Windows `.lnk` shortcut.
+    struct ShortcutInfo {
+        target: Option<PathBuf>,
+        arguments: Option<String>,
+        /// The "Start in" working directory configured on the shortcut. Empty when
+        /// the user never set one.
+        working_directory: String,
+    }
+
+    /// How a shortcut should be launched once its contents are known.
+    #[derive(Debug, PartialEq, Eq)]
+    enum ShortcutLaunch {
+        /// Execute the `.lnk` itself and let Windows honor the shortcut's own
+        /// configured "Start in" directory.
+        UseShortcutDefault,
+        /// Execute the resolved target with the shortcut file's own directory as
+        /// the working directory (used when the shortcut has no "Start in").
+        UseResolvedTarget,
+    }
+
+    /// Decide how to launch a shortcut: respect a configured "Start in", otherwise
+    /// fall back to the shortcut file's own folder by launching the resolved target.
+    fn plan_shortcut_launch(info: &ShortcutInfo) -> ShortcutLaunch {
+        if !info.working_directory.trim().is_empty() {
+            ShortcutLaunch::UseShortcutDefault
+        } else if info
+            .target
+            .as_ref()
+            .map(|target| !target.as_os_str().is_empty())
+            .unwrap_or(false)
+        {
+            ShortcutLaunch::UseResolvedTarget
+        } else {
+            ShortcutLaunch::UseShortcutDefault
+        }
+    }
+
+    fn open_windows_shortcut(lnk: &Path) -> Result<()> {
+        let working_directory = lnk.parent();
+        match read_windows_shortcut(lnk) {
+            Ok(info) => match plan_shortcut_launch(&info) {
+                ShortcutLaunch::UseResolvedTarget => shell_execute_open(
+                    info.target.as_deref().unwrap_or(lnk),
+                    info.arguments.as_deref(),
+                    working_directory,
+                ),
+                // Executing the `.lnk` makes Windows resolve it and apply the
+                // shortcut's own "Start in" directory; lpDirectory is ignored here.
+                ShortcutLaunch::UseShortcutDefault => {
+                    shell_execute_open(lnk, None, working_directory)
+                }
+            },
+            // If the shortcut cannot be parsed, fall back to a plain open so the
+            // launch still happens.
+            Err(_) => shell_execute_open(lnk, None, working_directory),
+        }
+    }
+
+    fn read_windows_shortcut(lnk: &Path) -> Result<ShortcutInfo> {
+        const BUFFER_LEN: usize = 1024;
+        let _com = ComGuard::init()?;
+        let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_ALL) }
+            .context("failed to create shell link instance")?;
+        let persist: IPersistFile = link.cast().context("failed to access shortcut persistence")?;
+        let lnk_wide = wide_null(lnk.as_os_str());
+        unsafe {
+            persist
+                .Load(PCWSTR(lnk_wide.as_ptr()), STGM_READ)
+                .with_context(|| format!("failed to load shortcut {}", lnk.display()))?;
+        }
+
+        let mut path_buffer = [0u16; BUFFER_LEN];
+        let mut find_data = WIN32_FIND_DATAW::default();
+        unsafe {
+            let _ = link.GetPath(&mut path_buffer, &mut find_data, 0);
+        }
+        let target_path = wide_buffer_to_string(&path_buffer);
+        let target = if target_path.trim().is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(target_path))
+        };
+
+        let mut directory_buffer = [0u16; BUFFER_LEN];
+        unsafe {
+            let _ = link.GetWorkingDirectory(&mut directory_buffer);
+        }
+        let working_directory = wide_buffer_to_string(&directory_buffer);
+
+        let mut arguments_buffer = [0u16; BUFFER_LEN];
+        unsafe {
+            let _ = link.GetArguments(&mut arguments_buffer);
+        }
+        let arguments_value = wide_buffer_to_string(&arguments_buffer);
+        let arguments = if arguments_value.is_empty() {
+            None
+        } else {
+            Some(arguments_value)
+        };
+
+        Ok(ShortcutInfo {
+            target,
+            arguments,
+            working_directory,
+        })
+    }
+
+    fn wide_buffer_to_string(buffer: &[u16]) -> String {
+        let length = buffer
+            .iter()
+            .position(|&value| value == 0)
+            .unwrap_or(buffer.len());
+        String::from_utf16_lossy(&buffer[..length])
+    }
+
+    fn shell_execute_open(
+        file: &Path,
+        parameters: Option<&str>,
+        directory: Option<&Path>,
+    ) -> Result<()> {
         let operation = wide_null(OsStr::new("open"));
-        let file = wide_null(target.as_os_str());
-        let directory = target
-            .parent()
-            .map(|parent| wide_null(parent.as_os_str()))
-            .unwrap_or_else(|| wide_null(OsStr::new("")));
+        let file_wide = wide_null(file.as_os_str());
+        let parameters_wide = parameters.map(|value| wide_null(OsStr::new(value)));
+        let directory_wide = directory.map(|value| wide_null(value.as_os_str()));
 
         let result = unsafe {
             ShellExecuteW(
                 None,
                 PCWSTR(operation.as_ptr()),
-                PCWSTR(file.as_ptr()),
-                PCWSTR::null(),
-                PCWSTR(directory.as_ptr()),
+                PCWSTR(file_wide.as_ptr()),
+                parameters_wide
+                    .as_ref()
+                    .map(|value| PCWSTR(value.as_ptr()))
+                    .unwrap_or_else(PCWSTR::null),
+                directory_wide
+                    .as_ref()
+                    .map(|value| PCWSTR(value.as_ptr()))
+                    .unwrap_or_else(PCWSTR::null),
                 SW_SHOWNORMAL,
             )
         };
@@ -1603,12 +1747,60 @@ mod imp {
         use super::{
             build_drop_effect_payload, build_hdrop_payload, custom_background_action_for_command,
             did_native_menu_open, explorer_to_app_drag_blocked, integrity_level_name,
-            mode_from_drop_effect, resolve_navigation_target, system_file_drag_allowed_effects,
-            validate_background_path, validate_paths, validate_shell_execute_result,
-            validate_system_default_open_path, NavigationOpenValidationError,
+            is_windows_shortcut, mode_from_drop_effect, plan_shortcut_launch,
+            resolve_navigation_target, system_file_drag_allowed_effects, validate_background_path,
+            validate_paths, validate_shell_execute_result, validate_system_default_open_path,
+            wide_buffer_to_string, NavigationOpenValidationError, ShortcutInfo, ShortcutLaunch,
             BACKGROUND_CMD_CREATE_FILE, BACKGROUND_CMD_PASTE, BACKGROUND_CMD_SORT_DESC,
             BACKGROUND_CMD_SORT_SIZE, BACKGROUND_CMD_VIEW_TILES,
         };
+        use std::path::{Path, PathBuf};
+
+        #[test]
+        fn shortcut_extension_is_detected_case_insensitively() {
+            assert!(is_windows_shortcut(Path::new("D:\\1\\2\\3\\b.lnk")));
+            assert!(is_windows_shortcut(Path::new("D:\\1\\2\\3\\B.LNK")));
+            assert!(!is_windows_shortcut(Path::new("D:\\1\\2\\3\\a.exe")));
+            assert!(!is_windows_shortcut(Path::new("D:\\1\\2\\3\\notes")));
+        }
+
+        #[test]
+        fn shortcut_with_start_in_uses_its_own_working_directory() {
+            let info = ShortcutInfo {
+                target: Some(PathBuf::from("E:\\app\\b.exe")),
+                arguments: None,
+                working_directory: "E:\\app".to_string(),
+            };
+            assert_eq!(plan_shortcut_launch(&info), ShortcutLaunch::UseShortcutDefault);
+        }
+
+        #[test]
+        fn shortcut_without_start_in_launches_resolved_target() {
+            let info = ShortcutInfo {
+                target: Some(PathBuf::from("E:\\app\\b.exe")),
+                arguments: Some("--flag".to_string()),
+                working_directory: "   ".to_string(),
+            };
+            assert_eq!(plan_shortcut_launch(&info), ShortcutLaunch::UseResolvedTarget);
+        }
+
+        #[test]
+        fn shortcut_without_resolvable_target_falls_back_to_default() {
+            let info = ShortcutInfo {
+                target: None,
+                arguments: None,
+                working_directory: String::new(),
+            };
+            assert_eq!(plan_shortcut_launch(&info), ShortcutLaunch::UseShortcutDefault);
+        }
+
+        #[test]
+        fn wide_buffer_is_truncated_at_first_null() {
+            let buffer = [0x44u16, 0x3a, 0x00, 0x78, 0x00];
+            assert_eq!(wide_buffer_to_string(&buffer), "D:");
+            let empty = [0u16; 4];
+            assert_eq!(wide_buffer_to_string(&empty), "");
+        }
 
         #[test]
         fn track_popup_zero_with_success_reports_native_menu_handled() {

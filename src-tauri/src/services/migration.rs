@@ -113,6 +113,7 @@ mod tests {
             connect_timeout_secs: 10,
             command_timeout_secs: 20,
             credential_target: target.map(str::to_string),
+            password: None,
         }
     }
 

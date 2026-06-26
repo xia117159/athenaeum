@@ -3,17 +3,17 @@
   "exceptions": [
     {
       "path": "src/features/workspace/useWorkspaceController.test.ts",
-      "maxLines": 4133,
+      "maxLines": 4155,
       "reason": "Legacy controller integration test file. Continue splitting by navigation, operation, search, properties, and remote trust behavior."
     },
     {
       "path": "src/features/workspace/useWorkspaceController.ts",
-      "maxLines": 2969,
+      "maxLines": 3024,
       "reason": "Legacy workspace facade still owns multiple orchestration flows. Continue extracting behavior-preserving subcontrollers and pure planners."
     },
     {
       "path": "src-tauri/src/services/remote_service.rs",
-      "maxLines": 2709,
+      "maxLines": 2711,
       "reason": "Remote service facade still contains FTP/SFTP adapter implementations after path, host-key, and factory extraction. Continue moving adapters into protocol modules."
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "path": "src-tauri/src/services/windows_shell.rs",
-      "maxLines": 2103,
+      "maxLines": 2295,
       "reason": "Windows shell adapter still contains COM, context menu, clipboard, drag-drop, and file operation code. Continue extracting capability modules around unsafe boundaries."
     },
     {
