@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SettingsSurface } from "./SettingsSurface";
 import type { RemoteConnectionProfile, SettingsModel, SettingsSection, WorkspaceState } from "./types";
 import {
@@ -50,6 +50,32 @@ function getSettingsErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function computeDirtySections(
+  persisted: WorkspaceState,
+  draft: WorkspaceState,
+  normalizedPersistedModel: SettingsModel,
+  deletedRemoteProfileIds: string[],
+  remoteProfilePasswords: Record<string, string | undefined>
+): Set<SettingsSection> {
+  const sections = new Set<SettingsSection>();
+  const dm = draft.settings.model;
+  const pm = normalizedPersistedModel;
+  if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
+  if (!hasSameJsonShape(pm.columns, dm.columns) || pm.detailsRowHeight !== dm.detailsRowHeight) sections.add("file-list");
+  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu)) sections.add("menu-mouse");
+  if (!hasSameJsonShape(pm.theme, dm.theme)) sections.add("appearance");
+  if (!hasSameJsonShape(pm.colorRules, dm.colorRules)) sections.add("color-rules");
+  if (!hasSameJsonShape(pm.tagRules, dm.tagRules)) sections.add("tag-rules");
+  if (
+    !hasSameJsonShape(persisted.remoteProfiles, draft.remoteProfiles) ||
+    deletedRemoteProfileIds.length > 0 ||
+    Object.keys(remoteProfilePasswords).length > 0
+  ) {
+    sections.add("connections");
+  }
+  return sections;
+}
+
 async function closeSettingsWindow() {
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -75,6 +101,16 @@ export function SettingsWindowView() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [remoteProfilePasswords, setRemoteProfilePasswords] = useState<Record<string, string | undefined>>({});
   const [deletedRemoteProfileIds, setDeletedRemoteProfileIds] = useState<string[]>([]);
+
+  const normalizedPersistedModel = useMemo(
+    () => normalizeSettingsModel(state.settings.model),
+    [state.settings.model]
+  );
+
+  const dirtySections = useMemo(
+    () => computeDirtySections(state, draftState, normalizedPersistedModel, deletedRemoteProfileIds, remoteProfilePasswords),
+    [state, draftState, normalizedPersistedModel, deletedRemoteProfileIds, remoteProfilePasswords]
+  );
 
   useEffect(() => {
     if (!settingsReady) {
@@ -208,6 +244,7 @@ export function SettingsWindowView() {
     <div className="settings-window-shell">
       <SettingsSurface
         state={draftState}
+        dirtySections={dirtySections}
         onSelectSection={updateDraftSection}
         onUpdateShortcut={(id, binding) =>
           updateDraftModel((model) => ({

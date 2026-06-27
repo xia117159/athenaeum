@@ -79,6 +79,7 @@ function createSettingsState(section: SettingsSection = "shortcuts") {
 function createProps(state: WorkspaceState) {
   return {
     state,
+    dirtySections: new Set<SettingsSection>(),
     onSelectSection: () => undefined,
     onUpdateShortcut: () => undefined,
     onUpdateColorRule: () => undefined,
@@ -596,8 +597,9 @@ export const completion = (async () => {
       assert.deepEqual(events, []);
     });
 
-    await assertTest("SettingsSurface blocks confirm when the remote profile form has unstaged edits", async () => {
+    await assertTest("SettingsSurface auto-commits remote profile edits without blocking confirm", async () => {
       const events: string[] = [];
+      const saved: Array<{ profile: RemoteConnectionProfile; password?: string }> = [];
       const state = createSettingsState("connections");
       const profile: RemoteConnectionProfile = {
         id: "remote-1",
@@ -622,25 +624,30 @@ export const completion = (async () => {
         root.render(
           React.createElement(SettingsSurface, {
             ...createProps(remoteState),
+            onSaveRemoteProfile: (nextProfile: RemoteConnectionProfile, password?: string) => saved.push({ profile: nextProfile, password }),
             onConfirm: () => events.push("confirm")
           })
         );
         await flushEffects();
       });
 
-      const nameInput = container.querySelector<HTMLInputElement>("[data-setting-id='remote-name']");
-      assert.ok(nameInput);
+      // Toggle a checkbox — immediateCommit triggers autoCommitToParent synchronously
+      const passiveCheckbox = container.querySelector<HTMLInputElement>("#remote-passive");
+      assert.ok(passiveCheckbox);
+      assert.equal(passiveCheckbox!.checked, true);
       await act(async () => {
-        nameInput!.value = "Deploy updated";
-        nameInput!.dispatchEvent(new Event("input", { bubbles: true }));
-        container.querySelector<HTMLButtonElement>("[data-action='confirm-settings']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        passiveCheckbox!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
         await flushEffects();
       });
 
-      assert.deepEqual(events, []);
-      assert.match(container.textContent ?? "", /暂存/u);
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].profile.passiveMode, false);
+
+      // Confirm should NOT be blocked
+      const confirmButton = container.querySelector<HTMLButtonElement>("[data-action='confirm-settings']");
+      assert.equal(confirmButton?.disabled, false);
     });
-    await assertTest("ConnectionsEditor masks saved passwords, toggles visibility, and stages edited passwords", async () => {
+    await assertTest("ConnectionsEditor masks saved passwords, toggles visibility, and commits edited passwords", async () => {
       const saved: Array<{ profile: RemoteConnectionProfile; password?: string }> = [];
       const profile: RemoteConnectionProfile = {
         id: "remote-1",
@@ -693,8 +700,11 @@ export const completion = (async () => {
       });
       assert.equal(passwordInput!.type, "text");
 
+      // Toggle a checkbox to trigger immediateCommit which includes the edited password
+      const passiveCheckbox = container.querySelector<HTMLInputElement>("#remote-passive");
+      assert.ok(passiveCheckbox);
       await act(async () => {
-        container.querySelector<HTMLButtonElement>("[data-action='save-remote-profile']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        passiveCheckbox!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
         await flushEffects();
       });
 
@@ -702,7 +712,7 @@ export const completion = (async () => {
       assert.equal(saved[0].password, "new-secret");
     });
 
-    await assertTest("ConnectionsEditor keeps test connection asynchronous without changing settings sections", async () => {
+    await assertTest("ConnectionsEditor tests connection from list item action button", async () => {
       let resolveProbe: ((value: { success: boolean; message: string; adapter: "sftp"; details: string[] }) => void) | undefined;
       const selected: SettingsSection[] = [];
       const tested: Array<{ profile: RemoteConnectionProfile; password?: string }> = [];
@@ -741,20 +751,17 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      const testButton = container.querySelector<HTMLButtonElement>("[data-action='test-remote-profile']");
+      const testButton = container.querySelector<HTMLButtonElement>(".connection-list-item__action[aria-label='测试连接']");
       assert.ok(testButton);
       await act(async () => {
-        const click = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
-        testButton!.dispatchEvent(click);
-        assert.equal(click.defaultPrevented, true);
+        testButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
         await flushEffects();
       });
 
       assert.equal(testButton!.disabled, true);
       assert.equal(tested.length, 1);
       assert.deepEqual(selected, []);
-      assert.match(container.textContent ?? "", /192\.168\.1\.3:6666/u);
-      assert.ok(container.querySelector(".connection-test-status--loading"));
+      assert.ok(container.querySelector(".connection-list-item__spinner"));
 
       await act(async () => {
         resolveProbe?.({ success: true, message: "Connection probe succeeded", adapter: "sftp", details: [] });
@@ -762,11 +769,10 @@ export const completion = (async () => {
       });
 
       assert.equal(testButton!.disabled, false);
-      assert.ok(container.querySelector(".connection-test-status--success"));
-      assert.match(container.textContent ?? "", /Connection probe succeeded/u);
+      assert.ok(container.querySelector(".connection-list-item.is-test-success"));
     });
 
-    await assertTest("ConnectionsEditor retains password in input after saving profile", async () => {
+    await assertTest("ConnectionsEditor retains password in input after auto-commit", async () => {
       const saved: Array<{ profile: RemoteConnectionProfile; password?: string }> = [];
       const profile: RemoteConnectionProfile = {
         id: "remote-1",
@@ -794,7 +800,6 @@ export const completion = (async () => {
             ...createProps(remoteState),
             onSaveRemoteProfile: (nextProfile: RemoteConnectionProfile, password?: string) => {
               saved.push({ profile: nextProfile, password });
-              // Simulate backend returning the saved profile with password
               remoteState.remoteProfiles = [{ ...nextProfile, password: password || nextProfile.password }];
             }
           })
@@ -803,22 +808,14 @@ export const completion = (async () => {
       });
 
       const passwordInput = container.querySelector<HTMLInputElement>("#remote-password");
-      const saveButton = container.querySelector<HTMLButtonElement>("[data-action='save-remote-profile']");
       assert.ok(passwordInput);
-      assert.ok(saveButton);
       assert.equal(passwordInput!.value, "my-secret-password");
 
-      // Change name and save
-      const nameInput = container.querySelector<HTMLInputElement>("#remote-name");
-      assert.ok(nameInput);
+      // Toggle a checkbox to trigger auto-commit
+      const passiveCheckbox = container.querySelector<HTMLInputElement>("#remote-passive");
+      assert.ok(passiveCheckbox);
       await act(async () => {
-        nameInput!.value = "Deploy Updated";
-        nameInput!.dispatchEvent(new Event("input", { bubbles: true }));
-        await flushEffects();
-      });
-
-      await act(async () => {
-        saveButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        passiveCheckbox!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
         await flushEffects();
       });
 
@@ -836,7 +833,7 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      // Password should still be visible after save
+      // Password should still be visible after auto-commit
       assert.equal(passwordInput!.value, "my-secret-password");
       assert.equal(saved.length, 1);
     });
@@ -844,28 +841,24 @@ export const completion = (async () => {
     // TODO: Add test for global password visibility preservation
     // The feature is implemented but the test needs to be fixed to properly verify state
 
-    await assertTest("workspace settings styles reserve connection warning space and order connection actions", async () => {
+    await assertTest("workspace settings styles support connection list actions and new-profile button", async () => {
       const css = readWorkspaceCss();
 
-      assert.match(css, /\.settings-inline-warning-slot\s*\{[^}]*min-height:\s*32px;/);
-      assert.match(css, /\.settings-form-actions\s*\{[^}]*justify-content:\s*flex-start;/);
+      assert.match(css, /\.connection-list-item__actions\s*\{/);
+      assert.match(css, /\.connection-list-item__action\s*\{/);
+      assert.match(css, /\.connection-list-item\.is-test-success\s*\{/);
+      assert.match(css, /\.connection-list-item\.is-test-error\s*\{/);
+      assert.match(css, /\.connection-list-add\s*\{/);
       assert.match(css, /\.connection-password-control\s*\{/);
-      assert.match(css, /\.connection-test-status\s*\{/);
 
       await act(async () => {
         root.render(React.createElement(SettingsSurface, createProps(createSettingsState("connections"))));
         await flushEffects();
       });
 
-      const actionIds = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-form-actions button")).map(
-        (button) => button.dataset.action
-      );
-      assert.deepEqual(actionIds, [
-        "new-remote-profile",
-        "test-remote-profile",
-        "save-remote-profile",
-        "delete-remote-profile"
-      ]);
+      assert.ok(container.querySelector(".connection-list-add"));
+      assert.equal(container.querySelector(".settings-form-actions"), null);
+      assert.equal(container.querySelector(".settings-inline-warning-slot"), null);
     });
   } finally {
     await act(async () => {
