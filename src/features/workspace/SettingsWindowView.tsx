@@ -119,7 +119,11 @@ export function SettingsWindowView() {
     if (dirty || applying) {
       return;
     }
-    setDraftState(createDraftState(state));
+    setDraftState((current) => {
+      const next = createDraftState(state);
+      next.settings.section = current.settings.section;
+      return next;
+    });
     setRemoteProfilePasswords({});
     setDeletedRemoteProfileIds([]);
     setErrorMessage(null);
