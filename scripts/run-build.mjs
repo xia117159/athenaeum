@@ -12,6 +12,7 @@ const srcDir = path.join(rootDir, "src");
 const tempDir = path.join(rootDir, ".build-ts");
 const distDir = path.join(rootDir, "dist");
 const assetsDir = path.join(distDir, "assets");
+const staticAssetNames = ["128x128.png"];
 const localCssImportPattern = /@import\s+(?:url\()?["']([^"']+)["']\)?\s*;/g;
 
 const formatHost = {
@@ -123,6 +124,17 @@ async function writeHtml() {
   await fs.writeFile(path.join(distDir, "index.html"), html);
 }
 
+export async function copyStaticAssets({
+  sourceDir = path.join(rootDir, "src-tauri", "icons"),
+  outputDir = distDir
+} = {}) {
+  await Promise.all(
+    staticAssetNames.map((assetName) =>
+      fs.copyFile(path.join(sourceDir, assetName), path.join(outputDir, assetName))
+    )
+  );
+}
+
 export default async function runBuild() {
   await ensureCleanDir(tempDir);
   await ensureCleanDir(distDir);
@@ -152,6 +164,7 @@ export default async function runBuild() {
     format: "esm"
   });
   await bundle.close();
+  await copyStaticAssets();
   await writeCssBundle(collectedCss);
   await writeHtml();
 }

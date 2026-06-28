@@ -23,6 +23,8 @@ export interface EntryViewModel {
   modifiedAt?: string | null;
   accessedAt?: string | null;
   isHidden: boolean;
+  isSystem: boolean;
+  isProtectedOperatingSystem: boolean;
   isReadOnly: boolean;
   isSymlink: boolean;
   location: LocationDescriptor;
@@ -116,6 +118,9 @@ export interface TreeNode {
   path: string;
   name: string;
   hasChildren: boolean;
+  isHidden: boolean;
+  isSystem: boolean;
+  isProtectedOperatingSystem: boolean;
 }
 
 export interface DriveInfo {

@@ -13,6 +13,9 @@ use crate::domain::models::{
     ItemPropertyFieldState, LocationDescriptor, TreeNode,
 };
 
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+
 fn metadata_modified_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
     metadata.modified().ok().map(DateTime::<Utc>::from)
 }
@@ -25,6 +28,22 @@ fn metadata_accessed_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
     metadata.accessed().ok().map(DateTime::<Utc>::from)
 }
 
+fn has_windows_file_attribute(metadata: Option<&fs::Metadata>, attribute: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata
+            .map(|value| value.file_attributes() & attribute != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (metadata, attribute);
+        false
+    }
+}
+
 fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
     if path
         .file_name()
@@ -35,21 +54,19 @@ fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
         return true;
     }
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
+    has_windows_hidden_attribute(metadata)
+}
 
-        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-        metadata
-            .map(|value| value.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
-            .unwrap_or(false)
-    }
+fn has_windows_hidden_attribute(metadata: Option<&fs::Metadata>) -> bool {
+    has_windows_file_attribute(metadata, FILE_ATTRIBUTE_HIDDEN)
+}
 
-    #[cfg(not(windows))]
-    {
-        let _ = metadata;
-        false
-    }
+fn is_system(metadata: Option<&fs::Metadata>) -> bool {
+    has_windows_file_attribute(metadata, FILE_ATTRIBUTE_SYSTEM)
+}
+
+fn is_protected_operating_system(metadata: Option<&fs::Metadata>) -> bool {
+    has_windows_hidden_attribute(metadata) && is_system(metadata)
 }
 
 fn is_symlink(metadata: &fs::Metadata) -> bool {
@@ -141,6 +158,7 @@ fn entry_from_path(
         .with_context(|| format!("failed to get metadata for {}", path.display()))?;
     let is_dir = metadata.is_dir();
     let hidden = is_hidden(&path, Some(&metadata));
+    let system = is_system(Some(&metadata));
     let read_only = metadata.permissions().readonly();
 
     Ok(EntryViewModel {
@@ -164,6 +182,8 @@ fn entry_from_path(
         modified_at: metadata_modified_at(&metadata),
         accessed_at: metadata_accessed_at(&metadata),
         is_hidden: hidden,
+        is_system: system,
+        is_protected_operating_system: is_protected_operating_system(Some(&metadata)),
         is_read_only: read_only,
         is_symlink: is_symlink(&metadata),
         location: LocationDescriptor::local(path.to_string_lossy().into_owned()),
@@ -410,6 +430,9 @@ pub fn get_tree_children(path: &Path) -> Result<Vec<TreeNode>> {
                 .unwrap_or_default()
                 .to_string(),
             has_children,
+            is_hidden: is_hidden(&child_path, Some(&metadata)),
+            is_system: is_system(Some(&metadata)),
+            is_protected_operating_system: is_protected_operating_system(Some(&metadata)),
         });
     }
 
@@ -623,8 +646,9 @@ mod tests {
 
     use super::{
         apply_color_rules, available_conflict_path, copy_recursively, create_file,
-        drive_infos_from_mask, get_item_properties, list_directory, move_entry,
-        readable_drive_infos, rename_entry,
+        drive_infos_from_mask, get_item_properties, get_tree_children, is_hidden,
+        is_protected_operating_system, is_system, list_directory, move_entry, readable_drive_infos,
+        rename_entry, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM,
     };
     use crate::domain::models::{
         ColorRule, ColorRuleMode, ColorRuleTarget, DirectorySizeAvailability, DriveInfo, EntryKind,
@@ -638,6 +662,28 @@ mod tests {
             .expect("time went backwards")
             .as_nanos();
         std::env::temp_dir().join(format!("athenaeum-{label}-{unique}"))
+    }
+
+    #[cfg(windows)]
+    fn set_windows_file_attributes(path: &std::path::Path, attributes: u32) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{
+            core::PCWSTR,
+            Win32::Storage::FileSystem::{SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES},
+        };
+
+        let wide_path = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        unsafe {
+            SetFileAttributesW(
+                PCWSTR(wide_path.as_ptr()),
+                FILE_FLAGS_AND_ATTRIBUTES(attributes),
+            )
+            .expect("set Windows file attributes");
+        }
     }
 
     #[test]
@@ -683,11 +729,54 @@ mod tests {
 
         assert_eq!(listing.entries.len(), 2);
         assert_eq!(listing.entries[0].kind, EntryKind::Directory);
+        assert!(!listing.entries[0].is_system);
+        assert!(!listing.entries[0].is_protected_operating_system);
         assert_eq!(
             listing.entries[1].decoration.tags,
             vec!["Pinned".to_string()]
         );
         assert_eq!(listing.entries[1].comment, Some("Reviewed".to_string()));
+        assert!(!listing.entries[1].is_system);
+        assert!(!listing.entries[1].is_protected_operating_system);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn protected_operating_system_requires_windows_hidden_and_system_attributes() {
+        const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+        let root = unique_temp_path("protected-attributes");
+        fs::create_dir_all(&root).expect("create root");
+        let file = root.join(".config");
+        fs::write(&file, "system only").expect("write file");
+
+        set_windows_file_attributes(&file, FILE_ATTRIBUTE_SYSTEM);
+        let metadata = fs::symlink_metadata(&file).expect("read system metadata");
+        assert!(is_hidden(&file, Some(&metadata)));
+        assert!(is_system(Some(&metadata)));
+        assert!(!is_protected_operating_system(Some(&metadata)));
+
+        set_windows_file_attributes(&file, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        let metadata = fs::symlink_metadata(&file).expect("read protected metadata");
+        assert!(is_protected_operating_system(Some(&metadata)));
+
+        set_windows_file_attributes(&file, FILE_ATTRIBUTE_NORMAL);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn get_tree_children_marks_regular_directories_as_not_system_or_protected() {
+        let root = unique_temp_path("tree-visibility");
+        fs::create_dir_all(root.join("child")).expect("create child directory");
+
+        let children = get_tree_children(&root).expect("read tree children");
+
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "child");
+        assert!(!children[0].is_hidden);
+        assert!(!children[0].is_system);
+        assert!(!children[0].is_protected_operating_system);
 
         let _ = fs::remove_dir_all(root);
     }

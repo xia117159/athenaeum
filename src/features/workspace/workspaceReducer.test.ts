@@ -165,6 +165,79 @@ assertTest("workspaceReducer cycles focus across visible panels and wraps in qua
     assert.equal(focus1.activePanelId, "panel-1");
   });
 
+assertTest("workspaceReducer initializes Windows file visibility and sync scrolling switches", () => {
+  const state = createState();
+
+  assert.deepEqual(state.fileVisibility, {
+    showHidden: false,
+    showSystem: false,
+    hideProtectedOperatingSystemFiles: true
+  });
+  assert.equal(state.syncScroll, false);
+});
+
+assertTest("workspaceReducer updates file visibility switches independently", () => {
+  const state = createState();
+
+  const showHidden = workspaceReducer(state, {
+    type: "fileVisibilitySet",
+    payload: { showHidden: true }
+  });
+  const showSystem = workspaceReducer(showHidden, {
+    type: "fileVisibilitySet",
+    payload: { showSystem: true }
+  });
+  const showProtected = workspaceReducer(showSystem, {
+    type: "fileVisibilitySet",
+    payload: { hideProtectedOperatingSystemFiles: false }
+  });
+
+  assert.deepEqual(showProtected.fileVisibility, {
+    showHidden: true,
+    showSystem: true,
+    hideProtectedOperatingSystemFiles: false
+  });
+});
+
+assertTest("workspaceReducer opens the search panel on the requested search tab", () => {
+  const state = createState();
+
+  const nameSearch = workspaceReducer(state, {
+    type: "searchPanelRequested",
+    payload: "name"
+  });
+  const contentSearch = workspaceReducer(nameSearch, {
+    type: "searchPanelRequested",
+    payload: "content"
+  });
+
+  assert.equal(nameSearch.informationPanel.expanded, true);
+  assert.equal(nameSearch.informationPanel.activeTab, "search");
+  assert.equal(nameSearch.search.activeTab, "name");
+  assert.equal(contentSearch.search.activeTab, "content");
+});
+
+assertTest("workspaceReducer toggles synchronized scrolling", () => {
+  const state = createState();
+
+  const enabled = workspaceReducer(state, {
+    type: "syncScrollSet",
+    payload: true
+  });
+  const unchanged = workspaceReducer(enabled, {
+    type: "syncScrollSet",
+    payload: true
+  });
+  const disabled = workspaceReducer(unchanged, {
+    type: "syncScrollSet",
+    payload: false
+  });
+
+  assert.equal(enabled.syncScroll, true);
+  assert.equal(unchanged, enabled);
+  assert.equal(disabled.syncScroll, false);
+});
+
 assertTest("workspaceReducer projects operation task snapshots and ignores stale task events", () => {
   const state = createState();
   const running = createOperationTask("task-1", 2, "running");

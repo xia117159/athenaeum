@@ -3,6 +3,7 @@ import type {
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  FileVisibilityState,
   InformationPanelTab,
   ItemProperties,
   InlineEditState,
@@ -51,6 +52,7 @@ import {
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
 import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
+import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -60,6 +62,8 @@ export type WorkspaceAction =
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
   | { type: "treeVisibilitySet"; payload: boolean }
+  | { type: "fileVisibilitySet"; payload: Partial<FileVisibilityState> }
+  | { type: "syncScrollSet"; payload: boolean }
   | { type: "panelFocused"; payload: { panelId: PanelId } }
   | { type: "focusNextPanel" }
   | { type: "tabOpened"; payload: { panelId: PanelId; tab: TabState } }
@@ -108,7 +112,7 @@ export type WorkspaceAction =
   | { type: "informationPanelExpandedSet"; payload: boolean }
   | { type: "informationPanelTabChanged"; payload: InformationPanelTab }
   | { type: "informationPanelHistoryRequested" }
-  | { type: "searchPanelRequested" }
+  | { type: "searchPanelRequested"; payload?: SearchTabId }
   | { type: "propertiesRequestStarted"; payload: { requestId: string; targetKey: string } }
   | {
       type: "propertiesRequestSucceeded";
@@ -318,6 +322,8 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
+    fileVisibility: { ...DEFAULT_FILE_VISIBILITY },
+    syncScroll: false,
     panels: normalizedPanels,
     activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
     directoryTree: bootstrap.directoryTree,
@@ -1118,6 +1124,15 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             treeVisible: action.payload
           };
 
+    case "fileVisibilitySet":
+      {
+        const fileVisibility = { ...state.fileVisibility, ...action.payload };
+        return hasSameJsonShape(fileVisibility, state.fileVisibility) ? state : { ...state, fileVisibility };
+      }
+
+    case "syncScrollSet":
+      return state.syncScroll === action.payload ? state : { ...state, syncScroll: action.payload };
+
     case "panelFocused":
       if (!getVisiblePanelIds(state.layoutMode).includes(action.payload.panelId)) {
         return state;
@@ -1771,14 +1786,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "searchPanelRequested":
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          expanded: true,
-          activeTab: "search"
-        }
-      };
+      {
+        const search = action.payload
+          ? { ...state.search, activeTab: action.payload, history: state.search.histories[action.payload], selectedHistoryIndex: undefined }
+          : state.search;
+        return { ...state, informationPanel: { ...state.informationPanel, expanded: true, activeTab: "search" }, search };
+      }
 
     case "propertiesRequestStarted":
       return {

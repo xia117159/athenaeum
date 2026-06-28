@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main, settings, and comment editor windows",
-  "windows": ["main", "settings", "comment-editor"],
+  "description": "Default capability for the main, settings, comment editor, and about windows",
+  "windows": ["main", "settings", "comment-editor", "about"],
   "permissions": [
     "core:default",
     "default",

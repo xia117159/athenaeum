@@ -1,16 +1,23 @@
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
+const require = createRequire(import.meta.url);
 const rootDir = process.cwd();
+const srcDir = path.join(rootDir, "src");
 const buildDir = path.join(rootDir, ".test-build");
 
 const formatHost = {
   getCanonicalFileName: (fileName) => fileName,
   getCurrentDirectory: () => rootDir,
   getNewLine: () => "\n"
+};
+
+require.extensions[".css"] = (module) => {
+  module.exports = {};
 };
 
 function compileTests() {
@@ -43,6 +50,21 @@ async function collectTests(dir) {
   return results;
 }
 
+async function copyCssModules(relativeDir = "") {
+  const sourceDir = path.join(srcDir, relativeDir);
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const relativePath = path.join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      await copyCssModules(relativePath);
+    } else if (entry.isFile() && entry.name.endsWith(".css")) {
+      const outputPath = path.join(buildDir, relativePath);
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.copyFile(path.join(srcDir, relativePath), outputPath);
+    }
+  }
+}
+
 async function collectScriptTests(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
   const results = [];
@@ -59,6 +81,7 @@ async function collectScriptTests(dir) {
 
 await fs.rm(buildDir, { force: true, recursive: true }).catch(() => undefined);
 compileTests();
+await copyCssModules();
 await fs.writeFile(path.join(buildDir, "package.json"), JSON.stringify({ type: "commonjs" }, null, 2));
 const tests = [...(await collectTests(buildDir)), ...(await collectScriptTests(path.join(rootDir, "scripts")))];
 

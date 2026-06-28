@@ -15,6 +15,7 @@ function assertTest(name: string, fn: () => void) {
 
 const css = readWorkspaceCss();
 const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+const workspaceMenuSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceMenuBar.tsx"), "utf8");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
 const navigationTabSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/NavigationTabView.tsx"), "utf8");
 const panelChromeSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspacePanelChrome.tsx"), "utf8");
@@ -140,10 +141,10 @@ assertTest("workspace top chrome separates command and address rows without the 
 });
 
 assertTest("workspace view menu reuses shared view and sort submenus", () => {
-  assert.equal(workspaceViewSource.includes("WorkspaceViewMenuItems"), true);
-  assert.equal(workspaceViewSource.includes("WorkspaceSortMenuItems"), true);
-  assert.equal(workspaceViewSource.includes('label: "视图"'), true);
-  assert.equal(workspaceViewSource.includes('label: "排序方式"'), true);
+  assert.equal(workspaceMenuSource.includes("WorkspaceViewMenuItems"), true);
+  assert.equal(workspaceMenuSource.includes("WorkspaceSortMenuItems"), true);
+  assert.equal(workspaceMenuSource.includes('label: "视图"'), true);
+  assert.equal(workspaceMenuSource.includes('label: "排序方式"'), true);
   assertDeclaration(getCssBlock(".menu-dropdown__submenu"), "position", "relative");
   assertDeclaration(getCssBlock(".menu-dropdown__submenu-items"), "position", "absolute");
 });

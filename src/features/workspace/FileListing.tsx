@@ -4,6 +4,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   useEffect,
   useRef,
   useState
@@ -365,6 +366,8 @@ export function FileListingShell({
   entryDropMoveBinding = "Shift",
   contextMenuDefault = "native",
   contextMenuToggleBinding = "Shift",
+  syncScrollEnabled = false,
+  onSyncScroll,
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel
@@ -400,6 +403,8 @@ export function FileListingShell({
   entryDropMoveBinding?: string;
   contextMenuDefault?: ContextMenuDefault;
   contextMenuToggleBinding?: string;
+  syncScrollEnabled?: boolean;
+  onSyncScroll?: (panelId: PanelId, deltaX: number, deltaY: number) => void;
   onInlineEditChange: (value: string) => void;
   onInlineEditCommit: (value?: string) => void;
   onInlineEditCancel: () => void;
@@ -1314,6 +1319,13 @@ export function FileListingShell({
     clearDropState();
   };
 
+  const handleListingWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!syncScrollEnabled) {
+      return;
+    }
+    onSyncScroll?.(panelId, event.deltaX, event.deltaY);
+  };
+
   const handleListingMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     const isBlankListingTarget = () => {
@@ -1711,6 +1723,7 @@ export function FileListingShell({
         onDragLeave={handleListingDragLeave}
         onDrop={handleListingDrop}
         onMouseDown={handleListingMouseDown}
+        onWheel={handleListingWheel}
       >
         {viewMode === "details" ? (
           <div

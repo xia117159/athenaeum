@@ -11,6 +11,7 @@ import {
   type WebviewWindowConstructor
 } from "./settingsWindow";
 import { COMMENT_WINDOW_LABEL } from "./commentWindow";
+import { ABOUT_WINDOW_LABEL } from "./aboutWindow";
 
 function assertTest(name: string, fn: () => Promise<void> | void) {
   return Promise.resolve()
@@ -144,7 +145,7 @@ export const completion = (async () => {
   });
 
   await assertTest("workspace source opens settings from the top menu only", () => {
-    const workspaceSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
+    const workspaceSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceMenuBar.tsx"), "utf8");
 
     assert.equal(workspaceSource.includes("SettingsDialog"), false);
     assert.equal(workspaceSource.includes("<SettingsSurface"), false);
@@ -185,7 +186,7 @@ export const completion = (async () => {
       permissions: string[];
     };
 
-    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL, COMMENT_WINDOW_LABEL]);
+    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL, COMMENT_WINDOW_LABEL, ABOUT_WINDOW_LABEL]);
     assert.equal(capability.permissions.includes("core:event:allow-emit"), true);
     assert.equal(capability.permissions.includes("core:webview:allow-create-webview-window"), true);
     assert.equal(capability.permissions.includes("core:window:allow-show"), true);

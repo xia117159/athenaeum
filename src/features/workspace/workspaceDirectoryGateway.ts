@@ -93,6 +93,9 @@ export function mapTreeNodes(
     label: node.name,
     path: node.path,
     kind,
+    isHidden: node.isHidden ?? false,
+    isSystem: node.isSystem ?? false,
+    isProtectedOperatingSystem: node.isProtectedOperatingSystem ?? false,
     expandable: node.hasChildren,
     loaded: false,
     children: []
@@ -108,6 +111,9 @@ export function buildRemoteTreeNodes(path: string, snapshot: DirectorySnapshot):
       path: entry.path,
       kind: "folder",
       badge: path,
+      isHidden: entry.isHidden ?? false,
+      isSystem: entry.isSystem ?? false,
+      isProtectedOperatingSystem: entry.isProtectedOperatingSystem ?? false,
       expandable: true,
       loaded: false,
       children: []

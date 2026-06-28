@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readCssWithImports } from "./run-build.mjs";
+import { copyStaticAssets, readCssWithImports } from "./run-build.mjs";
 
 function assertTest(name, fn) {
   return Promise.resolve()
@@ -33,6 +33,23 @@ await assertTest("readCssWithImports inlines relative CSS imports in dependency 
     assert.match(css, /\.base\s*\{/);
     assert.match(css, /\.entry\s*\{/);
     assert.match(css, /\.more\s*\{/);
+  } finally {
+    await fs.rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+await assertTest("copyStaticAssets includes the about window icon in dist", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sfm-static-assets-"));
+  try {
+    const sourceDir = path.join(tempDir, "icons");
+    const outputDir = path.join(tempDir, "dist");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "128x128.png"), "icon-bytes");
+
+    await copyStaticAssets({ sourceDir, outputDir });
+
+    assert.equal(await fs.readFile(path.join(outputDir, "128x128.png"), "utf8"), "icon-bytes");
   } finally {
     await fs.rm(tempDir, { force: true, recursive: true });
   }

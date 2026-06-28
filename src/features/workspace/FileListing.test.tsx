@@ -351,6 +351,8 @@ export const completion = (async () => {
         entryDropMoveBinding,
         contextMenuDefault,
         contextMenuToggleBinding,
+        syncScrollEnabled: false,
+        onSyncScroll: () => undefined,
         onSort: () => undefined,
         onResizeColumn: (columnId, width) => {
           resizedColumns.push({ columnId, width });

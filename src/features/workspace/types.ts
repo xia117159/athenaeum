@@ -65,6 +65,9 @@ export interface DirectoryNode {
   badge?: string;
   connectionState?: RemoteConnectionState;
   errorMessage?: string;
+  isHidden?: boolean;
+  isSystem?: boolean;
+  isProtectedOperatingSystem?: boolean;
   expandable: boolean;
   loaded?: boolean;
   children: DirectoryNode[];
@@ -83,6 +86,9 @@ export interface EntryViewModel {
   accessedLabel?: string;
   extension: string;
   attributes: string[];
+  isHidden?: boolean;
+  isSystem?: boolean;
+  isProtectedOperatingSystem?: boolean;
   accentColor: string;
   tags: string[];
   comment?: string;
@@ -494,6 +500,12 @@ export interface SettingsSurfaceState {
   model: SettingsModel;
 }
 
+export interface FileVisibilityState {
+  showHidden: boolean;
+  showSystem: boolean;
+  hideProtectedOperatingSystemFiles: boolean;
+}
+
 export type TabKind = "directory" | "search-results" | "navigation";
 
 export interface SearchTabState {
@@ -568,6 +580,8 @@ export interface WorkspaceState {
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
   treeVisible: boolean;
+  fileVisibility: FileVisibilityState;
+  syncScroll: boolean;
   panels: Record<PanelId, PanelState>;
   activePanelId: PanelId;
   directoryTree: DirectoryNode[];

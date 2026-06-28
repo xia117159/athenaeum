@@ -412,6 +412,12 @@ function formatDateLabel(value?: string | null) {
 }
 
 function describeEntry(entry: BackendEntryViewModel) {
+  if (entry.isProtectedOperatingSystem) {
+    return "受保护的操作系统文件";
+  }
+  if (entry.isSystem) {
+    return entry.kind === "directory" ? "系统文件夹" : "系统文件";
+  }
   if (entry.kind === "directory") {
     return entry.isHidden ? "隐藏文件夹" : "文件夹";
   }
@@ -557,6 +563,8 @@ function mapEntryViewModel(
   const attributes = [
     entry.kind === "directory" ? "D" : "A",
     ...(entry.isHidden ? ["H"] : []),
+    ...(entry.isSystem ? ["S"] : []),
+    ...(entry.isProtectedOperatingSystem ? ["P"] : []),
     ...(entry.isReadOnly ? ["R"] : []),
     ...(entry.isSymlink ? ["L"] : [])
   ];
@@ -574,6 +582,9 @@ function mapEntryViewModel(
     accessedLabel: formatDateLabel(entry.accessedAt),
     extension,
     attributes,
+    isHidden: entry.isHidden,
+    isSystem: entry.isSystem ?? false,
+    isProtectedOperatingSystem: entry.isProtectedOperatingSystem ?? false,
     accentColor: entry.decoration.colorHex ?? (entry.kind === "directory" ? "#2f6b57" : "#29659f"),
     tags: entry.decoration.tags ? [...entry.decoration.tags] : [],
     comment: entry.comment ?? "",
@@ -588,6 +599,9 @@ function cloneDirectorySnapshot(snapshot: DirectorySnapshot): DirectorySnapshot 
     entries: snapshot.entries.map((entry) => ({
       ...entry,
       attributes: [...entry.attributes],
+      isHidden: entry.isHidden,
+      isSystem: entry.isSystem,
+      isProtectedOperatingSystem: entry.isProtectedOperatingSystem,
       tags: [...entry.tags]
     }))
   };

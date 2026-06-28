@@ -57,6 +57,12 @@ function createWorkspaceState(): WorkspaceState {
       search: 0.36
     },
     treeVisible: false,
+    fileVisibility: {
+      showHidden: false,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: true
+    },
+    syncScroll: false,
     panels: {
       ...bootstrap.panels,
       "panel-1": {

@@ -74,6 +74,8 @@ pub struct EntryViewModel {
     pub modified_at: Option<DateTime<Utc>>,
     pub accessed_at: Option<DateTime<Utc>>,
     pub is_hidden: bool,
+    pub is_system: bool,
+    pub is_protected_operating_system: bool,
     pub is_read_only: bool,
     pub is_symlink: bool,
     pub location: LocationDescriptor,
@@ -215,6 +217,9 @@ pub struct TreeNode {
     pub path: String,
     pub name: String,
     pub has_children: bool,
+    pub is_hidden: bool,
+    pub is_system: bool,
+    pub is_protected_operating_system: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -2545,6 +2545,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       setSplitRatio: (key: keyof WorkspaceState["layoutRatios"], value: number) =>
         dispatch({ type: "splitRatioSet", payload: { key, value } }),
       setTreeVisible: (visible: boolean) => dispatch({ type: "treeVisibilitySet", payload: visible }),
+      setFileVisibility: (payload: Partial<WorkspaceState["fileVisibility"]>) =>
+        dispatch({ type: "fileVisibilitySet", payload }),
+      setSyncScroll: (enabled: boolean) => dispatch({ type: "syncScrollSet", payload: enabled }),
       focusPanel: (panelId: PanelId) => dispatch({ type: "panelFocused", payload: { panelId } }),
       focusNextPanel: () => dispatch({ type: "focusNextPanel" }),
       activateTab: (panelId: PanelId, tabId: string) => {
@@ -2681,6 +2684,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       selectInformationPanelTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) =>
         dispatch({ type: "informationPanelTabChanged", payload: tab }),
       openOperationHistory: () => dispatch({ type: "informationPanelHistoryRequested" }),
+      openSearchPanel: (tab?: WorkspaceState["search"]["activeTab"]) =>
+        dispatch({ type: "searchPanelRequested", payload: tab }),
       toggleSearch: (open?: boolean) => dispatch({ type: "searchToggled", payload: open }),
       selectSearchTab: (tab: WorkspaceState["search"]["activeTab"]) =>
         dispatch({ type: "searchTabChanged", payload: tab }),

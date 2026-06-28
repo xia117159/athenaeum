@@ -135,6 +135,8 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
         modifiedAt: "2026-04-18T10:00:00Z",
         accessedAt: "2026-04-19T11:12:13Z",
         isHidden: false,
+        isSystem: false,
+        isProtectedOperatingSystem: false,
         isReadOnly: true,
         isSymlink: false,
         location: {
@@ -165,6 +167,46 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
   assert.equal(snapshot.entries[0].description, "只读文件");
 });
 
+assertTest("mapDirectoryListingToSnapshot carries Windows system and protected attributes", () => {
+  const snapshot = mapDirectoryListingToSnapshot({
+    location: {
+      kind: "local",
+      path: "C:\\"
+    },
+    entries: [
+      {
+        path: "C:\\pagefile.sys",
+        name: "pagefile.sys",
+        extension: "sys",
+        kind: "file",
+        size: 4096,
+        modifiedAt: "2026-04-18T10:00:00Z",
+        isHidden: true,
+        isSystem: true,
+        isProtectedOperatingSystem: true,
+        isReadOnly: false,
+        isSymlink: false,
+        location: {
+          kind: "local",
+          path: "C:\\pagefile.sys"
+        },
+        decoration: {
+          colorHex: null,
+          tags: []
+        }
+      }
+    ],
+    parent: null,
+    canGoUp: false
+  });
+
+  assert.equal(snapshot.entries[0].isHidden, true);
+  assert.equal(snapshot.entries[0].isSystem, true);
+  assert.equal(snapshot.entries[0].isProtectedOperatingSystem, true);
+  assert.deepEqual(snapshot.entries[0].attributes, ["A", "H", "S", "P"]);
+  assert.equal(snapshot.entries[0].description, "受保护的操作系统文件");
+});
+
 assertTest("normalizeLocationPath strips Windows verbatim prefixes before further routing", () => {
   assert.equal(normalizeLocationPath("\\\\?\\E:\\"), "E:\\");
   assert.equal(normalizeLocationPath("\\\\?\\E:\\Workspace\\Logs"), "E:\\Workspace\\Logs");
@@ -185,6 +227,8 @@ assertTest("mapDirectoryListingToSnapshot keeps usable local paths when backend 
         size: 128,
         modifiedAt: "2026-04-18T10:00:00Z",
         isHidden: false,
+        isSystem: false,
+        isProtectedOperatingSystem: false,
         isReadOnly: false,
         isSymlink: false,
         location: {
@@ -374,6 +418,8 @@ assertTest("mapWorkspaceBootstrap gives panels independent snapshot and entry re
           size: 1024,
           modifiedAt: "2026-04-18T10:00:00Z",
           isHidden: false,
+          isSystem: false,
+          isProtectedOperatingSystem: false,
           isReadOnly: false,
           isSymlink: false,
           location: {

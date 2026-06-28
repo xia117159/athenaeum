@@ -112,6 +112,7 @@ function createFileEntry(
 ): EntryViewModel {
   const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
   const sizeLabel = options.sizeLabel ?? "24 KB";
+  const attributes = options.attributes ?? ["A"];
   return {
     id: `${parentPath}:${name}`,
     name,
@@ -122,7 +123,7 @@ function createFileEntry(
     sizeLabel,
     modifiedLabel: options.modifiedLabel ?? "2026-04-18 09:24",
     extension,
-    attributes: options.attributes ?? ["A"],
+    attributes, isHidden: attributes.includes("H"), isSystem: attributes.includes("S"), isProtectedOperatingSystem: attributes.includes("H") && attributes.includes("S"),
     accentColor: options.accentColor ?? "#29659f",
     tags: options.tags ?? [],
     description: options.description ?? "用于前端渲染的模拟文件。",

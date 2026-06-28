@@ -62,6 +62,8 @@ function createFile(path: string, name: string): BackendEntryViewModel {
     size: 42,
     modifiedAt: null,
     isHidden: false,
+    isSystem: false,
+    isProtectedOperatingSystem: false,
     isReadOnly: false,
     isSymlink: false,
     location: {
@@ -77,7 +79,16 @@ function createFile(path: string, name: string): BackendEntryViewModel {
 
 assertTest("mapTreeNodes converts backend tree nodes into unloaded workspace nodes", () => {
   assert.deepEqual(
-    mapTreeNodes([{ path: "E:\\Workspace", name: "Workspace", hasChildren: true }]),
+    mapTreeNodes([
+      {
+        path: "E:\\Workspace",
+        name: "Workspace",
+        hasChildren: true,
+        isHidden: true,
+        isSystem: true,
+        isProtectedOperatingSystem: true
+      }
+    ]),
     [
       {
         id: "E:\\Workspace",
@@ -86,6 +97,9 @@ assertTest("mapTreeNodes converts backend tree nodes into unloaded workspace nod
         kind: "folder",
         expandable: true,
         loaded: false,
+        isHidden: true,
+        isSystem: true,
+        isProtectedOperatingSystem: true,
         children: []
       }
     ]
@@ -135,6 +149,9 @@ assertTest("buildRemoteTreeNodes exposes folder entries as expandable child node
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0].label, "releases");
   assert.equal(nodes[0].badge, "sftp://cheng@127.0.0.1:6666/home/cheng");
+  assert.equal(nodes[0].isHidden, false);
+  assert.equal(nodes[0].isSystem, false);
+  assert.equal(nodes[0].isProtectedOperatingSystem, false);
 });
 
 export const workspaceDirectoryGatewayTests = (async () => {
@@ -175,6 +192,8 @@ export const workspaceDirectoryGatewayTests = (async () => {
       size: null,
       modifiedAt: null,
       isHidden: false,
+      isSystem: false,
+      isProtectedOperatingSystem: false,
       isReadOnly: false,
       isSymlink: false,
       location: {
@@ -245,7 +264,14 @@ export const workspaceDirectoryGatewayTests = (async () => {
   });
 
   await assertAsyncTest("loadWorkspaceTreeChildren invokes local get_tree_children and maps nodes", async () => {
-    const backendNodes: BackendTreeNode[] = [{ path: "E:\\Workspace\\src", name: "src", hasChildren: false }];
+    const backendNodes: BackendTreeNode[] = [{
+      path: "E:\\Workspace\\src",
+      name: "src",
+      hasChildren: false,
+      isHidden: false,
+      isSystem: false,
+      isProtectedOperatingSystem: false
+    }];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       assert.equal(command, "get_tree_children");
       assert.deepEqual(args, { path: "E:\\Workspace" });

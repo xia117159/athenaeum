@@ -1761,6 +1761,7 @@ fn parse_listing_entries(
                 modified_at: None,
                 accessed_at: None,
                 is_hidden: false,
+                is_system: false, is_protected_operating_system: false,
                 is_read_only: false,
                 is_symlink: false,
                 location: LocationDescriptor {
@@ -1821,6 +1822,8 @@ fn parse_sftp_entries(
                 is_hidden: remote_file_name(&remote_path)
                     .map(|value| value.starts_with('.'))
                     .unwrap_or(false),
+                is_system: false,
+                is_protected_operating_system: false,
                 is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
                 is_symlink: stat.file_type().is_symlink(),
                 location: LocationDescriptor {
