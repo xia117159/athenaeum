@@ -691,6 +691,58 @@ export const completion = (async () => {
       assert.equal(row.style.width, header.style.width);
     });
 
+    await assertTest("NavigationTabView opens a column header menu with a comment column instead of description", async () => {
+      const item = {
+        ...createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt"),
+        description: "release note"
+      };
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([item]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const header = container.querySelector<HTMLElement>(".navigation-table__row--header");
+      assert.ok(header);
+      assert.equal(container.querySelector('[data-navigation-column-id="description"]'), null);
+      assert.ok(container.querySelector('[data-navigation-column-id="comment"]'));
+      assert.ok(container.querySelector('[data-navigation-cell-id="comment"]'));
+
+      await act(async () => {
+        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 34 }));
+        await flushEffects();
+      });
+
+      const menu = container.querySelector(".column-header-menu") as HTMLElement | null;
+      assert.ok(menu);
+      assert.equal(menu.textContent?.includes("\u6ce8\u91ca"), true);
+      assert.equal(menu.textContent?.includes("\u63cf\u8ff0"), false);
+    });
+
     await assertTest("NavigationTabView adds dropped entry-drag payload paths to navigation", async () => {
       const addedPaths: string[][] = [];
       const savedPaths: string[] = [];

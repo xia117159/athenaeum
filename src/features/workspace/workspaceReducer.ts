@@ -625,6 +625,7 @@ function createSearchResultsSnapshot(sourceTab: TabState, tabId: string, results
       attributes: result.kind === "folder" ? ["D"] : ["A"],
       accentColor: result.kind === "folder" ? "#2f6b57" : "#29659f",
       tags: [],
+      comment: result.match,
       description: result.match
     }))
   };

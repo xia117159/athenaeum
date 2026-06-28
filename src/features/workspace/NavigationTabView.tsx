@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
+  Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   useEffect,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 import { hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
+import { NavigationColumnHeaderMenu } from "./NavigationColumnHeaderMenu";
 import type { EntryViewModel, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 import { NAVIGATION_TAB_ID } from "./workspaceTabs";
@@ -43,7 +45,7 @@ type CurrentFolderContext = {
   path: string;
 };
 
-type NavigationColumnId = "name" | "kind" | "path" | "description" | "status" | "lastOpened";
+type NavigationColumnId = "name" | "kind" | "path" | "comment" | "status" | "lastOpened";
 
 const NAVIGATION_GRID_COLUMN_GAP_PX = 6;
 const NAVIGATION_COLUMNS: Array<{
@@ -55,13 +57,17 @@ const NAVIGATION_COLUMNS: Array<{
   { id: "name", label: "\u540d\u79f0", width: 240, minWidth: 96 },
   { id: "kind", label: "\u7c7b\u578b", width: 112, minWidth: 72 },
   { id: "path", label: "\u8def\u5f84", width: 220, minWidth: 120 },
-  { id: "description", label: "\u63cf\u8ff0", width: 148, minWidth: 88 },
+  { id: "comment", label: "\u6ce8\u91ca", width: 148, minWidth: 88 },
   { id: "status", label: "\u72b6\u6001", width: 120, minWidth: 72 },
   { id: "lastOpened", label: "\u6700\u8fd1\u6253\u5f00", width: 148, minWidth: 112 }
 ];
 
 function createDefaultNavigationColumnWidths() {
   return Object.fromEntries(NAVIGATION_COLUMNS.map((column) => [column.id, column.width])) as Record<NavigationColumnId, number>;
+}
+
+function createDefaultNavigationColumnVisibility() {
+  return Object.fromEntries(NAVIGATION_COLUMNS.map((column) => [column.id, true])) as Record<NavigationColumnId, boolean>;
 }
 
 const STATUS_LABELS: Record<NavigationItem["targetStatus"], string> = {
@@ -135,6 +141,32 @@ function filterItems(items: NavigationItem[], filterText: string) {
   );
 }
 
+function getNavigationCellText(item: NavigationItem, columnId: NavigationColumnId) {
+  switch (columnId) {
+    case "name":
+      return item.displayName;
+    case "kind":
+      return KIND_LABELS[item.targetKind];
+    case "path":
+      return item.path;
+    case "comment":
+      return item.description || "--";
+    case "status":
+      return STATUS_LABELS[item.targetStatus];
+    case "lastOpened":
+      return formatTime(item.lastOpenedAt);
+    default:
+      return "";
+  }
+}
+
+function estimateNavigationColumnWidth(column: (typeof NAVIGATION_COLUMNS)[number], items: NavigationItem[]) {
+  const values = [column.label, ...items.map((item) => getNavigationCellText(item, column.id))];
+  const maxLength = values.reduce((max, value) => Math.max(max, Array.from(value).length), 0);
+  const iconAllowance = column.id === "name" ? 30 : 0;
+  return Math.max(column.minWidth, Math.min(520, maxLength * 8 + iconAllowance + 28));
+}
+
 export function NavigationTabView({
   panelId,
   navigation,
@@ -153,7 +185,10 @@ export function NavigationTabView({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [navigationColumnWidths, setNavigationColumnWidths] = useState<Record<NavigationColumnId, number>>(createDefaultNavigationColumnWidths);
+  const [navigationColumnVisibility, setNavigationColumnVisibility] = useState<Record<NavigationColumnId, boolean>>(createDefaultNavigationColumnVisibility);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const visibleItems = useMemo(() => filterItems(navigation.items, navigation.filterText), [navigation.items, navigation.filterText]);
   const selectedItems = navigation.items.filter((item) => navigation.selectedItemIds.includes(item.id));
   const primarySelected = selectedItems[0];
@@ -168,10 +203,11 @@ export function NavigationTabView({
   const canMoveDown = primarySelected
     ? navigation.items.findIndex((item) => item.id === primarySelected.id) < navigation.items.length - 1
     : false;
-  const navigationGridTemplateColumns = NAVIGATION_COLUMNS.map((column) => `${navigationColumnWidths[column.id]}px`).join(" ");
+  const visibleNavigationColumns = NAVIGATION_COLUMNS.filter((column) => navigationColumnVisibility[column.id]);
+  const navigationGridTemplateColumns = visibleNavigationColumns.map((column) => `${navigationColumnWidths[column.id]}px`).join(" ");
   const navigationGridWidth =
-    NAVIGATION_COLUMNS.reduce((sum, column) => sum + navigationColumnWidths[column.id], 0) +
-    Math.max(0, NAVIGATION_COLUMNS.length - 1) * NAVIGATION_GRID_COLUMN_GAP_PX;
+    visibleNavigationColumns.reduce((sum, column) => sum + navigationColumnWidths[column.id], 0) +
+    Math.max(0, visibleNavigationColumns.length - 1) * NAVIGATION_GRID_COLUMN_GAP_PX;
   const navigationGridStyle = {
     gridTemplateColumns: navigationGridTemplateColumns,
     width: `${navigationGridWidth}px`
@@ -210,6 +246,31 @@ export function NavigationTabView({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [menu]);
+
+  useEffect(() => {
+    if (!columnMenuPosition) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && columnMenuRef.current?.contains(event.target)) {
+        return;
+      }
+      setColumnMenuPosition(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setColumnMenuPosition(null);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [columnMenuPosition]);
 
   const submitDraft = () => {
     if (!draft?.path.trim()) {
@@ -467,6 +528,59 @@ export function NavigationTabView({
     window.addEventListener("mouseup", handleStop);
   };
 
+  const openColumnHeaderMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setColumnMenuPosition({ x: event.clientX, y: event.clientY });
+  };
+
+  const selectColumnMenuItem = (callback: () => void) => {
+    callback();
+    setColumnMenuPosition(null);
+  };
+
+  const setNavigationColumnVisible = (columnId: NavigationColumnId, visible: boolean) => {
+    setNavigationColumnVisibility((current) => ({
+      ...current,
+      [columnId]: visible
+    }));
+  };
+
+  const showAllNavigationColumns = () => {
+    setNavigationColumnVisibility(createDefaultNavigationColumnVisibility());
+  };
+
+  const autoFitVisibleNavigationColumns = () => {
+    setNavigationColumnWidths((current) => {
+      const next = { ...current };
+      for (const column of visibleNavigationColumns) {
+        next[column.id] = estimateNavigationColumnWidth(column, visibleItems);
+      }
+      return next;
+    });
+  };
+
+  const renderNavigationCell = (item: NavigationItem, columnId: NavigationColumnId) => {
+    if (columnId === "name") {
+      return (
+        <span role="cell" className="navigation-table__name" data-navigation-cell-id={columnId}>
+          <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" />
+          <span>{item.displayName}</span>
+        </span>
+      );
+    }
+
+    if (columnId === "path") {
+      return <span role="cell" className="navigation-table__path" data-navigation-cell-id={columnId}>{item.path}</span>;
+    }
+
+    if (columnId === "status") {
+      return <span role="cell" data-status={item.targetStatus} data-navigation-cell-id={columnId}>{STATUS_LABELS[item.targetStatus]}</span>;
+    }
+
+    return <span role="cell" data-navigation-cell-id={columnId}>{getNavigationCellText(item, columnId)}</span>;
+  };
+
   return (
     <div
       className={`navigation-tab${dragActive ? " is-entry-drop-target" : ""}`}
@@ -491,6 +605,21 @@ export function NavigationTabView({
       }}
       onDrop={handleDrop}
     >
+      {columnMenuPosition ? (
+        <NavigationColumnHeaderMenu
+          menuRef={columnMenuRef}
+          x={columnMenuPosition.x}
+          y={columnMenuPosition.y}
+          columns={NAVIGATION_COLUMNS}
+          visibility={navigationColumnVisibility}
+          onToggleColumn={(columnId) =>
+            selectColumnMenuItem(() => setNavigationColumnVisible(columnId, !navigationColumnVisibility[columnId]))
+          }
+          onShowAll={() => selectColumnMenuItem(showAllNavigationColumns)}
+          onAutoFit={() => selectColumnMenuItem(autoFitVisibleNavigationColumns)}
+        />
+      ) : null}
+
       <div className="navigation-tab__toolbar">
         <div className="navigation-tab__group">
           <button type="button" className="toolbar-button toolbar-button--icon" title="添加导航项" aria-label="添加导航项" onClick={() => openDraft()}>
@@ -543,7 +672,7 @@ export function NavigationTabView({
               <input value={draft.displayName ?? ""} onChange={(event) => setDraft({ ...draft, displayName: event.currentTarget.value })} />
             </label>
             <label>
-              <span>描述</span>
+              <span>{"\u6ce8\u91ca"}</span>
               <input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.currentTarget.value })} />
             </label>
             <label className="navigation-editor__path">
@@ -578,9 +707,15 @@ export function NavigationTabView({
       </div>
 
       <div className="navigation-table" role="table" aria-label="导航页快捷入口">
-        <div className="navigation-table__row navigation-table__row--header" role="row" style={navigationGridStyle}>
-          {NAVIGATION_COLUMNS.map((column) => (
-            <div key={column.id} className="navigation-header-cell" role="columnheader">
+        <div className="navigation-table__row navigation-table__row--header" role="row" style={navigationGridStyle} onContextMenu={openColumnHeaderMenu}>
+          {visibleNavigationColumns.map((column) => (
+            <div
+              key={column.id}
+              className="navigation-header-cell"
+              role="columnheader"
+              data-navigation-column-id={column.id}
+              onContextMenu={openColumnHeaderMenu}
+            >
               <span className="navigation-header-cell__label">{column.label}</span>
               <span
                 className="navigation-header-resizer"
@@ -620,15 +755,9 @@ export function NavigationTabView({
                   onDoubleClick={() => actions.openNavigationItem(panelId, item.id)}
                   onContextMenu={(event) => openMenu(event, item)}
                 >
-                  <span role="cell" className="navigation-table__name">
-                    <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" />
-                    <span>{item.displayName}</span>
-                  </span>
-                  <span role="cell">{KIND_LABELS[item.targetKind]}</span>
-                  <span role="cell" className="navigation-table__path">{item.path}</span>
-                  <span role="cell">{item.description || "--"}</span>
-                  <span role="cell" data-status={item.targetStatus}>{STATUS_LABELS[item.targetStatus]}</span>
-                  <span role="cell">{formatTime(item.lastOpenedAt)}</span>
+                  {visibleNavigationColumns.map((column) => (
+                    <Fragment key={column.id}>{renderNavigationCell(item, column.id)}</Fragment>
+                  ))}
                 </button>
               );
             })

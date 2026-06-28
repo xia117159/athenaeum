@@ -23,7 +23,6 @@ import type {
   EntryViewModel,
   PanelId,
   PanelState,
-  SearchResult,
   TabState,
   WindowsDragDropEnvironment,
   WorkspaceState
@@ -454,7 +453,6 @@ export function WorkspaceView() {
     </div>
   );
 }
-
 function ExplorerTreePane({
   nodes,
   activePath,
@@ -756,7 +754,6 @@ function PanelSurface({
     : [];
   const visibleEntries = isNavigationTab(activeTab) ? [] : filterEntriesByFileVisibility(activeTab.snapshot.entries, fileVisibility);
   const entries = isNavigationTab(activeTab) ? [] : isFocused ? filterEntries(visibleEntries, filterText) : visibleEntries;
-  const isSearchResultsTab = activeTab.kind === "search-results";
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
 
@@ -843,12 +840,6 @@ function PanelSurface({
             selectedEntries={directoryContextEntries}
             actions={actions}
           />
-        ) : isSearchResultsTab ? (
-          <SearchResultsListing
-            tab={activeTab}
-            filterText={isFocused ? filterText : ""}
-            onOpenResult={(result) => actions.navigateToPath(panel.id, result.openPath)}
-          />
         ) : (
           <WorkspaceFileListingShell
             panelId={panel.id}
@@ -875,7 +866,13 @@ function PanelSurface({
             onSelectAll={handleSelectAll}
             onSelectRange={handleSelectRange}
             onClearSelection={handleClearSelection}
-            onOpen={(entry) => actions.openEntry(panel.id, entry)}
+            onOpen={(entry) => {
+              if (activeTab.kind === "search-results") {
+                actions.openSearchResult(panel.id, entry);
+                return;
+              }
+              actions.openEntry(panel.id, entry);
+            }}
             detailsRowHeight={detailsRowHeight}
             tooltipHoverDelayMs={tooltipHoverDelayMs}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
@@ -906,72 +903,6 @@ function ReconnectPanel({ tab, onReconnect }: { tab: TabState; onReconnect: () =
       </button>
       <span title={tab.reconnect?.path ?? tab.snapshot.location.path}>{tab.reconnect?.path ?? tab.snapshot.location.path}</span>
       {tab.reconnect?.message ? <small>{tab.reconnect.message}</small> : null}
-    </div>
-  );
-}
-
-function filterSearchResults(results: SearchResult[], filterText: string) {
-  const normalized = filterText.trim().toLowerCase();
-  if (!normalized) {
-    return results;
-  }
-
-  return results.filter((result) =>
-    [result.name, result.path, result.parentPath, result.match].join(" ").toLowerCase().includes(normalized)
-  );
-}
-
-function SearchResultsListing({
-  tab,
-  filterText,
-  onOpenResult
-}: {
-  tab: TabState;
-  filterText: string;
-  onOpenResult: (result: SearchResult) => void;
-}) {
-  const results = filterSearchResults(tab.search?.results ?? [], filterText);
-  const progressText = tab.search?.progress?.statusText ?? `${results.length} 个结果`;
-
-  return (
-    <div className="search-results-tab">
-      <div className="search-results-tab__header">
-        <div>
-          <strong>{tab.title}</strong>
-          <span title={tab.search?.sourcePath}>{tab.search?.sourcePath ?? tab.snapshot.location.path}</span>
-        </div>
-        <span>{progressText}</span>
-      </div>
-
-      <div className="search-results-tab__table" role="table" aria-label="搜索结果">
-        <div className="search-results-tab__row search-results-tab__row--header" role="row">
-          <span role="columnheader">名称</span>
-          <span role="columnheader">类型</span>
-          <span role="columnheader">位置</span>
-          <span role="columnheader">匹配</span>
-        </div>
-        <div className="search-results-tab__body">
-          {results.length === 0 ? (
-            <div className="search-results-tab__empty">无结果</div>
-          ) : (
-            results.map((result) => (
-              <button
-                key={result.id}
-                type="button"
-                className="search-results-tab__row search-results-tab__result"
-                role="row"
-                title={result.path}
-                onClick={() => onOpenResult(result)}
-              >
-                <span role="cell">{result.name}</span>
-                <span role="cell">{result.kind === "folder" ? "文件夹" : "文件"}</span>
-                <span role="cell">{result.parentPath}</span>
-                <span role="cell">{result.match}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   );
 }

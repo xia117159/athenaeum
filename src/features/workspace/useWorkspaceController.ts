@@ -1867,6 +1867,19 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     await handleOpenNewTab(panelId, parentPath);
   });
 
+  const openSearchResult = useEffectEvent(async (panelId: PanelId, entry: EntryViewModel) => {
+    if (entry.kind === "folder") {
+      await handleOpenNewTab(panelId, entry.path);
+      return;
+    }
+
+    try {
+      await workspaceGateway.openPathWithSystemDefault(entry.path);
+    } catch (error) {
+      pushNotification("danger", getErrorMessage(error, "Unable to open with the system default app."));
+    }
+  });
+
   const openNavigationNativeContextMenu = useEffectEvent(async (itemIds: string[], clientX: number, clientY: number, screenX: number, screenY: number) => {
     if (itemIds.length !== 1) {
       void clientX;
@@ -2674,6 +2687,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       openNavigationItem: (panelId: PanelId, itemId: string, inBackground = false) =>
         void openNavigationItem(panelId, itemId, inBackground),
       openNavigationItemParent: (panelId: PanelId, itemId: string) => void openNavigationItemParent(panelId, itemId),
+      openSearchResult: (panelId: PanelId, entry: EntryViewModel) => void openSearchResult(panelId, entry),
       openNavigationNativeContextMenu: (itemIds: string[], clientX: number, clientY: number, screenX: number, screenY: number) =>
         openNavigationNativeContextMenu(itemIds, clientX, clientY, screenX, screenY),
       addCurrentFolderToNavigation: (folder?: NavigationFolderInput) => void addCurrentFolderToNavigation(folder),
@@ -2796,6 +2810,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       navigateUpKeepingForwardHistory,
       openNavigationItem,
       openNavigationItemParent,
+      openSearchResult,
       openNavigationNativeContextMenu,
       openNativeContextMenu,
       openTreeNode,
