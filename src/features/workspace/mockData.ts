@@ -13,6 +13,12 @@ import type {
   TabState,
   WorkspaceBootstrap
 } from "./types";
+import {
+  cloneColumns,
+  DEFAULT_COLUMNS,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS
+} from "./workspaceFileListDefaults";
 
 type CatalogDirectory = {
   path: string;
@@ -23,17 +29,8 @@ type CatalogDirectory = {
   entries: EntryViewModel[];
 };
 
-const DEFAULT_MOCK_COLUMNS: SettingsModel["columns"] = [
-  { id: "name", label: "鍚嶇О", visible: true, width: "2.2fr", align: "left" },
-  { id: "type", label: "绫诲瀷", visible: true, width: "1.1fr", align: "left" },
-  { id: "size", label: "澶у皬", visible: true, width: "0.9fr", align: "right" },
-  { id: "modified", label: "淇敼鏃堕棿", visible: true, width: "1.2fr", align: "left" },
-  { id: "tags", label: "鏍囩", visible: true, width: "1.1fr", align: "left" },
-  { id: "location", label: "浣嶇疆", visible: false, width: "1.3fr", align: "left" }
-];
-
-function cloneMockColumns(columns: SettingsModel["columns"] = DEFAULT_MOCK_COLUMNS) {
-  return columns.map((column) => ({ ...column }));
+function cloneMockColumns(columns: SettingsModel["columns"] = DEFAULT_COLUMNS) {
+  return cloneColumns(columns);
 }
 
 const ROOT_PATHS = ["C:\\", "D:\\", "sftp://deploy@edge-01/", "ftp://media@archive-server/shared"];
@@ -1025,6 +1022,8 @@ function createSettingsModel(): SettingsModel {
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
     detailsRowHeight: 24,
+    tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
+    metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
     contextMenu: {
       defaultMenu: "native"
     },

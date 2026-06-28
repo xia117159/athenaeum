@@ -9,6 +9,7 @@ import {
   toBackendShortcut,
   toRemoteProfileUpsertRequest
 } from "./workspaceBackendDtos";
+import { DEFAULT_COLUMNS } from "./workspaceMappers";
 import type { NavigationItem, RemoteConnectionProfile, SettingsModel } from "./types";
 
 function assertTest(name: string, fn: () => void) {
@@ -139,6 +140,8 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     tagRules: [],
     columns: [],
     detailsRowHeight: 46,
+    tooltipHoverDelayMs: 125,
+    metadataRetentionHours: null,
     contextMenu: {
       defaultMenu: "custom"
     },
@@ -164,7 +167,10 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
         priority: 1
       }
     ],
+    columns: DEFAULT_COLUMNS,
     detailsRowHeight: 46,
+    tooltipHoverDelayMs: 125,
+    metadataRetentionHours: null,
     contextMenu: {
       defaultMenu: "custom"
     },

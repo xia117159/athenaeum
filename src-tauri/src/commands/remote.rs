@@ -25,7 +25,10 @@ fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
         .clone();
     let snapshot = metadata.to_settings_snapshot(
         settings.layout,
+        settings.detail_columns,
         settings.details_row_height,
+        settings.tooltip_hover_delay_ms,
+        settings.metadata_retention_hours,
         settings.context_menu,
         settings.theme,
     );
@@ -175,13 +178,24 @@ pub async fn list_remote_directory(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<EntryViewModel>, String> {
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
+    let metadata = {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
+        metadata.clone()
+    };
     let password = request.password;
     let path = request.path;
-    run_remote_blocking(move || {
-        remote_service::list_directory(&profile, password.as_deref(), path.as_deref())
+    let profile_for_listing = profile.clone();
+    let mut entries = run_remote_blocking(move || {
+        remote_service::list_directory(&profile_for_listing, password.as_deref(), path.as_deref())
             .map_err(|error| error.to_string())
     })
-    .await
+    .await?;
+    for entry in &mut entries {
+        let key = remote_entry_uri(&profile, &entry.path);
+        entry.comment = metadata.comment_for_path(&key);
+    }
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -401,13 +415,58 @@ fn remote_profile_by_id(
         .ok_or_else(|| format!("remote profile not found: {id}"))
 }
 
+fn default_remote_port(protocol: &crate::domain::models::LocationKind) -> Option<u16> {
+    match protocol {
+        crate::domain::models::LocationKind::Ftp => Some(21),
+        crate::domain::models::LocationKind::Sftp => Some(22),
+        _ => None,
+    }
+}
+
+fn normalize_remote_uri_path(path: &str) -> String {
+    let normalized = path
+        .trim()
+        .replace('\\', "/")
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        "/".into()
+    } else {
+        format!("/{normalized}")
+    }
+}
+
+fn remote_entry_uri(profile: &RemoteProfile, remote_path: &str) -> String {
+    let port = if Some(profile.port) == default_remote_port(&profile.protocol) {
+        String::new()
+    } else {
+        format!(":{}", profile.port)
+    };
+    format!(
+        "{}://{}@{}{}{}",
+        match profile.protocol {
+            crate::domain::models::LocationKind::Ftp => "ftp",
+            crate::domain::models::LocationKind::Sftp => "sftp",
+            _ => "remote",
+        },
+        profile.username,
+        profile.host.to_lowercase(),
+        port,
+        normalize_remote_uri_path(remote_path)
+    )
+}
+
 pub fn hydrate_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfile> {
     profiles
         .into_iter()
         .map(|profile| {
             let mut hydrated = profile.clone();
             if let Some(credential_target) = &profile.credential_target {
-                if let Some(password) = remote_service::read_password_from_credential(credential_target) {
+                if let Some(password) =
+                    remote_service::read_password_from_credential(credential_target)
+                {
                     hydrated.password = Some(password);
                 }
             }
@@ -418,7 +477,8 @@ pub fn hydrate_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfil
 
 #[cfg(test)]
 mod tests {
-    use super::run_remote_blocking;
+    use super::{remote_entry_uri, run_remote_blocking};
+    use crate::domain::models::{LocationKind, RemoteAuthKind, RemoteProfile};
 
     #[test]
     fn remote_blocking_runner_executes_work_on_background_thread() {
@@ -429,5 +489,31 @@ mod tests {
         .expect("blocking work should finish");
 
         assert_ne!(worker_thread, caller_thread);
+    }
+
+    #[test]
+    fn remote_entry_uri_normalizes_host_but_preserves_username_and_path_case() {
+        let profile = RemoteProfile {
+            id: "remote-1".into(),
+            name: "Edge".into(),
+            protocol: LocationKind::Sftp,
+            host: "Edge-01.Internal".into(),
+            port: 22,
+            username: "DeployUser".into(),
+            root_path: "/".into(),
+            auth_kind: RemoteAuthKind::Password,
+            private_key_path: None,
+            passive_mode: true,
+            ignore_host_key: false,
+            connect_timeout_secs: 10,
+            command_timeout_secs: 20,
+            credential_target: None,
+            password: None,
+        };
+
+        assert_eq!(
+            remote_entry_uri(&profile, "/Releases/Report.TXT"),
+            "sftp://DeployUser@edge-01.internal/Releases/Report.TXT"
+        );
     }
 }

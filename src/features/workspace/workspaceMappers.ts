@@ -10,6 +10,12 @@ import type {
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
 import { createRemoteRootUri, createRemoteUri, resolveRemotePath, trimTrailingSlash } from "./remoteUri";
+import {
+  cloneColumns,
+  DEFAULT_COLUMNS,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS
+} from "./workspaceFileListDefaults";
 import type {
   BookmarkItem,
   ColumnDefinition,
@@ -27,17 +33,63 @@ import type {
   WorkspaceBootstrap
 } from "./types";
 
-export const DEFAULT_COLUMNS: ColumnDefinition[] = [
-  { id: "name", label: "名称", visible: true, width: "2.2fr", align: "left" },
-  { id: "type", label: "类型", visible: true, width: "1.1fr", align: "left" },
-  { id: "size", label: "大小", visible: true, width: "0.9fr", align: "right" },
-  { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
-  { id: "tags", label: "标签", visible: true, width: "1.1fr", align: "left" },
-  { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
-];
+export { cloneColumns, DEFAULT_COLUMNS, DEFAULT_METADATA_RETENTION_HOURS, DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "./workspaceFileListDefaults";
 
-export function cloneColumns(columns: ColumnDefinition[] = DEFAULT_COLUMNS): ColumnDefinition[] {
-  return columns.map((column) => ({ ...column }));
+const DEFAULT_COLUMN_BY_ID = new Map(DEFAULT_COLUMNS.map((column) => [column.id, column] as const));
+
+function normalizeColumnId(value?: string | null): ColumnDefinition["id"] | null {
+  return DEFAULT_COLUMNS.some((column) => column.id === value) ? (value as ColumnDefinition["id"]) : null;
+}
+
+function normalizeColumnAlign(value?: string | null): ColumnDefinition["align"] {
+  return value === "right" ? "right" : "left";
+}
+
+export function normalizeColumns(
+  columns?: Array<{
+    id?: string | null;
+    label?: string | null;
+    visible?: boolean | null;
+    width?: string | null;
+    align?: string | null;
+  }> | null
+): ColumnDefinition[] {
+  if (!columns || columns.length === 0) {
+    return cloneColumns();
+  }
+
+  const seen = new Set<ColumnDefinition["id"]>();
+  const normalized: ColumnDefinition[] = [];
+  const normalizedById = new Map<ColumnDefinition["id"], ColumnDefinition>();
+  for (const column of columns) {
+    const id = normalizeColumnId(column.id);
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    const fallback = DEFAULT_COLUMN_BY_ID.get(id)!;
+    seen.add(id);
+    const normalizedColumn = {
+      id,
+      label: typeof column.label === "string" && column.label.trim() ? column.label : fallback.label,
+      visible: typeof column.visible === "boolean" ? column.visible : fallback.visible,
+      width: typeof column.width === "string" && column.width.trim() ? column.width : fallback.width,
+      align: normalizeColumnAlign(column.align)
+    };
+    normalized.push(normalizedColumn);
+    normalizedById.set(id, normalizedColumn);
+  }
+
+  if (seen.size < DEFAULT_COLUMNS.length) {
+    return DEFAULT_COLUMNS.map((column) => normalizedById.get(column.id) ?? { ...column });
+  }
+
+  for (const column of DEFAULT_COLUMNS) {
+    if (!seen.has(column.id)) {
+      normalized.push({ ...column });
+    }
+  }
+
+  return normalized.length > 0 ? normalized : cloneColumns();
 }
 
 const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
@@ -185,7 +237,26 @@ export function normalizeDetailsRowHeight(value?: number | null) {
     return DEFAULT_DETAILS_ROW_HEIGHT;
   }
 
-  return clamp(24, Math.round(value), 72);
+  return clamp(12, Math.round(value), 72);
+}
+
+export function normalizeTooltipHoverDelayMs(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_TOOLTIP_HOVER_DELAY_MS;
+  }
+
+  return clamp(0, Math.round(value), 5000);
+}
+
+export function normalizeMetadataRetentionHours(value?: number | null) {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_METADATA_RETENTION_HOURS;
+  }
+
+  return Math.max(0, Math.round(value));
 }
 
 export function normalizeTabMinWidth(value?: number | null) {
@@ -324,12 +395,12 @@ function formatFileSize(size?: number | null) {
   return `${rendered} ${units[unitIndex]}`;
 }
 
-function formatModifiedLabel(modifiedAt?: string | null) {
-  if (!modifiedAt) {
+function formatDateLabel(value?: string | null) {
+  if (!value) {
     return "--";
   }
 
-  const date = new Date(modifiedAt);
+  const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "--";
   }
@@ -498,11 +569,14 @@ function mapEntryViewModel(
     parentPath: currentPath,
     sizeBytes: entry.kind === "directory" ? null : entry.size ?? null,
     sizeLabel: entry.kind === "directory" ? "--" : formatFileSize(entry.size),
-    modifiedLabel: formatModifiedLabel(entry.modifiedAt),
+    createdLabel: formatDateLabel(entry.createdAt),
+    modifiedLabel: formatDateLabel(entry.modifiedAt),
+    accessedLabel: formatDateLabel(entry.accessedAt),
     extension,
     attributes,
     accentColor: entry.decoration.colorHex ?? (entry.kind === "directory" ? "#2f6b57" : "#29659f"),
     tags: entry.decoration.tags ? [...entry.decoration.tags] : [],
+    comment: entry.comment ?? "",
     description: describeEntry(entry)
   } satisfies DirectorySnapshot["entries"][number];
 }
@@ -655,8 +729,10 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
       accentColor: definition.colorHex,
       quickFilter: definition.name
     })),
-    columns: cloneColumns(),
+    columns: normalizeColumns(settings.columns),
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settings.contextMenu?.defaultMenu)
     },
@@ -685,8 +761,10 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     shortcuts: mergeShortcutDefaults(settingsModel.shortcuts),
     colorRules: settingsModel.colorRules,
     tagRules: settingsModel.tagRules,
-    columns: settingsModel.columns.length > 0 ? cloneColumns(settingsModel.columns) : cloneColumns(),
+    columns: normalizeColumns(settingsModel.columns),
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settingsModel.contextMenu?.defaultMenu)
     },

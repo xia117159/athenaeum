@@ -4,8 +4,10 @@ import type { RemoteConnectionProfile, SettingsModel, SettingsSection, Workspace
 import {
   normalizeContextMenuDefault,
   normalizeDetailsRowHeight,
+  normalizeMetadataRetentionHours,
   normalizeSettingsModel,
   normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 import { useWorkspaceController } from "./useWorkspaceController";
@@ -18,6 +20,8 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     tagRules: model.tagRules.map((rule) => ({ ...rule })),
     columns: model.columns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
+    tooltipHoverDelayMs: model.tooltipHoverDelayMs,
+    metadataRetentionHours: model.metadataRetentionHours,
     contextMenu: { ...model.contextMenu },
     theme: { ...model.theme }
   };
@@ -61,7 +65,14 @@ function computeDirtySections(
   const dm = draft.settings.model;
   const pm = normalizedPersistedModel;
   if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
-  if (!hasSameJsonShape(pm.columns, dm.columns) || pm.detailsRowHeight !== dm.detailsRowHeight) sections.add("file-list");
+  if (
+    !hasSameJsonShape(pm.columns, dm.columns) ||
+    pm.detailsRowHeight !== dm.detailsRowHeight ||
+    pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
+    pm.metadataRetentionHours !== dm.metadataRetentionHours
+  ) {
+    sections.add("file-list");
+  }
   if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu)) sections.add("menu-mouse");
   if (!hasSameJsonShape(pm.theme, dm.theme)) sections.add("appearance");
   if (!hasSameJsonShape(pm.colorRules, dm.colorRules)) sections.add("color-rules");
@@ -311,6 +322,18 @@ export function SettingsWindowView() {
           updateDraftModel((model) => ({
             ...model,
             detailsRowHeight: normalizeDetailsRowHeight(value)
+          }))
+        }
+        onUpdateTooltipHoverDelay={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(value)
+          }))
+        }
+        onUpdateMetadataRetentionHours={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            metadataRetentionHours: normalizeMetadataRetentionHours(value)
           }))
         }
         onUpdateContextMenuDefault={(value) =>

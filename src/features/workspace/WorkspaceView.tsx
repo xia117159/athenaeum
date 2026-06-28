@@ -1,22 +1,5 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Copy,
-  FilePlus,
-  FolderPlus,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelTopOpen,
-  RefreshCw,
-  Scissors,
-  Search,
-  Trash2,
-  ClipboardPaste,
-  TextCursorInput,
-  X
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
@@ -824,6 +807,7 @@ function PanelLayout({
       columns={state.settings.model.columns}
       clipboard={state.clipboard}
       detailsRowHeight={state.settings.model.detailsRowHeight}
+      tooltipHoverDelayMs={state.settings.model.tooltipHoverDelayMs}
       entryDropMoveBinding={getShortcutBinding(state.settings.model.shortcuts, "drag-move")}
       contextMenuDefault={state.settings.model.contextMenu.defaultMenu}
       contextMenuToggleBinding={getShortcutBinding(state.settings.model.shortcuts, "context-menu-toggle")}
@@ -937,6 +921,7 @@ function PanelSurface({
   columns,
   clipboard,
   detailsRowHeight,
+  tooltipHoverDelayMs,
   entryDropMoveBinding,
   contextMenuDefault,
   contextMenuToggleBinding,
@@ -954,6 +939,7 @@ function PanelSurface({
   columns: ColumnDefinition[];
   clipboard: WorkspaceState["clipboard"];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
   entryDropMoveBinding: string;
   contextMenuDefault: ContextMenuDefault;
   contextMenuToggleBinding: string;
@@ -1081,6 +1067,9 @@ function PanelSurface({
             onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>
               actions.setColumnVisibility(panel.id, activeTab.id, columnId, visible)
             }
+            onMoveColumn={(sourceId: ColumnId, targetId: ColumnId, placement: "before" | "after") =>
+              actions.moveColumn(panel.id, activeTab.id, sourceId, targetId, placement)
+            }
             onShowAllColumns={(columnIds: ColumnId[]) => actions.showAllColumns(panel.id, activeTab.id, columnIds)}
             onSelect={(entry, multi) => actions.selectEntry(panel.id, activeTab.id, entry.id, multi)}
             onSelectMultiple={handleSelectMultiple}
@@ -1089,6 +1078,7 @@ function PanelSurface({
             onClearSelection={handleClearSelection}
             onOpen={(entry) => actions.openEntry(panel.id, entry)}
             detailsRowHeight={detailsRowHeight}
+            tooltipHoverDelayMs={tooltipHoverDelayMs}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
             onDropEntries={(paths, destination, operation) => actions.dropEntries(paths, destination, operation)}

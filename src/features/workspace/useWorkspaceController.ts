@@ -1,22 +1,53 @@
 import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
-import { createMockWorkspaceBootstrap, getParentLocationPath, nextGeneratedTabId, normalizeLocationPath } from "./mockData";
+import { createMockWorkspaceBootstrap, normalizeLocationPath } from "./mockData";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
+import { openCommentWindow } from "./commentWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
-import { cloneColumns } from "./workspaceMappers";
 import { devLog } from "./devLog";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
 import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
 import {
-  getLocationPathSeparator,
+  appendLocationPathSegment,
+  createDragDropRequestId,
+  createDragDropRequestKey,
+  createForwardPreservingNavigationHistory,
+  createMultiSelectionSummary,
+  createNotification,
+  createSelectionKey,
+  createReconnectTab,
+  createTabFromSnapshot,
+  createUniqueSearchTabId,
+  createUniqueTabId,
+  findDirectoryTabForNavigationFolder,
+  findEntryByPath,
+  findTab,
+  findTreeNode,
+  getActiveDirectoryTab,
+  getEntryNameFromPath,
+  getErrorMessage,
+  getFallbackDirectoryPath,
+  getSelectedEntries,
+  getTabsForPaths,
+  hasSameJsonShape,
+  hasVisibleNavigationTab,
+  isLocalFileClipboard,
+  isSameOrDescendantPath,
+  normalizeNavigationParentKey,
+  NOTIFICATION_AUTO_DISMISS_MS,
+  planNotificationDismissals,
+  waitForMilliseconds,
+  type NavigationFolderInput
+} from "./workspaceControllerUtils";
+import {
   getOperationRefreshPaths,
   getParentPathForRefresh,
-  getPathComparisonKey,
+  pathRefToWorkspacePath,
   getVisibleDirectoryRefreshTargets,
   getVisibleWatchRoots,
   hasSameParentPath,
@@ -27,18 +58,14 @@ import {
 } from "./workspaceRefreshPlanner";
 import type {
   ColumnId,
-  ColumnDefinition,
   ContextMenuState,
   DirectoryNode,
-  DirectorySnapshot,
   EntryViewModel,
-  MultiSelectionPropertiesSummary,
   NativeBackgroundContextMenuAction,
   NativeBackgroundContextMenuOptions,
   NativeContextMenuRequest,
   NavigationItem,
   NavigationItemUpsertRequest,
-  NotificationItem,
   OperationTaskSnapshot,
   PanelId,
   RemoteConnectionProfile,
@@ -53,413 +80,9 @@ import type {
   WorkspaceState
 } from "./types";
 
+export { planNotificationDismissals } from "./workspaceControllerUtils";
+
 const defaultWorkspaceGateway = createWorkspaceGateway();
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string" && error.trim()) {
-    return error;
-  }
-  return fallback;
-}
-
-function hasSameJsonShape(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function createDragDropRequestKey(paths: string[], destination: string, operation: "copy" | "move") {
-  return [
-    operation,
-    destination,
-    ...Array.from(new Set(paths)).sort((left, right) => left.localeCompare(right))
-  ].join("\u001f");
-}
-
-function createDragDropRequestId(operation: "copy" | "move", sequence: number) {
-  return `drag-drop-${operation}-${Date.now().toString(36)}-${sequence.toString(36)}`;
-}
-
-function createTabFromSnapshot(
-  panelId: PanelId,
-  snapshot: DirectorySnapshot,
-  id = nextGeneratedTabId(panelId),
-  viewMode: TabViewMode = "details",
-  columns: ColumnDefinition[] = []
-): TabState {
-  return {
-    id,
-    title: snapshot.location.label,
-    kind: "directory",
-    snapshot,
-    addressDraft: snapshot.location.path,
-    history: [snapshot.location.path],
-    historyIndex: 0,
-    selectedEntryIds: [],
-    expandedNodePaths: snapshot.breadcrumbs.map((breadcrumb) => breadcrumb.path),
-    viewMode,
-    sort: {
-      columnId: "name",
-      direction: "asc"
-    },
-    columns: cloneColumns(columns.length > 0 ? columns : undefined),
-    status: "ready"
-  };
-}
-
-function remoteKindFromPath(path: string) {
-  return path.startsWith("ftp://") ? "ftp" : "sftp";
-}
-
-function createReconnectSnapshot(path: string, message?: string): DirectorySnapshot {
-  return {
-    location: {
-      kind: remoteKindFromPath(path),
-      label: path,
-      path,
-      subtitle: message
-    },
-    breadcrumbs: [
-      {
-        id: path,
-        label: path,
-        path
-      }
-    ],
-    entries: []
-  };
-}
-
-function createReconnectTab(
-  panelId: PanelId,
-  path: string,
-  id: string,
-  viewMode: TabViewMode,
-  columns: ColumnDefinition[],
-  message?: string
-): TabState {
-  return {
-    ...createTabFromSnapshot(panelId, createReconnectSnapshot(path, message), id, viewMode, columns),
-    status: "reconnect-required",
-    reconnect: {
-      path,
-      ...(message ? { message } : {})
-    }
-  };
-}
-
-function createUniqueTabId(panelId: PanelId, tabs: TabState[]) {
-  const existingIds = new Set(tabs.map((tab) => tab.id));
-  let id = nextGeneratedTabId(panelId);
-  while (existingIds.has(id)) {
-    id = nextGeneratedTabId(panelId);
-  }
-  return id;
-}
-
-function createUniqueSearchTabId(panelId: PanelId, tabs: TabState[]) {
-  const existingIds = new Set(tabs.map((tab) => tab.id));
-  let sequence = 1;
-  let id = `${panelId}-search-results-${sequence}`;
-  while (existingIds.has(id)) {
-    sequence += 1;
-    id = `${panelId}-search-results-${sequence}`;
-  }
-  return id;
-}
-
-function findTreeNode(nodes: DirectoryNode[], path: string): DirectoryNode | undefined {
-  for (const node of nodes) {
-    if (node.path === path) {
-      return node;
-    }
-    const nested = findTreeNode(node.children, path);
-    if (nested) {
-      return nested;
-    }
-  }
-  return undefined;
-}
-
-function createNotification(intent: WorkspaceState["notifications"][number]["intent"], message: string) {
-  return {
-    id:
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    intent,
-    message
-  } satisfies WorkspaceState["notifications"][number];
-}
-
-function getSelectedEntries(state: WorkspaceState, panelId: PanelId) {
-  const tab = getActiveTab(state.panels[panelId]);
-  if (!isDirectoryTab(tab)) {
-    return [];
-  }
-  return tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
-}
-
-function createSelectionKey(entries: EntryViewModel[]) {
-  return entries.map((entry) => entry.id).join("|");
-}
-
-function createMultiSelectionSummary(entries: EntryViewModel[]): MultiSelectionPropertiesSummary {
-  const parentPaths = new Set(entries.map((entry) => entry.parentPath));
-  const kinds = new Set(entries.map((entry) => entry.kind));
-  const commonExtension =
-    entries.length > 0 && entries.every((entry) => entry.kind === "file" && Boolean(entry.extension))
-      ? (() => {
-          const extensions = new Set(entries.map((entry) => entry.extension));
-          return extensions.size === 1 ? [...extensions][0] : undefined;
-        })()
-      : undefined;
-  const directoryCount = entries.filter((entry) => entry.kind === "folder").length;
-  const knownSizeBytes = entries.reduce(
-    (sum, entry) => sum + (typeof entry.sizeBytes === "number" ? entry.sizeBytes : 0),
-    0
-  );
-  const unknownSizeCount = entries.filter((entry) => typeof entry.sizeBytes !== "number").length;
-
-  return {
-    selectionKey: createSelectionKey(entries),
-    count: entries.length,
-    knownSizeBytes,
-    unknownSizeCount,
-    directoryCount,
-    commonParentPath: parentPaths.size === 1 ? [...parentPaths][0] : undefined,
-    commonKind: kinds.size === 1 ? [...kinds][0] : undefined,
-    commonExtension,
-    fieldStates:
-      directoryCount > 0
-        ? [
-            {
-              field: "directorySize",
-              state: "notComputed",
-              message: "多选目录大小未计算"
-            }
-          ]
-        : []
-  };
-}
-
-function getActiveDirectoryTab(state: WorkspaceState, panelId: PanelId) {
-  const tab = getActiveTab(state.panels[panelId]);
-  return isDirectoryTab(tab) ? tab : undefined;
-}
-
-type NavigationFolderInput = {
-  displayName?: string;
-  path: string;
-};
-
-function normalizeNavigationParentKey(path: string) {
-  return normalizeLocationPath(path).replace(/\//g, "\\").toLowerCase();
-}
-
-function findTab(state: WorkspaceState, panelId: PanelId, tabId: string) {
-  return state.panels[panelId].tabs.find((tab) => tab.id === tabId);
-}
-
-function getTabsForPaths(state: WorkspaceState, paths: string[]) {
-  const normalizedPaths = paths.map((path) => normalizeLocationPath(path));
-  return Object.values(state.panels).flatMap((panel) =>
-    panel.tabs
-      .filter(isDirectoryTab)
-      .filter((tab) => {
-        const tabPath = normalizeLocationPath(tab.snapshot.location.path);
-        return normalizedPaths.some((path) => pathsEqual(tabPath, path) || isSameOrDescendantPath(path, tabPath));
-      })
-      .map((tab) => ({
-        panelId: panel.id,
-        tabId: tab.id,
-        path: tab.snapshot.location.path,
-        historyIndex: tab.historyIndex
-      }))
-  );
-}
-
-function getFallbackDirectoryPath(state: WorkspaceState, preferredPanelId: PanelId) {
-  const preferredPanel = state.panels[preferredPanelId];
-  const preferredDirectoryTab = preferredPanel.tabs.find(isDirectoryTab);
-  if (preferredDirectoryTab) {
-    return preferredDirectoryTab.snapshot.location.path;
-  }
-
-  const visiblePanelIds = ["panel-1", "panel-2", "panel-3", "panel-4"].filter((panelId): panelId is PanelId => {
-    switch (state.layoutMode) {
-      case "single":
-        return panelId === "panel-1";
-      case "dual":
-        return panelId === "panel-1" || panelId === "panel-2";
-      case "triple":
-        return panelId !== "panel-4";
-      case "quad":
-        return true;
-      default:
-        return panelId === "panel-1";
-    }
-  });
-
-  for (const panelId of visiblePanelIds) {
-    const tab = state.panels[panelId].tabs.find(isDirectoryTab);
-    if (tab) {
-      return tab.snapshot.location.path;
-    }
-  }
-
-  for (const panel of Object.values(state.panels)) {
-    const tab = panel.tabs.find(isDirectoryTab);
-    if (tab) {
-      return tab.snapshot.location.path;
-    }
-  }
-
-  return "C:\\";
-}
-
-function hasVisibleNavigationTab(state: WorkspaceState) {
-  return getVisiblePanelIds(state.layoutMode).some((panelId) => isNavigationTab(getActiveTab(state.panels[panelId])));
-}
-
-function getNavigationFolderMatchPanelOrder(state: WorkspaceState, navigationPanelId: PanelId) {
-  const visiblePanelIds = getVisiblePanelIds(state.layoutMode);
-  return [
-    ...visiblePanelIds.filter((panelId) => panelId !== navigationPanelId),
-    ...(visiblePanelIds.includes(navigationPanelId) ? [navigationPanelId] : [])
-  ];
-}
-
-function findDirectoryTabForNavigationFolder(state: WorkspaceState, navigationPanelId: PanelId, path: string) {
-  for (const panelId of getNavigationFolderMatchPanelOrder(state, navigationPanelId)) {
-    for (const tab of state.panels[panelId].tabs) {
-      if (isDirectoryTab(tab) && pathsEqual(tab.snapshot.location.path, path)) {
-        return { panelId, tabId: tab.id };
-      }
-    }
-  }
-
-  return undefined;
-}
-
-function isSameOrDescendantPath(source: string, destination: string) {
-  const normalizedSource = normalizeLocationPath(source);
-  const normalizedDestination = normalizeLocationPath(destination);
-  const separator = isRemotePath(normalizedSource) || isRemotePath(normalizedDestination) ? "/" : "\\";
-  const sourceKey = getPathComparisonKey(normalizedSource);
-  const destinationKey = getPathComparisonKey(normalizedDestination);
-  const prefix = sourceKey.endsWith(separator) ? sourceKey : `${sourceKey}${separator}`;
-  return destinationKey === sourceKey || destinationKey.startsWith(prefix);
-}
-
-function isLocalFileClipboard(paths: string[]) {
-  return paths.length > 0 && paths.every((path) => !isRemotePath(path));
-}
-
-function appendLocationPathSegment(basePath: string, segment: string) {
-  const separator = getLocationPathSeparator(basePath);
-  return basePath.endsWith(separator) ? `${basePath}${segment}` : `${basePath}${separator}${segment}`;
-}
-
-function buildDescendantPathChain(ancestorPath: string, descendantPath: string) {
-  const normalizedAncestorPath = normalizeLocationPath(ancestorPath);
-  const normalizedDescendantPath = normalizeLocationPath(descendantPath);
-  if (!isSameOrDescendantPath(normalizedAncestorPath, normalizedDescendantPath)) {
-    return [normalizedAncestorPath];
-  }
-  if (pathsEqual(normalizedAncestorPath, normalizedDescendantPath)) {
-    return [normalizedAncestorPath];
-  }
-
-  const separator = getLocationPathSeparator(normalizedAncestorPath);
-  const prefix = normalizedAncestorPath.endsWith(separator)
-    ? normalizedAncestorPath
-    : `${normalizedAncestorPath}${separator}`;
-  const segments = normalizedDescendantPath.slice(prefix.length).split(separator).filter(Boolean);
-  const chain = [normalizedAncestorPath];
-  let cursor = normalizedAncestorPath;
-  for (const segment of segments) {
-    cursor = appendLocationPathSegment(cursor, segment);
-    chain.push(cursor);
-  }
-  return chain;
-}
-
-function getDeepestForwardDescendantPath(tab: TabState, currentPath: string) {
-  const normalizedCurrentPath = normalizeLocationPath(currentPath);
-  return tab.history.slice(tab.historyIndex + 1).reduce<string>((deepestPath, historyPath) => {
-    const normalizedHistoryPath = normalizeLocationPath(historyPath);
-    if (
-      pathsEqual(normalizedHistoryPath, normalizedCurrentPath) ||
-      !isSameOrDescendantPath(normalizedCurrentPath, normalizedHistoryPath)
-    ) {
-      return deepestPath;
-    }
-
-    return getPathComparisonKey(normalizedHistoryPath).length > getPathComparisonKey(deepestPath).length
-      ? normalizedHistoryPath
-      : deepestPath;
-  }, normalizedCurrentPath);
-}
-
-function createForwardPreservingNavigationHistory(tab: TabState, targetPath: string) {
-  const currentPath = tab.snapshot.location.path;
-  const normalizedTargetPath = normalizeLocationPath(targetPath);
-  const targetIsCurrent = pathsEqual(normalizedTargetPath, currentPath);
-  const targetIsDescendant = isSameOrDescendantPath(currentPath, normalizedTargetPath) && !targetIsCurrent;
-  const targetIsAncestor = isSameOrDescendantPath(normalizedTargetPath, currentPath);
-  if (!targetIsCurrent && !targetIsDescendant && !targetIsAncestor) {
-    return null;
-  }
-
-  const deepestPath = getDeepestForwardDescendantPath(tab, currentPath);
-  const chainStartPath = targetIsDescendant ? currentPath : normalizedTargetPath;
-  if (!isSameOrDescendantPath(chainStartPath, deepestPath)) {
-    return null;
-  }
-
-  const chain = buildDescendantPathChain(chainStartPath, deepestPath);
-  const targetChainIndex = chain.findIndex((path) => pathsEqual(path, normalizedTargetPath));
-  if (targetChainIndex < 0) {
-    return null;
-  }
-
-  const chainKeys = new Set(chain.map(getPathComparisonKey));
-  const historyPrefix = tab.history
-    .slice(0, tab.historyIndex)
-    .map((historyPath) => normalizeLocationPath(historyPath))
-    .filter((historyPath) => !chainKeys.has(getPathComparisonKey(historyPath)));
-  return {
-    history: [...historyPrefix, ...chain],
-    historyIndex: historyPrefix.length + targetChainIndex
-  };
-}
-
-function waitForMilliseconds(milliseconds: number) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-/** How long a non-error notification stays on screen before auto-closing. */
-const NOTIFICATION_AUTO_DISMISS_MS = 5000;
-
-/**
- * Decide which notifications need an auto-dismiss timer scheduled and which
- * existing timers should be cleared. Error (`danger`) notifications are never
- * auto-dismissed so the user can read them; everything else closes after the
- * timeout. Pure so it can be unit-tested without timers.
- */
-export function planNotificationDismissals(
-  notifications: readonly { id: string; intent: NotificationItem["intent"] }[],
-  scheduledIds: ReadonlySet<string>
-): { toSchedule: string[]; toClear: string[] } {
-  const activeIds = new Set(notifications.map((notification) => notification.id));
-  const toSchedule = notifications
-    .filter((notification) => notification.intent !== "danger" && !scheduledIds.has(notification.id))
-    .map((notification) => notification.id);
-  const toClear = [...scheduledIds].filter((id) => !activeIds.has(id));
-  return { toSchedule, toClear };
-}
 
 export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () => ({
@@ -492,7 +115,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     colorRules: false,
     detailsRowHeight: false,
     theme: false,
-    contextMenu: false
+    contextMenu: false,
+    fileListModel: false
   });
 
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
@@ -539,7 +163,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       colorRules: true,
       detailsRowHeight: true,
       theme: true,
-      contextMenu: true
+      contextMenu: true,
+      fileListModel: true
     };
   };
 
@@ -549,7 +174,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       colorRules: false,
       detailsRowHeight: false,
       theme: false,
-      contextMenu: false
+      contextMenu: false,
+      fileListModel: false
     };
   };
 
@@ -573,7 +199,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       colorRules: !hasSameJsonShape(current.colorRules, next.colorRules),
       detailsRowHeight: current.detailsRowHeight !== next.detailsRowHeight,
       theme: !hasSameJsonShape(current.theme, next.theme),
-      contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu)
+      contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
+      fileListModel:
+        !hasSameJsonShape(current.columns, next.columns) ||
+        current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
+        current.metadataRetentionHours !== next.metadataRetentionHours
     };
   };
 
@@ -582,7 +212,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
     !hasSameJsonShape(current.theme, next.theme) ||
-    !hasSameJsonShape(current.contextMenu, next.contextMenu);
+    !hasSameJsonShape(current.contextMenu, next.contextMenu) ||
+    !hasSameJsonShape(current.columns, next.columns) ||
+    current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
+    current.metadataRetentionHours !== next.metadataRetentionHours;
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
@@ -776,12 +409,19 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     if (state.source !== "tauri") {
       return;
     }
-    if (skipNextSettingsPersistenceRef.current.contextMenu) {
+    if (skipNextSettingsPersistenceRef.current.contextMenu || skipNextSettingsPersistenceRef.current.fileListModel) {
       skipNextSettingsPersistenceRef.current.contextMenu = false;
+      skipNextSettingsPersistenceRef.current.fileListModel = false;
       return;
     }
     void workspaceGateway.saveSettingsModel(state.settings.model);
-  }, [state.settings.model.contextMenu, state.source]);
+  }, [
+    state.settings.model.columns,
+    state.settings.model.contextMenu,
+    state.settings.model.tooltipHoverDelayMs,
+    state.settings.model.metadataRetentionHours,
+    state.source
+  ]);
 
   useEffect(() => {
     if (!searchHistoryHydratedRef.current) {
@@ -1062,8 +702,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const infos = await workspaceGateway.resolveNavigationTargets(state.navigation.items.map((item) => item.path));
       dispatch({ type: "navigationTargetStatusUpdated", payload: infos });
     } catch (error) {
-      throw error;
-      throw error;
       dispatch({ type: "navigationStatusSet", payload: "idle" });
       pushNotification("danger", getErrorMessage(error, "无法刷新导航项目标状态。"));
     }
@@ -1299,6 +937,30 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     return replacements;
   };
 
+  const markDeletedMetadataForOperationTask = useEffectEvent(async (task: OperationTaskSnapshot) => {
+    if (!["delete", "move", "rename"].includes(task.kind) || task.status === "failed" || task.status === "cancelled") {
+      return;
+    }
+
+    const deletedPaths = Array.from(
+      new Set(
+        task.entryResults
+          .filter((result) => !result.error && ["deleted", "trashed", "moved", "renamed"].includes(result.kind))
+          .map((result) => (result.source ? pathRefToWorkspacePath(result.source, state.remoteProfiles) : null))
+          .filter((path): path is string => Boolean(path))
+      )
+    );
+    if (deletedPaths.length === 0) {
+      return;
+    }
+
+    try {
+      await workspaceGateway.markEntryMetadataDeleted(deletedPaths);
+    } catch (error) {
+      pushNotification("warning", getErrorMessage(error, "Unable to update metadata retention for deleted entries"));
+    }
+  });
+
   const projectOperationTask = useEffectEvent(async (task: OperationTaskSnapshot) => {
     dispatch({ type: "operationTaskEventReceived", payload: task });
     if (!isTerminalOperationTask(task)) {
@@ -1326,6 +988,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     } else if (task.status === "partialSucceeded") {
       pushNotification("warning", task.message ?? "File operation completed with errors");
     }
+    await markDeletedMetadataForOperationTask(task);
   });
 
   const projectOperationResult = useEffectEvent(async (task: OperationTaskSnapshot | void) => {
@@ -1502,6 +1165,53 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     workspaceGateway
   ]);
 
+  useEffect(() => {
+    if (state.status !== "ready" || state.source !== "tauri") {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const refreshEntryMetadataPaths = (paths: string[]) => {
+      if (disposed) {
+        return;
+      }
+      const refreshPaths = Array.from(
+        new Set(paths.map((path) => getParentPathForRefresh(path)).filter((path): path is string => Boolean(path)))
+      );
+      if (refreshPaths.length > 0) {
+        void refreshPanelsForPaths(refreshPaths);
+      }
+    };
+    const handleBrowserMetadataChanged = (event: Event) => {
+      const paths = (event as CustomEvent<unknown>).detail;
+      if (Array.isArray(paths) && paths.every((path) => typeof path === "string")) {
+        refreshEntryMetadataPaths(paths);
+      }
+    };
+    window.addEventListener("entry_metadata_changed", handleBrowserMetadataChanged);
+    void workspaceGateway
+      .listenEntryMetadataChanged(refreshEntryMetadataPaths)
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch((error) => {
+        if (!disposed) {
+          pushNotification("warning", getErrorMessage(error, "Unable to listen for entry metadata changes"));
+        }
+      });
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("entry_metadata_changed", handleBrowserMetadataChanged);
+      unlisten?.();
+    };
+  }, [pushNotification, refreshPanelsForPaths, state.source, state.status, workspaceGateway]);
+
   const undoLatestOperation = useEffectEvent(async () => {
     try {
       const task = await workspaceGateway.undoLatestOperation();
@@ -1631,6 +1341,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         operation === "copy"
           ? await workspaceGateway.copyEntries(operablePaths, normalizedDestination, operationOptions)
           : await workspaceGateway.moveEntries(operablePaths, normalizedDestination, operationOptions);
+      if (operation === "move" && !task) {
+        await workspaceGateway.markEntryMetadataDeleted(operablePaths);
+      }
       const refreshPaths = operation === "copy" ? [normalizedDestination] : [...sourceParents, normalizedDestination];
       await refreshPathsAfterOperationResult(task, refreshPaths);
       return;
@@ -1883,6 +1596,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         clipboard.mode === "copy"
           ? await workspaceGateway.copyEntries(operablePaths, destination, operationOptions)
           : await workspaceGateway.moveEntries(operablePaths, destination, operationOptions);
+      if (clipboard.mode === "cut" && !task) {
+        await workspaceGateway.markEntryMetadataDeleted(operablePaths);
+      }
       if (clipboard.mode === "cut" && task?.status !== "waitingConflict") {
         dispatch({ type: "clipboardSet", payload: undefined });
       }
@@ -1891,6 +1607,67 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     } catch (error) {
       pushNotification("danger", error instanceof Error ? error.message : "粘贴失败");
+    }
+  });
+
+  const getCommentRefreshPaths = (path: string) => {
+    const parentPath = getParentPathForRefresh(path);
+    return parentPath ? [parentPath] : [path];
+  };
+
+  const editEntryComment = useEffectEvent(async (panelId: PanelId, tabId: string, path: string) => {
+    const tab = findTab(state, panelId, tabId);
+    const entry =
+      isDirectoryTab(tab)
+        ? tab.snapshot.entries.find((item) => pathsEqual(item.path, path)) ?? findEntryByPath(state, path)
+        : findEntryByPath(state, path);
+
+    try {
+      await openCommentWindow({
+        path,
+        name: entry?.name ?? getEntryNameFromPath(path),
+        kind: entry?.kind ?? "file"
+      });
+    } catch (error) {
+      pushNotification("danger", getErrorMessage(error, "无法打开注释编辑窗口"));
+    }
+  });
+
+  const copyEntryComment = useEffectEvent(async (path: string, fallbackComment = "") => {
+    try {
+      const comment = fallbackComment || (await workspaceGateway.getEntryComment(path)) || "";
+      if (!comment) {
+        pushNotification("info", "当前项目没有注释可复制");
+        return;
+      }
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持剪贴板写入");
+      }
+      await navigator.clipboard.writeText(comment);
+    } catch (error) {
+      pushNotification("warning", getErrorMessage(error, "无法复制注释"));
+    }
+  });
+
+  const pasteEntryComment = useEffectEvent(async (_panelId: PanelId, _tabId: string, path: string) => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        throw new Error("当前环境不支持剪贴板读取");
+      }
+      const comment = await navigator.clipboard.readText();
+      await workspaceGateway.saveEntryComment(path, comment);
+      await refreshPanelsForPaths(getCommentRefreshPaths(path));
+    } catch (error) {
+      pushNotification("warning", getErrorMessage(error, "无法粘贴注释"));
+    }
+  });
+
+  const removeEntryComment = useEffectEvent(async (_panelId: PanelId, _tabId: string, path: string) => {
+    try {
+      await workspaceGateway.removeEntryComment(path);
+      await refreshPanelsForPaths(getCommentRefreshPaths(path));
+    } catch (error) {
+      pushNotification("warning", getErrorMessage(error, "无法移除注释"));
     }
   });
 
@@ -2208,6 +1985,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId: activeTab.id
         }
       );
+      if (!task) {
+        await workspaceGateway.markEntryMetadataDeleted(selection.map((entry) => entry.path));
+      }
       await refreshPathsAfterOperationResult(
         task,
         sourceParents.length > 0 ? sourceParents : [activeTab.snapshot.location.path]
@@ -2371,6 +2151,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId
         });
         const renamedPath = appendLocationPathSegment(edit.parentPath, nextName);
+        if (!task) {
+          await workspaceGateway.markEntryMetadataDeleted([edit.originalPath]);
+        }
         dispatch({ type: "inlineEditCanceled", payload: { panelId, tabId } });
         await refreshInlineEditParentAfterResult(task, edit.parentPath, [
           {
@@ -2933,7 +2716,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "columnsShown", payload: { panelId, tabId, ids } }),
       setColumnWidth: (panelId: PanelId, tabId: string, id: ColumnId, width: string) =>
         dispatch({ type: "columnWidthSet", payload: { panelId, tabId, id, width } }),
+      moveColumn: (
+        panelId: PanelId,
+        tabId: string,
+        sourceId: ColumnId,
+        targetId: ColumnId,
+        placement: "before" | "after"
+      ) => dispatch({ type: "columnOrderChanged", payload: { panelId, tabId, sourceId, targetId, placement } }),
       setDetailsRowHeight: (value: number) => dispatch({ type: "detailsRowHeightSet", payload: { value } }),
+      setTooltipHoverDelay: (value: number) => dispatch({ type: "tooltipHoverDelaySet", payload: { value } }),
+      setMetadataRetentionHours: (value: number | null) => dispatch({ type: "metadataRetentionHoursSet", payload: { value } }),
       setContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) =>
         dispatch({ type: "contextMenuDefaultSet", payload: { value } }),
       setOperationTasksOpen: (open: boolean) => dispatch({ type: "operationTasksOpenSet", payload: open }),
@@ -2944,6 +2736,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       cutSelection: (panelId: PanelId) => copySelection(panelId, "cut"),
       startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       pasteIntoPanel: (panelId: PanelId) => void pasteIntoPanel(panelId),
+      editEntryComment: (panelId: PanelId, tabId: string, path: string) => void editEntryComment(panelId, tabId, path),
+      copyEntryComment: (path: string, fallbackComment?: string) => void copyEntryComment(path, fallbackComment),
+      pasteEntryComment: (panelId: PanelId, tabId: string, path: string) => void pasteEntryComment(panelId, tabId, path),
+      removeEntryComment: (panelId: PanelId, tabId: string, path: string) => void removeEntryComment(panelId, tabId, path),
       deleteSelection: (panelId: PanelId) => void deleteSelection(panelId),
       renameSelection: (panelId: PanelId) => void renameSelection(panelId),
       createFolder: (panelId: PanelId) => void createFolder(panelId),
@@ -2978,6 +2774,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       commitActiveInlineEdits,
       commitInlineEdit,
       commitNavigation,
+      copyEntryComment,
       copySelection,
       createFile,
       createFolder,
@@ -2986,6 +2783,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       deleteSelection,
       dispatch,
       dropEntries,
+      editEntryComment,
       handleOpenNewTab,
       moveTabGuarded,
       navigateBreadcrumbPath,
@@ -2997,10 +2795,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       openNativeContextMenu,
       openTreeNode,
       pasteIntoPanel,
+      pasteEntryComment,
       pushNotification,
       refreshNavigationTargets,
       refreshPanel,
       reconnectTab,
+      removeEntryComment,
       renameSelection,
       reorderNavigationItem,
       runSearch,

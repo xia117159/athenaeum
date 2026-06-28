@@ -60,8 +60,13 @@ import {
   saveWorkspaceSettingsModel,
   saveWorkspaceShortcuts,
   saveWorkspaceTheme,
+  getWorkspaceEntryComment,
+  saveWorkspaceEntryComment,
+  removeWorkspaceEntryComment,
+  markWorkspaceEntryMetadataDeleted,
   reorderWorkspaceNavigationItems,
   listenWorkspaceSettingsChanged,
+  listenWorkspaceEntryMetadataChanged,
   testWorkspaceRemoteProfile,
   getWorkspaceRemoteHostKey,
   trustWorkspaceRemoteHostKey,
@@ -132,6 +137,10 @@ export interface WorkspaceGateway {
   saveDetailsRowHeight(value: number): Promise<void>;
   saveTheme(theme: SettingsModel["theme"]): Promise<void>;
   saveSettingsModel(model: SettingsModel): Promise<void>;
+  getEntryComment(path: string): Promise<string | null>;
+  saveEntryComment(path: string, comment: string): Promise<string | null>;
+  removeEntryComment(path: string): Promise<void>;
+  markEntryMetadataDeleted(paths: string[]): Promise<void>;
   saveBookmark(path: string, label: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
   deleteBookmark(id: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
   saveHotlist(path: string, label: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
@@ -152,6 +161,7 @@ export interface WorkspaceGateway {
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
+  listenEntryMetadataChanged(handler: (paths: string[]) => void): Promise<() => void>;
   setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
   listenFileSystemChanges(handler: (event: WorkspaceFsChangedEvent) => void): Promise<() => void>;
   copyEntries(
@@ -316,6 +326,22 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       await saveWorkspaceSettingsModel(model);
     },
 
+    async getEntryComment(path) {
+      return getWorkspaceEntryComment(path);
+    },
+
+    async saveEntryComment(path, comment) {
+      return saveWorkspaceEntryComment(path, comment);
+    },
+
+    async removeEntryComment(path) {
+      await removeWorkspaceEntryComment(path);
+    },
+
+    async markEntryMetadataDeleted(paths) {
+      await markWorkspaceEntryMetadataDeleted(paths);
+    },
+
     async saveBookmark(path, label) {
       return saveWorkspaceBookmark(path, label);
     },
@@ -394,6 +420,9 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
+    },
+    async listenEntryMetadataChanged(handler) {
+      return listenWorkspaceEntryMetadataChanged(handler);
     },
     async setWatchRoots(request) {
       // 防护：只在 roots 真正变化时才调用后端

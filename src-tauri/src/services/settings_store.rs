@@ -1,15 +1,24 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{collections::{HashMap, HashSet}, fs, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::domain::models::{ContextMenuSettings, ShortcutBinding, UiLayout, UiTheme};
+use crate::domain::models::{
+    ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign, ShortcutBinding, UiLayout,
+    UiTheme,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStore {
     pub layout: UiLayout,
+    #[serde(default = "default_detail_columns")]
+    pub detail_columns: Vec<DetailColumnDefinition>,
     #[serde(default = "default_details_row_height")]
     pub details_row_height: u16,
+    #[serde(default = "default_tooltip_hover_delay_ms")]
+    pub tooltip_hover_delay_ms: u32,
+    #[serde(default = "default_metadata_retention_hours")]
+    pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
     pub context_menu: ContextMenuSettings,
     #[serde(default)]
@@ -22,7 +31,10 @@ impl Default for SettingsStore {
     fn default() -> Self {
         Self {
             layout: UiLayout::fallback(),
+            detail_columns: default_detail_columns(),
             details_row_height: default_details_row_height(),
+            tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
+            metadata_retention_hours: default_metadata_retention_hours(),
             context_menu: ContextMenuSettings::default(),
             theme: UiTheme::default(),
             file_path: None,
@@ -47,7 +59,12 @@ impl SettingsStore {
         let mut store: Self =
             serde_json::from_str(&content).context("failed to parse settings store")?;
         store.layout = normalize_layout(store.layout);
+        store.detail_columns = normalize_detail_columns(store.detail_columns);
         store.details_row_height = normalize_details_row_height(store.details_row_height);
+        store.tooltip_hover_delay_ms =
+            normalize_tooltip_hover_delay_ms(store.tooltip_hover_delay_ms);
+        store.metadata_retention_hours =
+            normalize_metadata_retention_hours(store.metadata_retention_hours);
         store.context_menu = normalize_context_menu(store.context_menu);
         store.theme = normalize_theme(store.theme);
         store.file_path = Some(file_path);
@@ -82,8 +99,20 @@ impl SettingsStore {
         self.layout = normalize_layout(layout);
     }
 
+    pub fn set_detail_columns(&mut self, columns: Vec<DetailColumnDefinition>) {
+        self.detail_columns = normalize_detail_columns(columns);
+    }
+
     pub fn set_details_row_height(&mut self, details_row_height: u16) {
         self.details_row_height = normalize_details_row_height(details_row_height);
+    }
+
+    pub fn set_tooltip_hover_delay_ms(&mut self, value: u32) {
+        self.tooltip_hover_delay_ms = normalize_tooltip_hover_delay_ms(value);
+    }
+
+    pub fn set_metadata_retention_hours(&mut self, value: Option<u64>) {
+        self.metadata_retention_hours = normalize_metadata_retention_hours(value);
     }
 
     pub fn set_context_menu(&mut self, context_menu: ContextMenuSettings) {
@@ -142,8 +171,94 @@ fn normalize_layout(mut layout: UiLayout) -> UiLayout {
     layout
 }
 
+fn default_detail_columns() -> Vec<DetailColumnDefinition> {
+    vec![
+        detail_column("name", "名称", true, "240px", DetailColumnTextAlign::Left),
+        detail_column("type", "类型", true, "112px", DetailColumnTextAlign::Left),
+        detail_column("extension", "扩展名", true, "96px", DetailColumnTextAlign::Left),
+        detail_column("size", "大小", true, "96px", DetailColumnTextAlign::Right),
+        detail_column("created", "创建日期", true, "148px", DetailColumnTextAlign::Left),
+        detail_column("modified", "修改日期", true, "148px", DetailColumnTextAlign::Left),
+        detail_column("accessed", "访问日期", true, "148px", DetailColumnTextAlign::Left),
+        detail_column("tags", "标签", true, "120px", DetailColumnTextAlign::Left),
+        detail_column("comment", "注释", true, "220px", DetailColumnTextAlign::Left),
+        detail_column("location", "位置", false, "220px", DetailColumnTextAlign::Left),
+    ]
+}
+
+fn detail_column(
+    id: &str,
+    label: &str,
+    visible: bool,
+    width: &str,
+    align: DetailColumnTextAlign,
+) -> DetailColumnDefinition {
+    DetailColumnDefinition {
+        id: id.into(),
+        label: label.into(),
+        visible,
+        width: width.into(),
+        align,
+    }
+}
+
+fn normalize_detail_columns(columns: Vec<DetailColumnDefinition>) -> Vec<DetailColumnDefinition> {
+    if columns.is_empty() {
+        return default_detail_columns();
+    }
+
+    let defaults = default_detail_columns();
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for column in columns {
+        if !defaults.iter().any(|item| item.id == column.id) || !seen.insert(column.id.clone()) {
+            continue;
+        }
+        let fallback = defaults
+            .iter()
+            .find(|item| item.id == column.id)
+            .expect("validated default column");
+        normalized.push(DetailColumnDefinition {
+            id: column.id,
+            label: if column.label.trim().is_empty() {
+                fallback.label.clone()
+            } else {
+                column.label
+            },
+            visible: column.visible,
+            width: if column.width.trim().is_empty() {
+                fallback.width.clone()
+            } else {
+                column.width
+            },
+            align: column.align,
+        });
+    }
+
+    if seen.len() < defaults.len() {
+        let mut normalized_by_id: HashMap<String, DetailColumnDefinition> = normalized
+            .into_iter()
+            .map(|column| (column.id.clone(), column))
+            .collect();
+        return defaults
+            .into_iter()
+            .map(|column| normalized_by_id.remove(&column.id).unwrap_or(column))
+            .collect();
+    }
+
+    normalized
+}
+
 fn normalize_details_row_height(details_row_height: u16) -> u16 {
-    details_row_height.clamp(24, 72)
+    details_row_height.clamp(12, 72)
+}
+
+fn normalize_tooltip_hover_delay_ms(value: u32) -> u32 {
+    value.min(5000)
+}
+
+fn normalize_metadata_retention_hours(value: Option<u64>) -> Option<u64> {
+    value
 }
 
 fn normalize_context_menu(context_menu: ContextMenuSettings) -> ContextMenuSettings {
@@ -188,14 +303,22 @@ fn default_details_row_height() -> u16 {
     24
 }
 
+fn default_tooltip_hover_delay_ms() -> u32 {
+    200
+}
+
+fn default_metadata_retention_hours() -> Option<u64> {
+    Some(720)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{env, fs, path::PathBuf};
 
     use super::{validate_shortcuts, SettingsStore};
     use crate::domain::models::{
-        ContextMenuDefaultMenu, ContextMenuSettings, PanelLayoutMode, ShortcutBinding, UiLayout,
-        UiTheme,
+        ContextMenuDefaultMenu, ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign,
+        PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme,
     };
 
     struct TestDir {
@@ -271,6 +394,67 @@ mod tests {
 
         let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
         assert_eq!(reloaded.details_row_height, 68);
+    }
+
+    #[test]
+    fn details_row_height_allows_dense_twelve_pixel_rows() {
+        let mut store = SettingsStore::load_default();
+        store.set_details_row_height(4);
+        assert_eq!(store.details_row_height, 12);
+    }
+
+    #[test]
+    fn persist_round_trip_preserves_file_list_behavior_settings() {
+        let temp = TestDir::new("file-list-behavior");
+        let file_path = temp.path.join("layout.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_tooltip_hover_delay_ms(6400);
+        store.set_metadata_retention_hours(None);
+        store.persist().expect("failed to persist settings");
+
+        let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
+        assert_eq!(reloaded.tooltip_hover_delay_ms, 5000);
+        assert_eq!(reloaded.metadata_retention_hours, None);
+    }
+
+    #[test]
+    fn metadata_retention_hours_has_zero_floor_and_supports_finite_values() {
+        let mut store = SettingsStore::load_default();
+        store.set_metadata_retention_hours(Some(48));
+        assert_eq!(store.metadata_retention_hours, Some(48));
+        store.set_metadata_retention_hours(Some(0));
+        assert_eq!(store.metadata_retention_hours, Some(0));
+    }
+
+    #[test]
+    fn persist_round_trip_preserves_detail_columns() {
+        let temp = TestDir::new("detail-columns");
+        let file_path = temp.path.join("layout.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_detail_columns(vec![
+            DetailColumnDefinition {
+                id: "name".into(),
+                label: "Name".into(),
+                visible: true,
+                width: "240px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "comment".into(),
+                label: "Comment".into(),
+                visible: true,
+                width: "220px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+        ]);
+        store.persist().expect("failed to persist settings");
+
+        let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
+        assert_eq!(reloaded.detail_columns.len(), 10);
+        assert_eq!(reloaded.detail_columns[8].id, "comment");
+        assert!(reloaded.detail_columns[8].visible);
     }
 
     #[test]

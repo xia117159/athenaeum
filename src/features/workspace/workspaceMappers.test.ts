@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { normalizeLocationPath } from "./mockData";
 import {
+  DEFAULT_COLUMNS,
   DEFAULT_THEME,
   createTabFromSnapshot,
   mapDirectoryListingToSnapshot,
@@ -30,6 +31,15 @@ assertTest("DEFAULT_THEME includes configurable drag highlight colors", () => {
   });
 });
 
+assertTest("DEFAULT_COLUMNS exposes the file-list detail columns in the default order", () => {
+  assert.deepEqual(
+    DEFAULT_COLUMNS.map((column) => column.id),
+    ["name", "type", "extension", "size", "created", "modified", "accessed", "tags", "comment", "location"]
+  );
+  assert.equal(DEFAULT_COLUMNS.find((column) => column.id === "modified")?.label, "修改日期");
+  assert.equal(DEFAULT_COLUMNS.find((column) => column.id === "location")?.visible, false);
+});
+
 assertTest("mapSettingsModel normalizes configurable drag highlight colors", () => {
   const model = mapSettingsModel({
     bookmarks: [],
@@ -39,7 +49,14 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
     entryTags: [],
     colorRules: [],
     shortcuts: [],
+    columns: [
+      { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
+      { id: "size", label: "大小", visible: true, width: "96px", align: "right" },
+      { id: "type", label: "类型", visible: true, width: "112px", align: "left" }
+    ],
     detailsRowHeight: 24,
+    tooltipHoverDelayMs: 350,
+    metadataRetentionHours: null,
     contextMenu: {
       defaultMenu: "native"
     },
@@ -64,6 +81,11 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
   assert.equal(model.theme.activeTabBackground, "#ffffffcc");
   assert.equal(model.theme.dropHighlightFill, "#abcdef66");
   assert.equal(model.theme.dropHighlightBorder, "#0f6cbd");
+  assert.deepEqual(model.columns.slice(0, 4).map((column) => column.id), ["name", "type", "extension", "size"]);
+  assert.equal(model.columns.find((column) => column.id === "size")?.width, "96px");
+  assert.equal(model.columns.some((column) => column.id === "comment"), true);
+  assert.equal(model.tooltipHoverDelayMs, 350);
+  assert.equal(model.metadataRetentionHours, null);
 });
 
 assertTest("normalizeSettingsModel normalizes configurable drag highlight colors", () => {
@@ -73,6 +95,8 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
     tagRules: [],
     columns: [],
     detailsRowHeight: 24,
+    tooltipHoverDelayMs: 9999,
+    metadataRetentionHours: -1,
     contextMenu: {
       defaultMenu: "native"
     },
@@ -89,6 +113,9 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
   assert.equal(model.theme.activeTabBackground, "#ffffff");
   assert.equal(model.theme.dropHighlightFill, "#0f6cbd");
   assert.equal(model.theme.dropHighlightBorder, "#abc12399");
+  assert.deepEqual(model.columns.map((column) => column.id), DEFAULT_COLUMNS.map((column) => column.id));
+  assert.equal(model.tooltipHoverDelayMs, 5000);
+  assert.equal(model.metadataRetentionHours, 0);
 });
 
 assertTest("mapDirectoryListingToSnapshot translates backend entries into rich listing cells", () => {
@@ -104,7 +131,9 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
         extension: "txt",
         kind: "file",
         size: 1024,
+        createdAt: "2026-04-17T09:08:07Z",
         modifiedAt: "2026-04-18T10:00:00Z",
+        accessedAt: "2026-04-19T11:12:13Z",
         isHidden: false,
         isReadOnly: true,
         isSymlink: false,
@@ -115,7 +144,8 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
         decoration: {
           colorHex: "#ff6600",
           tags: ["Pinned", "Docs"]
-        }
+        },
+        comment: "Line one\nLine two"
       }
     ],
     parent: "C:\\",
@@ -129,6 +159,9 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
   assert.equal(snapshot.entries[0].accentColor, "#ff6600");
   assert.deepEqual(snapshot.entries[0].tags, ["Pinned", "Docs"]);
   assert.equal(snapshot.entries[0].sizeLabel, "1 KB");
+  assert.equal(snapshot.entries[0].createdLabel, "2026-04-17 17:08");
+  assert.equal(snapshot.entries[0].accessedLabel, "2026-04-19 19:12");
+  assert.equal(snapshot.entries[0].comment, "Line one\nLine two");
   assert.equal(snapshot.entries[0].description, "只读文件");
 });
 

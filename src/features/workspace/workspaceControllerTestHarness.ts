@@ -74,6 +74,7 @@ export function createTestGateway(
     getItemProperties?: WorkspaceGateway["getItemProperties"];
     deleteEntries?: WorkspaceGateway["deleteEntries"];
     renameEntry?: WorkspaceGateway["renameEntry"];
+    resolveNavigationTargets?: WorkspaceGateway["resolveNavigationTargets"];
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
     readSystemFileClipboard?: WorkspaceGateway["readSystemFileClipboard"];
@@ -171,6 +172,14 @@ export function createTestGateway(
     async saveSettingsModel(model: SettingsModel) {
       interactions.savedSettingsModels?.push(model);
     },
+    async getEntryComment() {
+      return null;
+    },
+    async saveEntryComment(_path: string, comment: string) {
+      return comment;
+    },
+    async removeEntryComment() {},
+    async markEntryMetadataDeleted() {},
     async listOperationTasks() {
       if (overrides.listOperationTasks) {
         return overrides.listOperationTasks();
@@ -190,6 +199,9 @@ export function createTestGateway(
       return () => undefined;
     },
     async listenSettingsChanged() {
+      return () => undefined;
+    },
+    async listenEntryMetadataChanged() {
       return () => undefined;
     },
     async setWatchRoots(request) {
@@ -351,6 +363,9 @@ export function createTestGateway(
     },
     async resolveNavigationTargets(paths) {
       interactions.navigationResolves?.push([...paths]);
+      if (overrides.resolveNavigationTargets) {
+        return overrides.resolveNavigationTargets(paths);
+      }
       return paths.map((path) => ({
         path,
         normalizedPath: path,
@@ -439,11 +454,14 @@ export function createEntry(parentPath: string, name: string, kind: EntryViewMod
     parentPath,
     sizeLabel: kind === "folder" ? "--" : "1 KB",
     sizeBytes,
+    createdLabel: "",
     modifiedLabel: "2026-04-21 10:00",
+    accessedLabel: "",
     extension: kind === "folder" ? "" : name.includes(".") ? `.${name.split(".").pop()}` : "",
     attributes: kind === "folder" ? ["D"] : ["A"],
     accentColor: "#0f6cbd",
     tags: [],
+    comment: "",
     description: name
   };
 }

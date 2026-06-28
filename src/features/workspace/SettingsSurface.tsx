@@ -10,7 +10,6 @@ import { HexAlphaColorPicker } from "react-colorful";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
 import type { RemoteTestResult } from "../../app/types";
 import type {
-  ColumnDefinition,
   RemoteConnectionProfile,
   SettingsModel,
   SettingsSection,
@@ -37,6 +36,8 @@ export type SettingsSurfaceProps = {
   onUpdateDropHighlightBorder: (color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
+  onUpdateTooltipHoverDelay: (value: number) => void;
+  onUpdateMetadataRetentionHours: (value: number | null) => void;
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
   onSaveRemoteProfile: (profile: RemoteConnectionProfile, password?: string) => void;
   onDeleteRemoteProfile: (id: string) => void;
@@ -85,25 +86,6 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
 const SETTINGS_SECTIONS = SETTINGS_SECTION_GROUPS.flatMap((group) => group.sections);
 const SHORTCUT_SCOPE_ORDER: ShortcutScope[] = ["workspace", "panel", "listing", "context-menu"];
 const SAVED_PASSWORD_MASK = "********";
-
-function getLocalizedColumnLabel(column: ColumnDefinition) {
-  switch (column.id) {
-    case "name":
-      return "名称";
-    case "type":
-      return "类型";
-    case "size":
-      return "大小";
-    case "modified":
-      return "修改时间";
-    case "tags":
-      return "标签";
-    case "location":
-      return "位置";
-    default:
-      return column.label;
-  }
-}
 
 function getShortcutScopeLabel(scope: string) {
   switch (scope) {
@@ -206,6 +188,8 @@ export function SettingsSurface({
   onUpdateDropHighlightBorder,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
+  onUpdateTooltipHoverDelay,
+  onUpdateMetadataRetentionHours,
   onUpdateContextMenuDefault,
   onSaveRemoteProfile,
   onDeleteRemoteProfile,
@@ -279,10 +263,13 @@ export function SettingsSurface({
             />
           ) : settings.section === "file-list" ? (
             <FileListPage
-              columns={settings.model.columns}
               detailsRowHeight={settings.model.detailsRowHeight}
+              tooltipHoverDelayMs={settings.model.tooltipHoverDelayMs}
+              metadataRetentionHours={settings.model.metadataRetentionHours}
               disabled={controlsDisabled}
               onUpdateDetailsRowHeight={onUpdateDetailsRowHeight}
+              onUpdateTooltipHoverDelay={onUpdateTooltipHoverDelay}
+              onUpdateMetadataRetentionHours={onUpdateMetadataRetentionHours}
             />
           ) : settings.section === "menu-mouse" ? (
             <MenuMousePage
@@ -631,34 +618,41 @@ function ShortcutCaptureInput({
 }
 
 function FileListPage({
-  columns,
   detailsRowHeight,
+  tooltipHoverDelayMs,
+  metadataRetentionHours,
   disabled,
-  onUpdateDetailsRowHeight
+  onUpdateDetailsRowHeight,
+  onUpdateTooltipHoverDelay,
+  onUpdateMetadataRetentionHours
 }: {
-  columns: SettingsModel["columns"];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
+  metadataRetentionHours: number | null;
   disabled: boolean;
   onUpdateDetailsRowHeight: (value: number) => void;
+  onUpdateTooltipHoverDelay: (value: number) => void;
+  onUpdateMetadataRetentionHours: (value: number | null) => void;
 }) {
+  const retentionNever = metadataRetentionHours === null;
   return (
     <div className="settings-page">
       <section className="settings-group">
         <header className="settings-group__header">
           <div>
-            <strong>详细信息视图</strong>
-            <span>调整文件列表行高。</span>
+            <strong>文件列表</strong>
+            <span>调整详细信息视图密度、悬停提示和注释/标签保留策略。</span>
           </div>
         </header>
         <div className="settings-row">
           <div>
             <strong>行高</strong>
-            <span>范围 24px - 72px</span>
+            <span>范围 12px - 72px</span>
           </div>
           <label className="settings-control-inline">
             <input
               type="number"
-              min={24}
+              min={12}
               max={72}
               step={2}
               value={String(detailsRowHeight)}
@@ -669,24 +663,53 @@ function FileListPage({
             <span>px</span>
           </label>
         </div>
-      </section>
-
-      <section className="settings-group">
-        <header className="settings-group__header">
+        <div className="settings-row">
           <div>
-            <strong>显示列</strong>
-            <span>当前列设置为只读预览。</span>
+            <strong>列表项悬停提示等待时间</strong>
+            <span>范围 0ms - 5000ms，0 表示鼠标移入即显示。</span>
           </div>
-        </header>
-        <div className="settings-table-scroll">
-          <div className="settings-table settings-table--columns" role="table" aria-label="显示列">
-            {columns.map((column) => (
-              <div key={column.id} className="column-toggle column-toggle--readonly" role="row">
-                <span>{getLocalizedColumnLabel(column)}</span>
-                <small>{column.visible ? "显示" : "隐藏"}</small>
-                <small>{column.width}</small>
-              </div>
-            ))}
+          <label className="settings-control-inline">
+            <input
+              type="number"
+              min={0}
+              max={5000}
+              step={50}
+              value={String(tooltipHoverDelayMs)}
+              data-setting-id="tooltip-hover-delay"
+              onInput={(event) => onUpdateTooltipHoverDelay(Number(event.currentTarget.value))}
+              disabled={disabled}
+            />
+            <span>ms</span>
+          </label>
+        </div>
+        <div className="settings-row">
+          <div>
+            <strong>注释/标签保留时间</strong>
+            <span>单位小时，0 表示随文件一起删除。</span>
+          </div>
+          <div className="settings-retention-control">
+            <label className="settings-control-inline">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={retentionNever ? "" : String(metadataRetentionHours)}
+                data-setting-id="metadata-retention-hours"
+                onInput={(event) => onUpdateMetadataRetentionHours(Number(event.currentTarget.value))}
+                disabled={disabled || retentionNever}
+              />
+              <span>小时</span>
+            </label>
+            <label className="settings-check-inline">
+              <input
+                type="checkbox"
+                checked={retentionNever}
+                data-setting-id="metadata-retention-never"
+                onChange={(event) => onUpdateMetadataRetentionHours(event.currentTarget.checked ? null : 720)}
+                disabled={disabled}
+              />
+              <span>永不删除</span>
+            </label>
           </div>
         </div>
       </section>

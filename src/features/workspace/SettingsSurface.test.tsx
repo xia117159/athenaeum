@@ -89,6 +89,8 @@ function createProps(state: WorkspaceState) {
     onUpdateDropHighlightBorder: () => undefined,
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
+    onUpdateTooltipHoverDelay: () => undefined,
+    onUpdateMetadataRetentionHours: () => undefined,
     onUpdateContextMenuDefault: () => undefined,
     onSaveRemoteProfile: (_profile: RemoteConnectionProfile, _password?: string) => undefined,
     onDeleteRemoteProfile: () => undefined,
@@ -394,6 +396,8 @@ export const completion = (async () => {
       const dropFillUpdates: string[] = [];
       const dropBorderUpdates: string[] = [];
       const rowHeightUpdates: number[] = [];
+      const tooltipDelayUpdates: number[] = [];
+      const retentionUpdates: Array<number | null> = [];
       const menuUpdates: string[] = [];
       const colorUpdates: string[] = [];
 
@@ -414,6 +418,8 @@ export const completion = (async () => {
             onUpdateDropHighlightFill: (color: string) => dropFillUpdates.push(color),
             onUpdateDropHighlightBorder: (color: string) => dropBorderUpdates.push(color),
             onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value),
+            onUpdateTooltipHoverDelay: (value: number) => tooltipDelayUpdates.push(value),
+            onUpdateMetadataRetentionHours: (value: number | null) => retentionUpdates.push(value),
             onUpdateContextMenuDefault: (value: "native" | "custom") => menuUpdates.push(value),
             onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
           })
@@ -514,17 +520,43 @@ export const completion = (async () => {
         root.render(
           React.createElement(SettingsSurface, {
             ...createProps(createSettingsState("file-list")),
-            onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value)
+            onUpdateDetailsRowHeight: (value: number) => rowHeightUpdates.push(value),
+            onUpdateTooltipHoverDelay: (value: number) => tooltipDelayUpdates.push(value),
+            onUpdateMetadataRetentionHours: (value: number | null) => retentionUpdates.push(value)
           })
         );
         await flushEffects();
       });
       const rowHeightInput = container.querySelector<HTMLInputElement>("[data-setting-id='details-row-height']");
       assert.ok(rowHeightInput);
+      assert.equal(rowHeightInput.min, "12");
+      assert.equal(rowHeightInput.max, "72");
       rowHeightInput!.value = "32";
       rowHeightInput!.dispatchEvent(new Event("input", { bubbles: true }));
       assert.deepEqual(rowHeightUpdates, [32]);
-      assert.ok(container.querySelector(".column-toggle--readonly"));
+      assert.equal(container.querySelector(".column-toggle--readonly"), null);
+
+      const tooltipDelayInput = container.querySelector<HTMLInputElement>("[data-setting-id='tooltip-hover-delay']");
+      assert.ok(tooltipDelayInput);
+      assert.equal(tooltipDelayInput.min, "0");
+      assert.equal(tooltipDelayInput.max, "5000");
+      tooltipDelayInput!.value = "0";
+      tooltipDelayInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      assert.deepEqual(tooltipDelayUpdates, [0]);
+
+      const retentionInput = container.querySelector<HTMLInputElement>("[data-setting-id='metadata-retention-hours']");
+      const retentionNever = container.querySelector<HTMLInputElement>("[data-setting-id='metadata-retention-never']");
+      assert.ok(retentionInput);
+      assert.ok(retentionNever);
+      assert.equal(retentionInput!.min, "0");
+      retentionInput!.value = "48";
+      retentionInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      retentionNever!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(retentionUpdates, [48, null]);
+      const settingsCss = readWorkspaceCss();
+      assert.match(settingsCss, /\.settings-check-inline\s*\{[\s\S]*?white-space:\s*nowrap;/);
+      assert.match(settingsCss, /\.settings-check-inline input\[type="checkbox"\]\s*\{[\s\S]*?width:\s*14px;/);
+      assert.match(settingsCss, /\.settings-check-inline span\s*\{[\s\S]*?white-space:\s*nowrap;/);
 
       await act(async () => {
         root.render(

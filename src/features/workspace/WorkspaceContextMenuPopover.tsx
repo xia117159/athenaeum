@@ -89,6 +89,10 @@ export function WorkspaceContextMenuPopover({
   const isDirectoryTab = tab?.kind === "directory";
   const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
   const canPaste = Boolean(clipboard?.paths.length);
+  const commentEntry =
+    tab?.kind === "directory" && contextMenu.entryPath
+      ? tab.snapshot.entries.find((entry) => entry.path === contextMenu.entryPath)
+      : undefined;
 
   const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
     <div className={`context-menu__submenu${disabled ? " is-disabled" : ""}`} role="none">
@@ -253,13 +257,66 @@ export function WorkspaceContextMenuPopover({
     </>
   );
 
+  const renderCommentMenu = () => {
+    const entryPath = contextMenu.entryPath;
+    const hasComment = Boolean(commentEntry?.comment);
+    return (
+      <>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath}
+          onClick={() => entryPath && handleAction(() => actions.editEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>编辑注释</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath || !hasComment}
+          onClick={() => entryPath && handleAction(() => actions.copyEntryComment(entryPath, commentEntry?.comment ?? ""))}
+        >
+          <span className="context-menu__check" />
+          <span>复制注释</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath}
+          onClick={() => entryPath && handleAction(() => actions.pasteEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>粘贴注释（从剪切板）</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath || !hasComment}
+          onClick={() => entryPath && handleAction(() => actions.removeEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>移除注释</span>
+        </button>
+      </>
+    );
+  };
+
   const menu = (
     <div ref={menuRef} className="context-menu" style={menuStyle}>
       <div className="context-menu__header">
-        <strong>{contextMenu.scope === "tab" ? "标签页" : contextMenu.scope === "panel" ? "面板操作" : "项目操作"}</strong>
+        <strong>
+          {contextMenu.scope === "tab"
+            ? "标签页"
+            : contextMenu.scope === "panel"
+              ? "面板操作"
+              : contextMenu.scope === "comment"
+                ? "注释"
+                : "项目操作"}
+        </strong>
         <span>{contextMenu.mode === "custom" ? "应用右键菜单" : "系统菜单不可用，已回退到应用菜单"}</span>
       </div>
-      {contextMenu.scope === "tab" ? renderTabMenu() : renderPanelMenu()}
+      {contextMenu.scope === "tab" ? renderTabMenu() : contextMenu.scope === "comment" ? renderCommentMenu() : renderPanelMenu()}
     </div>
   );
 

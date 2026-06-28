@@ -2,8 +2,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod remote;
+mod settings;
 
 pub use remote::*;
+pub use settings::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -68,12 +70,15 @@ pub struct EntryViewModel {
     pub extension: Option<String>,
     pub kind: EntryKind,
     pub size: Option<u64>,
+    pub created_at: Option<DateTime<Utc>>,
     pub modified_at: Option<DateTime<Utc>>,
+    pub accessed_at: Option<DateTime<Utc>>,
     pub is_hidden: bool,
     pub is_read_only: bool,
     pub is_symlink: bool,
     pub location: LocationDescriptor,
     pub decoration: EntryDecoration,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -347,6 +352,8 @@ pub struct TagDefinition {
 pub struct EntryTag {
     pub path: String,
     pub tag_ids: Vec<String>,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -950,36 +957,6 @@ pub struct SearchProgress {
     pub search_id: String,
     pub scanned_entries: usize,
     pub matched_entries: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SettingsSnapshot {
-    pub bookmarks: Vec<Bookmark>,
-    pub hotlist: Vec<HotlistEntry>,
-    #[serde(default)]
-    pub navigation_items: Vec<NavigationItem>,
-    pub tag_definitions: Vec<TagDefinition>,
-    pub entry_tags: Vec<EntryTag>,
-    pub color_rules: Vec<ColorRule>,
-    pub shortcuts: Vec<ShortcutBinding>,
-    pub details_row_height: u16,
-    #[serde(default)]
-    pub context_menu: ContextMenuSettings,
-    pub theme: UiTheme,
-    pub layout: UiLayout,
-    pub remote_profiles: Vec<RemoteProfile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SettingsModelUpdate {
-    pub shortcuts: Vec<ShortcutBinding>,
-    pub color_rules: Vec<ColorRule>,
-    pub details_row_height: u16,
-    #[serde(default)]
-    pub context_menu: ContextMenuSettings,
-    pub theme: UiTheme,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

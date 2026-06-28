@@ -10,6 +10,7 @@ import {
   type SettingsWindowOptions,
   type WebviewWindowConstructor
 } from "./settingsWindow";
+import { COMMENT_WINDOW_LABEL } from "./commentWindow";
 
 function assertTest(name: string, fn: () => Promise<void> | void) {
   return Promise.resolve()
@@ -184,7 +185,8 @@ export const completion = (async () => {
       permissions: string[];
     };
 
-    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL]);
+    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL, COMMENT_WINDOW_LABEL]);
+    assert.equal(capability.permissions.includes("core:event:allow-emit"), true);
     assert.equal(capability.permissions.includes("core:webview:allow-create-webview-window"), true);
     assert.equal(capability.permissions.includes("core:window:allow-show"), true);
     assert.equal(capability.permissions.includes("core:window:allow-set-focus"), true);

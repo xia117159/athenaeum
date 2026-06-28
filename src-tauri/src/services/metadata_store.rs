@@ -7,11 +7,21 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
-    Bookmark, ColorRule, ContextMenuSettings, EntryTag, HotlistEntry, NavigationItem,
-    NavigationItemUpsertRequest, NavigationTargetStatus, RemoteProfile, SettingsSnapshot,
-    ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+    Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag, HotlistEntry,
+    NavigationItem, NavigationItemUpsertRequest, NavigationTargetStatus, RemoteProfile,
+    SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
 };
 use crate::services::windows_shell;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryComment {
+    pub path: String,
+    pub comment: String,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+}
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +32,8 @@ pub struct MetadataStore {
     pub navigation_items: Vec<NavigationItem>,
     pub tag_definitions: Vec<TagDefinition>,
     pub entry_tags: Vec<EntryTag>,
+    #[serde(default)]
+    pub entry_comments: Vec<EntryComment>,
     pub color_rules: Vec<ColorRule>,
     pub shortcuts: Vec<ShortcutBinding>,
     pub remote_profiles: Vec<RemoteProfile>,
@@ -45,6 +57,7 @@ impl MetadataStore {
         let content = fs::read_to_string(&file_path).context("failed to read metadata store")?;
         let mut store: Self =
             serde_json::from_str(&content).context("failed to parse metadata store")?;
+        store.cleanup_expired_entry_metadata(Utc::now);
         store.file_path = Some(file_path);
         Ok(store)
     }
@@ -54,6 +67,8 @@ impl MetadataStore {
     }
 
     pub fn persist(&self) -> Result<()> {
+        let mut snapshot = self.clone();
+        snapshot.cleanup_expired_entry_metadata(Utc::now);
         let file_path = self
             .file_path
             .as_ref()
@@ -64,7 +79,7 @@ impl MetadataStore {
 
         let temp_path = file_path.with_extension("json.tmp");
         let content =
-            serde_json::to_vec_pretty(self).context("failed to serialize metadata store")?;
+            serde_json::to_vec_pretty(&snapshot).context("failed to serialize metadata store")?;
         fs::write(&temp_path, content).context("failed to write metadata store temp file")?;
         if file_path.exists() {
             fs::remove_file(file_path).context("failed to replace metadata store file")?;
@@ -76,12 +91,16 @@ impl MetadataStore {
     pub fn to_settings_snapshot(
         &self,
         layout: UiLayout,
+        columns: Vec<DetailColumnDefinition>,
         details_row_height: u16,
+        tooltip_hover_delay_ms: u32,
+        metadata_retention_hours: Option<u64>,
         context_menu: ContextMenuSettings,
         theme: UiTheme,
     ) -> SettingsSnapshot {
         // Hydrate passwords from credential store BEFORE redacting credential_target
-        let hydrated_profiles = crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
+        let hydrated_profiles =
+            crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
 
         SettingsSnapshot {
             bookmarks: self.bookmarks.clone(),
@@ -91,7 +110,10 @@ impl MetadataStore {
             entry_tags: self.entry_tags.clone(),
             color_rules: self.color_rules.clone(),
             shortcuts: self.shortcuts.clone(),
+            columns,
             details_row_height,
+            tooltip_hover_delay_ms,
+            metadata_retention_hours,
             context_menu,
             theme,
             layout,
@@ -329,11 +351,11 @@ impl MetadataStore {
     }
 
     pub fn tags_for_path(&self, path: &str) -> Vec<String> {
-        let normalized_path = normalize_path(Path::new(path));
+        let normalized_path = metadata_path_key(path);
         let Some(entry) = self
             .entry_tags
             .iter()
-            .find(|entry| normalize_path(Path::new(&entry.path)) == normalized_path)
+            .find(|entry| metadata_path_key(&entry.path) == normalized_path)
         else {
             return Vec::new();
         };
@@ -349,6 +371,101 @@ impl MetadataStore {
             .map(|definition| definition.name.clone())
             .collect()
     }
+
+    pub fn comment_for_path(&self, path: &str) -> Option<String> {
+        let normalized_path = metadata_path_key(path);
+        self.entry_comments
+            .iter()
+            .find(|entry| metadata_path_key(&entry.path) == normalized_path)
+            .map(|entry| entry.comment.clone())
+    }
+
+    pub fn upsert_entry_comment(
+        &mut self,
+        path: &str,
+        comment: &str,
+        now: impl Fn() -> DateTime<Utc>,
+    ) {
+        let normalized_path = metadata_path_key(path);
+        if let Some(existing) = self
+            .entry_comments
+            .iter_mut()
+            .find(|entry| metadata_path_key(&entry.path) == normalized_path)
+        {
+            existing.path = path.to_string();
+            existing.comment = comment.to_string();
+            existing.updated_at = now();
+            existing.expires_at = None;
+            return;
+        }
+
+        self.entry_comments.push(EntryComment {
+            path: path.to_string(),
+            comment: comment.to_string(),
+            updated_at: now(),
+            expires_at: None,
+        });
+    }
+
+    pub fn remove_entry_comment(&mut self, path: &str) -> bool {
+        let normalized_path = metadata_path_key(path);
+        let before = self.entry_comments.len();
+        self.entry_comments
+            .retain(|entry| metadata_path_key(&entry.path) != normalized_path);
+        before != self.entry_comments.len()
+    }
+
+    pub fn mark_entry_metadata_deleted(
+        &mut self,
+        paths: &[String],
+        retention_hours: Option<u64>,
+        now: impl Fn() -> DateTime<Utc>,
+    ) {
+        let path_keys = paths
+            .iter()
+            .map(|path| metadata_path_key(path))
+            .collect::<std::collections::HashSet<_>>();
+        if path_keys.is_empty() {
+            return;
+        }
+
+        let timestamp = now();
+        if retention_hours == Some(0) {
+            self.entry_comments
+                .retain(|entry| !path_keys.contains(&metadata_path_key(&entry.path)));
+            self.entry_tags
+                .retain(|entry| !path_keys.contains(&metadata_path_key(&entry.path)));
+            return;
+        }
+
+        let expires_at = retention_hours.map(|hours| deleted_metadata_expires_at(timestamp, hours));
+        for entry in &mut self.entry_comments {
+            if path_keys.contains(&metadata_path_key(&entry.path)) {
+                entry.expires_at = expires_at;
+            }
+        }
+        for entry in &mut self.entry_tags {
+            if path_keys.contains(&metadata_path_key(&entry.path)) {
+                entry.expires_at = expires_at;
+            }
+        }
+    }
+
+    pub fn cleanup_expired_entry_metadata(&mut self, now: impl Fn() -> DateTime<Utc>) {
+        let timestamp = now();
+        self.entry_comments.retain(|entry| {
+            entry
+                .expires_at
+                .map(|expiry| expiry > timestamp)
+                .unwrap_or(true)
+        });
+        self.entry_tags.retain(|entry| {
+            entry
+                .expires_at
+                .map(|expiry| expiry > timestamp)
+                .unwrap_or(true)
+        });
+    }
 }
 
 fn upsert_by_id<T>(items: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &str) {
@@ -360,13 +477,62 @@ fn upsert_by_id<T>(items: &mut Vec<T>, value: T, id_of: impl Fn(&T) -> &str) {
     }
 }
 
+fn deleted_metadata_expires_at(timestamp: DateTime<Utc>, retention_hours: u64) -> DateTime<Utc> {
+    i64::try_from(retention_hours)
+        .ok()
+        .and_then(chrono::Duration::try_hours)
+        .and_then(|duration| timestamp.checked_add_signed(duration))
+        .unwrap_or(DateTime::<Utc>::MAX_UTC)
+}
+
 fn normalize_path(path: &Path) -> String {
     let rendered = path.to_string_lossy();
+    let normalized = strip_windows_verbatim_prefix(&rendered);
     if cfg!(windows) {
-        rendered.to_lowercase()
+        normalized.to_lowercase()
     } else {
-        rendered.into_owned()
+        normalized
     }
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{rest}")
+    } else if let Some(rest) = path.strip_prefix("\\\\?\\") {
+        rest.to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn metadata_path_key(path: &str) -> String {
+    let trimmed = path.trim();
+    if let Some(remote_key) = remote_metadata_path_key(trimmed) {
+        return remote_key;
+    }
+    normalize_path(Path::new(trimmed))
+}
+
+fn remote_metadata_path_key(path: &str) -> Option<String> {
+    let lower = path.to_ascii_lowercase();
+    let scheme = if lower.starts_with("ftp://") {
+        "ftp"
+    } else if lower.starts_with("sftp://") {
+        "sftp"
+    } else {
+        return None;
+    };
+    let authority_start = scheme.len() + 3;
+    let rest = &path[authority_start..];
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let suffix = &rest[authority_end..];
+    let normalized_authority = match authority.rsplit_once('@') {
+        Some((userinfo, host_port)) => format!("{userinfo}@{}", host_port.to_lowercase()),
+        None => authority.to_lowercase(),
+    };
+
+    Some(format!("{scheme}://{normalized_authority}{suffix}"))
 }
 
 fn navigation_path_key(path: &str) -> String {
@@ -384,6 +550,8 @@ fn navigation_path_key(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::{env, fs, path::PathBuf};
+
+    use chrono::{DateTime, Utc};
 
     use super::MetadataStore;
     use crate::domain::models::{
@@ -447,7 +615,10 @@ mod tests {
         let reloaded = MetadataStore::load_from(file_path).expect("failed to reload metadata");
         let snapshot = reloaded.to_settings_snapshot(
             UiLayout::fallback(),
+            Vec::new(),
             36,
+            200,
+            Some(720),
             ContextMenuSettings::default(),
             UiTheme::default(),
         );
@@ -476,7 +647,10 @@ mod tests {
         let reloaded = MetadataStore::load_from(file_path).expect("failed to load legacy metadata");
         let snapshot = reloaded.to_settings_snapshot(
             UiLayout::fallback(),
+            Vec::new(),
             36,
+            200,
+            Some(720),
             ContextMenuSettings::default(),
             UiTheme::default(),
         );
@@ -681,11 +855,158 @@ mod tests {
             entry_tags: vec![EntryTag {
                 path: path.clone(),
                 tag_ids: vec!["tag-1".into()],
+                expires_at: None,
             }],
             ..MetadataStore::default()
         };
 
         assert_eq!(store.tags_for_path(&path), vec!["Pinned".to_string()]);
+    }
+
+    #[test]
+    fn local_entry_metadata_matches_windows_verbatim_and_normal_paths() {
+        let path = "C:\\Data\\notes.txt";
+        let verbatim_path = "\\\\?\\C:\\Data\\notes.txt";
+        let mut store = MetadataStore {
+            tag_definitions: vec![TagDefinition {
+                id: "tag-1".into(),
+                name: "Pinned".into(),
+                color_hex: "#00ff99".into(),
+            }],
+            entry_tags: vec![EntryTag {
+                path: path.into(),
+                tag_ids: vec!["tag-1".into()],
+                expires_at: None,
+            }],
+            ..MetadataStore::default()
+        };
+        store.upsert_entry_comment(path, "Verbatim-safe note", chrono::Utc::now);
+
+        assert_eq!(
+            store.comment_for_path(verbatim_path),
+            Some("Verbatim-safe note".to_string())
+        );
+        assert_eq!(
+            store.tags_for_path(verbatim_path),
+            vec!["Pinned".to_string()]
+        );
+
+        store.upsert_entry_comment(verbatim_path, "Updated through listing", chrono::Utc::now);
+        assert_eq!(
+            store.comment_for_path(path),
+            Some("Updated through listing".to_string())
+        );
+    }
+
+    #[test]
+    fn entry_comments_are_stored_by_path_key_and_can_be_removed() {
+        let path = "C:\\Data\\notes.txt";
+        let mut store = MetadataStore::default();
+
+        store.upsert_entry_comment(path, "First line\nSecond line", chrono::Utc::now);
+        assert_eq!(
+            store.comment_for_path(path),
+            Some("First line\nSecond line".to_string())
+        );
+
+        store.upsert_entry_comment(path, "Updated", chrono::Utc::now);
+        assert_eq!(store.comment_for_path(path), Some("Updated".to_string()));
+        assert!(store.remove_entry_comment(path));
+        assert_eq!(store.comment_for_path(path), None);
+    }
+
+    #[test]
+    fn remote_entry_comments_normalize_remote_host_only() {
+        let mut store = MetadataStore::default();
+        let path = "sftp://deploy@Example.COM/releases/report.txt";
+
+        store.upsert_entry_comment(path, "Remote note", chrono::Utc::now);
+
+        assert_eq!(
+            store.comment_for_path("sftp://deploy@example.com/releases/report.txt"),
+            Some("Remote note".to_string())
+        );
+        assert_eq!(
+            store.comment_for_path("sftp://deploy@example.com/releases/REPORT.txt"),
+            None
+        );
+        assert_eq!(
+            store.comment_for_path("sftp://DEPLOY@example.com/releases/report.txt"),
+            None
+        );
+    }
+
+    #[test]
+    fn deleted_entry_metadata_retention_controls_comments_and_tags() {
+        use chrono::{Duration, TimeZone};
+
+        let path = "C:\\Data\\notes.txt";
+        let now = chrono::Utc.with_ymd_and_hms(2026, 6, 27, 10, 0, 0).unwrap();
+        let mut store = MetadataStore {
+            tag_definitions: vec![TagDefinition {
+                id: "tag-1".into(),
+                name: "Pinned".into(),
+                color_hex: "#00ff99".into(),
+            }],
+            entry_tags: vec![EntryTag {
+                path: path.into(),
+                tag_ids: vec!["tag-1".into()],
+                expires_at: None,
+            }],
+            ..MetadataStore::default()
+        };
+        store.upsert_entry_comment(path, "Keep briefly", || now);
+
+        store.mark_entry_metadata_deleted(&[path.to_string()], Some(2), || now);
+        assert_eq!(
+            store.comment_for_path(path),
+            Some("Keep briefly".to_string())
+        );
+        assert_eq!(store.tags_for_path(path), vec!["Pinned".to_string()]);
+
+        store.cleanup_expired_entry_metadata(|| now + Duration::hours(3));
+        assert_eq!(store.comment_for_path(path), None);
+        assert!(store.tags_for_path(path).is_empty());
+    }
+
+    #[test]
+    fn zero_retention_removes_deleted_entry_metadata_immediately() {
+        let path = "C:\\Data\\notes.txt";
+        let mut store = MetadataStore::default();
+        store.upsert_entry_comment(path, "Temporary", chrono::Utc::now);
+
+        store.mark_entry_metadata_deleted(&[path.to_string()], Some(0), chrono::Utc::now);
+
+        assert_eq!(store.comment_for_path(path), None);
+    }
+
+    #[test]
+    fn never_retention_keeps_deleted_entry_metadata_without_expiry() {
+        let path = "C:\\Data\\notes.txt";
+        let mut store = MetadataStore::default();
+        store.upsert_entry_comment(path, "Permanent", chrono::Utc::now);
+
+        store.mark_entry_metadata_deleted(&[path.to_string()], None, chrono::Utc::now);
+        store.cleanup_expired_entry_metadata(chrono::Utc::now);
+
+        assert_eq!(store.comment_for_path(path), Some("Permanent".to_string()));
+    }
+
+    #[test]
+    fn huge_finite_retention_saturates_instead_of_becoming_never_expiring() {
+        let path = "C:\\Data\\notes.txt";
+        let mut store = MetadataStore::default();
+        store.upsert_entry_comment(path, "Long lived", chrono::Utc::now);
+
+        store.mark_entry_metadata_deleted(&[path.to_string()], Some(u64::MAX), chrono::Utc::now);
+
+        assert_eq!(
+            store
+                .entry_comments
+                .first()
+                .and_then(|entry| entry.expires_at),
+            Some(DateTime::<Utc>::MAX_UTC)
+        );
     }
 
     #[test]

@@ -4,7 +4,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   useEffect,
   useRef,
   useState
@@ -15,10 +14,28 @@ import {
   readEntryDragPayload
 } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
-import type { SystemIconImageList } from "./systemIconGateway";
 import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
 import { devLog, devWarn } from "./devLog";
+import {
+  estimateAutoFitColumnWidth,
+  getColumnHeaderMinWidth,
+  getColumnMenuLabel,
+  getDetailsGridMetrics,
+  getEntryTypeLabel,
+  getInlineIconSpec,
+  getLocalizedColumnLabel,
+  getLocationLabel,
+  getSortIndicator,
+  getViewBodyClassName,
+  ICON_VIEW_MODES,
+  type ListingEntry,
+  renderDetailsCell,
+  renderNameCell,
+  renderTagStack,
+  sortEntries
+} from "./fileListingPresentation";
+import { EntryTooltip, useEntryTooltip } from "./fileListingTooltip";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -35,20 +52,50 @@ import type {
 
 type DropOperation = "copy" | "move";
 
-const ICON_VIEW_MODES: TabViewMode[] = ["extra-large-icons", "large-icons", "medium-icons", "small-icons"];
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const ENTRY_DRAG_FOLLOWER_OFFSET_PX = 12;
-const DETAILS_GRID_COLUMN_GAP_PX = 6;
-const DEFAULT_DETAILS_COLUMN_WIDTHS: Record<ColumnId, number> = {
-  name: 240,
-  type: 112,
-  size: 96,
-  modified: 148,
-  tags: 120,
-  location: 220
-};
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
-const DETAILS_HEADER_MENU_COLUMN_IDS: ColumnId[] = ["name", "type", "size", "modified", "tags"];
+const COLUMN_POINTER_DRAG_THRESHOLD_PX = 4;
+const AUTO_FIT_EXTRA_WIDTH_PX = 16;
+
+function getAutoFitElementWidth(element: HTMLElement) {
+  const documentRef = element.ownerDocument;
+  const measureHost = documentRef.createElement("div");
+  measureHost.style.position = "fixed";
+  measureHost.style.left = "-10000px";
+  measureHost.style.top = "-10000px";
+  measureHost.style.visibility = "hidden";
+  measureHost.style.pointerEvents = "none";
+  measureHost.style.width = "max-content";
+
+  const clone = element.cloneNode(true) as HTMLElement;
+  clone.style.width = "max-content";
+  clone.style.maxWidth = "none";
+  clone.style.minWidth = "0";
+  measureHost.appendChild(clone);
+  documentRef.body.appendChild(measureHost);
+
+  const width = Math.max(clone.scrollWidth, clone.getBoundingClientRect().width);
+  measureHost.remove();
+  return Math.ceil(width);
+}
+
+function getAutoFitColumnWidthFromDom(root: HTMLElement | null, column: ColumnDefinition) {
+  if (!root) {
+    return null;
+  }
+
+  const candidates = [
+    root.querySelector<HTMLElement>(`[data-column-id="${column.id}"]`),
+    ...Array.from(root.querySelectorAll<HTMLElement>(`[data-cell-column-id="${column.id}"]`))
+  ].filter((element): element is HTMLElement => Boolean(element));
+  const measuredWidth = candidates.reduce((maxWidth, element) => Math.max(maxWidth, getAutoFitElementWidth(element)), 0);
+  if (measuredWidth <= 0) {
+    return null;
+  }
+
+  return `${Math.max(getColumnHeaderMinWidth(column), measuredWidth + AUTO_FIT_EXTRA_WIDTH_PX)}px`;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -114,6 +161,14 @@ type EntryDragFollower = {
   count: number;
 };
 
+type ActiveColumnPointerDrag = {
+  sourceId: ColumnId;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  dragging: boolean;
+};
+
 type MarqueeSelection = {
   active: boolean;
   startX: number;
@@ -169,164 +224,6 @@ export const TAB_VIEW_MODE_OPTIONS: Array<{ id: TabViewMode; label: string }> = 
 
 export function getTabViewModeLabel(mode: TabViewMode) {
   return TAB_VIEW_MODE_OPTIONS.find((option) => option.id === mode)?.label ?? mode;
-}
-
-function getLocalizedColumnLabel(column: ColumnDefinition) {
-  switch (column.id) {
-    case "name":
-      return "名称";
-    case "type":
-      return "类型";
-    case "size":
-      return "大小";
-    case "modified":
-      return "修改时间";
-    case "tags":
-      return "标签";
-    case "location":
-      return "位置";
-    default:
-      return column.label;
-  }
-}
-
-function getEntryTypeLabel(entry: EntryViewModel) {
-  return entry.kind === "folder" ? "文件夹" : entry.extension.replace(".", "").toUpperCase() || "文件";
-}
-
-function getLocationLabel(entry: EntryViewModel, currentPath: string) {
-  return entry.parentPath === currentPath ? "当前目录" : entry.parentPath;
-}
-
-function getColumnMenuLabel(columnId: ColumnId) {
-  switch (columnId) {
-    case "name":
-      return "名称";
-    case "type":
-      return "类型";
-    case "size":
-      return "大小";
-    case "modified":
-      return "修改时间";
-    case "tags":
-      return "标签";
-    case "location":
-      return "位置";
-    default:
-      return columnId;
-  }
-}
-
-function parseSizeLabel(sizeLabel: string) {
-  if (!sizeLabel || sizeLabel === "--") {
-    return -1;
-  }
-
-  const match = sizeLabel.trim().match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
-  if (!match) {
-    return Number.NaN;
-  }
-
-  const value = Number(match[1]);
-  const unit = match[2].toUpperCase();
-  const multiplierMap: Record<string, number> = {
-    B: 1,
-    KB: 1024,
-    MB: 1024 ** 2,
-    GB: 1024 ** 3,
-    TB: 1024 ** 4
-  };
-  return value * (multiplierMap[unit] ?? 1);
-}
-
-function parseModifiedLabel(label: string) {
-  const timestamp = Date.parse(label.replace(" ", "T"));
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function compareEntryByColumn(left: EntryViewModel, right: EntryViewModel, columnId: ColumnId, currentPath: string) {
-  switch (columnId) {
-    case "name":
-      return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
-    case "type":
-      return getEntryTypeLabel(left).localeCompare(getEntryTypeLabel(right), "zh-CN", {
-        numeric: true,
-        sensitivity: "base"
-      });
-    case "size":
-      return parseSizeLabel(left.sizeLabel) - parseSizeLabel(right.sizeLabel);
-    case "modified":
-      return parseModifiedLabel(left.modifiedLabel) - parseModifiedLabel(right.modifiedLabel);
-    case "tags":
-      return left.tags.join(",").localeCompare(right.tags.join(","), "zh-CN", { sensitivity: "base" });
-    case "location":
-      return getLocationLabel(left, currentPath).localeCompare(getLocationLabel(right, currentPath), "zh-CN", {
-        numeric: true,
-        sensitivity: "base"
-      });
-    default:
-      return 0;
-  }
-}
-
-function sortEntries(entries: EntryViewModel[], sort: SortState, currentPath: string) {
-  const direction = sort.direction === "asc" ? 1 : -1;
-  return [...entries].sort((left, right) => {
-    if (left.kind !== right.kind) {
-      return left.kind === "folder" ? -1 : 1;
-    }
-
-    const columnResult = compareEntryByColumn(left, right, sort.columnId, currentPath);
-    if (columnResult !== 0) {
-      return columnResult * direction;
-    }
-
-    return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
-  });
-}
-
-function getSortIndicator(sort: SortState, columnId: ColumnId) {
-  if (sort.columnId !== columnId) {
-    return "";
-  }
-  return sort.direction === "asc" ? "▲" : "▼";
-}
-
-function getViewBodyClassName(viewMode: TabViewMode, isEmpty: boolean) {
-  const classes = ["file-listing__body", `file-listing__body--${viewMode}`];
-  if (isEmpty) {
-    classes.push("is-empty");
-  }
-  return classes.join(" ");
-}
-
-type InlineIconSpec = {
-  displaySize: number;
-  imageList: SystemIconImageList;
-};
-
-type ListingEntry = EntryViewModel & {
-  inlineCreate?: boolean;
-};
-
-function getInlineIconSpec(viewMode: TabViewMode): InlineIconSpec {
-  switch (viewMode) {
-    case "extra-large-icons":
-      return { displaySize: 72, imageList: "jumbo" };
-    case "large-icons":
-      return { displaySize: 48, imageList: "extra-large" };
-    case "medium-icons":
-      return { displaySize: 32, imageList: "large" };
-    case "small-icons":
-      return { displaySize: 16, imageList: "small" };
-    case "details":
-      return { displaySize: 16, imageList: "sys-small" };
-    case "list":
-    case "tiles":
-    case "content":
-    default:
-      return { displaySize: 16, imageList: "sys-small" };
-  }
 }
 
 function getDropOperation(
@@ -428,127 +325,6 @@ function getPointerEntryDropTarget(
   return null;
 }
 
-function renderNameCell(
-  entry: EntryViewModel,
-  iconSpec: InlineIconSpec,
-  iconClassName?: string,
-  nameContent?: ReactNode
-) {
-  return (
-    <div className={`entry-name${iconClassName ? ` ${iconClassName}` : ""}`}>
-      <FileSystemIcon
-        kind={entry.kind}
-        path={entry.path}
-        extension={entry.extension}
-        size={iconSpec.displaySize}
-        imageList={iconSpec.imageList}
-      />
-      {nameContent ?? <span>{entry.name}</span>}
-    </div>
-  );
-}
-
-function renderTagStack(entry: EntryViewModel) {
-  return (
-    <div className="tag-stack">
-      {entry.tags.length > 0 ? entry.tags.map((tag) => <span key={tag}>{tag}</span>) : <span>--</span>}
-    </div>
-  );
-}
-
-function renderDetailsCell(
-  entry: ListingEntry,
-  columnId: ColumnDefinition["id"],
-  currentPath: string,
-  nameContent?: ReactNode
-) {
-  const detailIconSpec = getInlineIconSpec("details");
-  switch (columnId) {
-    case "name":
-      return renderNameCell(entry, detailIconSpec, undefined, nameContent);
-    case "type":
-      return getEntryTypeLabel(entry);
-    case "size":
-      return entry.sizeLabel;
-    case "modified":
-      return entry.modifiedLabel;
-    case "tags":
-      return renderTagStack(entry);
-    case "location":
-      return getLocationLabel(entry, currentPath);
-    default:
-      return "";
-  }
-}
-
-function getDetailsCellText(entry: EntryViewModel, columnId: ColumnId, currentPath: string) {
-  switch (columnId) {
-    case "name":
-      return entry.name;
-    case "type":
-      return getEntryTypeLabel(entry);
-    case "size":
-      return entry.sizeLabel;
-    case "modified":
-      return entry.modifiedLabel;
-    case "tags":
-      return entry.tags.length > 0 ? entry.tags.join(", ") : "--";
-    case "location":
-      return getLocationLabel(entry, currentPath);
-    default:
-      return "";
-  }
-}
-
-function getTextMeasureUnits(value: string) {
-  return Array.from(value).reduce((sum, char) => {
-    const codePoint = char.codePointAt(0) ?? 0;
-    return sum + (codePoint >= 0x2e80 ? 2 : 1);
-  }, 0);
-}
-
-function estimateAutoFitColumnWidth(column: ColumnDefinition, entries: EntryViewModel[], currentPath: string) {
-  const label = getColumnMenuLabel(column.id);
-  const maxUnits = [label, ...entries.map((entry) => getDetailsCellText(entry, column.id, currentPath))]
-    .map(getTextMeasureUnits)
-    .reduce((max, units) => Math.max(max, units), 0);
-  const iconAllowance = column.id === "name" ? 34 : 0;
-  const minWidth = column.id === "name" ? 160 : column.id === "modified" ? 132 : 80;
-  const width = Math.min(520, Math.max(minWidth, Math.ceil(maxUnits * 7 + 28 + iconAllowance)));
-  return `${width}px`;
-}
-
-function getColumnHeaderMinWidth(column: ColumnDefinition) {
-  const label = getLocalizedColumnLabel(column) || column.label || column.id;
-  return Math.max(48, Math.ceil(getTextMeasureUnits(label) * 10));
-}
-
-function parsePixelColumnWidth(width: string) {
-  const trimmed = width.trim();
-  if (!trimmed.endsWith("px")) {
-    return Number.NaN;
-  }
-  const parsed = Number.parseFloat(trimmed);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
-
-function getColumnPixelWidth(column: ColumnDefinition) {
-  const parsedWidth = parsePixelColumnWidth(column.width);
-  const fallbackWidth = DEFAULT_DETAILS_COLUMN_WIDTHS[column.id] ?? 120;
-  return Math.max(getColumnHeaderMinWidth(column), Math.round(Number.isFinite(parsedWidth) ? parsedWidth : fallbackWidth));
-}
-
-function getDetailsGridMetrics(columns: ColumnDefinition[]) {
-  const widths = columns.map(getColumnPixelWidth);
-  const gridTemplateColumns = widths.map((width) => `${width}px`).join(" ");
-  const totalGapWidth = Math.max(0, widths.length - 1) * DETAILS_GRID_COLUMN_GAP_PX;
-  const width = widths.reduce((sum, columnWidth) => sum + columnWidth, 0) + totalGapWidth;
-  return {
-    gridTemplateColumns,
-    width
-  };
-}
-
 export function FileListingShell({
   panelId,
   tabId,
@@ -568,10 +344,12 @@ export function FileListingShell({
   onClearSelection,
   onOpen,
   detailsRowHeight,
+  tooltipHoverDelayMs = 200,
   onOpenContextMenu,
   onOpenNativeContextMenu,
   onResizeColumn,
   onSetColumnVisibility,
+  onMoveColumn,
   onShowAllColumns,
   onDropEntries,
   onAddEntriesToNavigation,
@@ -601,10 +379,12 @@ export function FileListingShell({
   onClearSelection?: () => void;
   onOpen: (entry: EntryViewModel) => void;
   detailsRowHeight: number;
+  tooltipHoverDelayMs?: number;
   onOpenContextMenu: (payload: ContextMenuState) => void;
   onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => void;
   onResizeColumn: (columnId: ColumnId, width: string) => void;
   onSetColumnVisibility?: (columnId: ColumnId, visible: boolean) => void;
+  onMoveColumn?: (sourceId: ColumnId, targetId: ColumnId, placement: "before" | "after") => void;
   onShowAllColumns?: (columnIds: ColumnId[]) => void;
   onDropEntries: (paths: string[], destination: string, operation: DropOperation) => void;
   onAddEntriesToNavigation?: (paths: string[]) => void;
@@ -631,6 +411,7 @@ export function FileListingShell({
           attributes: inlineEdit.kind === "folder" ? ["D"] : ["A"],
           accentColor: "#0f6cbd",
           tags: [],
+          comment: "",
           description: inlineEdit.mode === "create-folder" ? "New folder" : "New file",
           inlineCreate: true
         }
@@ -647,6 +428,9 @@ export function FileListingShell({
   const suppressNextInlineBlurRef = useRef(false);
   const activeEntryPointerDragRef = useRef<ActiveEntryPointerDrag | null>(null);
   const cleanupEntryPointerDragRef = useRef<(() => void) | null>(null);
+  const activeColumnPointerDragRef = useRef<ActiveColumnPointerDrag | null>(null);
+  const cleanupColumnPointerDragRef = useRef<(() => void) | null>(null);
+  const suppressNextColumnClickRef = useRef<ColumnId | null>(null);
   const suppressNextEntryClickRef = useRef<string | null>(null);
   const inlineIconSpec = getInlineIconSpec(viewMode);
   const compactIconSpec = getInlineIconSpec("list");
@@ -708,6 +492,7 @@ export function FileListingShell({
   useEffect(
     () => () => {
       cleanupEntryPointerDragRef.current?.();
+      cleanupColumnPointerDragRef.current?.();
       clearPointerEntryDropHighlight();
     },
     []
@@ -860,6 +645,17 @@ export function FileListingShell({
   const renderEntryNameContent = (entry: ListingEntry) =>
     isInlineEditingEntry(entry) ? renderInlineEditInput() : <span>{entry.name}</span>;
 
+  const {
+    entryTooltip,
+    entryTooltipPosition,
+    entryTooltipRef,
+    hideEntryTooltip,
+    buildEntryTooltipHandlers
+  } = useEntryTooltip({
+    tooltipHoverDelayMs,
+    isDisabled: isInlineEditingEntry
+  });
+
   const getRequestedContextMenu = (event: ReactMouseEvent<HTMLElement>): ContextMenuDefault => {
     const shouldToggle = modifiersMatchShortcutBinding(event, contextMenuToggleBinding);
     if (!shouldToggle) {
@@ -881,6 +677,28 @@ export function FileListingShell({
     });
   };
 
+  const openCommentContextMenu = (event: ReactMouseEvent<HTMLElement>, entry: ListingEntry) => {
+    if (entry.inlineCreate) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    hideEntryTooltip();
+    if (!selectedEntryIds.includes(entry.id)) {
+      onSelect(entry, false);
+    }
+    onOpenContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      panelId,
+      tabId,
+      mode: "custom",
+      scope: "comment",
+      columnId: "comment",
+      entryPath: entry.path
+    });
+  };
+
   const startEntryPointerDrag = (event: ReactPointerEvent<HTMLElement>, entry: ListingEntry) => {
     if (event.button !== 0 || isInlineEditingEntry(entry)) {
       return;
@@ -888,6 +706,7 @@ export function FileListingShell({
     if (event.target instanceof HTMLElement && event.target.closest(".inline-edit-input")) {
       return;
     }
+    hideEntryTooltip();
 
     cleanupEntryPointerDragRef.current?.();
     const previewEntries = selectedEntryIds.includes(entry.id)
@@ -1043,6 +862,7 @@ export function FileListingShell({
   const buildEntryHandlers = (entry: ListingEntry) => {
     if (entry.inlineCreate) {
       return {
+        ...buildEntryTooltipHandlers(entry),
         draggable: false,
         onClick: (event: ReactMouseEvent<HTMLElement>) => event.stopPropagation(),
         onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => event.stopPropagation(),
@@ -1054,6 +874,7 @@ export function FileListingShell({
     }
 
     return {
+      ...buildEntryTooltipHandlers(entry),
       draggable: false,
       onClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (suppressNextEntryClickRef.current === entry.id) {
@@ -1097,6 +918,7 @@ export function FileListingShell({
           openBlankContextMenu(event);
           return;
         }
+        hideEntryTooltip();
         event.preventDefault();
         event.stopPropagation();
         const requestedMenu = getRequestedContextMenu(event);
@@ -1224,7 +1046,12 @@ export function FileListingShell({
         >
           <div className="file-row__grid" style={gridStyle}>
             {visibleColumns.map((column) => (
-              <div key={column.id} className={`file-cell file-cell--${column.align}`}>
+              <div
+                key={column.id}
+                className={`file-cell file-cell--${column.align}`}
+                data-cell-column-id={column.id}
+                onContextMenu={column.id === "comment" ? (event) => openCommentContextMenu(event, entry) : undefined}
+              >
                 {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry))}
               </div>
             ))}
@@ -1635,6 +1462,94 @@ export function FileListingShell({
     window.addEventListener("mouseup", handleMouseUp);
   };
 
+  const startColumnPointerDrag = (event: ReactPointerEvent<HTMLElement>, column: ColumnDefinition) => {
+    if (event.button !== 0 || !onMoveColumn) {
+      return;
+    }
+    if (event.target instanceof HTMLElement && event.target.closest(".file-header-resizer")) {
+      return;
+    }
+
+    cleanupColumnPointerDragRef.current?.();
+    const pointerDrag: ActiveColumnPointerDrag = {
+      sourceId: column.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false
+    };
+    activeColumnPointerDragRef.current = pointerDrag;
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+      cleanupColumnPointerDragRef.current = null;
+      document.body.classList.remove("is-column-pointer-dragging");
+    };
+
+    const finishDrag = (finishEvent: PointerEvent) => {
+      const activeDrag = activeColumnPointerDragRef.current;
+      cleanup();
+      activeColumnPointerDragRef.current = null;
+      if (!activeDrag || finishEvent.pointerId !== activeDrag.pointerId || !activeDrag.dragging) {
+        return;
+      }
+
+      finishEvent.preventDefault();
+      suppressNextColumnClickRef.current = activeDrag.sourceId;
+      window.setTimeout(() => {
+        if (suppressNextColumnClickRef.current === activeDrag.sourceId) {
+          suppressNextColumnClickRef.current = null;
+        }
+      }, 0);
+
+      const targetElement = document.elementFromPoint(finishEvent.clientX, finishEvent.clientY)?.closest("[data-column-id]") as HTMLElement | null;
+      const targetId = targetElement?.dataset.columnId as ColumnId | undefined;
+      if (!targetElement || !targetId || targetId === activeDrag.sourceId) {
+        return;
+      }
+
+      const rect = targetElement.getBoundingClientRect();
+      const placement = finishEvent.clientX < rect.left + rect.width / 2 ? "before" : "after";
+      onMoveColumn(activeDrag.sourceId, targetId, placement);
+    };
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const activeDrag = activeColumnPointerDragRef.current;
+      if (!activeDrag || moveEvent.pointerId !== activeDrag.pointerId) {
+        return;
+      }
+
+      const deltaX = moveEvent.clientX - activeDrag.startX;
+      const deltaY = moveEvent.clientY - activeDrag.startY;
+      if (!activeDrag.dragging && Math.hypot(deltaX, deltaY) < COLUMN_POINTER_DRAG_THRESHOLD_PX) {
+        return;
+      }
+      activeDrag.dragging = true;
+      document.body.classList.add("is-column-pointer-dragging");
+      moveEvent.preventDefault();
+    }
+
+    function handlePointerUp(upEvent: PointerEvent) {
+      finishDrag(upEvent);
+    }
+
+    function handlePointerCancel(cancelEvent: PointerEvent) {
+      if (cancelEvent.pointerId !== pointerDrag.pointerId) {
+        return;
+      }
+      cleanup();
+      activeColumnPointerDragRef.current = null;
+    }
+
+    cleanupColumnPointerDragRef.current = cleanup;
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
   const handleColumnResizeStart = (column: ColumnDefinition, event: ReactMouseEvent<HTMLSpanElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1661,8 +1576,7 @@ export function FileListingShell({
     window.addEventListener("mouseup", handleStop);
   };
 
-  const menuColumns = DETAILS_HEADER_MENU_COLUMN_IDS.map((columnId) => columns.find((column) => column.id === columnId))
-    .filter((column): column is ColumnDefinition => Boolean(column));
+  const menuColumns = columns;
 
   const openColumnHeaderMenu = (event: ReactMouseEvent<HTMLElement>) => {
     if (viewMode !== "details") {
@@ -1680,7 +1594,10 @@ export function FileListingShell({
 
   const autoFitVisibleColumns = () => {
     visibleColumns.forEach((column) => {
-      onResizeColumn(column.id, estimateAutoFitColumnWidth(column, entries, currentPath));
+      onResizeColumn(
+        column.id,
+        getAutoFitColumnWidthFromDom(scrollContainerRef.current, column) ?? estimateAutoFitColumnWidth(column, entries, currentPath)
+      );
     });
   };
 
@@ -1710,6 +1627,7 @@ export function FileListingShell({
               key={column.id}
               type="button"
               className="column-header-menu__item"
+              data-column-menu-id={column.id}
               role="menuitemcheckbox"
               aria-checked={column.visible}
               onClick={() =>
@@ -1767,11 +1685,25 @@ export function FileListingShell({
             onContextMenu={openColumnHeaderMenu}
           >
             {visibleColumns.map((column) => (
-              <div key={column.id} className={`file-header-cell file-cell--${column.align}`} onContextMenu={openColumnHeaderMenu}>
+              <div
+                key={column.id}
+                className={`file-header-cell file-cell--${column.align}`}
+                data-column-id={column.id}
+                onPointerDown={(event) => startColumnPointerDrag(event, column)}
+                onContextMenu={openColumnHeaderMenu}
+              >
                 <button
                   type="button"
                   className={`file-header-button file-cell file-cell--header file-cell--${column.align}`}
-                  onClick={() => onSort(column.id)}
+                  onClick={(event) => {
+                    if (suppressNextColumnClickRef.current === column.id) {
+                      suppressNextColumnClickRef.current = null;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      return;
+                    }
+                    onSort(column.id);
+                  }}
                 >
                   <span>{getLocalizedColumnLabel(column)}</span>
                   <span className="file-header-button__indicator">{getSortIndicator(sort, column.id)}</span>
@@ -1808,6 +1740,7 @@ export function FileListingShell({
           />
         )}
       </div>
+      <EntryTooltip tooltip={entryTooltip} tooltipRef={entryTooltipRef} position={entryTooltipPosition} />
       {entryDragFollower.visible && entryDragFollower.entry ? (
         <div
           className="entry-drag-follower"

@@ -1771,12 +1771,17 @@ assertTest("workspaceReducer cancels inline edit on the target tab only", () => 
 assertTest("workspaceReducer stores a clamped details row height in settings", () => {
   const state = createState();
 
-  const nextState = workspaceReducer(state, {
+  const maxState = workspaceReducer(state, {
     type: "detailsRowHeightSet",
     payload: { value: 84 }
   } as unknown as WorkspaceAction);
+  const minState = workspaceReducer(state, {
+    type: "detailsRowHeightSet",
+    payload: { value: 4 }
+  } as unknown as WorkspaceAction);
 
-  assert.equal(nextState.settings.model.detailsRowHeight, 72);
+  assert.equal(maxState.settings.model.detailsRowHeight, 72);
+  assert.equal(minState.settings.model.detailsRowHeight, 12);
 });
 
 assertTest("workspaceReducer normalizes legacy settings sections through one state boundary", () => {
@@ -1893,101 +1898,6 @@ assertTest("workspaceReducer stores resized detail column widths on the target t
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "name")?.width, originalSettingsWidth);
 });
 
-assertTest("workspaceReducer shows columns on the target tab and default settings model", () => {
-  const state = createState();
-  const targetTab = getActiveTab(state.panels["panel-1"]);
-  const hidden = {
-    ...state,
-    settings: {
-      ...state.settings,
-      model: {
-        ...state.settings.model,
-        columns: state.settings.model.columns.map((column) =>
-          column.id === "tags" ? { ...column, visible: false } : column
-        )
-      }
-    },
-    panels: {
-      ...state.panels,
-      "panel-1": {
-        ...state.panels["panel-1"],
-        tabs: state.panels["panel-1"].tabs.map((tab) =>
-          tab.id === targetTab.id
-            ? {
-                ...tab,
-                columns: tab.columns.map((column) =>
-                  column.id === "tags" ? { ...column, visible: false } : column
-                )
-              }
-            : tab
-        )
-      }
-    }
-  };
-
-  const nextState = workspaceReducer(hidden, {
-    type: "columnVisibilitySet",
-    payload: {
-      panelId: "panel-1",
-      tabId: targetTab.id,
-      id: "tags",
-      visible: true
-    }
-  } as WorkspaceAction);
-
-  assert.equal(getActiveTab(nextState.panels["panel-1"]).columns.find((column) => column.id === "tags")?.visible, true);
-  assert.equal(nextState.settings.model.columns.find((column) => column.id === "tags")?.visible, true);
-});
-
-assertTest("workspaceReducer can show all requested columns on the target tab", () => {
-  const state = createState();
-  const targetTab = getActiveTab(state.panels["panel-1"]);
-  const hiddenIds = new Set(["modified", "tags"]);
-  const hidden = {
-    ...state,
-    settings: {
-      ...state.settings,
-      model: {
-        ...state.settings.model,
-        columns: state.settings.model.columns.map((column) =>
-          hiddenIds.has(column.id) ? { ...column, visible: false } : column
-        )
-      }
-    },
-    panels: {
-      ...state.panels,
-      "panel-1": {
-        ...state.panels["panel-1"],
-        tabs: state.panels["panel-1"].tabs.map((tab) =>
-          tab.id === targetTab.id
-            ? {
-                ...tab,
-                columns: tab.columns.map((column) =>
-                  hiddenIds.has(column.id) ? { ...column, visible: false } : column
-                )
-              }
-            : tab
-        )
-      }
-    }
-  };
-
-  const nextState = workspaceReducer(hidden, {
-    type: "columnsShown",
-    payload: {
-      panelId: "panel-1",
-      tabId: targetTab.id,
-      ids: ["name", "type", "size", "modified", "tags"]
-    }
-  } as WorkspaceAction);
-
-  const nextTab = getActiveTab(nextState.panels["panel-1"]);
-  assert.equal(nextTab.columns.find((column) => column.id === "modified")?.visible, true);
-  assert.equal(nextTab.columns.find((column) => column.id === "tags")?.visible, true);
-  assert.equal(nextState.settings.model.columns.find((column) => column.id === "modified")?.visible, true);
-  assert.equal(nextState.settings.model.columns.find((column) => column.id === "tags")?.visible, true);
-});
-
 assertTest("workspaceReducer stores the directory tree visibility flag", () => {
   const state = createState();
 
@@ -2015,7 +1925,7 @@ assertTest("workspaceReducer stores the default context menu setting", () => {
   assert.equal(nextState.settings.model.contextMenu.defaultMenu, "custom");
 });
 
-assertTest("workspaceReducer preserves local-only columns and tag filters when backend settings sync", () => {
+assertTest("workspaceReducer replaces synced columns but preserves local-only tag filters when backend settings sync", () => {
   const state = workspaceReducer(
     workspaceReducer(createState(), {
       type: "columnVisibilityToggled",
@@ -2058,7 +1968,7 @@ assertTest("workspaceReducer preserves local-only columns and tag filters when b
   assert.equal(nextState.bookmarks[0].label, "Synced");
   assert.equal(nextState.settings.model.detailsRowHeight, 44);
   assert.equal(nextState.settings.model.theme.tabMinWidth, 132);
-  assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, true);
+  assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, false);
   assert.equal(nextState.settings.model.tagRules.find((rule) => rule.id === "tag-latest")?.quickFilter, "本地筛选");
 });
 

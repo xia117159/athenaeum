@@ -12,11 +12,17 @@ import type {
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
   DEFAULT_DETAILS_ROW_HEIGHT,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_COLUMNS,
   DEFAULT_CONTEXT_MENU_SETTINGS,
   DEFAULT_LAYOUT_RATIOS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS,
   DEFAULT_THEME,
   normalizeContextMenuDefault,
+  normalizeColumns,
+  normalizeMetadataRetentionHours,
   normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
@@ -73,7 +79,10 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
   return {
     shortcuts: model.shortcuts.map(toBackendShortcut),
     colorRules: model.colorRules.map(toBackendColorRule),
+    columns: normalizeColumns(model.columns),
     detailsRowHeight: model.detailsRowHeight,
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(model.contextMenu?.defaultMenu)
     },
@@ -132,7 +141,10 @@ export function createBrowserSettingsSnapshot(
     entryTags: [],
     colorRules: [],
     shortcuts: [],
+    columns: DEFAULT_COLUMNS,
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
+    tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
+    metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
     contextMenu: DEFAULT_CONTEXT_MENU_SETTINGS,
     theme: toBackendTheme(DEFAULT_THEME),
     layout: toBackendLayout("dual", DEFAULT_LAYOUT_RATIOS),

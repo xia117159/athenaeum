@@ -369,6 +369,31 @@ body.is-entry-pointer-dragging * {
   text-align: right;
 }
 
+.file-listing__tooltip {
+  position: fixed;
+  z-index: 59;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 16px));
+  overflow: auto;
+  padding: 7px 9px;
+  border: 1px solid #767676;
+  border-radius: 2px;
+  background: #ffffe1;
+  color: #1f1f1f;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.file-listing__tooltip-comment {
+  white-space: pre-wrap;
+}
+
 .entry-name {
   display: inline-flex;
   align-items: center;

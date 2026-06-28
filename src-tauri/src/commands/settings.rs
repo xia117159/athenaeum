@@ -35,6 +35,15 @@ fn emit_current_settings_changed(
     Ok(snapshot)
 }
 
+fn normalize_entry_comment_input(comment: &str) -> Option<String> {
+    let normalized = comment.trim_end_matches(['\r', '\n']).to_string();
+    if normalized.trim().is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 #[tauri::command]
 pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<SettingsSnapshot, String> {
     let metadata = state
@@ -49,7 +58,10 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         .clone();
     Ok(metadata.to_settings_snapshot(
         settings.layout,
+        settings.detail_columns,
         settings.details_row_height,
+        settings.tooltip_hover_delay_ms,
+        settings.metadata_retention_hours,
         settings.context_menu,
         settings.theme,
     ))
@@ -316,10 +328,103 @@ pub fn save_settings_model(
     }
     {
         let mut settings = state.settings.write().expect("settings lock poisoned");
+        settings.set_detail_columns(model.columns);
         settings.set_details_row_height(model.details_row_height);
+        settings.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);
+        settings.set_metadata_retention_hours(model.metadata_retention_hours);
         settings.set_context_menu(model.context_menu);
         settings.set_theme(model.theme);
     }
     persist_state(state.inner())?;
     emit_current_settings_changed(&app, state)
+}
+
+#[tauri::command]
+pub fn get_entry_comment(
+    path: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    let metadata = state.metadata.read().expect("metadata lock poisoned");
+    Ok(metadata.comment_for_path(&path))
+}
+
+#[tauri::command]
+pub fn save_entry_comment(
+    path: String,
+    comment: String,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<Option<String>, String> {
+    let normalized_comment = normalize_entry_comment_input(&comment);
+    {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        if let Some(comment) = &normalized_comment {
+            metadata.upsert_entry_comment(&path, comment, chrono::Utc::now);
+        } else {
+            metadata.remove_entry_comment(&path);
+        }
+    }
+    persist_state(state.inner())?;
+    let _ = app.emit("entry_metadata_changed", vec![path.clone()]);
+    Ok(normalized_comment)
+}
+
+#[tauri::command]
+pub fn remove_entry_comment(
+    path: String,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        metadata.remove_entry_comment(&path);
+    }
+    persist_state(state.inner())?;
+    let _ = app.emit("entry_metadata_changed", vec![path]);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mark_entry_metadata_deleted(
+    paths: Vec<String>,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let retention_hours = state
+        .settings
+        .read()
+        .expect("settings lock poisoned")
+        .metadata_retention_hours;
+    {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        metadata.mark_entry_metadata_deleted(&paths, retention_hours, chrono::Utc::now);
+    }
+    persist_state(state.inner())?;
+    let _ = app.emit("entry_metadata_changed", paths);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_entry_comment_input;
+
+    #[test]
+    fn whitespace_entry_comment_input_is_treated_as_removal() {
+        assert_eq!(normalize_entry_comment_input(""), None);
+        assert_eq!(normalize_entry_comment_input("   "), None);
+        assert_eq!(normalize_entry_comment_input("\r\n"), None);
+        assert_eq!(normalize_entry_comment_input("  \r\n"), None);
+    }
+
+    #[test]
+    fn entry_comment_input_preserves_meaningful_text_and_trims_terminal_newlines() {
+        assert_eq!(
+            normalize_entry_comment_input("  keep leading space\nsecond line\r\n"),
+            Some("  keep leading space\nsecond line".to_string())
+        );
+        assert_eq!(
+            normalize_entry_comment_input("keep trailing spaces  "),
+            Some("keep trailing spaces  ".to_string())
+        );
+    }
 }

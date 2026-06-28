@@ -19,12 +19,15 @@ export interface EntryViewModel {
   extension?: string | null;
   kind: EntryKind;
   size?: number | null;
+  createdAt?: string | null;
   modifiedAt?: string | null;
+  accessedAt?: string | null;
   isHidden: boolean;
   isReadOnly: boolean;
   isSymlink: boolean;
   location: LocationDescriptor;
   decoration: EntryDecoration;
+  comment?: string | null;
 }
 
 export interface DirectoryListing {
@@ -184,6 +187,7 @@ export interface TagDefinition {
 export interface EntryTag {
   path: string;
   tagIds: string[];
+  expiresAt?: string | null;
 }
 
 export interface ColorRule {
@@ -214,6 +218,14 @@ export interface UiTheme {
 
 export interface ContextMenuSettings {
   defaultMenu: "native" | "custom";
+}
+
+export interface DetailColumnDefinition {
+  id: string;
+  label: string;
+  visible: boolean;
+  width: string;
+  align: "left" | "right";
 }
 
 export type NativeBackgroundContextMenuAction =
@@ -310,7 +322,10 @@ export interface SettingsSnapshot {
   entryTags: EntryTag[];
   colorRules: ColorRule[];
   shortcuts: ShortcutBinding[];
+  columns?: DetailColumnDefinition[];
   detailsRowHeight: number;
+  tooltipHoverDelayMs?: number;
+  metadataRetentionHours?: number | null;
   contextMenu?: ContextMenuSettings;
   theme?: UiTheme;
   layout: UiLayout;
@@ -320,7 +335,10 @@ export interface SettingsSnapshot {
 export interface SettingsModelUpdate {
   shortcuts: ShortcutBinding[];
   colorRules: ColorRule[];
+  columns: DetailColumnDefinition[];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
+  metadataRetentionHours: number | null;
   contextMenu: ContextMenuSettings;
   theme: UiTheme;
 }

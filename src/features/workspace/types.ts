@@ -18,7 +18,17 @@ export type SettingsSection =
   | "connections";
 export type LocationKind = "local" | "ftp" | "sftp" | "virtual";
 export type EntryKind = "file" | "folder";
-export type ColumnId = "name" | "type" | "size" | "modified" | "tags" | "location";
+export type ColumnId =
+  | "name"
+  | "type"
+  | "extension"
+  | "size"
+  | "created"
+  | "modified"
+  | "accessed"
+  | "tags"
+  | "comment"
+  | "location";
 export type ShortcutScope = "workspace" | "panel" | "listing" | "context-menu";
 export type ContextMenuDefault = "native" | "custom";
 export type RemoteAuthKind = "password" | "keyFile" | "anonymous";
@@ -68,11 +78,14 @@ export interface EntryViewModel {
   parentPath: string;
   sizeBytes?: number | null;
   sizeLabel: string;
+  createdLabel?: string;
   modifiedLabel: string;
+  accessedLabel?: string;
   extension: string;
   attributes: string[];
   accentColor: string;
   tags: string[];
+  comment?: string;
   description: string;
   contentText?: string;
 }
@@ -230,6 +243,8 @@ export interface SettingsModel {
   tagRules: TagRule[];
   columns: ColumnDefinition[];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
+  metadataRetentionHours: number | null;
   contextMenu: ContextMenuSettings;
   theme: ThemeSettings;
 }
@@ -270,7 +285,9 @@ export interface ContextMenuState {
   panelId: PanelId;
   tabId: string;
   mode: "custom" | "system-fallback";
-  scope: "panel" | "selection" | "tab";
+  scope: "panel" | "selection" | "tab" | "comment";
+  columnId?: ColumnId;
+  entryPath?: string;
 }
 
 export interface EntryDragPayload {

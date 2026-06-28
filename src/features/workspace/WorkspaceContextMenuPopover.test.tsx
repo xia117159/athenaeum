@@ -80,6 +80,10 @@ function createActions(overrides: Record<string, unknown> = {}) {
     copyTabPath() {},
     addCurrentFolderToNavigation() {},
     addSelectedEntriesToNavigation() {},
+    editEntryComment() {},
+    copyEntryComment() {},
+    pasteEntryComment() {},
+    removeEntryComment() {},
     moveTab() {},
     activateTab() {},
     ...overrides
@@ -245,6 +249,74 @@ export const completion = (async () => {
       ) as HTMLButtonElement | undefined;
       descendingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       assert.deepEqual(sortCalls[1], ["panel-1", "panel-1-tab-1", { direction: "desc" }]);
+    });
+
+    await assertTest("WorkspaceContextMenuPopover renders the comment-only menu for comment cells", async () => {
+      const calls: unknown[][] = [];
+      const commentTab = {
+        ...directoryTab,
+        snapshot: {
+          ...directoryTab.snapshot,
+          entries: [
+            {
+              id: "file-source",
+              name: "report.txt",
+              kind: "file",
+              path: "D:\\Projects\\report.txt",
+              parentPath: "D:\\Projects",
+              sizeLabel: "2 KB",
+              modifiedLabel: "2026-04-21 10:00",
+              extension: ".txt",
+              attributes: ["A"],
+              accentColor: "#0f6cbd",
+              tags: [],
+              comment: "Existing note",
+              description: "Text report"
+            }
+          ]
+        }
+      };
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceContextMenuPopover, {
+            contextMenu: {
+              ...contextMenu,
+              mode: "custom",
+              scope: "comment",
+              columnId: "comment",
+              entryPath: "D:\\Projects\\report.txt"
+            },
+            viewMode: "details" as TabViewMode,
+            tab: commentTab as never,
+            actions: createActions({
+              editEntryComment: (...args: unknown[]) => calls.push(["edit", ...args]),
+              copyEntryComment: (...args: unknown[]) => calls.push(["copy", ...args]),
+              pasteEntryComment: (...args: unknown[]) => calls.push(["paste", ...args]),
+              removeEntryComment: (...args: unknown[]) => calls.push(["remove", ...args])
+            }) as never,
+            onClose: () => undefined
+          })
+        );
+        await flushEffects();
+      });
+
+      const labels = Array.from(document.body.querySelectorAll(".context-menu > .context-menu__item span:last-child")).map((item) =>
+        item.textContent?.trim()
+      );
+      assert.deepEqual(labels, ["编辑注释", "复制注释", "粘贴注释（从剪切板）", "移除注释"]);
+
+      const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".context-menu > .context-menu__item"));
+      buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[2].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[3].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(calls, [
+        ["edit", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"],
+        ["copy", "D:\\Projects\\report.txt", "Existing note"],
+        ["paste", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"],
+        ["remove", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"]
+      ]);
     });
   } finally {
     await act(async () => {

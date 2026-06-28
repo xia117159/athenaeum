@@ -34,6 +34,10 @@ permissions = [
   "allow-save-shortcuts",
   "allow-save-details-row-height",
   "allow-save-settings-model",
+  "allow-get-entry-comment",
+  "allow-save-entry-comment",
+  "allow-remove-entry-comment",
+  "allow-mark-entry-metadata-deleted",
   "allow-save-ui-layout",
   "allow-save-ui-theme",
   "allow-save-navigation-item",
@@ -231,6 +235,26 @@ commands.allow = ["save_details_row_height"]
 identifier = "allow-save-settings-model"
 description = "Allows saving the settings model in one confirmed update."
 commands.allow = ["save_settings_model"]
+
+[[permission]]
+identifier = "allow-get-entry-comment"
+description = "Allows reading a file or folder comment by workspace path."
+commands.allow = ["get_entry_comment"]
+
+[[permission]]
+identifier = "allow-save-entry-comment"
+description = "Allows saving a file or folder comment by workspace path."
+commands.allow = ["save_entry_comment"]
+
+[[permission]]
+identifier = "allow-remove-entry-comment"
+description = "Allows removing a file or folder comment by workspace path."
+commands.allow = ["remove_entry_comment"]
+
+[[permission]]
+identifier = "allow-mark-entry-metadata-deleted"
+description = "Allows applying metadata retention after file operations remove or move entries."
+commands.allow = ["mark_entry_metadata_deleted"]
 
 [[permission]]
 identifier = "allow-save-ui-layout"

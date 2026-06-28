@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main and settings windows",
-  "windows": ["main", "settings"],
+  "description": "Default capability for the main, settings, and comment editor windows",
+  "windows": ["main", "settings", "comment-editor"],
   "permissions": [
     "core:default",
     "default",
+    "core:event:allow-emit",
     "core:event:allow-listen",
     "core:webview:allow-create-webview-window",
     "core:window:allow-close",

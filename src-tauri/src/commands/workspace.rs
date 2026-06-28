@@ -21,11 +21,11 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         .map(|drive| drive.path.clone())
         .unwrap_or_else(|| ".".to_string());
 
-    let metadata = state
-        .metadata
-        .read()
-        .expect("metadata lock poisoned")
-        .clone();
+    let metadata = {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
+        metadata.clone()
+    };
     let settings = state
         .settings
         .read()
@@ -33,7 +33,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         .clone();
     let initial_listing =
         fs_service::list_directory(Path::new(&initial_path), &metadata.color_rules, |path| {
-            metadata.tags_for_path(path)
+            (metadata.tags_for_path(path), metadata.comment_for_path(path))
         })
         .map_err(|error| error.to_string())?;
 
@@ -43,7 +43,10 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         initial_listing,
         settings: metadata.to_settings_snapshot(
             settings.layout,
+            settings.detail_columns,
             settings.details_row_height,
+            settings.tooltip_hover_delay_ms,
+            settings.metadata_retention_hours,
             settings.context_menu,
             settings.theme,
         ),
@@ -60,13 +63,16 @@ pub fn list_directory(
     path: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<crate::domain::models::DirectoryListing, String> {
-    let metadata = state
-        .metadata
-        .read()
-        .expect("metadata lock poisoned")
-        .clone();
+    let metadata = {
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
+        metadata.clone()
+    };
     fs_service::list_directory(Path::new(&path), &metadata.color_rules, |entry_path| {
-        metadata.tags_for_path(entry_path)
+        (
+            metadata.tags_for_path(entry_path),
+            metadata.comment_for_path(entry_path),
+        )
     })
     .map_err(|error| error.to_string())
 }

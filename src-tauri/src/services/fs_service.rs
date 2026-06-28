@@ -135,6 +135,7 @@ fn entry_from_path(
     path: PathBuf,
     color_rules: &[ColorRule],
     tag_names: Vec<String>,
+    comment: Option<String>,
 ) -> Result<EntryViewModel> {
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("failed to get metadata for {}", path.display()))?;
@@ -159,7 +160,9 @@ fn entry_from_path(
             EntryKind::File
         },
         size: (!is_dir).then_some(metadata.len()),
+        created_at: metadata_created_at(&metadata),
         modified_at: metadata_modified_at(&metadata),
+        accessed_at: metadata_accessed_at(&metadata),
         is_hidden: hidden,
         is_read_only: read_only,
         is_symlink: is_symlink(&metadata),
@@ -168,6 +171,7 @@ fn entry_from_path(
             color_hex: apply_color_rules(&path, &metadata, color_rules),
             tags: tag_names,
         },
+        comment,
     })
 }
 
@@ -226,10 +230,10 @@ pub fn list_drives() -> Vec<DriveInfo> {
 pub fn list_directory<F>(
     path: &Path,
     color_rules: &[ColorRule],
-    tags_for_path: F,
+    metadata_for_path: F,
 ) -> Result<DirectoryListing>
 where
-    F: Fn(&str) -> Vec<String>,
+    F: Fn(&str) -> (Vec<String>, Option<String>),
 {
     let canonical = if path.exists() {
         path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
@@ -243,8 +247,8 @@ where
     {
         let entry = entry.context("failed to read directory entry")?;
         let entry_path = entry.path();
-        let tags = tags_for_path(&entry_path.to_string_lossy());
-        entries.push(entry_from_path(entry_path, color_rules, tags)?);
+        let (tags, comment) = metadata_for_path(&entry_path.to_string_lossy());
+        entries.push(entry_from_path(entry_path, color_rules, tags, comment)?);
     }
 
     entries.sort_by(|left, right| match (&left.kind, &right.kind) {
@@ -670,9 +674,9 @@ mod tests {
 
         let listing = list_directory(&workspace, &[], |path| {
             if path.ends_with("main.rs") {
-                vec!["Pinned".into()]
+                (vec!["Pinned".into()], Some("Reviewed".into()))
             } else {
-                Vec::new()
+                (Vec::new(), None)
             }
         })
         .expect("list directory");
@@ -683,6 +687,7 @@ mod tests {
             listing.entries[1].decoration.tags,
             vec!["Pinned".to_string()]
         );
+        assert_eq!(listing.entries[1].comment, Some("Reviewed".to_string()));
 
         let _ = fs::remove_dir_all(root);
     }

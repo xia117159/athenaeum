@@ -33,9 +33,13 @@ import { normalizeLocationPath } from "./mockData";
 import {
   cloneColumns,
   normalizeContextMenuDefault,
+  normalizeDetailsRowHeight as normalizeMappedDetailsRowHeight,
+  normalizeColumns,
+  normalizeMetadataRetentionHours,
   normalizeSettingsSection,
   normalizeSettingsModel,
   normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 import { devLog } from "./devLog";
@@ -46,6 +50,7 @@ import {
   isNavigationTab,
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
+import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -151,7 +156,13 @@ export type WorkspaceAction =
   | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
   | { type: "columnsShown"; payload: { panelId?: PanelId; tabId?: string; ids?: ColumnId[] } }
   | { type: "columnWidthSet"; payload: { panelId: PanelId; tabId: string; id: ColumnId; width: string } }
+  | {
+      type: "columnOrderChanged";
+      payload: { panelId: PanelId; tabId: string; sourceId: ColumnId; targetId: ColumnId; placement: "before" | "after" };
+    }
   | { type: "detailsRowHeightSet"; payload: { value: number } }
+  | { type: "tooltipHoverDelaySet"; payload: { value: number } }
+  | { type: "metadataRetentionHoursSet"; payload: { value: number | null } }
   | { type: "contextMenuDefaultSet"; payload: { value: SettingsModel["contextMenu"]["defaultMenu"] } }
   | { type: "themePanelFocusAccentSet"; payload: { color: string } }
   | { type: "themeActiveTabBackgroundSet"; payload: { color: string } }
@@ -177,10 +188,6 @@ export type WorkspaceAction =
   | { type: "contextMenuSet"; payload?: WorkspaceState["contextMenu"] };
 
 const PANEL_ORDER: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
-const MIN_DETAILS_ROW_HEIGHT = 24;
-const MAX_DETAILS_ROW_HEIGHT = 72;
-const MIN_COLUMN_WIDTH = 48;
-const MAX_COLUMN_WIDTH = 960;
 
 const DEFAULT_SEARCH_PROGRESS: SearchProgressState = {
   scannedEntries: 0,
@@ -261,7 +268,7 @@ function cloneRecoveredTab(tab: TabState, panelId: PanelId): TabState {
     expandedNodePaths: [...tab.expandedNodePaths],
     history: [...tab.history],
     sort: { ...tab.sort },
-    columns: cloneColumns(tab.columns),
+    columns: normalizeColumns(tab.columns),
     snapshot: {
       location: { ...tab.snapshot.location },
       breadcrumbs: tab.snapshot.breadcrumbs.map((breadcrumb) => ({ ...breadcrumb })),
@@ -472,15 +479,28 @@ function normalizePanelTabs(panel: PanelState): PanelState {
     seen.add(tab.id);
     return true;
   });
+  const normalizedTabs = tabs.map((tab) => {
+    const columns = normalizeColumns(tab.columns);
+    return hasSameJsonShape(columns, tab.columns)
+      ? tab
+      : {
+          ...tab,
+          columns
+        };
+  });
   const activeTabId = tabs.some((tab) => tab.id === panel.activeTabId) ? panel.activeTabId : tabs[0]?.id ?? panel.activeTabId;
 
-  if (tabs.length === panel.tabs.length && activeTabId === panel.activeTabId) {
+  if (
+    tabs.length === panel.tabs.length &&
+    activeTabId === panel.activeTabId &&
+    normalizedTabs.every((tab, index) => tab === tabs[index])
+  ) {
     return panel;
   }
 
   return {
     ...panel,
-    tabs,
+    tabs: normalizedTabs,
     activeTabId
   };
 }
@@ -740,11 +760,7 @@ function toggleExpandedPath(expandedNodePaths: string[], path: string) {
 }
 
 function normalizeDetailsRowHeight(value: number) {
-  if (!Number.isFinite(value)) {
-    return 24;
-  }
-
-  return Math.min(MAX_DETAILS_ROW_HEIGHT, Math.max(MIN_DETAILS_ROW_HEIGHT, Math.round(value)));
+  return normalizeMappedDetailsRowHeight(value);
 }
 
 function normalizeSearchHistory(items: string[]) {
@@ -785,49 +801,6 @@ function createSearchHistoryState(
     history: histories[search.activeTab],
     selectedHistoryIndex
   };
-}
-
-function normalizeColumnWidth(width: string) {
-  const trimmed = width.trim();
-  const pixelMatch = /^(\d+(?:\.\d+)?)px$/i.exec(trimmed);
-  if (!pixelMatch) {
-    return trimmed || `${MIN_COLUMN_WIDTH}px`;
-  }
-
-  const nextWidth = Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(Number(pixelMatch[1]))));
-  return `${nextWidth}px`;
-}
-
-function setColumnWidth(columns: ColumnDefinition[], columnId: ColumnId, width: string) {
-  let changed = false;
-  const normalizedWidth = normalizeColumnWidth(width);
-  const nextColumns = columns.map((column) => {
-    if (column.id !== columnId) {
-      return column;
-    }
-    changed = true;
-    return {
-      ...column,
-      width: normalizedWidth
-    };
-  });
-  return changed ? nextColumns : columns;
-}
-
-function setColumnVisibility(columns: ColumnDefinition[], columnIds: ColumnId[], visible: boolean) {
-  const targetIds = new Set(columnIds);
-  let changed = false;
-  const nextColumns = columns.map((column) => {
-    if (!targetIds.has(column.id) || column.visible === visible) {
-      return column;
-    }
-    changed = true;
-    return {
-      ...column,
-      visible
-    };
-  });
-  return changed ? nextColumns : columns;
 }
 
 function getEntryPathKey(path: string) {
@@ -2258,8 +2231,19 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         })
       );
 
+    case "columnOrderChanged":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) =>
+        moveColumn(columns, action.payload.sourceId, action.payload.targetId, action.payload.placement)
+      );
+
     case "detailsRowHeightSet":
       return updateSettingsModel(state, "detailsRowHeight", () => normalizeDetailsRowHeight(action.payload.value));
+
+    case "tooltipHoverDelaySet":
+      return updateSettingsModel(state, "tooltipHoverDelayMs", () => normalizeTooltipHoverDelayMs(action.payload.value));
+
+    case "metadataRetentionHoursSet":
+      return updateSettingsModel(state, "metadataRetentionHours", () => normalizeMetadataRetentionHours(action.payload.value));
 
     case "contextMenuDefaultSet":
       return updateSettingsModel(state, "contextMenu", (contextMenu) => ({
@@ -2343,8 +2327,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       {
         const model = normalizeSettingsModel({
           ...action.payload.settingsModel,
-          tagRules: state.settings.model.tagRules,
-          columns: state.settings.model.columns
+          tagRules: state.settings.model.tagRules
         });
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));

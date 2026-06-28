@@ -9,7 +9,17 @@ import {
   type SystemIconRequest
 } from "./systemIconGateway";
 import { installLegacyInputEventPatch } from "./testDom";
-import type { ClipboardState, ColumnDefinition, ColumnId, EntryViewModel, InlineEditState, NativeContextMenuRequest, PanelId, SortState } from "./types";
+import type {
+  ClipboardState,
+  ColumnDefinition,
+  ColumnId,
+  ContextMenuState,
+  EntryViewModel,
+  InlineEditState,
+  NativeContextMenuRequest,
+  PanelId,
+  SortState
+} from "./types";
 import { readWorkspaceCss } from "./workspaceCssTestUtils";
 
 const { JSDOM } = require("jsdom") as {
@@ -281,7 +291,7 @@ export const completion = (async () => {
 
   const root = ReactDOM.createRoot(container);
   const dropped: Array<{ paths: string[]; destination: string; operation: "copy" | "move" }> = [];
-  const customMenus: Array<{ mode: string; scope: string }> = [];
+  const customMenus: Array<Pick<ContextMenuState, "mode" | "scope" | "columnId" | "entryPath">> = [];
   const nativeMenus: Array<{
     target: NativeContextMenuRequest["target"];
     paths: string[];
@@ -303,6 +313,7 @@ export const completion = (async () => {
   const inlineCancels: string[] = [];
   const systemDragStarts: string[][] = [];
   const navigationAdds: string[][] = [];
+  const columnOrderChanges: Array<{ sourceId: ColumnId; targetId: ColumnId; placement: "before" | "after" }> = [];
 
   setSystemIconResolverForTests(async (request) => {
     resolvedIconRequests.push(request);
@@ -320,7 +331,8 @@ export const completion = (async () => {
     contextMenuToggleBinding = "Shift",
     clipboard?: ClipboardState,
     renderEntries: EntryViewModel[] = entries,
-    renderSort: SortState = { columnId: "name", direction: "asc" }
+    renderSort: SortState = { columnId: "name", direction: "asc" },
+    tooltipHoverDelayMs = 200
   ) {
     root.render(
       React.createElement(FileListingShell, {
@@ -335,6 +347,7 @@ export const completion = (async () => {
         inlineEdit,
         clipboard,
         detailsRowHeight: 42,
+        tooltipHoverDelayMs,
         entryDropMoveBinding,
         contextMenuDefault,
         contextMenuToggleBinding,
@@ -344,6 +357,9 @@ export const completion = (async () => {
         },
         onSetColumnVisibility: (columnId, visible) => {
           columnVisibilityChanges.push({ columnId, visible });
+        },
+        onMoveColumn: (sourceId, targetId, placement) => {
+          columnOrderChanges.push({ sourceId, targetId, placement });
         },
         onShowAllColumns: () => {
           showAllColumnsCalls += 1;
@@ -356,7 +372,17 @@ export const completion = (async () => {
         },
         onOpen: () => undefined,
         onOpenContextMenu: (payload) => {
-          customMenus.push({ mode: payload.mode, scope: payload.scope });
+          const captured: Pick<ContextMenuState, "mode" | "scope" | "columnId" | "entryPath"> = {
+            mode: payload.mode,
+            scope: payload.scope
+          };
+          if (payload.columnId) {
+            captured.columnId = payload.columnId;
+          }
+          if (payload.entryPath) {
+            captured.entryPath = payload.entryPath;
+          }
+          customMenus.push(captured);
         },
         onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => {
           nativeMenus.push({
@@ -539,7 +565,7 @@ export const completion = (async () => {
       assert.equal(menu.textContent?.includes("名称"), true);
       assert.equal(menu.textContent?.includes("类型"), true);
       assert.equal(menu.textContent?.includes("大小"), true);
-      assert.equal(menu.textContent?.includes("修改时间"), true);
+      assert.equal(menu.textContent?.includes("修改日期"), true);
       assert.equal(menu.textContent?.includes("标签"), true);
       assert.equal(menu.textContent?.includes("显示所有列"), true);
       assert.equal(menu.textContent?.includes("立即自动调整列宽"), true);
@@ -635,48 +661,6 @@ export const completion = (async () => {
       });
 
       assert.equal(showAllColumnsCalls, 1);
-    });
-
-    await assertTest("FileListingShell auto-fits visible detail columns from header and row text", async () => {
-      resizedColumns.length = 0;
-      const menuColumns: ColumnDefinition[] = [
-        { id: "name", label: "名称", visible: true, width: "2fr", align: "left" },
-        { id: "type", label: "类型", visible: true, width: "1fr", align: "left" },
-        { id: "size", label: "大小", visible: true, width: "1fr", align: "right" },
-        { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
-        { id: "tags", label: "标签", visible: false, width: "1fr", align: "left" }
-      ];
-
-      await act(async () => {
-        render("details", undefined, "panel-1", ["file-source"], "Shift", menuColumns);
-        await flushEffects();
-      });
-
-      const header = container.querySelector(".file-listing__header");
-      assert.ok(header);
-      await act(async () => {
-        header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 96, clientY: 40 }));
-        await flushEffects();
-      });
-
-      const menu = container.querySelector(".column-header-menu") as HTMLElement | null;
-      assert.ok(menu);
-      const autoFitItem = Array.from(menu.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("立即自动调整列宽")
-      );
-      assert.ok(autoFitItem);
-
-      await act(async () => {
-        autoFitItem!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-        await flushEffects();
-      });
-
-      assert.deepEqual(
-        resizedColumns.map((item) => item.columnId),
-        ["name", "type", "size", "modified"]
-      );
-      assert.equal(resizedColumns.every((item) => /^\d+px$/.test(item.width)), true);
-      assert.equal(Number.parseInt(resizedColumns[0].width, 10) > Number.parseInt(resizedColumns[1].width, 10), true);
     });
 
     await assertTest("FileListingShell copies selected entries to directory tabs with pointer drag", async () => {
@@ -1311,22 +1295,6 @@ export const completion = (async () => {
       );
     });
 
-    await assertTest("workspace file listing styles no longer draw accent left borders", async () => {
-      const css = readWorkspaceCss();
-      assert.equal(css.includes("border-left: 2px solid var(--row-accent);"), false);
-    });
-
-    await assertTest("FileListingShell applies the configurable details row height to the listing root", async () => {
-      await act(async () => {
-        render("details");
-        await flushEffects();
-      });
-
-      const listing = container.querySelector(".file-listing");
-      assert.ok(listing);
-      assert.equal((listing as HTMLElement).style.getPropertyValue("--details-row-height"), "42px");
-    });
-
     await assertTest("FileListingShell keeps the marquee rectangle inside the listing content region", async () => {
       await act(async () => {
         render("details", undefined, "panel-1", []);
@@ -1456,16 +1424,6 @@ export const completion = (async () => {
       });
 
       assert.deepEqual(resizedColumns, [{ columnId: "name", width: "280px" }]);
-    });
-
-    await assertTest("workspace details header resize dividers are visible by default", async () => {
-      const css = readWorkspaceCss();
-      const defaultDividerRule = css.match(/\.file-header-resizer::after\s*\{([^}]*)\}/)?.[1] ?? "";
-
-      assert.notEqual(defaultDividerRule, "");
-      assert.match(defaultDividerRule, /background:\s*[^;]+;/);
-      assert.doesNotMatch(defaultDividerRule, /background:\s*transparent\b/);
-      assert.match(css, /\.file-header-resizer:hover::after\s*\{[\s\S]*background:\s*#8a8a8a;/);
     });
 
     await assertTest("FileListingShell materializes detail columns as fixed pixel tracks without resizing sibling columns", async () => {

@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import {
   deleteWorkspaceBookmark,
   deleteWorkspaceNavigationItem,
+  getWorkspaceEntryComment,
   getWorkspaceRemoteHostKey,
   listenWorkspaceSettingsChanged,
+  markWorkspaceEntryMetadataDeleted,
   markWorkspaceNavigationItemOpened,
+  removeWorkspaceEntryComment,
   saveWorkspaceBookmark,
   saveWorkspaceColorRules,
+  saveWorkspaceEntryComment,
   saveWorkspaceLayout,
   saveWorkspaceNavigationItem,
   saveWorkspaceRemoteProfile,
@@ -254,8 +258,13 @@ export const workspaceSettingsGatewayTests = (async () => {
         }
       ],
       tagRules: [],
-      columns: [],
+      columns: [
+        { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
+        { id: "comment", label: "注释", visible: true, width: "220px", align: "left" }
+      ],
       detailsRowHeight: 44,
+      tooltipHoverDelayMs: 125,
+      metadataRetentionHours: null,
       contextMenu: {
         defaultMenu: "custom"
       },
@@ -287,7 +296,21 @@ export const workspaceSettingsGatewayTests = (async () => {
                 priority: 1
               }
             ],
+            columns: [
+              { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
+              { id: "type", label: "类型", visible: true, width: "112px", align: "left" },
+              { id: "extension", label: "扩展名", visible: true, width: "96px", align: "left" },
+              { id: "size", label: "大小", visible: true, width: "96px", align: "right" },
+              { id: "created", label: "创建日期", visible: true, width: "148px", align: "left" },
+              { id: "modified", label: "修改日期", visible: true, width: "148px", align: "left" },
+              { id: "accessed", label: "访问日期", visible: true, width: "148px", align: "left" },
+              { id: "tags", label: "标签", visible: true, width: "120px", align: "left" },
+              { id: "comment", label: "注释", visible: true, width: "220px", align: "left" },
+              { id: "location", label: "位置", visible: false, width: "220px", align: "left" }
+            ],
             detailsRowHeight: 44,
+            tooltipHoverDelayMs: 125,
+            metadataRetentionHours: null,
             contextMenu: {
               defaultMenu: "custom"
             },
@@ -476,6 +499,47 @@ export const workspaceSettingsGatewayTests = (async () => {
       {
         command: "mark_navigation_item_opened",
         args: { id: "nav-2" }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("entry comment helpers keep command arguments stable", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      if (command === "get_entry_comment") {
+        return "existing comment" as T;
+      }
+      if (command === "save_entry_comment") {
+        return (args.comment as string) as T;
+      }
+      return undefined as T;
+    };
+    const path = "D:\\Docs\\report.txt";
+
+    const loaded = await getWorkspaceEntryComment(path, { invoke, runtimeHost });
+    const saved = await saveWorkspaceEntryComment(path, "updated comment", { invoke, runtimeHost });
+    await removeWorkspaceEntryComment(path, { invoke, runtimeHost });
+    await markWorkspaceEntryMetadataDeleted([path], { invoke, runtimeHost });
+
+    assert.equal(loaded, "existing comment");
+    assert.equal(saved, "updated comment");
+    assert.deepEqual(invocations, [
+      {
+        command: "get_entry_comment",
+        args: { path }
+      },
+      {
+        command: "save_entry_comment",
+        args: { path, comment: "updated comment" }
+      },
+      {
+        command: "remove_entry_comment",
+        args: { path }
+      },
+      {
+        command: "mark_entry_metadata_deleted",
+        args: { paths: [path] }
       }
     ]);
   });

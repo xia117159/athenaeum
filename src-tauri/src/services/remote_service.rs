@@ -3,13 +3,7 @@ mod host_key;
 mod remote_path;
 pub(super) mod windows_credentials;
 
-use std::{
-    fs, io,
-    net::{TcpStream, ToSocketAddrs},
-    path::{Path, PathBuf},
-    process::{Command, Output},
-    time::Duration,
-};
+use std::{fs, io, net::{TcpStream, ToSocketAddrs}, path::{Path, PathBuf}, process::{Command, Output}, time::Duration};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -26,10 +20,7 @@ use crate::domain::models::{
 
 use self::{
     adapter_factory::{preferred_curl_executable, select_adapter},
-    host_key::{
-        create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key,
-        write_known_host_entry,
-    },
+    host_key::{create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key, write_known_host_entry},
     remote_path::{
         available_local_conflict_path, available_sftp_conflict_path, build_url,
         create_remote_transfer_temp_dir, ensure_remote_not_inside_source, join_remote_path,
@@ -43,9 +34,7 @@ use self::{
 #[cfg(test)]
 use self::{
     host_key::{host_key_algorithm, host_key_fingerprint_sha256, known_hosts_host},
-    remote_path::{
-        available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root,
-    },
+    remote_path::{available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root},
 };
 
 pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
@@ -1768,7 +1757,9 @@ fn parse_listing_entries(
                     EntryKind::File
                 },
                 size: None,
+                created_at: None,
                 modified_at: None,
+                accessed_at: None,
                 is_hidden: false,
                 is_read_only: false,
                 is_symlink: false,
@@ -1778,6 +1769,7 @@ fn parse_listing_entries(
                     connection_id: Some(profile.id.clone()),
                 },
                 decoration: EntryDecoration::default(),
+                comment: None,
             }
         })
         .collect()
@@ -1821,7 +1813,11 @@ fn parse_sftp_entries(
                     EntryKind::File
                 },
                 size: (!is_directory).then_some(stat.size).flatten(),
+                created_at: None,
                 modified_at,
+                accessed_at: stat
+                    .atime
+                    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single()),
                 is_hidden: remote_file_name(&remote_path)
                     .map(|value| value.starts_with('.'))
                     .unwrap_or(false),
@@ -1833,6 +1829,7 @@ fn parse_sftp_entries(
                     connection_id: Some(profile.id.clone()),
                 },
                 decoration: EntryDecoration::default(),
+                comment: None,
             })
         })
         .collect::<Vec<_>>();
