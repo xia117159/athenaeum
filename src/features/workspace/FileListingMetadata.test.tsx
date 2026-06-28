@@ -301,6 +301,60 @@ export const completion = (async () => {
       assert.deepEqual(columnOrderChanges, [{ sourceId: "size", targetId: "type", placement: "before" }]);
     });
 
+    await assertTest("FileListingShell shows a header follower and insert indicator during column drag", async () => {
+      const dragColumns: ColumnDefinition[] = [
+        { id: "name", label: "Name", visible: true, width: "240px", align: "left" },
+        { id: "type", label: "Type", visible: true, width: "112px", align: "left" },
+        { id: "size", label: "Size", visible: true, width: "96px", align: "right" }
+      ];
+
+      await act(async () => {
+        render({ renderColumns: dragColumns });
+        await flushEffects();
+      });
+
+      const source = container.querySelector<HTMLElement>("[data-column-id='size']");
+      const previous = container.querySelector<HTMLElement>("[data-column-id='name']");
+      const target = container.querySelector<HTMLElement>("[data-column-id='type']");
+      assert.ok(source);
+      assert.ok(previous);
+      assert.ok(target);
+      Object.defineProperty(previous, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 0, right: 100, top: 0, bottom: 24, width: 100, height: 24 })
+      });
+      Object.defineProperty(target, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 106, right: 218, top: 0, bottom: 24, width: 112, height: 24 })
+      });
+      const restore = stubElementFromPoint(target);
+
+      await act(async () => {
+        source.dispatchEvent(createPointerEvent("pointerdown", { pointerId: 8, button: 0, clientX: 360, clientY: 12 }));
+        window.dispatchEvent(createPointerEvent("pointermove", { pointerId: 8, clientX: 126, clientY: 12 }));
+        await flushEffects();
+      });
+      restore();
+
+      const follower = container.querySelector<HTMLElement>(".column-drag-follower");
+      assert.ok(follower);
+      assert.equal(follower.textContent?.trim(), "大小");
+      assert.equal(follower.style.left, "126px");
+      assert.equal(follower.style.top, "12px");
+
+      const indicator = container.querySelector<HTMLElement>(".file-listing__column-drop-indicator");
+      assert.ok(indicator);
+      assert.equal(indicator.style.left, "100px");
+
+      await act(async () => {
+        window.dispatchEvent(createPointerEvent("pointerup", { pointerId: 8, clientX: 126, clientY: 12 }));
+        await flushEffects();
+      });
+
+      assert.equal(container.querySelector(".column-drag-follower"), null);
+      assert.equal(container.querySelector(".file-listing__column-drop-indicator"), null);
+    });
+
     await assertTest("FileListingShell shows a multiline row tooltip after the configured hover delay", async () => {
       const tooltipEntries = entries.map((entry) =>
         entry.id === "file-source"

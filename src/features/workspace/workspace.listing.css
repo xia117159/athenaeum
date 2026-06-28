@@ -263,6 +263,12 @@ body.is-entry-pointer-dragging * {
   user-select: none;
 }
 
+body.is-column-pointer-dragging,
+body.is-column-pointer-dragging * {
+  cursor: default !important;
+  user-select: none;
+}
+
 .entry-drag-follower {
   position: fixed;
   pointer-events: none;
@@ -302,6 +308,48 @@ body.is-entry-pointer-dragging * {
   font-size: 11px;
   line-height: 18px;
   text-align: center;
+}
+
+.column-drag-follower {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+  z-index: 10000;
+  opacity: 0.86;
+}
+
+.column-drag-follower__content {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  max-width: min(280px, 38vw);
+  padding: 0 7px;
+  border: 1px solid var(--accent, #7ba7d8);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text, #1f1f1f);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.column-drag-follower__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-listing__column-drop-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 4;
+  will-change: opacity;
+  animation: pulse-indicator 0.6s ease-in-out infinite;
 }
 
 .file-row__grid {

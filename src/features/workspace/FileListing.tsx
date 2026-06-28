@@ -36,6 +36,14 @@ import {
   sortEntries
 } from "./fileListingPresentation";
 import { EntryTooltip, useEntryTooltip } from "./fileListingTooltip";
+import {
+  ColumnDragFollowerView,
+  ColumnDropIndicatorView,
+  EMPTY_COLUMN_DRAG_FOLLOWER,
+  getColumnPointerDropTarget,
+  type ColumnDragFollower,
+  type ColumnDropIndicator
+} from "./fileListingColumnDrag";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -448,8 +456,11 @@ export function FileListingShell({
     entry: null,
     count: 0
   });
+  const [columnDragFollower, setColumnDragFollower] = useState<ColumnDragFollower>(EMPTY_COLUMN_DRAG_FOLLOWER);
+  const [columnDropIndicator, setColumnDropIndicator] = useState<ColumnDropIndicator | null>(null);
   const lastClickedEntryIdRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const detailsHeaderRef = useRef<HTMLDivElement | null>(null);
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
@@ -1486,6 +1497,8 @@ export function FileListingShell({
       window.removeEventListener("pointercancel", handlePointerCancel);
       cleanupColumnPointerDragRef.current = null;
       document.body.classList.remove("is-column-pointer-dragging");
+      setColumnDragFollower(EMPTY_COLUMN_DRAG_FOLLOWER);
+      setColumnDropIndicator(null);
     };
 
     const finishDrag = (finishEvent: PointerEvent) => {
@@ -1504,15 +1517,16 @@ export function FileListingShell({
         }
       }, 0);
 
-      const targetElement = document.elementFromPoint(finishEvent.clientX, finishEvent.clientY)?.closest("[data-column-id]") as HTMLElement | null;
-      const targetId = targetElement?.dataset.columnId as ColumnId | undefined;
-      if (!targetElement || !targetId || targetId === activeDrag.sourceId) {
+      const dropTarget = getColumnPointerDropTarget(
+        getElementFromClientPoint(finishEvent.clientX, finishEvent.clientY),
+        finishEvent.clientX,
+        activeDrag.sourceId
+      );
+      if (!dropTarget) {
         return;
       }
 
-      const rect = targetElement.getBoundingClientRect();
-      const placement = finishEvent.clientX < rect.left + rect.width / 2 ? "before" : "after";
-      onMoveColumn(activeDrag.sourceId, targetId, placement);
+      onMoveColumn(activeDrag.sourceId, dropTarget.targetId, dropTarget.placement);
     };
 
     function handlePointerMove(moveEvent: PointerEvent) {
@@ -1526,9 +1540,30 @@ export function FileListingShell({
       if (!activeDrag.dragging && Math.hypot(deltaX, deltaY) < COLUMN_POINTER_DRAG_THRESHOLD_PX) {
         return;
       }
-      activeDrag.dragging = true;
+      if (!activeDrag.dragging) {
+        activeDrag.dragging = true;
+        setColumnDragFollower({
+          visible: true,
+          x: moveEvent.clientX,
+          y: moveEvent.clientY,
+          label: getLocalizedColumnLabel(column)
+        });
+      }
       document.body.classList.add("is-column-pointer-dragging");
       moveEvent.preventDefault();
+
+      setColumnDragFollower((previous) => ({
+        ...previous,
+        x: moveEvent.clientX,
+        y: moveEvent.clientY
+      }));
+
+      const dropTarget = getColumnPointerDropTarget(
+        getElementFromClientPoint(moveEvent.clientX, moveEvent.clientY),
+        moveEvent.clientX,
+        activeDrag.sourceId
+      );
+      setColumnDropIndicator(dropTarget ? { targetId: dropTarget.targetId, placement: dropTarget.placement } : null);
     }
 
     function handlePointerUp(upEvent: PointerEvent) {
@@ -1679,6 +1714,7 @@ export function FileListingShell({
       >
         {viewMode === "details" ? (
           <div
+            ref={detailsHeaderRef}
             className="file-listing__header"
             data-details-scroll-header="true"
             style={gridStyle}
@@ -1717,6 +1753,7 @@ export function FileListingShell({
                 />
               </div>
             ))}
+            <ColumnDropIndicatorView headerRef={detailsHeaderRef} indicator={columnDropIndicator} />
           </div>
         ) : null}
         <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
@@ -1762,6 +1799,7 @@ export function FileListingShell({
           </div>
         </div>
       ) : null}
+      <ColumnDragFollowerView follower={columnDragFollower} />
     </div>
   );
 }
