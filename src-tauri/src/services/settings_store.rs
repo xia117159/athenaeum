@@ -13,6 +13,8 @@ pub struct SettingsStore {
     pub layout: UiLayout,
     #[serde(default = "default_detail_columns")]
     pub detail_columns: Vec<DetailColumnDefinition>,
+    #[serde(default = "default_navigation_columns")]
+    pub navigation_columns: Vec<DetailColumnDefinition>,
     #[serde(default = "default_details_row_height")]
     pub details_row_height: u16,
     #[serde(default = "default_tooltip_hover_delay_ms")]
@@ -32,6 +34,7 @@ impl Default for SettingsStore {
         Self {
             layout: UiLayout::fallback(),
             detail_columns: default_detail_columns(),
+            navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
@@ -60,6 +63,7 @@ impl SettingsStore {
             serde_json::from_str(&content).context("failed to parse settings store")?;
         store.layout = normalize_layout(store.layout);
         store.detail_columns = normalize_detail_columns(store.detail_columns);
+        store.navigation_columns = normalize_navigation_columns(store.navigation_columns);
         store.details_row_height = normalize_details_row_height(store.details_row_height);
         store.tooltip_hover_delay_ms =
             normalize_tooltip_hover_delay_ms(store.tooltip_hover_delay_ms);
@@ -101,6 +105,10 @@ impl SettingsStore {
 
     pub fn set_detail_columns(&mut self, columns: Vec<DetailColumnDefinition>) {
         self.detail_columns = normalize_detail_columns(columns);
+    }
+
+    pub fn set_navigation_columns(&mut self, columns: Vec<DetailColumnDefinition>) {
+        self.navigation_columns = normalize_navigation_columns(columns);
     }
 
     pub fn set_details_row_height(&mut self, details_row_height: u16) {
@@ -186,6 +194,23 @@ fn default_detail_columns() -> Vec<DetailColumnDefinition> {
     ]
 }
 
+fn default_navigation_columns() -> Vec<DetailColumnDefinition> {
+    vec![
+        detail_column("name", "\u{540d}\u{79f0}", true, "220px", DetailColumnTextAlign::Left),
+        detail_column("kind", "\u{7c7b}\u{578b}", true, "96px", DetailColumnTextAlign::Left),
+        detail_column("path", "\u{8def}\u{5f84}", true, "180px", DetailColumnTextAlign::Left),
+        detail_column("comment", "\u{6ce8}\u{91ca}", true, "112px", DetailColumnTextAlign::Left),
+        detail_column("status", "\u{72b6}\u{6001}", true, "80px", DetailColumnTextAlign::Left),
+        detail_column(
+            "lastOpened",
+            "\u{6700}\u{8fd1}\u{6253}\u{5f00}",
+            true,
+            "132px",
+            DetailColumnTextAlign::Left,
+        ),
+    ]
+}
+
 fn detail_column(
     id: &str,
     label: &str,
@@ -247,6 +272,83 @@ fn normalize_detail_columns(columns: Vec<DetailColumnDefinition>) -> Vec<DetailC
     }
 
     normalized
+}
+
+fn normalize_navigation_columns(columns: Vec<DetailColumnDefinition>) -> Vec<DetailColumnDefinition> {
+    if columns.is_empty() {
+        return default_navigation_columns();
+    }
+
+    let defaults = default_navigation_columns();
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for column in columns {
+        if !defaults.iter().any(|item| item.id == column.id) || !seen.insert(column.id.clone()) {
+            continue;
+        }
+        let fallback = defaults
+            .iter()
+            .find(|item| item.id == column.id)
+            .expect("validated default navigation column");
+        normalized.push(DetailColumnDefinition {
+            id: column.id,
+            label: if column.label.trim().is_empty() {
+                fallback.label.clone()
+            } else {
+                column.label
+            },
+            visible: column.visible,
+            width: if column.width.trim().is_empty() {
+                fallback.width.clone()
+            } else {
+                column.width
+            },
+            align: column.align,
+        });
+    }
+
+    if seen.len() < defaults.len() {
+        let mut normalized_by_id: HashMap<String, DetailColumnDefinition> = normalized
+            .into_iter()
+            .map(|column| (column.id.clone(), column))
+            .collect();
+        return defaults
+            .into_iter()
+            .map(|column| normalized_by_id.remove(&column.id).unwrap_or(column))
+            .collect();
+    }
+
+    if is_legacy_default_navigation_columns(&normalized, &defaults) {
+        return defaults;
+    }
+
+    normalized
+}
+
+fn is_legacy_default_navigation_columns(
+    columns: &[DetailColumnDefinition],
+    defaults: &[DetailColumnDefinition],
+) -> bool {
+    let legacy_widths = [
+        ("name", "240px"),
+        ("kind", "112px"),
+        ("path", "220px"),
+        ("comment", "148px"),
+        ("status", "120px"),
+        ("lastOpened", "148px"),
+    ];
+
+    columns.len() == defaults.len()
+        && columns.iter().zip(defaults.iter()).all(|(column, fallback)| {
+            let legacy_width = legacy_widths
+                .iter()
+                .find_map(|(id, width)| (*id == column.id).then_some(*width));
+            column.id == fallback.id
+                && column.label == fallback.label
+                && column.visible
+                && column.align == fallback.align
+                && legacy_width == Some(column.width.as_str())
+        })
 }
 
 fn normalize_details_row_height(details_row_height: u16) -> u16 {
@@ -455,6 +557,108 @@ mod tests {
         assert_eq!(reloaded.detail_columns.len(), 10);
         assert_eq!(reloaded.detail_columns[8].id, "comment");
         assert!(reloaded.detail_columns[8].visible);
+    }
+
+    #[test]
+    fn persist_round_trip_preserves_navigation_columns() {
+        let temp = TestDir::new("navigation-columns");
+        let file_path = temp.path.join("layout.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_navigation_columns(vec![
+            DetailColumnDefinition {
+                id: "path".into(),
+                label: "Path".into(),
+                visible: true,
+                width: "336px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "name".into(),
+                label: "Name".into(),
+                visible: false,
+                width: "240px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+        ]);
+        store.persist().expect("failed to persist settings");
+
+        let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
+        assert_eq!(reloaded.navigation_columns.len(), 6);
+        assert_eq!(reloaded.navigation_columns[0].id, "name");
+        assert!(!reloaded.navigation_columns[0].visible);
+        assert_eq!(reloaded.navigation_columns[2].id, "path");
+        assert_eq!(reloaded.navigation_columns[2].width, "336px");
+    }
+
+    #[test]
+    fn default_navigation_columns_use_compact_details_widths() {
+        let store = SettingsStore::load_default();
+
+        let widths: Vec<&str> = store
+            .navigation_columns
+            .iter()
+            .map(|column| column.width.as_str())
+            .collect();
+
+        assert_eq!(widths, ["220px", "96px", "180px", "112px", "80px", "132px"]);
+    }
+
+    #[test]
+    fn legacy_default_navigation_columns_migrate_to_compact_widths() {
+        let mut store = SettingsStore::load_default();
+        store.set_navigation_columns(vec![
+            DetailColumnDefinition {
+                id: "name".into(),
+                label: "\u{540d}\u{79f0}".into(),
+                visible: true,
+                width: "240px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "kind".into(),
+                label: "\u{7c7b}\u{578b}".into(),
+                visible: true,
+                width: "112px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "path".into(),
+                label: "\u{8def}\u{5f84}".into(),
+                visible: true,
+                width: "220px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "comment".into(),
+                label: "\u{6ce8}\u{91ca}".into(),
+                visible: true,
+                width: "148px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "status".into(),
+                label: "\u{72b6}\u{6001}".into(),
+                visible: true,
+                width: "120px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+            DetailColumnDefinition {
+                id: "lastOpened".into(),
+                label: "\u{6700}\u{8fd1}\u{6253}\u{5f00}".into(),
+                visible: true,
+                width: "148px".into(),
+                align: DetailColumnTextAlign::Left,
+            },
+        ]);
+
+        let widths: Vec<&str> = store
+            .navigation_columns
+            .iter()
+            .map(|column| column.width.as_str())
+            .collect();
+
+        assert_eq!(widths, ["220px", "96px", "180px", "112px", "80px", "132px"]);
     }
 
     #[test]

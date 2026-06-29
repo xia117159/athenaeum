@@ -1022,7 +1022,7 @@ function createSettingsModel(): SettingsModel {
       { id: "tags", label: "标签", visible: true, width: "1.1fr", align: "left" },
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
-    detailsRowHeight: 24,
+    navigationColumns: [], detailsRowHeight: 24,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
     contextMenu: {

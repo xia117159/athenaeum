@@ -184,6 +184,15 @@ export type NavigationTargetStatus =
   | "unsupportedRemote"
   | "invalidPath"
   | "unknownError";
+export type NavigationColumnId = "name" | "kind" | "path" | "comment" | "status" | "lastOpened";
+
+export interface NavigationColumnDefinition {
+  id: NavigationColumnId;
+  label: string;
+  visible: boolean;
+  width: string;
+  align: "left" | "right";
+}
 
 export interface NavigationItemUpsertRequest {
   id?: string;
@@ -248,6 +257,7 @@ export interface SettingsModel {
   colorRules: ColorRule[];
   tagRules: TagRule[];
   columns: ColumnDefinition[];
+  navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

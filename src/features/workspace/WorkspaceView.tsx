@@ -592,6 +592,7 @@ function PanelLayout({
       isFocused={state.activePanelId === panelId}
       filterText={activeFilterText}
       columns={state.settings.model.columns}
+      navigationColumns={state.settings.model.navigationColumns}
       clipboard={state.clipboard}
       detailsRowHeight={state.settings.model.detailsRowHeight}
       tooltipHoverDelayMs={state.settings.model.tooltipHoverDelayMs}
@@ -709,6 +710,7 @@ function PanelSurface({
   isFocused,
   filterText,
   columns,
+  navigationColumns,
   clipboard,
   detailsRowHeight,
   tooltipHoverDelayMs,
@@ -730,6 +732,7 @@ function PanelSurface({
   isFocused: boolean;
   filterText: string;
   columns: ColumnDefinition[];
+  navigationColumns: WorkspaceState["settings"]["model"]["navigationColumns"];
   clipboard: WorkspaceState["clipboard"];
   detailsRowHeight: number;
   tooltipHoverDelayMs: number;
@@ -829,6 +832,7 @@ function PanelSurface({
           <NavigationTabView
             panelId={panel.id}
             navigation={navigation}
+            navigationColumns={navigationColumns}
             currentFolder={
               directoryContextTab
                 ? {

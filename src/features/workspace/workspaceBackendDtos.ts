@@ -25,6 +25,7 @@ import {
   normalizeTooltipHoverDelayMs,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
+import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
 
 export function toBackendLayout(
@@ -80,6 +81,7 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
     shortcuts: model.shortcuts.map(toBackendShortcut),
     colorRules: model.colorRules.map(toBackendColorRule),
     columns: normalizeColumns(model.columns),
+    navigationColumns: normalizeNavigationColumns(model.navigationColumns),
     detailsRowHeight: model.detailsRowHeight,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
@@ -142,6 +144,7 @@ export function createBrowserSettingsSnapshot(
     colorRules: [],
     shortcuts: [],
     columns: DEFAULT_COLUMNS,
+    navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,

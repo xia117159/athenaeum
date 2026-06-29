@@ -7,6 +7,7 @@ import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
+import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog } from "./devLog";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
@@ -72,6 +73,7 @@ import type {
   SearchProgressState,
   SelectionPathReplacement,
   SettingsModel,
+  NavigationColumnId,
   SettingsSection,
   SortState,
   TabState,
@@ -202,6 +204,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
       fileListModel:
         !hasSameJsonShape(current.columns, next.columns) ||
+        !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
     };
@@ -214,6 +217,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.theme, next.theme) ||
     !hasSameJsonShape(current.contextMenu, next.contextMenu) ||
     !hasSameJsonShape(current.columns, next.columns) ||
+    !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 
@@ -417,6 +421,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void workspaceGateway.saveSettingsModel(state.settings.model);
   }, [
     state.settings.model.columns,
+    state.settings.model.navigationColumns,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
     state.settings.model.metadataRetentionHours,
@@ -2742,6 +2747,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         targetId: ColumnId,
         placement: "before" | "after"
       ) => dispatch({ type: "columnOrderChanged", payload: { panelId, tabId, sourceId, targetId, placement } }),
+      setNavigationColumnVisibility: (id: NavigationColumnId, visible: boolean) =>
+        dispatch({ type: "navigationColumnsUpdated", payload: setColumnVisibility(state.settings.model.navigationColumns, [id], visible) }),
+      showAllNavigationColumns: (ids?: NavigationColumnId[]) =>
+        dispatch({ type: "navigationColumnsUpdated", payload: setColumnVisibility(state.settings.model.navigationColumns, ids ?? state.settings.model.navigationColumns.map((column) => column.id), true) }),
+      setNavigationColumnWidth: (id: NavigationColumnId, width: string) =>
+        dispatch({ type: "navigationColumnWidthSet", payload: { id, width } }),
+      moveNavigationColumn: (sourceId: NavigationColumnId, targetId: NavigationColumnId, placement: "before" | "after") =>
+        dispatch({ type: "navigationColumnsUpdated", payload: moveColumn(state.settings.model.navigationColumns, sourceId, targetId, placement) }),
       setDetailsRowHeight: (value: number) => dispatch({ type: "detailsRowHeightSet", payload: { value } }),
       setTooltipHoverDelay: (value: number) => dispatch({ type: "tooltipHoverDelaySet", payload: { value } }),
       setMetadataRetentionHours: (value: number | null) => dispatch({ type: "metadataRetentionHoursSet", payload: { value } }),

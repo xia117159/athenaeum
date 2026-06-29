@@ -49,6 +49,9 @@ function installDomEnvironment() {
     value: dom.window.navigator
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  if (!globalThis.HTMLElement.prototype.setPointerCapture) {
+    globalThis.HTMLElement.prototype.setPointerCapture = () => undefined;
+  }
 
   return dom;
 }
@@ -137,6 +140,32 @@ function dispatchPointerLikeMouseEvent(target: EventTarget, type: string, client
       screenX: clientX
     })
   );
+}
+
+function createPointerEvent(type: string, options: { pointerId?: number; button?: number; clientX?: number; clientY?: number } = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    pointerId: { configurable: true, value: options.pointerId ?? 1 },
+    button: { configurable: true, value: options.button ?? 0 },
+    clientX: { configurable: true, value: options.clientX ?? 0 },
+    clientY: { configurable: true, value: options.clientY ?? 0 }
+  });
+  return event;
+}
+
+function stubElementFromPoint(element: Element | null) {
+  const original = document.elementFromPoint;
+  Object.defineProperty(document, "elementFromPoint", {
+    configurable: true,
+    value: () => element
+  });
+  return () => {
+    if (original) {
+      Object.defineProperty(document, "elementFromPoint", { configurable: true, value: original });
+      return;
+    }
+    Reflect.deleteProperty(document, "elementFromPoint");
+  };
 }
 
 export const completion = (async () => {
@@ -623,6 +652,7 @@ export const completion = (async () => {
 
     await assertTest("NavigationTabView materializes resizable fixed column tracks", async () => {
       const item = createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt");
+      const resizedColumns: Array<{ columnId: string; width: string }> = [];
       const actions = {
         setNavigationFilter() {},
         saveNavigationItem() {},
@@ -636,6 +666,9 @@ export const completion = (async () => {
         addCurrentFolderToNavigation() {},
         addSelectedEntriesToNavigation() {},
         addPathsToNavigation() {},
+        setNavigationColumnWidth(columnId: string, width: string) {
+          resizedColumns.push({ columnId, width });
+        },
         openNavigationNativeContextMenu() {
           return Promise.resolve(false);
         }
@@ -686,9 +719,7 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      assert.match(header.style.gridTemplateColumns, /^312px\s+\d+px\s+\d+px\s+\d+px\s+\d+px\s+\d+px$/);
-      assert.equal(row.style.gridTemplateColumns, header.style.gridTemplateColumns);
-      assert.equal(row.style.width, header.style.width);
+      assert.deepEqual(resizedColumns.at(-1), { columnId: "name", width: "312px" });
     });
 
     await assertTest("NavigationTabView opens a column header menu with a comment column instead of description", async () => {
@@ -741,6 +772,213 @@ export const completion = (async () => {
       assert.ok(menu);
       assert.equal(menu.textContent?.includes("\u6ce8\u91ca"), true);
       assert.equal(menu.textContent?.includes("\u63cf\u8ff0"), false);
+    });
+
+    await assertTest("NavigationTabView auto-fits columns from measured rendered cell widths", async () => {
+      const resizedColumns: Array<{ columnId: string; width: string }> = [];
+      const originalScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+      const measuredWidths: Record<string, number> = {
+        name: 126,
+        kind: 42,
+        path: 276,
+        comment: 58,
+        status: 44,
+        lastOpened: 86
+      };
+      Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+        configurable: true,
+        get() {
+          const element = this as HTMLElement;
+          const columnId = element.dataset.navigationCellId ?? element.closest<HTMLElement>("[data-column-id]")?.dataset.columnId;
+          return columnId ? measuredWidths[columnId] ?? 24 : 24;
+        }
+      });
+
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        setNavigationColumnWidth(columnId: string, width: string) {
+          resizedColumns.push({ columnId, width });
+        },
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      try {
+        await act(async () => {
+          root.render(
+            React.createElement(NavigationTabView, {
+              panelId: "panel-1",
+              navigation: createNavigationState([createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt")]),
+              selectedEntries: [],
+              actions
+            })
+          );
+          await flushEffects();
+        });
+
+        const header = container.querySelector<HTMLElement>(".navigation-table__row--header");
+        assert.ok(header);
+        await act(async () => {
+          header.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 34 }));
+          await flushEffects();
+        });
+        const autoFitItem = Array.from(container.querySelectorAll<HTMLButtonElement>(".column-header-menu button")).find((button) =>
+          button.textContent?.includes("\u7acb\u5373\u81ea\u52a8\u8c03\u6574\u5217\u5bbd")
+        );
+        assert.ok(autoFitItem);
+
+        await act(async () => {
+          autoFitItem!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+          await flushEffects();
+        });
+
+        assert.deepEqual(resizedColumns, [
+          { columnId: "name", width: "130px" },
+          { columnId: "kind", width: "46px" },
+          { columnId: "path", width: "280px" },
+          { columnId: "comment", width: "62px" },
+          { columnId: "status", width: "48px" },
+          { columnId: "lastOpened", width: "90px" }
+        ]);
+      } finally {
+        if (originalScrollWidth) {
+          Object.defineProperty(HTMLElement.prototype, "scrollWidth", originalScrollWidth);
+        } else {
+          Reflect.deleteProperty(HTMLElement.prototype, "scrollWidth");
+        }
+      }
+    });
+
+    await assertTest("NavigationTabView sorts navigation rows from header clicks and toggles direction", async () => {
+      const items = [
+        createNavigationItem("nav-bravo", "C:\\Users\\Admin\\Documents\\Bravo.txt"),
+        createNavigationItem("nav-alpha", "C:\\Users\\Admin\\Documents\\Alpha.txt")
+      ];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState(items),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const getRowTitles = () =>
+        Array.from(container.querySelectorAll<HTMLElement>(".navigation-table__item")).map((row) => row.title);
+      const nameHeader = container.querySelector<HTMLElement>('[data-navigation-column-id="name"]');
+      assert.ok(nameHeader);
+
+      await act(async () => {
+        nameHeader.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(getRowTitles(), [items[1].path, items[0].path]);
+      assert.equal(nameHeader.textContent?.includes("\u25b2"), true);
+
+      await act(async () => {
+        nameHeader.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(getRowTitles(), [items[0].path, items[1].path]);
+      assert.equal(nameHeader.textContent?.includes("\u25bc"), true);
+    });
+
+    await assertTest("NavigationTabView emits navigation column moves from pointer drag", async () => {
+      const moves: Array<{ sourceId: string; targetId: string; placement: "before" | "after" }> = [];
+      const actions = {
+        setNavigationFilter() {},
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        setNavigationSelection() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {},
+        moveNavigationColumn(sourceId: string, targetId: string, placement: "before" | "after") {
+          moves.push({ sourceId, targetId, placement });
+        },
+        openNavigationNativeContextMenu() {
+          return Promise.resolve(false);
+        }
+      } as unknown as WorkspaceActions;
+
+      await act(async () => {
+        root.render(
+          React.createElement(NavigationTabView, {
+            panelId: "panel-1",
+            navigation: createNavigationState([createNavigationItem("nav-report", "C:\\Users\\Admin\\Documents\\report.txt")]),
+            selectedEntries: [],
+            actions
+          })
+        );
+        await flushEffects();
+      });
+
+      const source = container.querySelector<HTMLElement>('[data-navigation-column-id="path"]');
+      const target = container.querySelector<HTMLElement>('[data-navigation-column-id="name"]');
+      assert.ok(source);
+      assert.ok(target);
+      Object.defineProperty(target, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 0, right: 240, top: 0, bottom: 24, width: 240, height: 24 })
+      });
+      const restore = stubElementFromPoint(target);
+
+      await act(async () => {
+        source.dispatchEvent(createPointerEvent("pointerdown", { pointerId: 9, button: 0, clientX: 360, clientY: 12 }));
+        window.dispatchEvent(createPointerEvent("pointermove", { pointerId: 9, clientX: 40, clientY: 12 }));
+        await flushEffects();
+      });
+
+      const indicator = container.querySelector<HTMLElement>(".navigation-table__column-drop-indicator");
+      assert.ok(indicator);
+      assert.equal(indicator.parentElement, container.querySelector(".navigation-table"));
+      assert.equal(container.querySelector(".file-listing__column-drop-indicator"), null);
+
+      await act(async () => {
+        window.dispatchEvent(createPointerEvent("pointerup", { pointerId: 9, clientX: 40, clientY: 12 }));
+        await flushEffects();
+      });
+      restore();
+
+      assert.deepEqual(moves, [{ sourceId: "path", targetId: "name", placement: "before" }]);
     });
 
     await assertTest("NavigationTabView adds dropped entry-drag payload paths to navigation", async () => {

@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
+import { estimateDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
+import { getDetailsColumnSortIndicator } from "./DetailsColumnHeader";
+import { getDetailsColumnPixelWidth, getDetailsGridMetrics as getSharedDetailsGridMetrics } from "./detailsGridMetrics";
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
+import { getTextMeasureUnits } from "./textMeasure";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -11,7 +15,8 @@ import type {
 
 export const ICON_VIEW_MODES: TabViewMode[] = ["extra-large-icons", "large-icons", "medium-icons", "small-icons"];
 
-const DETAILS_GRID_COLUMN_GAP_PX = 6;
+const DETAILS_GRID_COLUMN_GAP_PX = 4;
+const DETAILS_MIN_COLUMN_WIDTH_PX = 40;
 
 const DEFAULT_DETAILS_COLUMN_WIDTHS: Record<ColumnId, number> = {
   name: 240,
@@ -269,7 +274,7 @@ export function renderDetailsCell(
   }
 }
 
-function getDetailsCellText(entry: EntryViewModel, columnId: ColumnId, currentPath: string) {
+export function getDetailsCellText(entry: EntryViewModel, columnId: ColumnId, currentPath: string) {
   switch (columnId) {
     case "name":
       return entry.name;
@@ -300,51 +305,35 @@ export function formatTooltipTags(entry: EntryViewModel) {
   return entry.tags.length > 0 ? entry.tags.join("、") : "--";
 }
 
-function getTextMeasureUnits(value: string) {
-  return Array.from(value).reduce((sum, char) => {
-    const codePoint = char.codePointAt(0) ?? 0;
-    return sum + (codePoint >= 0x2e80 ? 2 : 1);
-  }, 0);
-}
-
 export function estimateAutoFitColumnWidth(column: ColumnDefinition, entries: EntryViewModel[], currentPath: string) {
-  const label = getColumnMenuLabel(column.id);
-  const maxUnits = [label, ...entries.map((entry) => getDetailsCellText(entry, column.id, currentPath))]
-    .map(getTextMeasureUnits)
-    .reduce((max, units) => Math.max(max, units), 0);
-  const iconAllowance = column.id === "name" ? 34 : 0;
-  const minWidth = column.id === "name" ? 160 : ["created", "modified", "accessed"].includes(column.id) ? 132 : 80;
-  const width = Math.min(520, Math.max(minWidth, Math.ceil(maxUnits * 7 + 28 + iconAllowance)));
-  return `${width}px`;
+  return estimateDetailsAutoFitColumnWidth({
+    column,
+    items: entries,
+    getHeaderText: (candidate) => getColumnMenuLabel(candidate.id),
+    getCellText: (entry, candidate) => getDetailsCellText(entry, candidate.id, currentPath),
+    getMinWidth: () => DETAILS_MIN_COLUMN_WIDTH_PX,
+    getIconAllowance: (candidate) => (candidate.id === "name" ? 22 : 0)
+  });
 }
 
 export function getColumnHeaderMinWidth(column: ColumnDefinition) {
   const label = getLocalizedColumnLabel(column) || column.label || column.id;
-  return Math.max(48, Math.ceil(getTextMeasureUnits(label) * 10));
+  return Math.max(DETAILS_MIN_COLUMN_WIDTH_PX, Math.ceil(getTextMeasureUnits(label) * 6 + 4));
 }
 
-function parsePixelColumnWidth(width: string) {
-  const trimmed = width.trim();
-  if (!trimmed.endsWith("px")) {
-    return Number.NaN;
-  }
-  const parsed = Number.parseFloat(trimmed);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
-
-function getColumnPixelWidth(column: ColumnDefinition) {
-  const parsedWidth = parsePixelColumnWidth(column.width);
+export function getColumnPixelWidth(column: ColumnDefinition) {
   const fallbackWidth = DEFAULT_DETAILS_COLUMN_WIDTHS[column.id] ?? 120;
-  return Math.max(getColumnHeaderMinWidth(column), Math.round(Number.isFinite(parsedWidth) ? parsedWidth : fallbackWidth));
+  return getDetailsColumnPixelWidth({
+    column,
+    minWidth: getColumnHeaderMinWidth(column),
+    fallbackWidth
+  });
 }
 
 export function getDetailsGridMetrics(columns: ColumnDefinition[]) {
-  const widths = columns.map(getColumnPixelWidth);
-  const gridTemplateColumns = widths.map((width) => `${width}px`).join(" ");
-  const totalGapWidth = Math.max(0, widths.length - 1) * DETAILS_GRID_COLUMN_GAP_PX;
-  const width = widths.reduce((sum, columnWidth) => sum + columnWidth, 0) + totalGapWidth;
-  return {
-    gridTemplateColumns,
-    width
-  };
+  return getSharedDetailsGridMetrics({
+    columns,
+    gap: DETAILS_GRID_COLUMN_GAP_PX,
+    getColumnPixelWidth
+  });
 }

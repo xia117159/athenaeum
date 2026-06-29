@@ -10,6 +10,7 @@ import {
   toRemoteProfileUpsertRequest
 } from "./workspaceBackendDtos";
 import { DEFAULT_COLUMNS } from "./workspaceMappers";
+import { NAVIGATION_COLUMNS } from "./NavigationTabColumns";
 import type { NavigationItem, RemoteConnectionProfile, SettingsModel } from "./types";
 
 function assertTest(name: string, fn: () => void) {
@@ -139,6 +140,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     ],
     tagRules: [],
     columns: [],
+    navigationColumns: [],
     detailsRowHeight: 46,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
@@ -168,6 +170,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       }
     ],
     columns: DEFAULT_COLUMNS,
+    navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: 46,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
@@ -228,6 +231,7 @@ assertTest("createBrowserSettingsSnapshot provides a complete settings fallback 
   assert.equal(snapshot.bookmarks.length, 1);
   assert.equal(snapshot.hotlist.length, 0);
   assert.equal(snapshot.detailsRowHeight, 24);
+  assert.deepEqual(snapshot.navigationColumns, NAVIGATION_COLUMNS);
   assert.equal(snapshot.layout.layoutMode, "dual");
   assert.equal(snapshot.theme!.panelFocusAccent, "#0f6cbd");
   assert.equal(snapshot.theme!.activeTabBackground, "#ffffff");

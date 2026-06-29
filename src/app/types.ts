@@ -328,6 +328,7 @@ export interface SettingsSnapshot {
   colorRules: ColorRule[];
   shortcuts: ShortcutBinding[];
   columns?: DetailColumnDefinition[];
+  navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
@@ -341,6 +342,7 @@ export interface SettingsModelUpdate {
   shortcuts: ShortcutBinding[];
   colorRules: ColorRule[];
   columns: DetailColumnDefinition[];
+  navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

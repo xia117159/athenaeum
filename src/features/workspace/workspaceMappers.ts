@@ -9,6 +9,7 @@ import type {
   WorkspaceBootstrap as BackendWorkspaceBootstrap
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
+import { normalizeNavigationColumns } from "./NavigationTabColumns";
 import { createRemoteRootUri, createRemoteUri, resolveRemotePath, trimTrailingSlash } from "./remoteUri";
 import {
   cloneColumns,
@@ -34,6 +35,7 @@ import type {
 } from "./types";
 
 export { cloneColumns, DEFAULT_COLUMNS, DEFAULT_METADATA_RETENTION_HOURS, DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "./workspaceFileListDefaults";
+export { cloneNavigationColumns, NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 
 const DEFAULT_COLUMN_BY_ID = new Map(DEFAULT_COLUMNS.map((column) => [column.id, column] as const));
 
@@ -744,6 +746,7 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
       quickFilter: definition.name
     })),
     columns: normalizeColumns(settings.columns),
+    navigationColumns: normalizeNavigationColumns(settings.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
@@ -776,6 +779,7 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     colorRules: settingsModel.colorRules,
     tagRules: settingsModel.tagRules,
     columns: normalizeColumns(settingsModel.columns),
+    navigationColumns: normalizeNavigationColumns(settingsModel.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),

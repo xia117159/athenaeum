@@ -34,3 +34,4 @@ Thumbs.db
 # Local agent / tool metadata
 .claude/
 .codex/
+.temp

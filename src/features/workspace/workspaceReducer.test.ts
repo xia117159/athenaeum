@@ -1966,7 +1966,7 @@ assertTest("workspaceReducer stores resized detail column widths on the target t
 
   const nameColumn = nextState.panels["panel-1"].tabs[0].columns.find((column) => column.id === "name");
   assert.ok(nameColumn);
-  assert.equal(nameColumn!.width, "48px");
+  assert.equal(nameColumn!.width, "40px");
   assert.equal(nextState.panels["panel-2"].tabs[0].columns.find((column) => column.id === "name")?.width, originalOtherTabWidth);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "name")?.width, originalSettingsWidth);
 });

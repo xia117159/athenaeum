@@ -231,12 +231,21 @@ export const completion = (async () => {
 
     await assertTest("workspace details header resize dividers are visible by default", async () => {
       const css = readWorkspaceCss();
-      const defaultDividerRule = css.match(/\.file-header-resizer::after\s*\{([^}]*)\}/)?.[1] ?? "";
+      const defaultDividerRule = css.match(/\.details-column-header__resizer::after\s*\{([^}]*)\}/)?.[1] ?? "";
 
       assert.notEqual(defaultDividerRule, "");
       assert.match(defaultDividerRule, /background:\s*[^;]+;/);
       assert.doesNotMatch(defaultDividerRule, /background:\s*transparent\b/);
-      assert.match(css, /\.file-header-resizer:hover::after\s*\{[\s\S]*background:\s*#8a8a8a;/);
+      assert.match(css, /\.details-column-header__resizer:hover::after\s*\{[\s\S]*background:\s*#8a8a8a;/);
+    });
+
+    await assertTest("workspace column drag indicators stay within the details header height", async () => {
+      const css = readWorkspaceCss();
+      const fileIndicatorRule = css.match(/\.file-listing__column-drop-indicator\s*\{([^}]*)\}/)?.[1] ?? "";
+
+      assert.notEqual(fileIndicatorRule, "");
+      assert.match(fileIndicatorRule, /height:\s*var\(--details-header-height\);/);
+      assert.doesNotMatch(fileIndicatorRule, /bottom:\s*0\b/);
     });
 
     await assertTest("FileListingShell exposes column menu items in the current full column order", async () => {

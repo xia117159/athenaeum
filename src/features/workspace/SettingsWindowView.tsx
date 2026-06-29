@@ -19,6 +19,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     colorRules: model.colorRules.map((rule) => ({ ...rule })),
     tagRules: model.tagRules.map((rule) => ({ ...rule })),
     columns: model.columns.map((column) => ({ ...column })),
+    navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
@@ -67,6 +68,7 @@ function computeDirtySections(
   if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
   if (
     !hasSameJsonShape(pm.columns, dm.columns) ||
+    !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
     pm.detailsRowHeight !== dm.detailsRowHeight ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours

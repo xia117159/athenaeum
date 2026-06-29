@@ -1,5 +1,4 @@
 import {
-  type CSSProperties,
   type DragEvent as ReactDragEvent,
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -21,10 +20,21 @@ import {
   Search,
   Trash2
 } from "lucide-react";
+import { DetailsListBase } from "./DetailsListBase";
+import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
 import { hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { FileSystemIcon } from "./FileSystemIcon";
-import { NavigationColumnHeaderMenu } from "./NavigationColumnHeaderMenu";
-import type { EntryViewModel, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
+import {
+  getNavigationCellText,
+  getNavigationColumnHeaderMinWidth,
+  getNavigationColumnPixelWidth,
+  NAVIGATION_COLUMNS,
+  NAVIGATION_COLUMN_MIN_WIDTHS,
+  NAVIGATION_GRID_COLUMN_GAP_PX,
+  type NavigationSortState,
+  sortNavigationItemsForColumn
+} from "./NavigationTabColumns";
+import type { EntryViewModel, NavigationColumnDefinition, NavigationColumnId, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 import { NAVIGATION_TAB_ID } from "./workspaceTabs";
 
@@ -45,31 +55,6 @@ type CurrentFolderContext = {
   path: string;
 };
 
-type NavigationColumnId = "name" | "kind" | "path" | "comment" | "status" | "lastOpened";
-
-const NAVIGATION_GRID_COLUMN_GAP_PX = 6;
-const NAVIGATION_COLUMNS: Array<{
-  id: NavigationColumnId;
-  label: string;
-  width: number;
-  minWidth: number;
-}> = [
-  { id: "name", label: "\u540d\u79f0", width: 240, minWidth: 96 },
-  { id: "kind", label: "\u7c7b\u578b", width: 112, minWidth: 72 },
-  { id: "path", label: "\u8def\u5f84", width: 220, minWidth: 120 },
-  { id: "comment", label: "\u6ce8\u91ca", width: 148, minWidth: 88 },
-  { id: "status", label: "\u72b6\u6001", width: 120, minWidth: 72 },
-  { id: "lastOpened", label: "\u6700\u8fd1\u6253\u5f00", width: 148, minWidth: 112 }
-];
-
-function createDefaultNavigationColumnWidths() {
-  return Object.fromEntries(NAVIGATION_COLUMNS.map((column) => [column.id, column.width])) as Record<NavigationColumnId, number>;
-}
-
-function createDefaultNavigationColumnVisibility() {
-  return Object.fromEntries(NAVIGATION_COLUMNS.map((column) => [column.id, true])) as Record<NavigationColumnId, boolean>;
-}
-
 const STATUS_LABELS: Record<NavigationItem["targetStatus"], string> = {
   ok: "正常",
   missing: "缺失",
@@ -86,23 +71,6 @@ const KIND_LABELS: Record<NavigationItem["targetKind"], string> = {
   unknown: "未知",
   remoteUnsupported: "远程暂不支持"
 };
-
-function formatTime(value?: string | null) {
-  if (!value) {
-    return "--";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-}
 
 function createDraft(item?: NavigationItem | null): NavigationItemUpsertRequest {
   return {
@@ -141,41 +109,17 @@ function filterItems(items: NavigationItem[], filterText: string) {
   );
 }
 
-function getNavigationCellText(item: NavigationItem, columnId: NavigationColumnId) {
-  switch (columnId) {
-    case "name":
-      return item.displayName;
-    case "kind":
-      return KIND_LABELS[item.targetKind];
-    case "path":
-      return item.path;
-    case "comment":
-      return item.description || "--";
-    case "status":
-      return STATUS_LABELS[item.targetStatus];
-    case "lastOpened":
-      return formatTime(item.lastOpenedAt);
-    default:
-      return "";
-  }
-}
-
-function estimateNavigationColumnWidth(column: (typeof NAVIGATION_COLUMNS)[number], items: NavigationItem[]) {
-  const values = [column.label, ...items.map((item) => getNavigationCellText(item, column.id))];
-  const maxLength = values.reduce((max, value) => Math.max(max, Array.from(value).length), 0);
-  const iconAllowance = column.id === "name" ? 30 : 0;
-  return Math.max(column.minWidth, Math.min(520, maxLength * 8 + iconAllowance + 28));
-}
-
 export function NavigationTabView({
   panelId,
   navigation,
+  navigationColumns = NAVIGATION_COLUMNS,
   currentFolder,
   selectedEntries,
   actions
 }: {
   panelId: PanelId;
   navigation: NavigationState;
+  navigationColumns?: NavigationColumnDefinition[];
   currentFolder?: CurrentFolderContext;
   selectedEntries: EntryViewModel[];
   actions: WorkspaceActions;
@@ -184,12 +128,13 @@ export function NavigationTabView({
   const [nameDraft, setNameDraft] = useState<{ id: string; displayName: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [navigationColumnWidths, setNavigationColumnWidths] = useState<Record<NavigationColumnId, number>>(createDefaultNavigationColumnWidths);
-  const [navigationColumnVisibility, setNavigationColumnVisibility] = useState<Record<NavigationColumnId, boolean>>(createDefaultNavigationColumnVisibility);
-  const [columnMenuPosition, setColumnMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [navigationSort, setNavigationSort] = useState<NavigationSortState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const columnMenuRef = useRef<HTMLDivElement | null>(null);
-  const visibleItems = useMemo(() => filterItems(navigation.items, navigation.filterText), [navigation.items, navigation.filterText]);
+  const navigationTableRef = useRef<HTMLDivElement | null>(null);
+  const visibleItems = useMemo(
+    () => sortNavigationItemsForColumn(filterItems(navigation.items, navigation.filterText), navigationSort),
+    [navigation.items, navigation.filterText, navigationSort]
+  );
   const selectedItems = navigation.items.filter((item) => navigation.selectedItemIds.includes(item.id));
   const primarySelected = selectedItems[0];
   const menuSelectedItems = menu?.itemId
@@ -203,15 +148,6 @@ export function NavigationTabView({
   const canMoveDown = primarySelected
     ? navigation.items.findIndex((item) => item.id === primarySelected.id) < navigation.items.length - 1
     : false;
-  const visibleNavigationColumns = NAVIGATION_COLUMNS.filter((column) => navigationColumnVisibility[column.id]);
-  const navigationGridTemplateColumns = visibleNavigationColumns.map((column) => `${navigationColumnWidths[column.id]}px`).join(" ");
-  const navigationGridWidth =
-    visibleNavigationColumns.reduce((sum, column) => sum + navigationColumnWidths[column.id], 0) +
-    Math.max(0, visibleNavigationColumns.length - 1) * NAVIGATION_GRID_COLUMN_GAP_PX;
-  const navigationGridStyle = {
-    gridTemplateColumns: navigationGridTemplateColumns,
-    width: `${navigationGridWidth}px`
-  } as CSSProperties;
 
   useEffect(() => {
     if (!menu) {
@@ -246,31 +182,6 @@ export function NavigationTabView({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [menu]);
-
-  useEffect(() => {
-    if (!columnMenuPosition) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && columnMenuRef.current?.contains(event.target)) {
-        return;
-      }
-      setColumnMenuPosition(null);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setColumnMenuPosition(null);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [columnMenuPosition]);
 
   const submitDraft = () => {
     if (!draft?.path.trim()) {
@@ -499,71 +410,18 @@ export function NavigationTabView({
       });
   };
 
-  const handleNavigationColumnResizeStart = (columnId: NavigationColumnId, event: ReactMouseEvent<HTMLSpanElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const column = NAVIGATION_COLUMNS.find((candidate) => candidate.id === columnId);
-    const headerCell = event.currentTarget.closest(".navigation-header-cell");
-    const measuredWidth = headerCell instanceof HTMLElement ? headerCell.getBoundingClientRect().width : 0;
-    const startWidth = measuredWidth > 0 ? measuredWidth : navigationColumnWidths[columnId];
-    const startX = event.clientX;
-    const minWidth = column?.minWidth ?? 72;
-
-    const handleMove = (moveEvent: MouseEvent) => {
-      moveEvent.preventDefault();
-      const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
-      setNavigationColumnWidths((current) => ({
-        ...current,
-        [columnId]: nextWidth
-      }));
-    };
-
-    const handleStop = () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleStop);
-    };
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleStop);
-  };
-
-  const openColumnHeaderMenu = (event: ReactMouseEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setColumnMenuPosition({ x: event.clientX, y: event.clientY });
-  };
-
-  const selectColumnMenuItem = (callback: () => void) => {
-    callback();
-    setColumnMenuPosition(null);
-  };
-
-  const setNavigationColumnVisible = (columnId: NavigationColumnId, visible: boolean) => {
-    setNavigationColumnVisibility((current) => ({
-      ...current,
-      [columnId]: visible
-    }));
-  };
-
-  const showAllNavigationColumns = () => {
-    setNavigationColumnVisibility(createDefaultNavigationColumnVisibility());
-  };
-
-  const autoFitVisibleNavigationColumns = () => {
-    setNavigationColumnWidths((current) => {
-      const next = { ...current };
-      for (const column of visibleNavigationColumns) {
-        next[column.id] = estimateNavigationColumnWidth(column, visibleItems);
-      }
-      return next;
-    });
+  const toggleNavigationSort = (columnId: NavigationColumnId) => {
+    setNavigationSort((current) =>
+      current?.columnId === columnId
+        ? { columnId, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { columnId, direction: "asc" }
+    );
   };
 
   const renderNavigationCell = (item: NavigationItem, columnId: NavigationColumnId) => {
     if (columnId === "name") {
       return (
-        <span role="cell" className="navigation-table__name" data-navigation-cell-id={columnId}>
+        <span role="cell" className="navigation-table__cell navigation-table__name" data-navigation-cell-id={columnId}>
           <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" />
           <span>{item.displayName}</span>
         </span>
@@ -571,14 +429,14 @@ export function NavigationTabView({
     }
 
     if (columnId === "path") {
-      return <span role="cell" className="navigation-table__path" data-navigation-cell-id={columnId}>{item.path}</span>;
+      return <span role="cell" className="navigation-table__cell navigation-table__path" data-navigation-cell-id={columnId}>{item.path}</span>;
     }
 
     if (columnId === "status") {
-      return <span role="cell" data-status={item.targetStatus} data-navigation-cell-id={columnId}>{STATUS_LABELS[item.targetStatus]}</span>;
+      return <span role="cell" className="navigation-table__cell" data-status={item.targetStatus} data-navigation-cell-id={columnId}>{STATUS_LABELS[item.targetStatus]}</span>;
     }
 
-    return <span role="cell" data-navigation-cell-id={columnId}>{getNavigationCellText(item, columnId)}</span>;
+    return <span role="cell" className="navigation-table__cell" data-navigation-cell-id={columnId}>{getNavigationCellText(item, columnId)}</span>;
   };
 
   return (
@@ -605,21 +463,6 @@ export function NavigationTabView({
       }}
       onDrop={handleDrop}
     >
-      {columnMenuPosition ? (
-        <NavigationColumnHeaderMenu
-          menuRef={columnMenuRef}
-          x={columnMenuPosition.x}
-          y={columnMenuPosition.y}
-          columns={NAVIGATION_COLUMNS}
-          visibility={navigationColumnVisibility}
-          onToggleColumn={(columnId) =>
-            selectColumnMenuItem(() => setNavigationColumnVisible(columnId, !navigationColumnVisibility[columnId]))
-          }
-          onShowAll={() => selectColumnMenuItem(showAllNavigationColumns)}
-          onAutoFit={() => selectColumnMenuItem(autoFitVisibleNavigationColumns)}
-        />
-      ) : null}
-
       <div className="navigation-tab__toolbar">
         <div className="navigation-tab__group">
           <button type="button" className="toolbar-button toolbar-button--icon" title="添加导航项" aria-label="添加导航项" onClick={() => openDraft()}>
@@ -706,27 +549,45 @@ export function NavigationTabView({
         ) : null}
       </div>
 
-      <div className="navigation-table" role="table" aria-label="导航页快捷入口">
-        <div className="navigation-table__row navigation-table__row--header" role="row" style={navigationGridStyle} onContextMenu={openColumnHeaderMenu}>
-          {visibleNavigationColumns.map((column) => (
-            <div
-              key={column.id}
-              className="navigation-header-cell"
-              role="columnheader"
-              data-navigation-column-id={column.id}
-              onContextMenu={openColumnHeaderMenu}
-            >
-              <span className="navigation-header-cell__label">{column.label}</span>
-              <span
-                className="navigation-header-resizer"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={`resize ${column.id} column`}
-                onMouseDown={(event) => handleNavigationColumnResizeStart(column.id, event)}
-              />
-            </div>
-          ))}
-        </div>
+      <div ref={navigationTableRef} className="navigation-table" role="table" aria-label="导航页快捷入口">
+        <DetailsListBase<NavigationColumnId, NavigationColumnDefinition>
+          columns={navigationColumns}
+          sort={navigationSort}
+          gap={NAVIGATION_GRID_COLUMN_GAP_PX}
+          getColumnLabel={(column) => column.label}
+          getColumnMinWidth={(column) => NAVIGATION_COLUMN_MIN_WIDTHS[column.id]}
+          getColumnPixelWidth={getNavigationColumnPixelWidth}
+          onSort={toggleNavigationSort}
+          onResizeColumn={actions.setNavigationColumnWidth}
+          onMoveColumn={actions.moveNavigationColumn}
+          onSetColumnVisibility={actions.setNavigationColumnVisibility}
+          onShowAllColumns={actions.showAllNavigationColumns}
+          onAutoFitColumn={(column) =>
+            actions.setNavigationColumnWidth(
+              column.id,
+              getDetailsAutoFitColumnWidth({
+                root: navigationTableRef.current,
+                column,
+                items: visibleItems,
+                cellDataAttribute: "data-navigation-cell-id",
+                getHeaderText: (candidate) => candidate.label,
+                getCellText: (item, candidate) => getNavigationCellText(item, candidate.id),
+                getMinWidth: getNavigationColumnHeaderMinWidth,
+                getIconAllowance: (candidate) => (candidate.id === "name" ? 22 : 0)
+              })
+            )
+          }
+          headerClassName="navigation-table__row navigation-table__row--header"
+          cellClassName="navigation-header-cell"
+          buttonClassName="navigation-header-button"
+          indicatorClassName="navigation-header-cell__sort"
+          resizerClassName="navigation-header-resizer"
+          resizerSelector=".navigation-header-resizer"
+          headerCellSelector=".navigation-header-cell"
+          dropIndicatorClassName="navigation-table__column-drop-indicator"
+          dataAttributeName="data-navigation-column-id"
+        >
+          {({ gridStyle: navigationGridStyle, visibleColumns: visibleNavigationColumns }) => (
         <div className="navigation-table__body">
           {visibleItems.length === 0 ? (
             <div className="navigation-tab__empty">
@@ -763,6 +624,8 @@ export function NavigationTabView({
             })
           )}
         </div>
+          )}
+        </DetailsListBase>
       </div>
       </div>
 

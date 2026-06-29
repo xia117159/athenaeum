@@ -1,9 +1,8 @@
 import type { RefObject } from "react";
-import type { ColumnId } from "./types";
 
-export type ColumnPointerDropTarget = {
+export type ColumnPointerDropTarget<T extends string = string> = {
   targetElement: HTMLElement;
-  targetId: ColumnId;
+  targetId: T;
   placement: "before" | "after";
 };
 
@@ -14,8 +13,8 @@ export type ColumnDragFollower = {
   label: string;
 };
 
-export type ColumnDropIndicator = {
-  targetId: ColumnId;
+export type ColumnDropIndicator<T extends string = string> = {
+  targetId: T;
   placement: "before" | "after";
 };
 
@@ -26,9 +25,13 @@ export const EMPTY_COLUMN_DRAG_FOLLOWER: ColumnDragFollower = {
   label: ""
 };
 
-export function getColumnPointerDropTarget(element: Element | null, clientX: number, sourceId: ColumnId): ColumnPointerDropTarget | null {
+export function getColumnPointerDropTarget<T extends string>(
+  element: Element | null,
+  clientX: number,
+  sourceId: T
+): ColumnPointerDropTarget<T> | null {
   const targetElement = element?.closest("[data-column-id]") as HTMLElement | null;
-  const targetId = targetElement?.dataset.columnId as ColumnId | undefined;
+  const targetId = targetElement?.dataset.columnId as T | undefined;
   if (!targetElement || !targetId || targetId === sourceId) {
     return null;
   }
@@ -65,10 +68,12 @@ function getColumnDropIndicatorLeft(header: HTMLElement, indicator: ColumnDropIn
 
 export function ColumnDropIndicatorView({
   headerRef,
-  indicator
+  indicator,
+  className = "file-listing__column-drop-indicator"
 }: {
   headerRef: RefObject<HTMLDivElement | null>;
   indicator: ColumnDropIndicator | null;
+  className?: string;
 }) {
   if (!indicator || !headerRef.current) {
     return null;
@@ -76,7 +81,7 @@ export function ColumnDropIndicatorView({
 
   return (
     <div
-      className="file-listing__column-drop-indicator"
+      className={`details-column-drop-indicator ${className}`}
       style={{
         left: getColumnDropIndicatorLeft(headerRef.current, indicator)
       }}

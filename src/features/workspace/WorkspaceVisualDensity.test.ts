@@ -18,6 +18,7 @@ const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const workspaceMenuSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceMenuBar.tsx"), "utf8");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
 const navigationTabSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/NavigationTabView.tsx"), "utf8");
+const detailsListBaseSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/DetailsListBase.tsx"), "utf8");
 const panelChromeSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspacePanelChrome.tsx"), "utf8");
 const treeBranchSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceTreeBranch.tsx"), "utf8");
 
@@ -168,11 +169,16 @@ assertTest("directory tree and details list use desktop file-manager density", (
   assertDeclaration(getCssBlock(".panel-listing"), "height", "100%");
   assertDeclaration(getCssBlock(".file-listing__scroll"), "flex", "1"); // 使用 flex 布局占据剩余空间
   assertDeclaration(getCssBlock(".file-listing"), "--details-header-height", "24px");
+  assertDeclaration(getCssBlock(".file-listing__header"), "gap", "4px");
+  assertDeclaration(getCssBlock(".file-listing__header"), "padding", "0");
   assertDeclaration(getCssBlock(".file-listing__header"), "min-height", "var\\(--details-header-height\\)");
   assertDeclaration(getCssBlock(".file-listing__body"), "box-sizing", "border-box");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "gap", "0");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "min-height", "calc\\(100% - var\\(--details-header-height\\)\\)");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "padding", "0");
+  assertDeclaration(getCssBlock(".file-row__grid"), "gap", "4px");
+  assertDeclaration(getCssBlock(".file-row__grid"), "padding", "0");
+  assertDeclaration(getCssBlock(".file-cell"), "padding", "2px 2px");
   assertDeclaration(getCssBlock(".file-row"), "user-select", "none");
   assertDeclaration(getCssBlock(".file-card"), "user-select", "none");
   assertDeclaration(getCssBlock(".file-list-item"), "user-select", "none");
@@ -189,14 +195,25 @@ assertTest("navigation page uses the details-list density and fill contract", ()
   assertDeclaration(getCssBlock(".navigation-tab__editor-slot"), "min-height", "0");
   assertDeclaration(getCssBlock(".navigation-table"), "height", "100%");
   assertDeclaration(getCssBlock(".navigation-table"), "overflow", "auto");
+  assertDeclaration(getCssBlock(".navigation-table"), "position", "relative");
+  assertDeclaration(getCssBlock(".navigation-table__column-drop-indicator"), "height", "var\\(--details-header-height\\)");
   assertDeclaration(getCssBlock(".navigation-table__body"), "min-height", "calc\\(100% - var\\(--details-header-height\\)\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "grid-template-columns", "220px 96px 180px 112px 80px 132px");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "gap", "4px");
   assertDeclaration(getCssBlock(".navigation-table__row"), "min-height", "var\\(--details-row-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "padding", "0");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "appearance", "none");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "box-sizing", "border-box");
   assertDeclaration(getCssBlock(".navigation-table__row--header"), "min-height", "var\\(--details-header-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__cell"), "padding", "2px 2px");
+  assertDeclaration(getCssBlock(".navigation-header-cell"), "padding", "2px 2px");
   assertDeclaration(getCssBlock(".navigation-table__row"), "width", "max-content");
   assertDeclaration(getCssBlock(".navigation-table__row"), "min-width", "100%");
+  assertNoDeclaration(getCssBlock(".navigation-table__item.is-selected"), "box-shadow");
   assert.equal(navigationTabSource.includes("navigation-header-resizer"), true);
   assert.equal(navigationTabSource.includes("navigation-tab__editor-slot"), true);
-  assert.equal(navigationTabSource.includes("gridTemplateColumns: navigationGridTemplateColumns"), true);
+  assert.equal(navigationTabSource.includes("DetailsListBase"), true);
+  assert.equal(detailsListBaseSource.includes("gridTemplateColumns: gridMetrics.gridTemplateColumns"), true);
   assert.equal(navigationTabSource.includes('data-entry-drop-kind="navigation"'), true);
 });
 

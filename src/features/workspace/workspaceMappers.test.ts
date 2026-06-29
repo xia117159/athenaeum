@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { normalizeLocationPath } from "./mockData";
 import {
   DEFAULT_COLUMNS,
+  NAVIGATION_COLUMNS,
   DEFAULT_THEME,
   createTabFromSnapshot,
   mapDirectoryListingToSnapshot,
   mapFavoriteCollections,
   mapSettingsModel,
   mapWorkspaceBootstrap,
+  normalizeNavigationColumns,
   normalizeSettingsModel
 } from "./workspaceMappers";
 
@@ -40,6 +42,42 @@ assertTest("DEFAULT_COLUMNS exposes the file-list detail columns in the default 
   assert.equal(DEFAULT_COLUMNS.find((column) => column.id === "location")?.visible, false);
 });
 
+assertTest("NAVIGATION_COLUMNS exposes the navigation detail columns in the default order", () => {
+  assert.deepEqual(
+    NAVIGATION_COLUMNS.map((column) => column.id),
+    ["name", "kind", "path", "comment", "status", "lastOpened"]
+  );
+  assert.deepEqual(
+    NAVIGATION_COLUMNS.map((column) => column.width),
+    ["220px", "96px", "180px", "112px", "80px", "132px"]
+  );
+  assert.equal(NAVIGATION_COLUMNS.find((column) => column.id === "comment")?.label, "\u6ce8\u91ca");
+});
+
+assertTest("normalizeNavigationColumns preserves compact auto-fit widths above the header minimum", () => {
+  const columns = normalizeNavigationColumns([
+    { id: "kind", label: "\u7c7b\u578b", visible: true, width: "42px", align: "left" }
+  ]);
+
+  assert.equal(columns.find((column) => column.id === "kind")?.width, "42px");
+});
+
+assertTest("normalizeNavigationColumns migrates the legacy default widths to the compact defaults", () => {
+  const columns = normalizeNavigationColumns([
+    { id: "name", label: "\u540d\u79f0", visible: true, width: "240px", align: "left" },
+    { id: "kind", label: "\u7c7b\u578b", visible: true, width: "112px", align: "left" },
+    { id: "path", label: "\u8def\u5f84", visible: true, width: "220px", align: "left" },
+    { id: "comment", label: "\u6ce8\u91ca", visible: true, width: "148px", align: "left" },
+    { id: "status", label: "\u72b6\u6001", visible: true, width: "120px", align: "left" },
+    { id: "lastOpened", label: "\u6700\u8fd1\u6253\u5f00", visible: true, width: "148px", align: "left" }
+  ]);
+
+  assert.deepEqual(
+    columns.map((column) => column.width),
+    NAVIGATION_COLUMNS.map((column) => column.width)
+  );
+});
+
 assertTest("mapSettingsModel normalizes configurable drag highlight colors", () => {
   const model = mapSettingsModel({
     bookmarks: [],
@@ -53,6 +91,10 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
       { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
       { id: "size", label: "大小", visible: true, width: "96px", align: "right" },
       { id: "type", label: "类型", visible: true, width: "112px", align: "left" }
+    ],
+    navigationColumns: [
+      { id: "path", label: "Path", visible: true, width: "300px", align: "left" },
+      { id: "name", label: "Name", visible: false, width: "200px", align: "left" }
     ],
     detailsRowHeight: 24,
     tooltipHoverDelayMs: 350,
@@ -84,6 +126,9 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
   assert.deepEqual(model.columns.slice(0, 4).map((column) => column.id), ["name", "type", "extension", "size"]);
   assert.equal(model.columns.find((column) => column.id === "size")?.width, "96px");
   assert.equal(model.columns.some((column) => column.id === "comment"), true);
+  assert.deepEqual(model.navigationColumns.slice(0, 3).map((column) => column.id), ["name", "kind", "path"]);
+  assert.equal(model.navigationColumns.find((column) => column.id === "name")?.visible, false);
+  assert.equal(model.navigationColumns.find((column) => column.id === "path")?.width, "300px");
   assert.equal(model.tooltipHoverDelayMs, 350);
   assert.equal(model.metadataRetentionHours, null);
 });
@@ -94,6 +139,7 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
     colorRules: [],
     tagRules: [],
     columns: [],
+    navigationColumns: [],
     detailsRowHeight: 24,
     tooltipHoverDelayMs: 9999,
     metadataRetentionHours: -1,
@@ -114,6 +160,7 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
   assert.equal(model.theme.dropHighlightFill, "#0f6cbd");
   assert.equal(model.theme.dropHighlightBorder, "#abc12399");
   assert.deepEqual(model.columns.map((column) => column.id), DEFAULT_COLUMNS.map((column) => column.id));
+  assert.deepEqual(model.navigationColumns.map((column) => column.id), NAVIGATION_COLUMNS.map((column) => column.id));
   assert.equal(model.tooltipHoverDelayMs, 5000);
   assert.equal(model.metadataRetentionHours, 0);
 });

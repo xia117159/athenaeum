@@ -53,6 +53,7 @@ async function flushEffects() {
 const columns: ColumnDefinition[] = [
   { id: "name", label: "名称", visible: true, width: "2fr", align: "left" },
   { id: "type", label: "类型", visible: true, width: "1fr", align: "left" },
+  { id: "extension", label: "扩展名", visible: true, width: "1fr", align: "left" },
   { id: "size", label: "大小", visible: true, width: "1fr", align: "right" },
   { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
   { id: "tags", label: "标签", visible: false, width: "1fr", align: "left" }
@@ -102,6 +103,7 @@ export const fileListingAutoFitTests = (async () => {
   const measuredWidths: Record<string, number> = {
     name: 286,
     type: 124,
+    extension: 36,
     size: 88,
     modified: 172
   };
@@ -161,10 +163,11 @@ export const fileListingAutoFitTests = (async () => {
       });
 
       assert.deepEqual(resizedColumns, [
-        { columnId: "name", width: "302px" },
-        { columnId: "type", width: "140px" },
-        { columnId: "size", width: "104px" },
-        { columnId: "modified", width: "188px" }
+        { columnId: "name", width: "290px" },
+        { columnId: "type", width: "128px" },
+        { columnId: "extension", width: "40px" },
+        { columnId: "size", width: "92px" },
+        { columnId: "modified", width: "176px" }
       ]);
     });
   } finally {

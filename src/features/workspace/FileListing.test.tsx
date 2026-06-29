@@ -1456,7 +1456,7 @@ export const completion = (async () => {
       assert.doesNotMatch(css, /\.file-row__grid\s*\{[^}]*min-width:\s*100%;/);
     });
 
-    await assertTest("FileListingShell clamps column resizing to at least the header text width", async () => {
+    await assertTest("FileListingShell clamps column resizing to the compact header minimum", async () => {
       resizedColumns.length = 0;
       const narrowColumns: ColumnDefinition[] = [
         { id: "modified", label: "modified", visible: true, width: "160px", align: "left" }
@@ -1492,7 +1492,7 @@ export const completion = (async () => {
       });
 
       assert.equal(resizedColumns[0]?.columnId, "modified");
-      assert.ok(Number.parseInt(resizedColumns[0]?.width ?? "0", 10) >= 80);
+      assert.equal(resizedColumns[0]?.width, "52px");
     });
 
     await assertTest("FileListingShell opens the native background context menu when blank space is right-clicked", async () => {

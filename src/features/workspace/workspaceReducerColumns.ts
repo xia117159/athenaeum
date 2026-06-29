@@ -1,6 +1,10 @@
-import type { ColumnDefinition, ColumnId } from "./types";
+type ColumnLayout<T extends string> = {
+  id: T;
+  visible: boolean;
+  width: string;
+};
 
-const MIN_COLUMN_WIDTH = 48;
+const MIN_COLUMN_WIDTH = 40;
 const MAX_COLUMN_WIDTH = 960;
 
 function normalizeColumnWidth(width: string) {
@@ -14,7 +18,7 @@ function normalizeColumnWidth(width: string) {
   return `${nextWidth}px`;
 }
 
-export function setColumnWidth(columns: ColumnDefinition[], columnId: ColumnId, width: string) {
+export function setColumnWidth<T extends string, C extends ColumnLayout<T>>(columns: C[], columnId: T, width: string) {
   let changed = false;
   const normalizedWidth = normalizeColumnWidth(width);
   const nextColumns = columns.map((column) => {
@@ -30,7 +34,7 @@ export function setColumnWidth(columns: ColumnDefinition[], columnId: ColumnId, 
   return changed ? nextColumns : columns;
 }
 
-export function setColumnVisibility(columns: ColumnDefinition[], columnIds: ColumnId[], visible: boolean) {
+export function setColumnVisibility<T extends string, C extends ColumnLayout<T>>(columns: C[], columnIds: T[], visible: boolean) {
   const targetIds = new Set(columnIds);
   let changed = false;
   const nextColumns = columns.map((column) => {
@@ -46,10 +50,10 @@ export function setColumnVisibility(columns: ColumnDefinition[], columnIds: Colu
   return changed ? nextColumns : columns;
 }
 
-export function moveColumn(
-  columns: ColumnDefinition[],
-  sourceId: ColumnId,
-  targetId: ColumnId,
+export function moveColumn<T extends string, C extends ColumnLayout<T>>(
+  columns: C[],
+  sourceId: T,
+  targetId: T,
   placement: "before" | "after"
 ) {
   if (sourceId === targetId) {

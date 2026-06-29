@@ -92,6 +92,7 @@ impl MetadataStore {
         &self,
         layout: UiLayout,
         columns: Vec<DetailColumnDefinition>,
+        navigation_columns: Vec<DetailColumnDefinition>,
         details_row_height: u16,
         tooltip_hover_delay_ms: u32,
         metadata_retention_hours: Option<u64>,
@@ -111,6 +112,7 @@ impl MetadataStore {
             color_rules: self.color_rules.clone(),
             shortcuts: self.shortcuts.clone(),
             columns,
+            navigation_columns,
             details_row_height,
             tooltip_hover_delay_ms,
             metadata_retention_hours,
@@ -616,6 +618,7 @@ mod tests {
         let snapshot = reloaded.to_settings_snapshot(
             UiLayout::fallback(),
             Vec::new(),
+            Vec::new(),
             36,
             200,
             Some(720),
@@ -647,6 +650,7 @@ mod tests {
         let reloaded = MetadataStore::load_from(file_path).expect("failed to load legacy metadata");
         let snapshot = reloaded.to_settings_snapshot(
             UiLayout::fallback(),
+            Vec::new(),
             Vec::new(),
             36,
             200,

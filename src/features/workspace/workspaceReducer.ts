@@ -7,7 +7,7 @@ import type {
   InformationPanelTab,
   ItemProperties,
   InlineEditState,
-  NavigationItem,
+  NavigationColumnDefinition, NavigationItem,
   NavigationTargetInfo,
   MultiSelectionPropertiesSummary,
   OperationHistoryRecord,
@@ -160,10 +160,9 @@ export type WorkspaceAction =
   | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
   | { type: "columnsShown"; payload: { panelId?: PanelId; tabId?: string; ids?: ColumnId[] } }
   | { type: "columnWidthSet"; payload: { panelId: PanelId; tabId: string; id: ColumnId; width: string } }
-  | {
-      type: "columnOrderChanged";
-      payload: { panelId: PanelId; tabId: string; sourceId: ColumnId; targetId: ColumnId; placement: "before" | "after" };
-    }
+  | { type: "columnOrderChanged"; payload: { panelId: PanelId; tabId: string; sourceId: ColumnId; targetId: ColumnId; placement: "before" | "after" } }
+  | { type: "navigationColumnsUpdated"; payload: NavigationColumnDefinition[] }
+  | { type: "navigationColumnWidthSet"; payload: { id: NavigationColumnDefinition["id"]; width: string } }
   | { type: "detailsRowHeightSet"; payload: { value: number } }
   | { type: "tooltipHoverDelaySet"; payload: { value: number } }
   | { type: "metadataRetentionHoursSet"; payload: { value: number | null } }
@@ -2249,6 +2248,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) =>
         moveColumn(columns, action.payload.sourceId, action.payload.targetId, action.payload.placement)
       );
+
+    case "navigationColumnsUpdated": return updateSettingsModel(state, "navigationColumns", () => action.payload);
+    case "navigationColumnWidthSet": return updateSettingsModel(state, "navigationColumns", (columns) => setColumnWidth(columns, action.payload.id, action.payload.width));
 
     case "detailsRowHeightSet":
       return updateSettingsModel(state, "detailsRowHeight", () => normalizeDetailsRowHeight(action.payload.value));

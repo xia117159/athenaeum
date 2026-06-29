@@ -14,20 +14,21 @@ import {
   hasEntryDragPayload,
   readEntryDragPayload
 } from "./entryDrag";
+import { DetailsListBase } from "./DetailsListBase";
+import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
 import { FileSystemIcon } from "./FileSystemIcon";
 import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
 import { devLog, devWarn } from "./devLog";
 import {
-  estimateAutoFitColumnWidth,
   getColumnHeaderMinWidth,
-  getColumnMenuLabel,
+  getColumnPixelWidth,
+  getDetailsCellText,
   getDetailsGridMetrics,
   getEntryTypeLabel,
   getInlineIconSpec,
   getLocalizedColumnLabel,
   getLocationLabel,
-  getSortIndicator,
   getViewBodyClassName,
   ICON_VIEW_MODES,
   type ListingEntry,
@@ -37,14 +38,6 @@ import {
   sortEntries
 } from "./fileListingPresentation";
 import { EntryTooltip, useEntryTooltip } from "./fileListingTooltip";
-import {
-  ColumnDragFollowerView,
-  ColumnDropIndicatorView,
-  EMPTY_COLUMN_DRAG_FOLLOWER,
-  getColumnPointerDropTarget,
-  type ColumnDragFollower,
-  type ColumnDropIndicator
-} from "./fileListingColumnDrag";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -64,47 +57,6 @@ type DropOperation = "copy" | "move";
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const ENTRY_DRAG_FOLLOWER_OFFSET_PX = 12;
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
-const COLUMN_POINTER_DRAG_THRESHOLD_PX = 4;
-const AUTO_FIT_EXTRA_WIDTH_PX = 16;
-
-function getAutoFitElementWidth(element: HTMLElement) {
-  const documentRef = element.ownerDocument;
-  const measureHost = documentRef.createElement("div");
-  measureHost.style.position = "fixed";
-  measureHost.style.left = "-10000px";
-  measureHost.style.top = "-10000px";
-  measureHost.style.visibility = "hidden";
-  measureHost.style.pointerEvents = "none";
-  measureHost.style.width = "max-content";
-
-  const clone = element.cloneNode(true) as HTMLElement;
-  clone.style.width = "max-content";
-  clone.style.maxWidth = "none";
-  clone.style.minWidth = "0";
-  measureHost.appendChild(clone);
-  documentRef.body.appendChild(measureHost);
-
-  const width = Math.max(clone.scrollWidth, clone.getBoundingClientRect().width);
-  measureHost.remove();
-  return Math.ceil(width);
-}
-
-function getAutoFitColumnWidthFromDom(root: HTMLElement | null, column: ColumnDefinition) {
-  if (!root) {
-    return null;
-  }
-
-  const candidates = [
-    root.querySelector<HTMLElement>(`[data-column-id="${column.id}"]`),
-    ...Array.from(root.querySelectorAll<HTMLElement>(`[data-cell-column-id="${column.id}"]`))
-  ].filter((element): element is HTMLElement => Boolean(element));
-  const measuredWidth = candidates.reduce((maxWidth, element) => Math.max(maxWidth, getAutoFitElementWidth(element)), 0);
-  if (measuredWidth <= 0) {
-    return null;
-  }
-
-  return `${Math.max(getColumnHeaderMinWidth(column), measuredWidth + AUTO_FIT_EXTRA_WIDTH_PX)}px`;
-}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -168,14 +120,6 @@ type EntryDragFollower = {
   y: number;
   entry: Pick<EntryViewModel, "kind" | "path" | "extension" | "name"> | null;
   count: number;
-};
-
-type ActiveColumnPointerDrag = {
-  sourceId: ColumnId;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  dragging: boolean;
 };
 
 type MarqueeSelection = {
@@ -441,9 +385,6 @@ export function FileListingShell({
   const suppressNextInlineBlurRef = useRef(false);
   const activeEntryPointerDragRef = useRef<ActiveEntryPointerDrag | null>(null);
   const cleanupEntryPointerDragRef = useRef<(() => void) | null>(null);
-  const activeColumnPointerDragRef = useRef<ActiveColumnPointerDrag | null>(null);
-  const cleanupColumnPointerDragRef = useRef<(() => void) | null>(null);
-  const suppressNextColumnClickRef = useRef<ColumnId | null>(null);
   const suppressNextEntryClickRef = useRef<string | null>(null);
   const inlineIconSpec = getInlineIconSpec(viewMode);
   const compactIconSpec = getInlineIconSpec("list");
@@ -461,13 +402,8 @@ export function FileListingShell({
     entry: null,
     count: 0
   });
-  const [columnDragFollower, setColumnDragFollower] = useState<ColumnDragFollower>(EMPTY_COLUMN_DRAG_FOLLOWER);
-  const [columnDropIndicator, setColumnDropIndicator] = useState<ColumnDropIndicator | null>(null);
   const lastClickedEntryIdRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const detailsHeaderRef = useRef<HTMLDivElement | null>(null);
-  const columnMenuRef = useRef<HTMLDivElement | null>(null);
-  const [columnMenuPosition, setColumnMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     suppressNextInlineBlurRef.current = false;
@@ -480,35 +416,9 @@ export function FileListingShell({
     input.select();
   }, [inlineEdit?.mode, inlineEdit?.entryId]);
 
-  useEffect(() => {
-    if (!columnMenuPosition) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && columnMenuRef.current?.contains(event.target)) {
-        return;
-      }
-      setColumnMenuPosition(null);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setColumnMenuPosition(null);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [columnMenuPosition]);
-
   useEffect(
     () => () => {
       cleanupEntryPointerDragRef.current?.();
-      cleanupColumnPointerDragRef.current?.();
       clearPointerEntryDropHighlight();
     },
     []
@@ -1485,169 +1395,6 @@ export function FileListingShell({
     window.addEventListener("mouseup", handleMouseUp);
   };
 
-  const startColumnPointerDrag = (event: ReactPointerEvent<HTMLElement>, column: ColumnDefinition) => {
-    if (event.button !== 0 || !onMoveColumn) {
-      return;
-    }
-    if (event.target instanceof HTMLElement && event.target.closest(".file-header-resizer")) {
-      return;
-    }
-
-    cleanupColumnPointerDragRef.current?.();
-    const pointerDrag: ActiveColumnPointerDrag = {
-      sourceId: column.id,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      dragging: false
-    };
-    activeColumnPointerDragRef.current = pointerDrag;
-
-    const cleanup = () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerCancel);
-      cleanupColumnPointerDragRef.current = null;
-      document.body.classList.remove("is-column-pointer-dragging");
-      setColumnDragFollower(EMPTY_COLUMN_DRAG_FOLLOWER);
-      setColumnDropIndicator(null);
-    };
-
-    const finishDrag = (finishEvent: PointerEvent) => {
-      const activeDrag = activeColumnPointerDragRef.current;
-      cleanup();
-      activeColumnPointerDragRef.current = null;
-      if (!activeDrag || finishEvent.pointerId !== activeDrag.pointerId || !activeDrag.dragging) {
-        return;
-      }
-
-      finishEvent.preventDefault();
-      suppressNextColumnClickRef.current = activeDrag.sourceId;
-      window.setTimeout(() => {
-        if (suppressNextColumnClickRef.current === activeDrag.sourceId) {
-          suppressNextColumnClickRef.current = null;
-        }
-      }, 0);
-
-      const dropTarget = getColumnPointerDropTarget(
-        getElementFromClientPoint(finishEvent.clientX, finishEvent.clientY),
-        finishEvent.clientX,
-        activeDrag.sourceId
-      );
-      if (!dropTarget) {
-        return;
-      }
-
-      onMoveColumn(activeDrag.sourceId, dropTarget.targetId, dropTarget.placement);
-    };
-
-    function handlePointerMove(moveEvent: PointerEvent) {
-      const activeDrag = activeColumnPointerDragRef.current;
-      if (!activeDrag || moveEvent.pointerId !== activeDrag.pointerId) {
-        return;
-      }
-
-      const deltaX = moveEvent.clientX - activeDrag.startX;
-      const deltaY = moveEvent.clientY - activeDrag.startY;
-      if (!activeDrag.dragging && Math.hypot(deltaX, deltaY) < COLUMN_POINTER_DRAG_THRESHOLD_PX) {
-        return;
-      }
-      if (!activeDrag.dragging) {
-        activeDrag.dragging = true;
-        setColumnDragFollower({
-          visible: true,
-          x: moveEvent.clientX,
-          y: moveEvent.clientY,
-          label: getLocalizedColumnLabel(column)
-        });
-      }
-      document.body.classList.add("is-column-pointer-dragging");
-      moveEvent.preventDefault();
-
-      setColumnDragFollower((previous) => ({
-        ...previous,
-        x: moveEvent.clientX,
-        y: moveEvent.clientY
-      }));
-
-      const dropTarget = getColumnPointerDropTarget(
-        getElementFromClientPoint(moveEvent.clientX, moveEvent.clientY),
-        moveEvent.clientX,
-        activeDrag.sourceId
-      );
-      setColumnDropIndicator(dropTarget ? { targetId: dropTarget.targetId, placement: dropTarget.placement } : null);
-    }
-
-    function handlePointerUp(upEvent: PointerEvent) {
-      finishDrag(upEvent);
-    }
-
-    function handlePointerCancel(cancelEvent: PointerEvent) {
-      if (cancelEvent.pointerId !== pointerDrag.pointerId) {
-        return;
-      }
-      cleanup();
-      activeColumnPointerDragRef.current = null;
-    }
-
-    cleanupColumnPointerDragRef.current = cleanup;
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerCancel);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handleColumnResizeStart = (column: ColumnDefinition, event: ReactMouseEvent<HTMLSpanElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const headerCell = event.currentTarget.closest(".file-header-cell");
-    const measuredWidth = headerCell instanceof HTMLElement ? headerCell.getBoundingClientRect().width : 0;
-    const pixelWidth = Number.parseFloat(column.width);
-    const startWidth = measuredWidth > 0 ? measuredWidth : Number.isFinite(pixelWidth) ? pixelWidth : 160;
-    const startX = event.clientX;
-    const minWidth = getColumnHeaderMinWidth(column);
-
-    const handleMove = (moveEvent: MouseEvent) => {
-      moveEvent.preventDefault();
-      const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
-      onResizeColumn(column.id, `${nextWidth}px`);
-    };
-
-    const handleStop = () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleStop);
-    };
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleStop);
-  };
-
-  const menuColumns = columns;
-
-  const openColumnHeaderMenu = (event: ReactMouseEvent<HTMLElement>) => {
-    if (viewMode !== "details") {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    setColumnMenuPosition({ x: event.clientX, y: event.clientY });
-  };
-
-  const selectColumnMenuItem = (callback: () => void) => {
-    callback();
-    setColumnMenuPosition(null);
-  };
-
-  const autoFitVisibleColumns = () => {
-    visibleColumns.forEach((column) => {
-      onResizeColumn(
-        column.id,
-        getAutoFitColumnWidthFromDom(scrollContainerRef.current, column) ?? estimateAutoFitColumnWidth(column, entries, currentPath)
-      );
-    });
-  };
-
   return (
     <div
       className={`file-listing file-listing--${viewMode}`}
@@ -1655,62 +1402,6 @@ export function FileListingShell({
       style={listingStyle}
       onContextMenu={handleBlankContextMenu}
     >
-      {columnMenuPosition && viewMode === "details" ? (
-        <div
-          ref={columnMenuRef}
-          className="column-header-menu"
-          role="menu"
-          style={{
-            left: columnMenuPosition.x,
-            top: columnMenuPosition.y
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          {menuColumns.map((column) => (
-            <button
-              key={column.id}
-              type="button"
-              className="column-header-menu__item"
-              data-column-menu-id={column.id}
-              role="menuitemcheckbox"
-              aria-checked={column.visible}
-              onClick={() =>
-                selectColumnMenuItem(() => {
-                  onSetColumnVisibility?.(column.id, !column.visible);
-                })
-              }
-            >
-              <span className="column-header-menu__check" aria-hidden="true">
-                {column.visible ? "✓" : ""}
-              </span>
-              <span>{getColumnMenuLabel(column.id)}</span>
-            </button>
-          ))}
-          <div className="column-header-menu__separator" role="separator" />
-          <button
-            type="button"
-            className="column-header-menu__item"
-            role="menuitem"
-            onClick={() => selectColumnMenuItem(() => onShowAllColumns?.(menuColumns.map((column) => column.id)))}
-          >
-            <span className="column-header-menu__check" aria-hidden="true" />
-            <span>显示所有列</span>
-          </button>
-          <button
-            type="button"
-            className="column-header-menu__item"
-            role="menuitem"
-            onClick={() => selectColumnMenuItem(autoFitVisibleColumns)}
-          >
-            <span className="column-header-menu__check" aria-hidden="true" />
-            <span>立即自动调整列宽</span>
-          </button>
-        </div>
-      ) : null}
-
       <div
         ref={scrollContainerRef}
         className={`file-listing__scroll${isListingDropTarget ? " is-drop-target" : ""}`}
@@ -1726,50 +1417,47 @@ export function FileListingShell({
         onWheel={handleListingWheel}
       >
         {viewMode === "details" ? (
-          <div
-            ref={detailsHeaderRef}
-            className="file-listing__header"
-            data-details-scroll-header="true"
-            style={gridStyle}
-            onContextMenu={openColumnHeaderMenu}
+          <DetailsListBase<ColumnId, ColumnDefinition>
+            columns={columns}
+            sort={sort}
+            gap={4}
+            getColumnLabel={getLocalizedColumnLabel}
+            getColumnMinWidth={getColumnHeaderMinWidth}
+            getColumnPixelWidth={getColumnPixelWidth}
+            onSort={onSort}
+            onResizeColumn={onResizeColumn}
+            onMoveColumn={onMoveColumn}
+            onSetColumnVisibility={onSetColumnVisibility}
+            onShowAllColumns={onShowAllColumns}
+            onAutoFitColumn={(column) =>
+              onResizeColumn(
+                column.id,
+                getDetailsAutoFitColumnWidth({
+                  root: scrollContainerRef.current,
+                  column,
+                  items: entries,
+                  cellDataAttribute: "data-cell-column-id",
+                  getHeaderText: getLocalizedColumnLabel,
+                  getCellText: (entry, candidate) => getDetailsCellText(entry, candidate.id, currentPath),
+                  getMinWidth: getColumnHeaderMinWidth,
+                  getIconAllowance: (candidate) => (candidate.id === "name" ? 22 : 0)
+                })
+              )
+            }
+            headerDataAttributes={{ "data-details-scroll-header": "true" }}
+            headerClassName="file-listing__header"
+            cellClassName="file-header-cell"
+            buttonClassName="file-header-button file-cell file-cell--header"
+            indicatorClassName="file-header-button__indicator"
+            resizerClassName="file-header-resizer"
+            resizerSelector=".file-header-resizer"
+            headerCellSelector=".file-header-cell"
           >
-            {visibleColumns.map((column) => (
-              <div
-                key={column.id}
-                className={`file-header-cell file-cell--${column.align}`}
-                data-column-id={column.id}
-                onPointerDown={(event) => startColumnPointerDrag(event, column)}
-                onContextMenu={openColumnHeaderMenu}
-              >
-                <button
-                  type="button"
-                  className={`file-header-button file-cell file-cell--header file-cell--${column.align}`}
-                  onClick={(event) => {
-                    if (suppressNextColumnClickRef.current === column.id) {
-                      suppressNextColumnClickRef.current = null;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      return;
-                    }
-                    onSort(column.id);
-                  }}
-                >
-                  <span>{getLocalizedColumnLabel(column)}</span>
-                  <span className="file-header-button__indicator">{getSortIndicator(sort, column.id)}</span>
-                </button>
-                <span
-                  className="file-header-resizer"
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label={`resize ${getLocalizedColumnLabel(column)} column`}
-                  onMouseDown={(event) => handleColumnResizeStart(column, event)}
-                />
-              </div>
-            ))}
-            <ColumnDropIndicatorView headerRef={detailsHeaderRef} indicator={columnDropIndicator} />
-          </div>
-        ) : null}
-        <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
+            {() => <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>}
+          </DetailsListBase>
+        ) : (
+          <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
+        )}
 
         {/* 框选矩形 */}
         {marqueeSelection.active && (
@@ -1812,7 +1500,6 @@ export function FileListingShell({
           </div>
         </div>
       ) : null}
-      <ColumnDragFollowerView follower={columnDragFollower} />
     </div>
   );
 }

@@ -150,3 +150,40 @@ assertTest("workspaceReducer can show all requested columns on the target tab", 
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "modified")?.visible, true);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "tags")?.visible, true);
 });
+
+assertTest("workspaceReducer persists navigation column layout in the settings model", () => {
+  const state = createState();
+  const navigationColumns = state.settings.model.navigationColumns.map((column) =>
+    column.id === "path"
+      ? { ...column, width: "336px" }
+      : column.id === "comment"
+        ? { ...column, visible: false }
+        : column
+  );
+  const [pathColumn] = navigationColumns.splice(2, 1);
+  navigationColumns.splice(0, 0, pathColumn);
+  const reordered = workspaceReducer(state, {
+    type: "navigationColumnsUpdated",
+    payload: navigationColumns
+  } as WorkspaceAction);
+
+  assert.deepEqual(reordered.settings.model.navigationColumns.slice(0, 2).map((column) => column.id), ["path", "name"]);
+  assert.equal(reordered.settings.model.navigationColumns.find((column) => column.id === "path")?.width, "336px");
+  assert.equal(reordered.settings.model.navigationColumns.find((column) => column.id === "comment")?.visible, false);
+});
+
+assertTest("workspaceReducer accumulates batched navigation column width updates", () => {
+  const state = createState();
+  const nextState = ["name", "kind", "path"].reduce(
+    (current, id, index) =>
+      workspaceReducer(current, {
+        type: "navigationColumnWidthSet",
+        payload: { id, width: `${280 + index * 16}px` }
+      } as unknown as WorkspaceAction),
+    state
+  );
+
+  assert.equal(nextState.settings.model.navigationColumns.find((column) => column.id === "name")?.width, "280px");
+  assert.equal(nextState.settings.model.navigationColumns.find((column) => column.id === "kind")?.width, "296px");
+  assert.equal(nextState.settings.model.navigationColumns.find((column) => column.id === "path")?.width, "312px");
+});

@@ -25,6 +25,7 @@ import type {
   SettingsSnapshot as BackendSettingsSnapshot
 } from "../../app/types";
 import type { RemoteConnectionProfile, SettingsModel } from "./types";
+import { NAVIGATION_COLUMNS } from "./NavigationTabColumns";
 import type { WorkspaceInvoke } from "./workspaceIpc";
 
 async function assertAsyncTest(name: string, fn: () => Promise<void>) {
@@ -262,6 +263,10 @@ export const workspaceSettingsGatewayTests = (async () => {
         { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
         { id: "comment", label: "注释", visible: true, width: "220px", align: "left" }
       ],
+      navigationColumns: [
+        { id: "name", label: "Name", visible: true, width: "220px", align: "left" },
+        { id: "path", label: "Path", visible: true, width: "180px", align: "left" }
+      ],
       detailsRowHeight: 44,
       tooltipHoverDelayMs: 125,
       metadataRetentionHours: null,
@@ -308,6 +313,13 @@ export const workspaceSettingsGatewayTests = (async () => {
               { id: "comment", label: "注释", visible: true, width: "220px", align: "left" },
               { id: "location", label: "位置", visible: false, width: "220px", align: "left" }
             ],
+            navigationColumns: NAVIGATION_COLUMNS.map((column) =>
+              column.id === "name"
+                ? { ...column, label: "Name" }
+                : column.id === "path"
+                  ? { ...column, label: "Path" }
+                  : column
+            ),
             detailsRowHeight: 44,
             tooltipHoverDelayMs: 125,
             metadataRetentionHours: null,

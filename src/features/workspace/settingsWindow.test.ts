@@ -171,6 +171,8 @@ export const completion = (async () => {
     assert.equal(settingsWindowSource.includes("onUpdateDropHighlightBorder"), true);
     assert.equal(settingsWindowSource.includes("dropHighlightFill: normalizeThemeAccentColor(color)"), true);
     assert.equal(settingsWindowSource.includes("dropHighlightBorder: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("navigationColumns: model.navigationColumns.map"), true);
+    assert.equal(settingsWindowSource.includes("!hasSameJsonShape(pm.navigationColumns, dm.navigationColumns)"), true);
 
     const remoteUpsertsIndex = settingsWindowSource.indexOf("await applyRemoteProfileUpserts()");
     const settingsModelIndex = settingsWindowSource.indexOf("await actions.applySettingsModel");

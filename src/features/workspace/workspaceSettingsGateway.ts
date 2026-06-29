@@ -148,6 +148,7 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
         shortcuts: model.shortcuts.map(toBackendShortcut),
         colorRules: model.colorRules.map(toBackendColorRule),
         columns: model.columns,
+        navigationColumns: model.navigationColumns,
         detailsRowHeight: normalizeDetailsRowHeight(model.detailsRowHeight),
         tooltipHoverDelayMs: model.tooltipHoverDelayMs,
         metadataRetentionHours: model.metadataRetentionHours,
