@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+﻿﻿import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
@@ -17,6 +17,7 @@ import { createNavigationTab, getActiveTab } from "./workspaceReducer";
 import type {
   DirectoryNode,
   EntryViewModel,
+  GitFileStatus,
   NativeBackgroundContextMenuOptions,
   OperationTaskSnapshot,
   RemoteConnectionProfile,
@@ -205,6 +206,80 @@ export const completion = (async () => {
         () => getActiveTab(latestController!.state.panels[panelId]).snapshot.location.path === originalPath,
         "locked-tab navigation test did not restore the original path"
       );
+    });
+
+    await assertTest("useWorkspaceController stores git status returned after local navigation", async () => {
+      const panelId = "panel-1";
+      const activeTab = getActiveTab(latestController!.state.panels[panelId]);
+      assert.equal(activeTab.snapshot.location.kind, "local");
+      const targetPath = activeTab.snapshot.location.path;
+      const probeKey = `${targetPath}\\__git_probe__.txt`;
+
+      const originalGetGitStatus = gateway.getGitStatus;
+      gateway.getGitStatus = async () => ({
+        statuses: { [probeKey]: "modified" } as Record<string, GitFileStatus>,
+        isGitRepo: true
+      });
+
+      try {
+        await act(async () => {
+          latestController?.actions.navigateToPath(panelId, targetPath, false);
+          await flushEffects();
+        });
+        await waitFor(
+          () => getActiveTab(latestController!.state.panels[panelId]).gitStatus?.[probeKey] === "modified",
+          "git status was not stored on the tab after local navigation"
+        );
+      } finally {
+        gateway.getGitStatus = originalGetGitStatus;
+      }
+    });
+
+    await assertTest("useWorkspaceController broadcasts git status to all tabs sharing the same path", async () => {
+      const panelId = "panel-1";
+      const activeTab = getActiveTab(latestController!.state.panels[panelId]);
+      const targetPath = activeTab.snapshot.location.path;
+      const probeKey = `${targetPath}\\__git_probe__.txt`;
+
+      const originalGetGitStatus = gateway.getGitStatus;
+      gateway.getGitStatus = async () => ({
+        statuses: { [probeKey]: "modified" } as Record<string, GitFileStatus>,
+        isGitRepo: true
+      });
+
+      try {
+        // Open a second tab at the same path — both tabs share the same directory.
+        await act(async () => {
+          latestController?.actions.openNewTab(panelId, targetPath);
+          await flushEffects();
+        });
+        await waitFor(
+          () => latestController!.state.panels[panelId].tabs.length >= 2,
+          "second tab was not opened"
+        );
+
+        const tabs = latestController!.state.panels[panelId].tabs;
+        const tabA = tabs[0];
+        const tabB = tabs[tabs.length - 1];
+        assert.notEqual(tabA.id, tabB.id, "expected two distinct tabs");
+        assert.equal(tabB.snapshot.location.path, targetPath, "second tab should have the same path");
+
+        // Wait for both tabs to receive git status.
+        await waitFor(
+          () => tabA.gitStatus?.[probeKey] === "modified",
+          "first tab did not receive git status"
+        );
+        // Re-read the state after waitFor, since the controller state may have updated.
+        const updatedTabs = latestController!.state.panels[panelId].tabs;
+        const updatedTabB = updatedTabs.find((t) => t.id === tabB.id);
+        assert.equal(
+          updatedTabB?.gitStatus?.[probeKey],
+          "modified",
+          "second tab with the same path did not receive git status broadcast"
+        );
+      } finally {
+        gateway.getGitStatus = originalGetGitStatus;
+      }
     });
 
     await assertTest("useWorkspaceController loads properties for the current folder and selected item", async () => {

@@ -1,6 +1,6 @@
 import type { Event } from "@tauri-apps/api/event";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
-import { getWindowsDragDropEnvironment, hasTauriRuntime } from "./workspaceIpc";
+import { getWindowsDragDropEnvironment, hasTauriRuntime, disposeQuietly } from "./workspaceIpc";
 import type { WindowsDragDropEnvironment } from "./types";
 
 export type SystemFileDropHandler = (paths: string[], destination: string) => void;
@@ -305,24 +305,7 @@ export async function listenSystemFileDrops(
 
   return () => {
     clearSystemFileDropHighlight();
-    // Tauri's internal unlisten can throw/reject during teardown races (e.g. an
-    // unmount or HMR swap before its handler bookkeeping settles, surfacing as
-    // "Cannot read properties of undefined (reading 'handlerId')"). That is
-    // teardown noise, not a drag fault, so isolate each disposer: a failure to
-    // detach one listener must not leave the other attached or bubble out of
-    // cleanup.
     void disposeQuietly(unlisten);
     void disposeQuietly(unlistenPosition);
   };
-}
-
-function disposeQuietly(unlisten: () => void) {
-  try {
-    const result = unlisten() as unknown;
-    if (result && typeof (result as Promise<unknown>).then === "function") {
-      void (result as Promise<unknown>).catch(() => undefined);
-    }
-  } catch {
-    // Listener already disposed or torn down mid-flight; nothing to do.
-  }
 }

@@ -209,6 +209,63 @@ export const completion = (async () => {
       assert.ok(container.querySelector('.entry-icon[data-kind="remote-root"]'));
       assert.ok(container.querySelector('.entry-icon[data-kind="folder"]'));
     });
+
+    await assertTest("WorkspaceTreeBranch marks hidden folder node icons with is-hidden", async () => {
+      const hiddenTreeNode: DirectoryNode = {
+        id: "D:\\",
+        label: "Projects (D:)",
+        path: "D:\\",
+        kind: "drive",
+        expandable: true,
+        loaded: true,
+        children: [
+          {
+            id: "D:\\.hidden",
+            label: ".hidden",
+            path: "D:\\.hidden",
+            kind: "folder",
+            isHidden: true,
+            expandable: true,
+            loaded: true,
+            children: []
+          },
+          {
+            id: "D:\\Visible",
+            label: "Visible",
+            path: "D:\\Visible",
+            kind: "folder",
+            expandable: true,
+            loaded: true,
+            children: []
+          }
+        ]
+      };
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceTreeBranch, {
+            node: hiddenTreeNode,
+            depth: 0,
+            activePath: "D:\\.hidden",
+            expandedNodePaths: ["D:\\"],
+            onToggle: () => undefined,
+            onNavigate: () => undefined
+          })
+        );
+        await flushEffects();
+      });
+
+      const folderIcons = Array.from(container.querySelectorAll<HTMLElement>('.entry-icon[data-kind="folder"]'));
+      assert.equal(folderIcons.length, 2);
+
+      const hiddenIcon = folderIcons[0];
+      const visibleIcon = folderIcons[1];
+
+      assert.equal(hiddenIcon.classList.contains("is-hidden"), true);
+      assert.equal(hiddenIcon.getAttribute("data-hidden"), "true");
+      assert.equal(visibleIcon.classList.contains("is-hidden"), false);
+      assert.equal(visibleIcon.getAttribute("data-hidden"), null);
+    });
   } finally {
     await act(async () => {
       root.unmount();

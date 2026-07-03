@@ -101,6 +101,7 @@ import type {
 import type {
   DirectoryNode,
   DirectorySnapshot,
+  GitFileStatus,
   LayoutRatios,
   NavigationItem,
   NavigationItemUpsertRequest,
@@ -130,6 +131,7 @@ export interface WorkspaceGateway {
   ): Promise<WorkspaceState["search"]["results"]>;
   cancelSearch(searchId: string): Promise<void>;
   getItemProperties(requestId: string, path: string, includeDirectorySize?: boolean): Promise<ItemProperties>;
+  getGitStatus(directory: string): Promise<{ statuses: Record<string, GitFileStatus>; isGitRepo: boolean }>;
   saveSession(state: WorkspaceState): Promise<void>;
   saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios, treeVisible: boolean): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
@@ -297,6 +299,18 @@ export function createWorkspaceGateway(): WorkspaceGateway {
         profiles
       );
     },
+
+async getGitStatus(directory: string) {
+try {
+return await invokeWithBrowserFallback<{ statuses: Record<string, GitFileStatus>; isGitRepo: boolean }>(
+"get_git_status",
+{ directory },
+() => ({ statuses: {}, isGitRepo: false })
+);
+} catch {
+return { statuses: {}, isGitRepo: false };
+}
+},
 
     async saveSession(state: WorkspaceState) {
       writeWorkspaceSession(state);

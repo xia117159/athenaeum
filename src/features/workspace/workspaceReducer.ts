@@ -4,6 +4,7 @@ import type {
   DirectoryNode,
   DirectorySnapshot,
   FileVisibilityState,
+  GitFileStatus,
   InformationPanelTab,
   ItemProperties,
   InlineEditState,
@@ -87,6 +88,7 @@ export type WorkspaceAction =
         selectionReplacements?: SelectionPathReplacement[];
       };
     }
+  | { type: "tabGitStatusUpdated"; payload: { panelId: PanelId; tabId: string; gitStatus: Record<string, GitFileStatus> | undefined } }
   | { type: "addressDraftChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
   | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[] } }
   | { type: "treeNodeConnectionStarted"; payload: { path: string } }
@@ -1453,13 +1455,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               status: "ready",
               inlineEdit: undefined,
               search: undefined,
-              reconnect: undefined
+              reconnect: undefined,
+              gitStatus: pathChanged ? undefined : tab.gitStatus
             };
           });
 
           return pathChanged ? unbindSearchTabsForSource(updatedPanel, action.payload.tabId) : updatedPanel;
         }
       ));
+
+    case "tabGitStatusUpdated":
+      if (!panelHasTab(state.panels[action.payload.panelId], action.payload.tabId)) {
+        return state;
+      }
+      return updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => ({
+          ...tab,
+          gitStatus: action.payload.gitStatus
+        }))
+      );
 
     case "addressDraftChanged":
       return updatePanel(

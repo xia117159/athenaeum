@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { resolveSystemIcon, type FileSystemIconKind, type SystemIconImageList } from "./systemIconGateway";
+import { GitStatusBadge } from "./GitStatusBadge";
+import type { GitFileStatus } from "./types";
 
 export function FileSystemIcon({
   kind,
@@ -7,7 +9,9 @@ export function FileSystemIcon({
   path,
   extension,
   size = 16,
-  imageList
+  imageList,
+  hidden = false,
+  gitStatus
 }: {
   kind: FileSystemIconKind;
   className?: string;
@@ -15,11 +19,16 @@ export function FileSystemIcon({
   extension?: string;
   size?: number;
   imageList?: SystemIconImageList;
+  hidden?: boolean;
+  gitStatus?: GitFileStatus;
 }) {
   const [iconSrc, setIconSrc] = useState<string | null>(null);
   const classes = ["entry-icon", `entry-icon--${kind}`];
   if (className) {
     classes.push(className);
+  }
+  if (hidden) {
+    classes.push("is-hidden");
   }
 
   useEffect(() => {
@@ -39,7 +48,7 @@ export function FileSystemIcon({
   }, [extension, imageList, kind, path, size]);
 
   return (
-    <span className={classes.join(" ")} data-kind={kind} aria-hidden="true">
+    <span className={classes.join(" ")} data-kind={kind} data-hidden={hidden ? "true" : undefined} aria-hidden="true">
       {iconSrc ? <img className="entry-icon__img" src={iconSrc} alt="" draggable={false} /> : null}
       {kind === "folder" ? (
         <svg
@@ -98,6 +107,7 @@ export function FileSystemIcon({
           <circle cx="53" cy="28" r="2.3" fill="#f4bf40" />
         </svg>
       ) : null}
+      {gitStatus ? <GitStatusBadge status={gitStatus} /> : null}
     </span>
   );
 }

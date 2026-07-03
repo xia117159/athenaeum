@@ -1,5 +1,6 @@
 pub mod fs_service;
 pub mod file_watcher;
+pub mod git_status_service;
 pub mod icon_service;
 pub mod metadata_store;
 pub mod migration;

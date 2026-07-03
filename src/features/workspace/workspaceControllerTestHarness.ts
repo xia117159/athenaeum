@@ -161,6 +161,9 @@ export function createTestGateway(
         fieldStates: []
       };
     },
+async getGitStatus() {
+return { statuses: {}, isGitRepo: false };
+},
     async saveSession() {},
     async saveLayout() {},
     async saveShortcuts() {},

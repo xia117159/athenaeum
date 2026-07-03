@@ -10,6 +10,7 @@ import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { WorkspaceTreeBranch } from "./WorkspaceTreeBranch";
 import { openSettingsWindow } from "./settingsWindow";
 import { listenSystemFileDrops } from "./systemDragDrop";
+import { disposeQuietly } from "./workspaceIpc";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
@@ -180,7 +181,7 @@ export function WorkspaceView() {
 
     return () => {
       disposed = true;
-      unlisten?.();
+      disposeQuietly(unlisten);
     };
   }, [handleExplorerFileDropsBlocked]);
 
@@ -856,6 +857,7 @@ function PanelSurface({
             viewMode={activeTab.viewMode}
             inlineEdit={activeTab.inlineEdit}
             clipboard={clipboard}
+            gitStatus={activeTab.gitStatus}
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
             onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>

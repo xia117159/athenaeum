@@ -68,7 +68,8 @@ permissions = [
   "allow-move-remote-entries",
   "allow-transfer-remote-entries",
   "allow-show-native-background-context-menu",
-  "allow-show-native-context-menu"
+  "allow-show-native-context-menu",
+  "allow-get-git-status"
 ]
 
 [[permission]]
@@ -410,3 +411,8 @@ commands.allow = ["show_native_context_menu"]
 identifier = "allow-show-native-background-context-menu"
 description = "Allows the workspace to open the Windows native context menu for a local folder background."
 commands.allow = ["show_native_background_context_menu"]
+
+[[permission]]
+identifier = "allow-get-git-status"
+description = "Allows reading Git status for local directories to display overlay badges."
+commands.allow = ["get_git_status"]

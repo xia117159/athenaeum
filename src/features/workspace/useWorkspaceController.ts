@@ -9,7 +9,8 @@ import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } fro
 import { createDefaultSearchId } from "./workspaceSearch";
 import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
-import { devLog } from "./devLog";
+import { devLog, devWarn } from "./devLog";
+import { disposeQuietly } from "./workspaceIpc";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
 import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
@@ -93,6 +94,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }));
   const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
+  // Retained per-tab id of the most recently initiated navigation. Unlike
+  // navigationRequestsRef (an in-flight token cleared on completion), this is
+  // never deleted, so late-arriving async side-results (e.g. git status) can
+  // still tell whether they belong to the tab's current directory.
+  const latestNavigationIdRef = useRef<Map<string, number>>(new Map());
   const nextNavigationRequestIdRef = useRef(0);
   const nextSearchRequestIdRef = useRef(0);
   const nextPropertiesRequestIdRef = useRef(0);
@@ -108,6 +114,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const liveRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLiveDirectoryRootsRef = useRef<Set<string>>(new Set());
   const pendingLiveNavigationRefreshRef = useRef(false);
+  // Tracks in-flight git status IPC calls by normalized path to prevent
+  // redundant concurrent requests during rapid live-refresh cycles.
+  const pendingGitStatusRef = useRef<Set<string>>(new Set());
+  // Tabs waiting for a pending git status result, keyed by normalized path.
+  // When multiple tabs share the same path, only one IPC call is made, but
+  // the result is dispatched to every waiting tab.
+  const pendingGitStatusTabsRef = useRef<
+    Map<string, Array<{ panelId: PanelId; tabId: string; shouldApply?: () => boolean }>>
+  >(new Map());
 
   // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
   const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
@@ -124,6 +139,53 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+
+  /**
+   * Fetches git status for a tab and dispatches tabGitStatusUpdated.
+   *
+   * When multiple tabs share the same directory path, only one IPC call is
+   * made, but the result is broadcast to every waiting tab. The optional
+   * shouldApply callback allows callers to bail out if the result is stale
+   * (e.g. navigation superseded). When omitted, the result is always applied.
+   */
+  const fetchGitStatusForTab = useEffectEvent(
+    (panelId: PanelId, tabId: string, path: string, shouldApply?: () => boolean) => {
+      if (isRemotePath(path)) return;
+      const gitPathKey = normalizeLocationPath(path).toLowerCase();
+
+      // Register this tab as waiting for the result of this path.
+      const waiting = pendingGitStatusTabsRef.current.get(gitPathKey) ?? [];
+      waiting.push({ panelId, tabId, shouldApply });
+      pendingGitStatusTabsRef.current.set(gitPathKey, waiting);
+
+      // If an IPC call for this path is already in-flight, don't make another.
+      if (pendingGitStatusRef.current.has(gitPathKey)) return;
+      pendingGitStatusRef.current.add(gitPathKey);
+
+      void workspaceGateway
+        .getGitStatus(path)
+        .then((result) => {
+          pendingGitStatusRef.current.delete(gitPathKey);
+          const tabsToDispatch = pendingGitStatusTabsRef.current.get(gitPathKey) ?? [];
+          pendingGitStatusTabsRef.current.delete(gitPathKey);
+
+          for (const { panelId: pId, tabId: tId, shouldApply: apply } of tabsToDispatch) {
+            if (apply ? apply() : true) {
+              if (result.isGitRepo) {
+                dispatch({ type: "tabGitStatusUpdated", payload: { panelId: pId, tabId: tId, gitStatus: result.statuses } });
+              } else {
+                dispatch({ type: "tabGitStatusUpdated", payload: { panelId: pId, tabId: tId, gitStatus: undefined } });
+              }
+            }
+          }
+        })
+        .catch((error) => {
+          pendingGitStatusRef.current.delete(gitPathKey);
+          pendingGitStatusTabsRef.current.delete(gitPathKey);
+          devWarn("[useWorkspaceController] git status fetch failed", error);
+        });
+    }
+  );
 
   // Auto-close non-error notifications after a fixed timeout; error (danger)
   // notifications persist until dismissed manually so their details aren't missed.
@@ -267,6 +329,23 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "content", history: readSearchHistory("content") } });
     dispatch({ type: "searchHistoryLoaded", payload: { tab: "name", history: readSearchHistory("name") } });
   }, []);
+
+  // After bootstrap completes, fetch git status for all restored directory tabs.
+  // This ensures overlay icons appear immediately on startup without requiring
+  // the user to navigate to trigger a refresh.
+  const bootstrapGitStatusFetchedRef = useRef(false);
+  useEffect(() => {
+    if (state.status !== "ready" || bootstrapGitStatusFetchedRef.current) {
+      return;
+    }
+    bootstrapGitStatusFetchedRef.current = true;
+    for (const panel of Object.values(state.panels)) {
+      for (const tab of panel.tabs) {
+        if (isNavigationTab(tab) || tab.status !== "ready") continue;
+        fetchGitStatusForTab(panel.id, tab.id, tab.snapshot.location.path);
+      }
+    }
+  }, [state.status]);
 
   useEffect(() => {
     if (
@@ -580,6 +659,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const requestId = nextNavigationRequestIdRef.current + 1;
       nextNavigationRequestIdRef.current = requestId;
       navigationRequestsRef.current.set(requestKey, requestId);
+      latestNavigationIdRef.current.set(requestKey, requestId);
       if (isRemotePath(path)) {
         dispatch({ type: "tabReconnectStarted", payload: { panelId, tabId } });
       }
@@ -603,6 +683,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             selectionReplacements: options.selectionReplacements
           }
         });
+
+        if (!isRemotePath(snapshot.location.path)) {
+          fetchGitStatusForTab(panelId, tabId, snapshot.location.path, () =>
+            latestNavigationIdRef.current.get(requestKey) === requestId
+          );
+        }
       } catch (error) {
         const message = getErrorMessage(error, `无法打开 ${path}`);
         const isProfileNotFound = message.includes("未找到远程连接配置");
@@ -893,7 +979,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       });
     return () => {
       disposed = true;
-      unlisten?.();
+      disposeQuietly(unlisten);
       // ❌ 移除：不在这里清空 watch roots
       // WatchRootsManager.dispose() 会负责清理
     };
@@ -1077,8 +1163,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       ]);
 
       if (disposed) {
-        unlistenTasks();
-        unlistenHistory();
+        disposeQuietly(unlistenTasks);
+        disposeQuietly(unlistenHistory);
         return;
       }
 
@@ -1104,7 +1190,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     return () => {
       disposed = true;
       for (const unlisten of unlistenFns) {
-        unlisten();
+        disposeQuietly(unlisten);
       }
     };
   }, [projectOperationTask, pushNotification, state.source, state.status, workspaceGateway]);
@@ -1156,7 +1242,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     return () => {
       disposed = true;
-      unlisten?.();
+      disposeQuietly(unlisten);
     };
   }, [
     pushNotification,
@@ -1213,7 +1299,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     return () => {
       disposed = true;
       window.removeEventListener("entry_metadata_changed", handleBrowserMetadataChanged);
-      unlisten?.();
+      disposeQuietly(unlisten);
     };
   }, [pushNotification, refreshPanelsForPaths, state.source, state.status, workspaceGateway]);
 
@@ -1259,6 +1345,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tab: createTabFromSnapshot(panelId, snapshot, tabId, viewMode, sourceColumns)
         }
       });
+      fetchGitStatusForTab(panelId, tabId, snapshot.location.path);
     } catch (error) {
       const message = getErrorMessage(error, `无法打开 ${basePath}`);
       if (isRemotePath(basePath)) {
@@ -1273,6 +1360,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
                 tab: createTabFromSnapshot(panelId, snapshot, tabId, viewMode, sourceColumns)
               }
             });
+            fetchGitStatusForTab(panelId, tabId, snapshot.location.path);
             return;
           }
         } catch (retryError) {

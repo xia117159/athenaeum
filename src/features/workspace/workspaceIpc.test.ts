@@ -116,7 +116,8 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "move_remote_entries",
     "transfer_remote_entries",
     "show_native_background_context_menu",
-    "show_native_context_menu"
+    "show_native_context_menu",
+    "get_git_status"
   ];
 
   assert.equal(capability.permissions.includes("default"), true);

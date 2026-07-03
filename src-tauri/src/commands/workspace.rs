@@ -4,13 +4,13 @@ use tauri::{AppHandle, State, Window};
 
 use crate::{
     domain::models::{
-        ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
+        GitDirectoryStatus, ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
         SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WindowsDragDropEnvironment,
         WorkspaceBootstrap, WorkspaceWatchRootsRequest,
     },
-    services::{fs_service, icon_service, remote_service, windows_shell, AppState},
+    services::{fs_service, git_status_service, icon_service, remote_service, windows_shell, AppState},
 };
 
 #[tauri::command]
@@ -248,4 +248,14 @@ pub async fn perform_system_file_operation(
     windows_shell::perform_system_file_operation(request, &window)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn get_git_status(directory: String) -> Result<GitDirectoryStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_status_service::get_git_status_for_directory(std::path::Path::new(&directory))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("git status task failed: {error}"))?
 }

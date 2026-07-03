@@ -8,6 +8,24 @@ import type {
 
 export type SystemFileOperationKind = "copy" | "move";
 
+/**
+ * Safely calls a Tauri unlisten function, catching errors that arise during
+ * teardown races (React StrictMode double-unmount, HMR, etc.) where Tauri's
+ * internal listener registry may be in an inconsistent state.
+ * The canonical error is: "Cannot read properties of undefined (reading 'handlerId')".
+ */
+export function disposeQuietly(unlisten: (() => void) | undefined | null): void {
+  if (!unlisten) return;
+  try {
+    const result = unlisten() as unknown;
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      void (result as Promise<unknown>).catch(() => undefined);
+    }
+  } catch {
+    // Listener already disposed or torn down mid-flight; nothing to do.
+  }
+}
+
 export type WorkspaceInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
 
 type RuntimeHost = object | null | undefined;

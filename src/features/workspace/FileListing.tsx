@@ -45,6 +45,7 @@ import type {
   ContextMenuDefault,
   ContextMenuState,
   EntryViewModel,
+  GitFileStatus,
   InlineEditState,
   NativeContextMenuRequest,
   PanelId,
@@ -53,6 +54,14 @@ import type {
 } from "./types";
 
 type DropOperation = "copy" | "move";
+
+/** Backend normalizes HashMap keys to lowercase on Windows; try both cases.
+ * Only paths explicitly in the map get a badge — untracked/ignored files
+ * are not included by the backend and will get no overlay. */
+function lookupGitStatus(gitStatus: Record<string, GitFileStatus> | undefined, path: string): GitFileStatus | undefined {
+  if (!gitStatus) return undefined;
+  return gitStatus[path] ?? gitStatus[path.toLowerCase()];
+}
 
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const ENTRY_DRAG_FOLLOWER_OFFSET_PX = 12;
@@ -314,7 +323,8 @@ export function FileListingShell({
   onSyncScroll,
   onInlineEditChange,
   onInlineEditCommit,
-  onInlineEditCancel
+  onInlineEditCancel,
+  gitStatus
 }: {
   panelId: PanelId;
   tabId: string;
@@ -352,6 +362,7 @@ export function FileListingShell({
   onInlineEditChange: (value: string) => void;
   onInlineEditCommit: (value?: string) => void;
   onInlineEditCancel: () => void;
+  gitStatus?: Record<string, GitFileStatus>;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
   const inlineCreateEntry: ListingEntry | undefined =
@@ -978,7 +989,7 @@ export function FileListingShell({
                 data-cell-column-id={column.id}
                 onContextMenu={column.id === "comment" ? (event) => openCommentContextMenu(event, entry) : undefined}
               >
-                {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry))}
+                {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
               </div>
             ))}
           </div>
@@ -1013,6 +1024,8 @@ export function FileListingShell({
               extension={entry.extension}
               size={inlineIconSpec.displaySize}
               imageList={inlineIconSpec.imageList}
+              hidden={entry.isHidden}
+              gitStatus={lookupGitStatus(gitStatus, entry.path)}
             />
           </div>
           <div className="file-card__title file-card__title--multiline" title={entry.name}>
@@ -1042,7 +1055,7 @@ export function FileListingShell({
           {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
-          {renderNameCell(entry, compactIconSpec, "entry-name--compact", renderEntryNameContent(entry))}
+          {renderNameCell(entry, compactIconSpec, "entry-name--compact", renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
         </div>
       );
     });
@@ -1067,7 +1080,7 @@ export function FileListingShell({
           {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
-          <div className="file-card__leading">{renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry))}</div>
+          <div className="file-card__leading">{renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}</div>
           <div className="file-card__meta">
             <span>类型: {getEntryTypeLabel(entry)}</span>
             <span>大小: {entry.sizeLabel}</span>
@@ -1098,7 +1111,7 @@ export function FileListingShell({
           {...buildEntryHandlers(entry)}
         >
           <div className="file-content-item__main">
-            {renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry))}
+            {renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
             <p>{entry.description}</p>
             {entry.contentText ? <p className="file-content-item__snippet">{entry.contentText}</p> : null}
             {renderTagStack(entry)}

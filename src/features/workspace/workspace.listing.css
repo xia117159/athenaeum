@@ -466,6 +466,7 @@ body.is-column-pointer-dragging * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 .entry-icon__img,
@@ -474,6 +475,33 @@ body.is-column-pointer-dragging * {
   height: 100%;
   max-width: none;
   display: block;
+}
+
+.git-status-badge {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.file-listing__body--medium-icons .git-status-badge {
+  width: 14px;
+  height: 14px;
+}
+
+.file-listing__body--large-icons .git-status-badge,
+.file-listing__body--extra-large-icons .git-status-badge {
+  width: 16px;
+  height: 16px;
+}
+
+/* Hidden entries: dim only the icon layers, never the text, row background,
+   hover background, or selection background. */
+.entry-icon.is-hidden .entry-icon__img,
+.entry-icon.is-hidden .entry-icon__svg {
+  opacity: 0.45;
 }
 
 .entry-name > span:last-child {

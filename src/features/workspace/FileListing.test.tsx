@@ -1973,6 +1973,107 @@ export const completion = (async () => {
         /\.file-listing--details\s+\.file-row\.is-inline-editing\s+\.inline-edit-input\s*\{[^}]*max-width:\s*none;/s
       );
     });
+
+    await assertTest("FileListingShell marks hidden entry icons with is-hidden in details view", async () => {
+      const hiddenEntries: EntryViewModel[] = [
+        {
+          ...entries[0],
+          id: "hidden-folder",
+          name: ".secret-folder",
+          path: "D:\\.secret-folder",
+          isHidden: true
+        },
+        {
+          ...entries[1],
+          id: "hidden-file",
+          name: ".secret.txt",
+          path: "D:\\.secret.txt",
+          isHidden: true
+        },
+        {
+          ...entries[0],
+          id: "normal-folder",
+          name: "NormalFolder",
+          path: "D:\\NormalFolder",
+          isHidden: false
+        }
+      ];
+
+      await act(async () => {
+        render("details", undefined, "panel-1", [], "Shift", columns, "native", "Shift", undefined, hiddenEntries);
+        await flushEffects();
+      });
+
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".file-row"));
+      assert.equal(rows.length, 3);
+
+      // Sort order puts folders before files, so query by path to avoid
+      // depending on the exact row sequence.
+      const hiddenFolderRow = rows.find((r) => r.dataset.entryPath === "D:\\.secret-folder");
+      const hiddenFileRow = rows.find((r) => r.dataset.entryPath === "D:\\.secret.txt");
+      const normalRow = rows.find((r) => r.dataset.entryPath === "D:\\NormalFolder");
+
+      const hiddenFolderIcon = hiddenFolderRow?.querySelector(".entry-icon") ?? null;
+      const hiddenFileIcon = hiddenFileRow?.querySelector(".entry-icon") ?? null;
+      const normalIcon = normalRow?.querySelector(".entry-icon") ?? null;
+
+      assert.ok(hiddenFolderIcon);
+      assert.ok(hiddenFileIcon);
+      assert.ok(normalIcon);
+
+      assert.equal(hiddenFolderIcon.classList.contains("is-hidden"), true);
+      assert.equal(hiddenFolderIcon.getAttribute("data-hidden"), "true");
+      assert.equal(hiddenFileIcon.classList.contains("is-hidden"), true);
+      assert.equal(hiddenFileIcon.getAttribute("data-hidden"), "true");
+      assert.equal(normalIcon.classList.contains("is-hidden"), false);
+      assert.equal(normalIcon.getAttribute("data-hidden"), null);
+    });
+
+    await assertTest("FileListingShell marks hidden entry icons with is-hidden in icon view", async () => {
+      const hiddenEntries: EntryViewModel[] = [
+        {
+          ...entries[0],
+          id: "hidden-folder",
+          name: ".secret-folder",
+          path: "D:\\.secret-folder",
+          isHidden: true
+        },
+        {
+          ...entries[1],
+          id: "normal-file",
+          name: "report.txt",
+          path: "D:\\report.txt",
+          isHidden: false
+        }
+      ];
+
+      await act(async () => {
+        render("extra-large-icons", undefined, "panel-1", [], "Shift", columns, "native", "Shift", undefined, hiddenEntries);
+        await flushEffects();
+      });
+
+      const cards = Array.from(container.querySelectorAll<HTMLElement>(".file-card--icon"));
+      assert.equal(cards.length, 2);
+
+      const hiddenCardIcon = cards[0].querySelector(".entry-icon");
+      const normalCardIcon = cards[1].querySelector(".entry-icon");
+
+      assert.ok(hiddenCardIcon);
+      assert.ok(normalCardIcon);
+      assert.equal(hiddenCardIcon.classList.contains("is-hidden"), true);
+      assert.equal(normalCardIcon.classList.contains("is-hidden"), false);
+    });
+
+    await assertTest("hidden icon opacity only applies to entry-icon not to file-row or text", async () => {
+      const css = readWorkspaceCss();
+      // The opacity rule must target .entry-icon.is-hidden .entry-icon__img/.entry-icon__svg
+      assert.match(css, /\.entry-icon\.is-hidden\s+\.entry-icon__img/);
+      assert.match(css, /\.entry-icon\.is-hidden\s+\.entry-icon__svg/);
+      // The file-row must NOT have a hidden opacity rule
+      assert.doesNotMatch(css, /\.file-row\.is-hidden/);
+      // The tree-node__row must NOT have a hidden opacity rule
+      assert.doesNotMatch(css, /\.tree-node__row\.is-hidden/);
+    });
   } finally {
     await act(async () => {
       root.unmount();

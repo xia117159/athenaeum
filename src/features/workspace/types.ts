@@ -18,6 +18,7 @@ export type SettingsSection =
   | "connections";
 export type LocationKind = "local" | "ftp" | "sftp" | "virtual";
 export type EntryKind = "file" | "folder";
+export type GitFileStatus = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflict" | "clean";
 export type ColumnId =
   | "name"
   | "type"
@@ -545,6 +546,7 @@ export interface TabState {
   virtualPath?: "navigation://shortcuts";
   inlineEdit?: InlineEditState;
   search?: SearchTabState;
+  gitStatus?: Record<string, GitFileStatus>;
   reconnect?: {
     path: string;
     profileId?: string;

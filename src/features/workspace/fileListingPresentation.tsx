@@ -9,6 +9,7 @@ import type {
   ColumnDefinition,
   ColumnId,
   EntryViewModel,
+  GitFileStatus,
   SortState,
   TabViewMode
 } from "./types";
@@ -217,7 +218,8 @@ export function renderNameCell(
   entry: EntryViewModel,
   iconSpec: InlineIconSpec,
   iconClassName?: string,
-  nameContent?: ReactNode
+  nameContent?: ReactNode,
+  gitStatus?: GitFileStatus
 ) {
   return (
     <div className={`entry-name${iconClassName ? ` ${iconClassName}` : ""}`}>
@@ -227,6 +229,8 @@ export function renderNameCell(
         extension={entry.extension}
         size={iconSpec.displaySize}
         imageList={iconSpec.imageList}
+        hidden={entry.isHidden}
+        gitStatus={gitStatus}
       />
       {nameContent ?? <span>{entry.name}</span>}
     </div>
@@ -245,12 +249,13 @@ export function renderDetailsCell(
   entry: ListingEntry,
   columnId: ColumnDefinition["id"],
   currentPath: string,
-  nameContent?: ReactNode
+  nameContent?: ReactNode,
+  gitStatus?: GitFileStatus
 ) {
   const detailIconSpec = getInlineIconSpec("details");
   switch (columnId) {
     case "name":
-      return renderNameCell(entry, detailIconSpec, undefined, nameContent);
+      return renderNameCell(entry, detailIconSpec, undefined, nameContent, gitStatus);
     case "type":
       return getEntryTypeLabel(entry);
     case "extension":

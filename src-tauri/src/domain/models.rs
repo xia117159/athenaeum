@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -250,6 +252,8 @@ pub struct SystemIconRequest {
     pub size: u32,
     #[serde(default)]
     pub image_list: Option<SystemIconImageList>,
+    #[serde(default)]
+    pub include_overlays: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +262,25 @@ pub struct SystemIconBitmap {
     pub width: u32,
     pub height: u32,
     pub rgba_base64: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GitFileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflict,
+    Clean,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDirectoryStatus {
+    pub statuses: HashMap<String, GitFileStatus>,
+    pub is_git_repo: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

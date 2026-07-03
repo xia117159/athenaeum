@@ -47,6 +47,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Ole",
   "Win32_System_Threading"
 ] }
+gix = { version = "0.85.0", features = ["status"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
