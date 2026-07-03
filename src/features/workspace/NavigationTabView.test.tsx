@@ -1044,6 +1044,120 @@ export const completion = (async () => {
       assert.deepEqual(addedPaths, [["C:\\Users\\Admin\\Documents\\report.txt", "D:\\Archive"]]);
       assert.deepEqual(savedPaths, []);
     });
+
+    await assertTest("NavigationTabView supports Home/End/PageUp/PageDown/Escape navigation-key shortcuts", async () => {
+      const items = [
+        createNavigationItem("nav-1", "C:\\Users\\Admin\\Documents\\alpha.txt"),
+        createNavigationItem("nav-2", "C:\\Users\\Admin\\Documents\\bravo.txt"),
+        createNavigationItem("nav-3", "C:\\Users\\Admin\\Documents\\charlie.txt"),
+        createNavigationItem("nav-4", "C:\\Users\\Admin\\Documents\\delta.txt")
+      ];
+      const selections: string[][] = [];
+      const filters: string[] = [];
+      const actions = {
+        setNavigationFilter(value: string) {
+          filters.push(value);
+        },
+        setNavigationSelection(ids: string[]) {
+          selections.push([...ids]);
+        },
+        saveNavigationItem() {},
+        openNavigationItem() {},
+        openNavigationItemParent() {},
+        deleteNavigationItems() {},
+        reorderNavigationItem() {},
+        selectNavigationItem() {},
+        refreshNavigationTargets() {},
+        addCurrentFolderToNavigation() {},
+        addSelectedEntriesToNavigation() {},
+        addPathsToNavigation() {}
+      } as unknown as WorkspaceActions;
+
+      let mountKey = 0;
+      function select(ids: string[]) {
+        selections.length = 0;
+        mountKey += 1;
+        root.render(
+          React.createElement(
+            "div",
+            { key: mountKey },
+            React.createElement(NavigationTabView, {
+              panelId: "panel-1",
+              navigation: {
+                ...createNavigationState(items),
+                selectedItemIds: ids
+              },
+              selectedEntries: [],
+              actions
+            })
+          )
+        );
+      }
+
+      const getRoot = () => container.querySelector(".navigation-tab");
+
+      await act(async () => {
+        select(["nav-2"]);
+        await flushEffects();
+      });
+      const navigationRoot = container.querySelector(".navigation-tab");
+      assert.ok(navigationRoot);
+
+      const dispatchKey = async (init: KeyboardEventInit) => {
+        const root0 = getRoot();
+        assert.ok(root0);
+        await act(async () => {
+          root0.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+          await flushEffects();
+        });
+      };
+
+      // Home selects the first item.
+      await dispatchKey({ key: "Home" });
+      assert.deepEqual(selections.at(-1), ["nav-1"]);
+
+      // End selects the last item.
+      await dispatchKey({ key: "End" });
+      assert.deepEqual(selections.at(-1), ["nav-4"]);
+
+      // Shift+End extends the range from current selection (nav-1) to the last item.
+      await act(async () => {
+        select(["nav-1"]);
+        await flushEffects();
+      });
+      await dispatchKey({ key: "End", shiftKey: true });
+      assert.deepEqual(selections.at(-1), ["nav-1", "nav-2", "nav-3", "nav-4"]);
+
+      // Shift+Home extends from current selection (nav-4) back to the first item.
+      await act(async () => {
+        select(["nav-4"]);
+        await flushEffects();
+      });
+      await dispatchKey({ key: "Home", shiftKey: true });
+      assert.deepEqual(selections.at(-1), ["nav-1", "nav-2", "nav-3", "nav-4"]);
+
+      // PageDown advances by the fixed page step (default 10 → clamps to last).
+      await act(async () => {
+        select(["nav-1"]);
+        await flushEffects();
+      });
+      await dispatchKey({ key: "PageDown" });
+      assert.deepEqual(selections.at(-1), ["nav-4"]);
+
+      // PageUp returns to the first item, clamped.
+      await dispatchKey({ key: "PageUp" });
+      assert.deepEqual(selections.at(-1), ["nav-1"]);
+
+      // Escape with an empty filter clears the selection (not the filter).
+      filters.length = 0;
+      await act(async () => {
+        select(["nav-2", "nav-3"]);
+        await flushEffects();
+      });
+      await dispatchKey({ key: "Escape" });
+      assert.deepEqual(selections.at(-1), []);
+      assert.deepEqual(filters, []);
+    });
   } finally {
     await act(async () => {
       root.unmount();

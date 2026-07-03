@@ -3,6 +3,7 @@ import type {
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  EntryFocusMove,
   FileVisibilityState,
   GitFileStatus,
   InformationPanelTab,
@@ -30,8 +31,7 @@ import type {
   TabViewMode,
   WorkspaceBootstrap,
   WorkspaceState
-} from "./types";
-import { normalizeLocationPath } from "./mockData";
+} from "./types";import { normalizeLocationPath } from "./mockData";
 import {
   cloneColumns,
   normalizeContextMenuDefault,
@@ -105,6 +105,24 @@ export type WorkspaceAction =
     }
   | { type: "allEntriesSelected"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionCleared"; payload: { panelId: PanelId; tabId: string } }
+  | {
+      type: "entryFocusMoved";
+      payload: {
+        panelId: PanelId;
+        tabId: string;
+        orderedEntryIds: string[];
+        move: EntryFocusMove;
+      };
+    }
+  | {
+      type: "entryRangeExtended";
+      payload: {
+        panelId: PanelId;
+        tabId: string;
+        orderedEntryIds: string[];
+        move: EntryFocusMove;
+      };
+    }
   | { type: "tabSortChanged"; payload: { panelId: PanelId; tabId: string; columnId: ColumnId } }
   | { type: "tabSortSet"; payload: { panelId: PanelId; tabId: string; sort: Partial<SortState> } }
   | { type: "tabViewModeSet"; payload: { panelId: PanelId; tabId: string; viewMode: TabViewMode } }
@@ -149,7 +167,7 @@ export type WorkspaceAction =
   | { type: "favoritesUpdated"; payload: Pick<WorkspaceState, "bookmarks" | "hotlist"> }
   | { type: "navigationItemsUpdated"; payload: NavigationItem[] }
   | { type: "navigationTargetStatusUpdated"; payload: NavigationTargetInfo[] }
-  | { type: "navigationSelectionSet"; payload: string[] }
+  | { type: "navigationSelectionSet"; payload: string[] | { itemIds: string[]; anchorId?: string | null; cursorId?: string | null } }
   | { type: "navigationItemSelectionChanged"; payload: { itemId: string; multi: boolean } }
   | { type: "navigationFilterChanged"; payload: string }
   | { type: "navigationStatusSet"; payload: WorkspaceState["navigation"]["status"] }
@@ -979,6 +997,166 @@ function selectEntries(selectedEntryIds: string[], entryId: string, multi: boole
     : [...selectedEntryIds, entryId];
 }
 
+/**
+ * 计算"当前焦点"在有序列表中的 index。
+ * 焦点取 selectedEntryIds 的最后一项（最近焦点项，符合 Shift 扩展时的起点直觉）；
+ * 若无选中，则视作首项之前（delta<0 时退到末项，delta>0 时落到首项），与方向键无选中时的 Windows 行为一致。
+ */
+function resolveFocusIndex(selectedEntryIds: string[], orderedEntryIds: string[]): number {
+  if (selectedEntryIds.length === 0) {
+    return -1;
+  }
+  const lastSelected = selectedEntryIds[selectedEntryIds.length - 1];
+  const index = orderedEntryIds.indexOf(lastSelected);
+  return index;
+}
+
+/**
+ * 根据 EntryFocusMove 与起点 index 计算目标 index（含边界 clamp）。
+ * 无选中(startIndex=-1)时：向下(delta>0/page-down)落到首项、向上(delta<0/page-up)落到末项。
+ */
+function resolveTargetIndex(startIndex: number, orderedCount: number, move: EntryFocusMove): number {
+  if (orderedCount <= 0) {
+    return -1;
+  }
+  if (move.kind === "absolute") {
+    return move.position === "first" ? 0 : orderedCount - 1;
+  }
+  const step =
+    move.kind === "delta"
+      ? move.delta
+      : move.direction === "up"
+        ? -move.pageSize
+        : move.pageSize;
+  const base = startIndex === -1 ? (step > 0 ? -1 : orderedCount) : startIndex;
+  return Math.min(Math.max(base + step, 0), orderedCount - 1);
+}
+
+/** 返回当前多选区间的可见端点。 */
+function selectionRangeEdges(selectedEntryIds: string[], orderedEntryIds: string[]): { min: number; max: number } {
+  const indices = selectedEntryIds.map((id) => orderedEntryIds.indexOf(id)).filter((index) => index >= 0);
+  if (indices.length === 0) {
+    return { min: -1, max: -1 };
+  }
+  return { min: Math.min(...indices), max: Math.max(...indices) };
+}
+
+function findIndexById(orderedEntryIds: string[], id: string | null | undefined): number {
+  if (!id) {
+    return -1;
+  }
+  return orderedEntryIds.indexOf(id);
+}
+
+function isMultiRange(selectedEntryIds: string[], orderedEntryIds: string[]): boolean {
+  const edges = selectionRangeEdges(selectedEntryIds, orderedEntryIds);
+  return edges.min >= 0 && edges.max > edges.min;
+}
+
+function nextSelectionForSingleMove(targetIndex: number, orderedEntryIds: string[]): string[] {
+  const targetId = orderedEntryIds[targetIndex];
+  return targetId ? [targetId] : [];
+}
+
+/**
+ * 单选移动（纯方向键 / Home / End / PageUp / PageDown）：
+ * - 单项选择：从焦点按 move 移动一格/到端点/翻页，塌缩为单项，锚点=目标。
+ * - 多选区间：先塌缩到区间"近端外侧一格"——朝移动方向取区间近端再加一格 move（边界 clamp），
+ *   塌缩为单项，锚点=目标。即 Shift+End 得到 [B,C,D] 后单独 ↑ 会落到上端 B 的上一项 A，
+ *   单独 End 会落 到下端 D 的再下端（若已是末项则停在末项）。
+ */
+function moveFocusSelection(
+  tab: TabState,
+  orderedEntryIds: string[],
+  move: EntryFocusMove
+): TabState {
+  const count = orderedEntryIds.length;
+  if (count <= 0) {
+    return tab;
+  }
+  const targetIndex = resolveTargetIndex(focusStartForPlainMove(tab, orderedEntryIds, move), count, move);
+  if (targetIndex < 0) {
+    return tab;
+  }
+  const targetId = orderedEntryIds[targetIndex];
+  if (!targetId) {
+    return tab;
+  }
+  return {
+    ...tab,
+    selectedEntryIds: nextSelectionForSingleMove(targetIndex, orderedEntryIds),
+    selectionAnchorId: targetId,
+    selectionCursorId: null
+  };
+}
+
+/**
+ * 纯方向键时的移动起点：
+ * - 多选区间：朝移动方向取区间近端（↑/Home/PageUp→上端 min；↓/End/PageDown→下端 max），
+ *   再由 resolveTargetIndex 在该近端基础上加一格 move（即塌缩到近端外侧一格）。
+ * - 单项 / 无选中：取焦点 index（无选中按 resolveTargetIndex 内部的端点直觉处理）。
+ */
+function focusStartForPlainMove(tab: TabState, orderedEntryIds: string[], move: EntryFocusMove): number {
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  if (isMultiRange(tab.selectedEntryIds, orderedEntryIds)) {
+    const edges = selectionRangeEdges(tab.selectedEntryIds, orderedEntryIds);
+    const upward =
+      move.kind === "absolute"
+        ? move.position === "first"
+        : move.kind === "delta"
+          ? move.delta < 0
+          : move.direction === "up";
+    return upward ? edges.min : edges.max;
+  }
+  return focusIndex;
+}
+
+/**
+ * Shift 多选扩展：锚点固定，只移动光标端。
+ * - 锚点（id）：首次 Shift 时确立为当前光标条目 id；后续 Shift 操作保持锚点不变。
+ *   若状态里没有锚点（null/undefined），用当前焦点 id 作为锚点；无选中时锚点退化为首项。
+ * - 光标端（id）：上一次光标位置取状态保存的 selectionCursorId（命中 ordered 时使用），
+ *   缺失时退化为焦点 index；再按 move 计算新光标 index。
+ * - 选中集 = ordered[ min(anchor,cursor) .. max(anchor,cursor) ]，天然支持越锚反向（区间随光标收缩）。
+ * - 把新光标 id 持久到 selectionCursorId，确保后续连续 Shift 移动的"起点"始终是上一次光标位置。
+ */
+function extendRangeSelection(
+  tab: TabState,
+  orderedEntryIds: string[],
+  move: EntryFocusMove
+): TabState {
+  const count = orderedEntryIds.length;
+  if (count <= 0) {
+    return tab;
+  }
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  const anchorIndex = resolveAnchorIndex(tab, orderedEntryIds);
+  const storedCursor = findIndexById(orderedEntryIds, tab.selectionCursorId);
+  const cursorStart = storedCursor !== -1 ? storedCursor : (focusIndex === -1 ? anchorIndex : focusIndex);
+  const cursorIndex = resolveTargetIndex(cursorStart, count, move);
+  if (cursorIndex < 0) {
+    return { ...tab, selectionAnchorId: orderedEntryIds[anchorIndex] ?? null };
+  }
+  const from = Math.min(anchorIndex, cursorIndex);
+  const to = Math.max(anchorIndex, cursorIndex);
+  return {
+    ...tab,
+    selectedEntryIds: orderedEntryIds.slice(from, to + 1),
+    selectionAnchorId: orderedEntryIds[anchorIndex] ?? null,
+    selectionCursorId: orderedEntryIds[cursorIndex] ?? null
+  };
+}
+
+/** 把 selectionAnchorId 解析成在 orderedEntryIds 中的 index；缺失/无效时退化为焦点或首项。 */
+function resolveAnchorIndex(tab: TabState, orderedEntryIds: string[]): number {
+  const stored = findIndexById(orderedEntryIds, tab.selectionAnchorId);
+  if (stored !== -1) {
+    return stored;
+  }
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  return focusIndex === -1 ? 0 : focusIndex;
+}
+
 function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntryId: string, orderedEntryIds?: string[]): string[] {
   const validEntryIds = new Set(entries.map((entry) => entry.id));
   const orderedEntries = orderedEntryIds
@@ -1453,8 +1631,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               history: nextHistory,
               historyIndex: nextHistoryIndex,
               selectedEntryIds: pathChanged
-                ? []
+                ? (action.payload.snapshot.entries[0] ? [action.payload.snapshot.entries[0].id] : [])
                 : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
+              selectionAnchorId: pathChanged ? (action.payload.snapshot.entries[0]?.id ?? null) : tab.selectionAnchorId ?? null,
+              selectionCursorId: pathChanged ? null : tab.selectionCursorId ?? null,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
               inlineEdit: undefined,
@@ -1602,10 +1782,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           updateTab(panel, action.payload.tabId, (tab) =>
             isNavigationTab(tab)
               ? tab
-              : {
-                  ...tab,
-                  selectedEntryIds: selectEntries(tab.selectedEntryIds, action.payload.entryId, action.payload.multi)
-                }
+              : (() => {
+                  const nextSelected = selectEntries(tab.selectedEntryIds, action.payload.entryId, action.payload.multi);
+                  // 点击/单选切换时锚点跟随单选焦点重置：multi 模式下保留原锚点以维持区间扩展的可预期性，
+                  // 非 multi（普通单点）塌缩为单项 → 锚点设为新单项 id。
+                  const anchorId = action.payload.multi
+                    ? tab.selectionAnchorId ?? null
+                    : nextSelected.length === 0
+                      ? null
+                      : nextSelected[0];
+                  return { ...tab, selectedEntryIds: nextSelected, selectionAnchorId: anchorId, selectionCursorId: null };
+                })()
           )
       ));
 
@@ -1620,7 +1807,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: action.payload.entryIds
+                  selectedEntryIds: action.payload.entryIds,
+                  selectionAnchorId:
+                    action.payload.entryIds.length === 1 ? action.payload.entryIds[0] : null,
+                  selectionCursorId: null
                 }
           )
       ));
@@ -1641,7 +1831,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                     action.payload.fromEntryId,
                     action.payload.toEntryId,
                     action.payload.orderedEntryIds
-                  )
+                  ),
+                  selectionAnchorId: null,
+                  selectionCursorId: null
                 }
           )
       ));
@@ -1657,7 +1849,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id)
+                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id),
+                  selectionAnchorId: null,
+                  selectionCursorId: null
                 }
           )
       ));
@@ -1673,8 +1867,36 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: []
+                  selectedEntryIds: [],
+                  selectionAnchorId: null,
+                  selectionCursorId: null
                 }
+          )
+      ));
+
+    case "entryFocusMoved":
+      devLog("[workspaceReducer] entryFocusMoved:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : moveFocusSelection(tab, action.payload.orderedEntryIds, action.payload.move)
+          )
+      ));
+
+    case "entryRangeExtended":
+      devLog("[workspaceReducer] entryRangeExtended:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : extendRangeSelection(tab, action.payload.orderedEntryIds, action.payload.move)
           )
       ));
 
@@ -2160,23 +2382,37 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         };
       }
 
-    case "navigationSelectionSet":
+    case "navigationSelectionSet": {
+      const payload = action.payload;
+      const itemIds = Array.isArray(payload) ? payload : payload.itemIds;
+      const anchorId = Array.isArray(payload) ? undefined : payload.anchorId;
+      const cursorId = Array.isArray(payload) ? undefined : payload.cursorId;
       return {
         ...state,
         navigation: {
           ...state.navigation,
-          selectedItemIds: action.payload.filter((id, index, ids) => ids.indexOf(id) === index)
+          selectedItemIds: itemIds.filter((id, index, ids) => ids.indexOf(id) === index),
+          selectionAnchorId: anchorId === undefined ? state.navigation.selectionAnchorId ?? null : anchorId,
+          selectionCursorId: cursorId === undefined ? state.navigation.selectionCursorId ?? null : cursorId
         }
       };
+    }
 
-    case "navigationItemSelectionChanged":
+    case "navigationItemSelectionChanged": {
+      const nextSelected = selectEntries(state.navigation.selectedItemIds, action.payload.itemId, action.payload.multi);
       return {
         ...state,
         navigation: {
           ...state.navigation,
-          selectedItemIds: selectEntries(state.navigation.selectedItemIds, action.payload.itemId, action.payload.multi)
+          selectedItemIds: nextSelected,
+          // 与文件列表一致：multi 模式保留原锚点；普通单点塌缩为单项 → 锚点设为该项、光标清空。
+          selectionAnchorId: action.payload.multi
+            ? state.navigation.selectionAnchorId ?? null
+            : nextSelected.length === 0 ? null : nextSelected[0],
+          selectionCursorId: null
         }
       };
+    }
 
     case "navigationFilterChanged":
       return {

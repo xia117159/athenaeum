@@ -19,6 +19,7 @@ import {
   DEFAULT_METADATA_RETENTION_HOURS,
   DEFAULT_TOOLTIP_HOVER_DELAY_MS
 } from "./workspaceFileListDefaults";
+import { DEFAULT_SHORTCUTS } from "./workspaceMappers";
 
 type CatalogDirectory = {
   path: string;
@@ -889,99 +890,9 @@ export function createTabState(
 
 function createSettingsModel(): SettingsModel {
   return {
-    shortcuts: [
-      {
-        id: "focus-next-panel",
-        action: "切换到下一个面板",
-        scope: "workspace",
-        binding: "Tab",
-        description: "按顺序切换可见面板焦点。"
-      },
-      {
-        id: "open-search",
-        action: "打开搜索面板",
-        scope: "workspace",
-        binding: "Ctrl+F",
-        description: "打开停靠式搜索面板。"
-      },
-      {
-        id: "copy",
-        action: "复制",
-        scope: "listing",
-        binding: "Ctrl+C",
-        description: "复制当前选中项。"
-      },
-      {
-        id: "paste",
-        action: "粘贴",
-        scope: "listing",
-        binding: "Ctrl+V",
-        description: "将剪贴板内容粘贴到当前目录。"
-      },
-      {
-        id: "cut",
-        action: "剪切",
-        scope: "listing",
-        binding: "Ctrl+X",
-        description: "剪切当前选中项。"
-      },
-      {
-        id: "drag-move",
-        action: "拖放时移动",
-        scope: "listing",
-        binding: "Shift",
-        description: "拖放文件或文件夹时执行移动而不是复制。"
-      },
-      {
-        id: "context-menu-toggle",
-        action: "右键菜单切换",
-        scope: "context-menu",
-        binding: "Shift",
-        description: "右键时临时切换 Windows 系统菜单与软件自定义菜单。"
-      },
-      {
-        id: "create-folder",
-        action: "新建文件夹",
-        scope: "listing",
-        binding: "Ctrl+Shift+N",
-        description: "在当前目录中新建文件夹。"
-      },
-      {
-        id: "delete",
-        action: "删除",
-        scope: "listing",
-        binding: "Delete",
-        description: "删除当前选中项。"
-      },
-      {
-        id: "rename",
-        action: "重命名",
-        scope: "listing",
-        binding: "F2",
-        description: "重命名当前选中项。"
-      },
-      {
-        id: "refresh",
-        action: "刷新",
-        scope: "panel",
-        binding: "F5",
-        description: "刷新当前面板。"
-      },
-      {
-        id: "new-tab",
-        action: "新建标签页",
-        scope: "panel",
-        binding: "Ctrl+T",
-        description: "在新标签页中打开当前目录。"
-      },
-      {
-        id: "close-tab",
-        action: "关闭标签页",
-        scope: "panel",
-        binding: "Ctrl+W",
-        description: "当存在多个标签页时关闭当前标签页。"
-      }
-    ],
+    // 复用 `DEFAULT_SHORTCUTS`（与设置界面的可配置快捷键默认表同源），
+    // 避免在此处维护一份重复的快捷键清单导致与本任务的列表导航新增项漂移。
+    shortcuts: DEFAULT_SHORTCUTS.map((shortcut) => ({ ...shortcut })),
     colorRules: [
       {
         id: "rule-release",

@@ -435,33 +435,9 @@ export function FileListingShell({
     []
   );
 
-  // 键盘快捷键处理
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // 检查焦点是否在可编辑元素上
-      const target = event.target;
-      const isEditable =
-        target instanceof HTMLElement &&
-        (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
-
-      // Ctrl+A / Cmd+A: 全选（仅在非可编辑元素时生效）
-      if ((event.ctrlKey || event.metaKey) && event.key === "a" && !isEditable) {
-        devLog("[FileListing] Ctrl+A detected, onSelectAll:", onSelectAll);
-        event.preventDefault();
-        if (onSelectAll) {
-          devLog("[FileListing] Calling onSelectAll");
-          onSelectAll();
-        } else {
-          devWarn("[FileListing] onSelectAll is undefined");
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onSelectAll]);
+  // 列表键盘快捷键（Ctrl+A 全选等）已统一上提到 useWorkspaceController 的全局 window
+  // keydown 监听器，并按 state.activePanelId 路由到激活面板的激活标签页，避免每个面板实例各挂
+  // 一个 window 监听器导致“多面板下 Ctrl+A 对所有面板同时生效”的 BUG。
 
   const visibleOrderedEntryIds = sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id);
   const detailsGridMetrics = getDetailsGridMetrics(visibleColumns);

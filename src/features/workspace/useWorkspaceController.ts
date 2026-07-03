@@ -11,6 +11,8 @@ import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
+import { sortEntries } from "./fileListingPresentation";
+import { filterEntriesByFileVisibility } from "./workspaceVisibility";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
 import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
@@ -77,6 +79,7 @@ import type {
   NavigationColumnId,
   SettingsSection,
   SortState,
+  EntryFocusMove,
   TabState,
   TabViewMode,
   WorkspaceFsChangedEvent,
@@ -2677,6 +2680,129 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       if (shortcutMatches(shortcuts, "navigate-up", eventBinding) && !editable) {
         event.preventDefault();
         navigateUpKeepingForwardHistory(state.activePanelId);
+        return;
+      }
+
+      // 列表导航快捷键统一作用于激活面板的激活标签页（修复多面板下 FileListing 各自挂 window
+      // 监听器导致的“Ctrl+A 对所有面板同时生效”BUG）。导航页标签不参与文件列表选择。
+      const listShortcutIds = [
+        "select-first",
+        "select-last",
+        "select-previous",
+        "select-next",
+        "select-previous-page",
+        "select-next-page",
+        "extend-previous",
+        "extend-next",
+        "extend-first",
+        "extend-last",
+        "select-all",
+        "clear-selection",
+        "open-entry",
+        "navigate-parent"
+      ] as const;
+      const matchedListShortcut = listShortcutIds.find(
+        (id) => !editable && shortcutMatches(shortcuts, id, eventBinding)
+      );
+      if (matchedListShortcut) {
+        event.preventDefault();
+        const activePanel = state.panels[state.activePanelId];
+        const activeTab = getActiveTab(activePanel);
+        if (isNavigationTab(activeTab)) {
+          return;
+        }
+        // 复算激活标签页显示顺序：可见性过滤 + 搜索过滤（与主区域焦点面板显示一致）+ 排序，
+        // 确保键盘移动与列表视觉顺序一致（不要直接用 snapshot.entries 原始顺序）。
+        const orderedEntryIds = sortEntries(
+          filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility).filter(
+            (entry) => {
+              const filterText = state.search.filterText.trim().toLowerCase();
+              if (!filterText) {
+                return true;
+              }
+              return [entry.name, entry.path, entry.extension, entry.description, entry.tags.join(" ")]
+                .join(" ")
+                .toLowerCase()
+                .includes(filterText);
+            }
+          ),
+          activeTab.sort,
+          activeTab.snapshot.location.path
+        ).map((entry) => entry.id);
+
+        if (matchedListShortcut === "select-all") {
+          dispatch({ type: "allEntriesSelected", payload: { panelId: activePanel.id, tabId: activeTab.id } });
+          return;
+        }
+        if (matchedListShortcut === "clear-selection") {
+          dispatch({ type: "entrySelectionCleared", payload: { panelId: activePanel.id, tabId: activeTab.id } });
+          return;
+        }
+        if (matchedListShortcut === "open-entry") {
+          const selectedIds = activeTab.selectedEntryIds;
+          const targetId = selectedIds[selectedIds.length - 1] ?? orderedEntryIds[0];
+          const targetEntry = activeTab.snapshot.entries.find((entry) => entry.id === targetId);
+          if (targetEntry) {
+            if (targetEntry.kind === "folder") {
+              void commitNavigation(activePanel.id, targetEntry.path);
+            } else {
+              void workspaceGateway.openPathWithSystemDefault(targetEntry.path).catch((error) => {
+                pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
+              });
+            }
+          }
+          return;
+        }
+        if (matchedListShortcut === "navigate-parent") {
+          navigateUpKeepingForwardHistory(state.activePanelId);
+          return;
+        }
+        const dispatchFocusMove = (move: EntryFocusMove) =>
+          dispatch({
+            type: "entryFocusMoved",
+            payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move }
+          });
+        const dispatchRangeExtend = (move: EntryFocusMove) =>
+          dispatch({
+            type: "entryRangeExtended",
+            payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move }
+          });
+        const LIST_PAGE_SIZE = 10; // TODO: 改为按视口可见行数动态计算。
+        switch (matchedListShortcut) {
+          case "select-first":
+            dispatchFocusMove({ kind: "absolute", position: "first" });
+            break;
+          case "select-last":
+            dispatchFocusMove({ kind: "absolute", position: "last" });
+            break;
+          case "select-previous":
+            dispatchFocusMove({ kind: "delta", delta: -1 });
+            break;
+          case "select-next":
+            dispatchFocusMove({ kind: "delta", delta: 1 });
+            break;
+          case "select-previous-page":
+            dispatchFocusMove({ kind: "page", direction: "up", pageSize: LIST_PAGE_SIZE });
+            break;
+          case "select-next-page":
+            dispatchFocusMove({ kind: "page", direction: "down", pageSize: LIST_PAGE_SIZE });
+            break;
+          case "extend-previous":
+            dispatchRangeExtend({ kind: "delta", delta: -1 });
+            break;
+          case "extend-next":
+            dispatchRangeExtend({ kind: "delta", delta: 1 });
+            break;
+          case "extend-first":
+            dispatchRangeExtend({ kind: "absolute", position: "first" });
+            break;
+          case "extend-last":
+            dispatchRangeExtend({ kind: "absolute", position: "last" });
+            break;
+          default:
+            break;
+        }
+        return;
       }
     };
 
@@ -2837,7 +2963,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       reorderNavigationItem: (itemId: string, direction: -1 | 1) => void reorderNavigationItem(itemId, direction),
       selectNavigationItem: (itemId: string, multi = false) =>
         dispatch({ type: "navigationItemSelectionChanged", payload: { itemId, multi } }),
-      setNavigationSelection: (itemIds: string[]) => dispatch({ type: "navigationSelectionSet", payload: itemIds }),
+      setNavigationSelection: (
+        itemIds: string[],
+        meta?: { anchorId?: string | null; cursorId?: string | null }
+      ) =>
+        dispatch({
+          type: "navigationSelectionSet",
+          payload: meta
+            ? { itemIds, anchorId: meta.anchorId ?? undefined, cursorId: meta.cursorId ?? undefined }
+            : itemIds
+        }),
       setNavigationFilter: (value: string) => dispatch({ type: "navigationFilterChanged", payload: value }),
       refreshNavigationTargets: () => void refreshNavigationTargets(),
       openNavigationItem: (panelId: PanelId, itemId: string, inBackground = false) =>

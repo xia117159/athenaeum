@@ -31,6 +31,16 @@ export type ColumnId =
   | "comment"
   | "location";
 export type ShortcutScope = "workspace" | "panel" | "listing" | "context-menu";
+
+/**
+ * 列表键盘导航的移动意图。
+ * - delta:      距当前焦点 ±N 格（方向键一格、PageUp/Down 一页）。
+ * - absolute:  跳到列表首项或末项（Home/End）。
+ */
+export type EntryFocusMove =
+  | { kind: "delta"; delta: number }
+  | { kind: "absolute"; position: "first" | "last" }
+  | { kind: "page"; direction: "up" | "down"; pageSize: number };
 export type ContextMenuDefault = "native" | "custom";
 export type RemoteAuthKind = "password" | "keyFile" | "anonymous";
 export type SortDirection = "asc" | "desc";
@@ -232,6 +242,16 @@ export interface NavigationTargetInfo {
 export interface NavigationState {
   items: NavigationItem[];
   selectedItemIds: string[];
+  /**
+   * Shift 区间多选锚点（NavigationItem.id）。纯方向键/点击/重置会清空为 null。
+   * 仅内存态，不持久化。
+   */
+  selectionAnchorId?: string | null;
+  /**
+   * Shift 区间的光标端 id（与锚点配对），仅在 Shift 区间操作期间维护，纯方向键/点击/重置会清空为 null。
+   * 仅内存态。显式记录光标端是为了在区间随光标反向回退时仍能确定上次光标位置。
+   */
+  selectionCursorId?: string | null;
   filterText: string;
   status: "idle" | "checking" | "saving";
   gitStatusCache: Record<string, Record<string, GitFileStatus>>;
@@ -540,6 +560,19 @@ export interface TabState {
   history: string[];
   historyIndex: number;
   selectedEntryIds: string[];
+  /**
+   * Shift 区间选中的锚点条目 id。仅在按下 Shift 进行区间多选时确立，
+   * 纯方向键/点击/进入新目录会复位为 null。仅内存态（不参与会话持久化）。
+   * 用 id 而非 index，避免在排序/筛选变动导致 ordered 顺序变化时锚点漂移。
+   */
+  selectionAnchorId?: string | null;
+  /**
+   * Shift 区间的光标端条目 id（与锚点配对使用）。仅在 Shift 区间操作期间维护，
+   * 纯方向键/点击/进入新目录会复位为 null。仅内存态。显式记录光标端是为了在
+   * "区间随光标在锚点两侧反向回退"时仍能确定上次光标位置（仅靠 selectedEntryIds
+   * 的末项无法推断光标端方向）。
+   */
+  selectionCursorId?: string | null;
   expandedNodePaths: string[];
   viewMode: TabViewMode;
   sort: SortState;

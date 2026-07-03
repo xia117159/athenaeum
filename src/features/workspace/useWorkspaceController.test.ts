@@ -4194,6 +4194,102 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController routes list keyboard shortcuts only to the active panel", async () => {
+      const keyboardInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      const keyboardBootstrap = createMockWorkspaceBootstrap("tauri");
+      keyboardBootstrap.layoutMode = "dual";
+      keyboardBootstrap.activePanelId = "panel-1";
+      const panel1Tab = keyboardBootstrap.panels["panel-1"].tabs[0];
+      const panel2Tab = keyboardBootstrap.panels["panel-2"].tabs[0];
+      panel1Tab.snapshot = {
+        ...resolveMockDirectory("D:\\Projects\\Atlas"),
+        location: panel1Tab.snapshot.location
+      };
+      panel2Tab.snapshot = {
+        ...resolveMockDirectory("D:\\Projects\\Atlas"),
+        location: panel2Tab.snapshot.location
+      };
+      panel1Tab.selectedEntryIds = [];
+      panel2Tab.selectedEntryIds = [];
+      let keyboardController: ReturnType<typeof useWorkspaceController> | undefined;
+      const keyboardGateway = createTestGateway(() => undefined, keyboardInteractions, {
+        loadBootstrap: () => keyboardBootstrap
+      });
+      function KeyboardHarness() {
+        keyboardController = useWorkspaceController(keyboardGateway);
+        return React.createElement("div", null, keyboardController.state.status);
+      }
+      const keyboardContainer = document.createElement("div");
+      document.body.appendChild(keyboardContainer);
+      const keyboardRoot = ReactDOM.createRoot(keyboardContainer);
+
+      const getActiveIds = (panelId: "panel-1" | "panel-2") =>
+        getActiveTab(keyboardController!.state.panels[panelId]).selectedEntryIds;
+
+      try {
+        await act(async () => {
+          keyboardRoot.render(React.createElement(KeyboardHarness));
+          await flushEffects();
+        });
+        await waitFor(() => keyboardController?.state.status === "ready", "keyboard controller did not bootstrap");
+
+        // Ctrl+A on panel-1 (active) selects only panel-1 entries, panel-2 stays empty.
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-1").length > 0, "Ctrl+A did not select entries in active panel");
+        assert.deepEqual(getActiveIds("panel-2"), [], "Ctrl+A leaked into the inactive panel");
+
+        // Reset and move focus to panel-2; Ctrl+A now selects panel-2 only.
+        await act(async () => {
+          keyboardController?.actions.focusPanel("panel-2");
+          await flushEffects();
+        });
+        assert.equal(keyboardController!.state.activePanelId, "panel-2");
+        const panel2ActiveTabBefore = getActiveTab(keyboardController!.state.panels["panel-2"]);
+        assert.equal(panel2ActiveTabBefore.snapshot.entries.length > 0, true, "panel-2 active tab has no entries");
+        // Note: focusPanel deliberately clears the previously-active panel's active-tab selection
+        // (see focusPanel in workspaceReducer), so panel-1 selection is already empty here.
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-2").length > 0, "Ctrl+A did not select entries after focus switch");
+        assert.deepEqual(getActiveIds("panel-1"), [], "Ctrl+A leaked back into the previously active panel");
+
+        // ArrowDown on panel-2 moves selection to the second entry (single-select).
+        await act(async () => {
+          keyboardController?.actions.clearSelection("panel-2", keyboardBootstrap.panels["panel-2"].activeTabId);
+          await flushEffects();
+        });
+        assert.equal(keyboardController!.state.activePanelId, "panel-2");
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-2").length === 1, "ArrowDown did not move selection");
+        assert.deepEqual(getActiveIds("panel-1"), [], "ArrowDown leaked into inactive panel");
+      } finally {
+        await act(async () => {
+          keyboardRoot.unmount();
+          await flushEffects();
+        });
+        keyboardContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController persists details row height changes through the workspace gateway", async () => {
       interactions.savedDetailsRowHeights.length = 0;
 

@@ -275,21 +275,76 @@ export function NavigationTabView({
       return;
     }
 
-    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && visibleItems.length > 0) {
+    // 列表导航：Shift 期间锚点固定、只动光标；纯方向键先塌缩到区间近端外侧一格再按 move 走，
+    // 单项选择按 move 走一格/到端点/翻页。
+    if (
+      (event.key === "ArrowDown" || event.key === "ArrowUp" ||
+        event.key === "Home" || event.key === "End" ||
+        event.key === "PageUp" || event.key === "PageDown") &&
+      visibleItems.length > 0
+    ) {
       consumeKey(event);
-      const currentIndex = primarySelected ? visibleItems.findIndex((item) => item.id === primarySelected.id) : -1;
-      const nextIndex =
-        event.key === "ArrowDown"
-          ? Math.min(visibleItems.length - 1, currentIndex + 1)
-          : Math.max(0, currentIndex === -1 ? visibleItems.length - 1 : currentIndex - 1);
-      const nextItem = visibleItems[nextIndex];
-      if (nextItem) {
-        if (event.shiftKey && primarySelected) {
-          const start = Math.min(currentIndex, nextIndex);
-          const end = Math.max(currentIndex, nextIndex);
-          actions.setNavigationSelection(visibleItems.slice(start, end + 1).map((item) => item.id));
+      const ids = visibleItems.map((item) => item.id);
+      const count = ids.length;
+      const withShift = event.shiftKey;
+
+      // 解析当前锚点 / 光标 id（首次 Shift 时确立锚点）。
+      const anchorId = navigation.selectionAnchorId ?? primarySelected?.id ?? null;
+      const anchorIndex = ids.indexOf(anchorId ?? "");
+      const cursorId = navigation.selectionCursorId;
+      const cursorStoredIndex = cursorId ? ids.indexOf(cursorId) : -1;
+
+      const focusIndex = primarySelected ? ids.indexOf(primarySelected.id) : -1;
+
+      // 计算"光标端起点" + 目标 index：
+      // - 多选区间 + 纯方向键：从区间近端（朝移动方向的可见端）再按 move 走一格 → 塌缩为单项。
+      // - Shift：锚点固定，从"上一次光标"按 move 走一格/到端点/翻页。
+      // - 单项：从焦点按 move 走。
+      const isUp =
+        event.key === "ArrowUp" || event.key === "Home" || event.key === "PageUp";
+      const isAbsolute = event.key === "Home" || event.key === "End";
+      const isPage = event.key === "PageUp" || event.key === "PageDown";
+      const step = isPage ? 10 : 1; // TODO: PageUp/Down 改为按视口可见行数动态计算。
+
+      // 区间近端（用于纯方向键多选塌缩）。
+      const selectedIndices = navigation.selectedItemIds
+        .map((id) => ids.indexOf(id))
+        .filter((index) => index >= 0);
+      const rangeMin = selectedIndices.length ? Math.min(...selectedIndices) : -1;
+      const rangeMax = selectedIndices.length ? Math.max(...selectedIndices) : -1;
+      const inMultiRange = rangeMin >= 0 && rangeMax > rangeMin && !(withShift || cursorStoredIndex !== -1);
+
+      let cursorStart: number;
+      if (inMultiRange) {
+        // 纯方向键从多选区间出发：起点取近端（↑/Home/PageUp→min；↓/End/PageDown→max），再按 move 走。
+        cursorStart = isUp ? rangeMin : rangeMax;
+      } else if (withShift) {
+        cursorStart = cursorStoredIndex !== -1 ? cursorStoredIndex : (focusIndex === -1 ? (anchorIndex === -1 ? 0 : anchorIndex) : focusIndex);
+      } else {
+        cursorStart = focusIndex === -1 ? (isUp ? count : -1) : focusIndex;
+      }
+
+      let targetIndex: number;
+      if (isAbsolute) {
+        targetIndex = isUp ? 0 : count - 1;
+      } else {
+        targetIndex = Math.min(Math.max(cursorStart + (isUp ? -step : step), 0), count - 1);
+        if (cursorStart === -1 && !withShift) {
+          // 无选中时方向键的端点直觉：↓ 落到首项，↑ 落到末项。
+          targetIndex = isUp ? count - 1 : 0;
+        }
+      }
+
+      const targetId = ids[targetIndex];
+      if (targetId) {
+        if (withShift) {
+          const effectiveAnchor = anchorIndex === -1 ? (focusIndex === -1 ? 0 : focusIndex) : anchorIndex;
+          const from = Math.min(effectiveAnchor, targetIndex);
+          const to = Math.max(effectiveAnchor, targetIndex);
+          actions.setNavigationSelection(ids.slice(from, to + 1), { anchorId: ids[effectiveAnchor] ?? null, cursorId: targetId });
         } else {
-          actions.setNavigationSelection([nextItem.id]);
+          // 纯方向键塌缩为单项并重置锚点为目标项。
+          actions.setNavigationSelection([targetId], { anchorId: targetId, cursorId: null });
         }
       }
       return;
@@ -337,7 +392,7 @@ export function NavigationTabView({
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       consumeKey(event);
-      actions.setNavigationSelection(visibleItems.map((item) => item.id));
+      actions.setNavigationSelection(visibleItems.map((item) => item.id), { anchorId: null, cursorId: null });
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && selectedItems.length > 0) {
@@ -345,9 +400,14 @@ export function NavigationTabView({
       void navigator.clipboard?.writeText(selectedItems.map((item) => item.path).join("\n")).catch(() => undefined);
       return;
     }
-    if (event.key === "Escape" && navigation.filterText) {
+    if (event.key === "Escape") {
       consumeKey(event);
-      actions.setNavigationFilter("");
+      if (navigation.filterText) {
+        actions.setNavigationFilter("");
+        return;
+      }
+      // 没有 filterText 时，Esc 清空导航页当前选择（与文件列表 Esc 行为一致）。
+      actions.setNavigationSelection([], { anchorId: null, cursorId: null });
     }
   };
 
@@ -385,7 +445,7 @@ export function NavigationTabView({
 
   const openAppMenuAt = (position: MenuPosition, item?: NavigationItem) => {
     if (item && !navigation.selectedItemIds.includes(item.id)) {
-      actions.setNavigationSelection([item.id]);
+      actions.setNavigationSelection([item.id], { anchorId: item.id, cursorId: null });
     }
     setMenu({
       x: position.x,
@@ -421,7 +481,7 @@ export function NavigationTabView({
     const itemIds = getContextMenuItemIds(item);
     if (!event.shiftKey && canOpenNativeContextMenu(item, itemIds)) {
       if (item && !navigation.selectedItemIds.includes(item.id)) {
-        actions.setNavigationSelection([item.id]);
+        actions.setNavigationSelection([item.id], { anchorId: item.id, cursorId: null });
       }
       setMenu(null);
       void actions

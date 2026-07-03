@@ -28,7 +28,21 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["navigate-up", "Alt+Up"],
   ["navigate-forward", "Alt+Right"],
   ["drag-move", "Shift"],
-  ["context-menu-toggle", "Shift"]
+  ["context-menu-toggle", "Shift"],
+  ["select-first", "Home"],
+  ["select-last", "End"],
+  ["select-previous", "Up"],
+  ["select-next", "Down"],
+  ["select-previous-page", "PageUp"],
+  ["select-next-page", "PageDown"],
+  ["extend-previous", "Shift+Up"],
+  ["extend-next", "Shift+Down"],
+  ["extend-first", "Shift+Home"],
+  ["extend-last", "Shift+End"],
+  ["select-all", "Ctrl+A"],
+  ["clear-selection", "Escape"],
+  ["open-entry", "Enter"],
+  ["navigate-parent", "Backspace"]
 ]);
 
 export const DEFAULT_SHORTCUT_BINDINGS = new Map(

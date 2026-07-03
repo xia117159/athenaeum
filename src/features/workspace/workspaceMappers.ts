@@ -94,7 +94,7 @@ export function normalizeColumns(
   return normalized.length > 0 ? normalized : cloneColumns();
 }
 
-const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
+export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
   {
     id: "focus-next-panel",
     action: "切换到下一个面板",
@@ -199,6 +199,104 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "panel",
     binding: "Ctrl+W",
     description: "当存在多个标签页时关闭当前标签页。"
+  },
+  {
+    id: "select-previous",
+    action: "上一项",
+    scope: "listing",
+    binding: "Up",
+    description: "在列表中单选上一项。"
+  },
+  {
+    id: "select-next",
+    action: "下一项",
+    scope: "listing",
+    binding: "Down",
+    description: "在列表中单选下一项。"
+  },
+  {
+    id: "select-first",
+    action: "第一项",
+    scope: "listing",
+    binding: "Home",
+    description: "单选列表第一项。"
+  },
+  {
+    id: "select-last",
+    action: "最后一项",
+    scope: "listing",
+    binding: "End",
+    description: "单选列表最后一项。"
+  },
+  {
+    id: "select-previous-page",
+    action: "上一页",
+    scope: "listing",
+    binding: "PageUp",
+    description: "在列表中向上翻页单选。"
+  },
+  {
+    id: "select-next-page",
+    action: "下一页",
+    scope: "listing",
+    binding: "PageDown",
+    description: "在列表中向下翻页单选。"
+  },
+  {
+    id: "extend-previous",
+    action: "扩展到上一项",
+    scope: "listing",
+    binding: "Shift+Up",
+    description: "以当前选中项为起点，多选到上一项。"
+  },
+  {
+    id: "extend-next",
+    action: "扩展到下一项",
+    scope: "listing",
+    binding: "Shift+Down",
+    description: "以当前选中项为起点，多选到下一项。"
+  },
+  {
+    id: "extend-first",
+    action: "扩展到第一项",
+    scope: "listing",
+    binding: "Shift+Home",
+    description: "以当前选中项为起点，多选到列表顶。"
+  },
+  {
+    id: "extend-last",
+    action: "扩展到最后一项",
+    scope: "listing",
+    binding: "Shift+End",
+    description: "以当前选中项为起点，多选到列表底。"
+  },
+  {
+    id: "select-all",
+    action: "全选",
+    scope: "listing",
+    binding: "Ctrl+A",
+    description: "选中当前列表中的全部项。"
+  },
+  {
+    id: "clear-selection",
+    action: "清除选择",
+    scope: "listing",
+    binding: "Escape",
+    description: "清除列表中的多选，恢复为无选中。"
+  },
+  {
+    id: "open-entry",
+    action: "打开",
+    scope: "listing",
+    binding: "Enter",
+    description: "打开当前选中的文件夹或文件。"
+  },
+  {
+    id: "navigate-parent",
+    action: "返回上一级",
+    scope: "listing",
+    binding: "Backspace",
+    description: "返回当前目录的上一级。"
   }
 ];
 
