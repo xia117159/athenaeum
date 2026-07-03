@@ -88,6 +88,15 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
   return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
 }
 
+function getFileExtension(path: string): string {
+  const lastDot = path.lastIndexOf(".");
+  const lastSlash = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  if (lastDot > lastSlash && lastDot !== -1) {
+    return path.slice(lastDot);
+  }
+  return "";
+}
+
 function getDroppedPaths(event: ReactDragEvent<HTMLElement>) {
   const text = event.dataTransfer?.getData("text/plain") ?? "";
   return text
@@ -452,9 +461,10 @@ export function NavigationTabView({
   const renderNavigationCell = (item: NavigationItem, columnId: NavigationColumnId) => {
     if (columnId === "name") {
       const gitStatus = lookupNavigationGitStatus(navigation.gitStatusCache, item.path);
+      const extension = item.targetKind === "file" ? getFileExtension(item.path) : "";
       return (
         <span role="cell" className="navigation-table__cell navigation-table__name" data-navigation-cell-id={columnId}>
-          <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" gitStatus={gitStatus} />
+          <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension={extension} size={16} imageList="sys-small" gitStatus={gitStatus} />
           <span>{item.displayName}</span>
         </span>
       );

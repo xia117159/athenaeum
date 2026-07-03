@@ -36,7 +36,7 @@ export function FileSystemIcon({
 
     setIconSrc(null);
 
-    void resolveSystemIcon({ kind, path, extension, size, imageList }).then((resolvedIcon) => {
+    void resolveSystemIcon({ kind, path, extension, size, imageList, includeOverlays: true }).then((resolvedIcon) => {
       if (!disposed) {
         setIconSrc(resolvedIcon);
       }
