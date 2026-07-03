@@ -245,13 +245,10 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
       let bootstrap = mapWorkspaceBootstrap(backendBootstrap);
       const remoteProfiles = backendBootstrap.settings.remoteProfiles;
-      const seedPaths = [
-        backendBootstrap.initialPath,
-        backendBootstrap.settings.bookmarks[0]?.path,
-        backendBootstrap.settings.hotlist[0]?.path,
-        remoteProfiles[0] ? createRemoteRootUri(remoteProfiles[0]) : undefined,
-        backendBootstrap.drives[1]?.path
-      ].filter((value): value is string => Boolean(value));
+
+      // 性能优化：启动时只加载 initialPath，避免被慢速路径（远程连接、网络驱动器）阻塞
+      // 其他路径会在用户切换标签页或从会话恢复时按需加载
+      const seedPaths = [backendBootstrap.initialPath].filter((value): value is string => Boolean(value));
 
       bootstrap = await hydratePanels(bootstrap, seedPaths, remoteProfiles);
       migrateLegacyWorkspaceSession();

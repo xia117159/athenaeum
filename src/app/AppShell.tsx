@@ -12,15 +12,17 @@ function getAppView() {
 }
 
 export function AppShell() {
-  if (getAppView() === "settings") {
+  const view = getAppView();
+
+  if (view === "settings") {
     return <SettingsWindowView />;
   }
 
-  if (getAppView() === "comment") {
+  if (view === "comment") {
     return <CommentWindowView />;
   }
 
-  if (getAppView() === "about") {
+  if (view === "about") {
     return <AboutWindowView />;
   }
 

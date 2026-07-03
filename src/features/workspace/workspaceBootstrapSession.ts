@@ -149,6 +149,7 @@ export async function hydratePanels(
 ) {
   const panels = { ...base.panels };
   const uniquePaths = seedPaths.filter((path, index) => path && seedPaths.indexOf(path) === index);
+
   const snapshots = await Promise.allSettled(
     uniquePaths.map(async (path, index) => ({
       panelId: PANEL_IDS[index],
