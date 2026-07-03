@@ -34,7 +34,7 @@ import {
   type NavigationSortState,
   sortNavigationItemsForColumn
 } from "./NavigationTabColumns";
-import type { EntryViewModel, NavigationColumnDefinition, NavigationColumnId, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
+import type { EntryViewModel, GitFileStatus, NavigationColumnDefinition, NavigationColumnId, NavigationItem, NavigationItemUpsertRequest, NavigationState, PanelId } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 import { NAVIGATION_TAB_ID } from "./workspaceTabs";
 
@@ -101,12 +101,43 @@ function filterItems(items: NavigationItem[], filterText: string) {
   if (!query) {
     return items;
   }
-  return items.filter((item) =>
-    [item.displayName, item.description, item.path, STATUS_LABELS[item.targetStatus], KIND_LABELS[item.targetKind]]
-      .join(" ")
-      .toLowerCase()
-      .includes(query)
-  );
+  return items.filter((item) => {
+    return (
+      item.displayName.toLowerCase().includes(query) ||
+      item.path.toLowerCase().includes(query) ||
+      item.description.toLowerCase().includes(query)
+    );
+  });
+}
+
+function extractParentDirectory(path: string): string | null {
+  if (!path || path.length === 0) {
+    return null;
+  }
+  const normalized = path.replace(/\//g, "\\");
+  const lastSeparator = normalized.lastIndexOf("\\");
+  if (lastSeparator === -1) {
+    return null;
+  }
+  return normalized.substring(0, lastSeparator);
+}
+
+function lookupNavigationGitStatus(
+  gitStatusCache: Record<string, Record<string, GitFileStatus>> | undefined,
+  itemPath: string
+): GitFileStatus | undefined {
+  if (!gitStatusCache) {
+    return undefined;
+  }
+  const parentDir = extractParentDirectory(itemPath);
+  if (!parentDir) {
+    return undefined;
+  }
+  const dirCache = gitStatusCache[parentDir] ?? gitStatusCache[parentDir.toLowerCase()];
+  if (!dirCache) {
+    return undefined;
+  }
+  return dirCache[itemPath] ?? dirCache[itemPath.toLowerCase()];
 }
 
 export function NavigationTabView({
@@ -420,9 +451,10 @@ export function NavigationTabView({
 
   const renderNavigationCell = (item: NavigationItem, columnId: NavigationColumnId) => {
     if (columnId === "name") {
+      const gitStatus = lookupNavigationGitStatus(navigation.gitStatusCache, item.path);
       return (
         <span role="cell" className="navigation-table__cell navigation-table__name" data-navigation-cell-id={columnId}>
-          <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" />
+          <FileSystemIcon kind={item.targetKind === "folder" ? "folder" : "file"} path={item.path} extension="" size={16} imageList="sys-small" gitStatus={gitStatus} />
           <span>{item.displayName}</span>
         </span>
       );

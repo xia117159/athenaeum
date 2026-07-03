@@ -91,7 +91,9 @@ function createWorkspaceState(): WorkspaceState {
       items: bootstrap.navigationItems,
       selectedItemIds: [],
       filterText: "",
-      status: "idle"
+      status: "idle",
+      gitStatusCache: {},
+      gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
     search: {

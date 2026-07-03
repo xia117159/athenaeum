@@ -153,6 +153,8 @@ export type WorkspaceAction =
   | { type: "navigationItemSelectionChanged"; payload: { itemId: string; multi: boolean } }
   | { type: "navigationFilterChanged"; payload: string }
   | { type: "navigationStatusSet"; payload: WorkspaceState["navigation"]["status"] }
+  | { type: "navigation/git-status-loading"; payload: { directory: string } }
+  | { type: "navigation/git-status-loaded"; payload: { directory: string; statuses: Record<string, GitFileStatus> } }
   | { type: "remoteProfilesUpdated"; payload: RemoteConnectionProfile[] }
   | { type: "settingsSectionSet"; payload: SettingsSection }
   | { type: "shortcutBindingUpdated"; payload: { id: string; binding: string } }
@@ -334,7 +336,9 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       items: sortNavigationItems(bootstrap.navigationItems),
       selectedItemIds: [],
       filterText: "",
-      status: "idle"
+      status: "idle",
+      gitStatusCache: {},
+      gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
     search: {
@@ -2189,6 +2193,30 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         navigation: {
           ...state.navigation,
           status: action.payload
+        }
+      };
+
+    case "navigation/git-status-loading":
+      return {
+        ...state,
+        navigation: {
+          ...state.navigation,
+          gitStatusLoadingDirs: state.navigation.gitStatusLoadingDirs.includes(action.payload.directory)
+            ? state.navigation.gitStatusLoadingDirs
+            : [...state.navigation.gitStatusLoadingDirs, action.payload.directory]
+        }
+      };
+
+    case "navigation/git-status-loaded":
+      return {
+        ...state,
+        navigation: {
+          ...state.navigation,
+          gitStatusCache: {
+            ...state.navigation.gitStatusCache,
+            [action.payload.directory]: action.payload.statuses
+          },
+          gitStatusLoadingDirs: state.navigation.gitStatusLoadingDirs.filter((dir) => dir !== action.payload.directory)
         }
       };
 

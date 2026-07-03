@@ -187,6 +187,38 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   );
 
+  /**
+   * Fetches git status for a navigation parent directory and dispatches navigation/git-status-loaded.
+   */
+  const fetchGitStatusForNavigationDir = useEffectEvent((directory: string) => {
+    if (isRemotePath(directory)) return;
+    const gitPathKey = normalizeLocationPath(directory).toLowerCase();
+
+    // If already loading or loaded, skip
+    if (pendingGitStatusRef.current.has(gitPathKey) || state.navigation.gitStatusLoadingDirs.includes(directory)) {
+      return;
+    }
+
+    dispatch({ type: "navigation/git-status-loading", payload: { directory } });
+    pendingGitStatusRef.current.add(gitPathKey);
+
+    void workspaceGateway
+      .getGitStatus(directory)
+      .then((result) => {
+        pendingGitStatusRef.current.delete(gitPathKey);
+        if (result.isGitRepo) {
+          dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: result.statuses } });
+        } else {
+          dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: {} } });
+        }
+      })
+      .catch((error) => {
+        pendingGitStatusRef.current.delete(gitPathKey);
+        dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: {} } });
+        devWarn("[useWorkspaceController] navigation git status fetch failed", error);
+      });
+  });
+
   // Auto-close non-error notifications after a fixed timeout; error (danger)
   // notifications persist until dismissed manually so their details aren't missed.
   useEffect(() => {
@@ -563,6 +595,37 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         });
     }
   }, [state.status, state.activePanelId, state.panels, state.directoryTree, workspaceGateway]);
+
+  useEffect(() => {
+    if (state.status !== "ready" || state.source !== "tauri") {
+      return;
+    }
+
+    const uniqueParentDirs = new Set<string>();
+    for (const item of state.navigation.items) {
+      if (!item.path || isRemotePath(item.path)) {
+        continue;
+      }
+      const normalized = item.path.replace(/\//g, "\\");
+      const lastSeparator = normalized.lastIndexOf("\\");
+      if (lastSeparator === -1) {
+        continue;
+      }
+      const parentDir = normalized.substring(0, lastSeparator);
+      if (
+        parentDir &&
+        !state.navigation.gitStatusCache[parentDir] &&
+        !state.navigation.gitStatusCache[parentDir.toLowerCase()] &&
+        !state.navigation.gitStatusLoadingDirs.includes(parentDir)
+      ) {
+        uniqueParentDirs.add(parentDir);
+      }
+    }
+
+    for (const dir of uniqueParentDirs) {
+      fetchGitStatusForNavigationDir(dir);
+    }
+  }, [state.status, state.source, state.navigation.items, state.navigation.gitStatusCache, state.navigation.gitStatusLoadingDirs]);
 
   const applySettingsModel = useEffectEvent(async (model: SettingsModel, section?: SettingsSection) => {
     if (state.source === "tauri") {

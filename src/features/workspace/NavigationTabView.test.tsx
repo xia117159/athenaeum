@@ -83,7 +83,9 @@ function createNavigationState(items: NavigationItem[] = []): NavigationState {
     items,
     selectedItemIds: items.slice(0, 1).map((item) => item.id),
     filterText: "",
-    status: "idle"
+    status: "idle",
+    gitStatusCache: {},
+    gitStatusLoadingDirs: []
   };
 }
 

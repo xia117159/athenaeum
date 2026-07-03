@@ -234,6 +234,8 @@ export interface NavigationState {
   selectedItemIds: string[];
   filterText: string;
   status: "idle" | "checking" | "saving";
+  gitStatusCache: Record<string, Record<string, GitFileStatus>>;
+  gitStatusLoadingDirs: string[];
 }
 
 export interface ThemeSettings {
