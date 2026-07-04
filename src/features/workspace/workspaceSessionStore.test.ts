@@ -30,6 +30,9 @@ function createStorage(seed: Record<string, string> = {}) {
     setItem(key: string, value: string) {
       values.set(key, value);
     },
+    removeItem(key: string) {
+      values.delete(key);
+    },
     snapshot() {
       return Object.fromEntries(values.entries());
     }
@@ -53,6 +56,13 @@ function createWorkspaceState(): WorkspaceState {
       tree: 0.31,
       search: 0.36
     },
+    treeVisible: false,
+    fileVisibility: {
+      showHidden: false,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: true
+    },
+    syncScroll: false,
     panels: {
       ...bootstrap.panels,
       "panel-1": {
@@ -81,11 +91,12 @@ function createWorkspaceState(): WorkspaceState {
       items: bootstrap.navigationItems,
       selectedItemIds: [],
       filterText: "",
-      status: "idle"
+      status: "idle",
+      gitStatusCache: {},
+      gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
     search: {
-      open: false,
       loading: false,
       filterText: "",
       query: {
@@ -112,6 +123,13 @@ function createWorkspaceState(): WorkspaceState {
         matchedEntries: 0,
         cancelled: false,
         statusText: "就绪"
+      }
+    },
+    informationPanel: {
+      expanded: true,
+      activeTab: "history",
+      properties: {
+        status: "idle"
       }
     },
     settings: {
@@ -222,6 +240,21 @@ assertTest("toPersistedSession skips transient search results tabs", () => {
   assert.equal(session.panels["panel-1"].activeTabId, sourceTab.id);
 });
 
+assertTest("toPersistedSession stores the bottom information panel state", () => {
+  const session = toPersistedSession(createWorkspaceState());
+
+  assert.deepEqual(session.informationPanel, {
+    expanded: true,
+    activeTab: "history"
+  });
+});
+
+assertTest("toPersistedSession stores the directory tree visibility flag", () => {
+  const session = toPersistedSession(createWorkspaceState());
+
+  assert.equal(session.treeVisible, false);
+});
+
 assertTest("toPersistedSession keeps a navigation tab as a virtual session tab", () => {
   const state = createWorkspaceState();
   const navigationTab = createNavigationTab("navigation-tab");
@@ -250,6 +283,23 @@ assertTest("readPersistedSession returns null for unavailable or malformed stora
   assert.equal(readPersistedSession(createStorage({ [WORKSPACE_SESSION_STORAGE_KEY]: "{broken" })), null);
 });
 
+assertTest("readPersistedSession normalizes old sessions without informationPanel", () => {
+  const legacySession = toPersistedSession(createWorkspaceState());
+  delete legacySession.informationPanel;
+  delete legacySession.treeVisible;
+  const storage = createStorage({
+    [WORKSPACE_SESSION_STORAGE_KEY]: JSON.stringify(legacySession)
+  });
+
+  const restored = readPersistedSession(storage);
+
+  assert.deepEqual(restored?.informationPanel, {
+    expanded: false,
+    activeTab: "properties"
+  });
+  assert.equal(restored?.treeVisible, true);
+});
+
 assertTest("writePersistedSession ignores storage failures", () => {
   const session = toPersistedSession(createWorkspaceState());
   const throwingStorage = {
@@ -258,7 +308,8 @@ assertTest("writePersistedSession ignores storage failures", () => {
     },
     setItem() {
       throw new Error("quota exceeded");
-    }
+    },
+    removeItem() {}
   };
 
   assert.doesNotThrow(() => writePersistedSession(session, throwingStorage));

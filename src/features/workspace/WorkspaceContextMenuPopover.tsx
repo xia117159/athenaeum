@@ -1,7 +1,7 @@
-import { type CSSProperties, useLayoutEffect, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { TAB_VIEW_MODE_OPTIONS } from "./FileListing";
-import type { ContextMenuState, TabState, TabViewMode } from "./types";
+import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
+import type { ClipboardState, ContextMenuState, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -12,13 +12,19 @@ export function WorkspaceContextMenuPopover({
   contextMenu,
   viewMode,
   tab,
+  clipboard,
   actions,
+  layoutMode,
+  panelIds,
   onClose
 }: {
   contextMenu: ContextMenuState;
   viewMode: TabViewMode;
   tab?: TabState;
+  clipboard?: ClipboardState;
   actions: WorkspaceActions;
+  layoutMode: PanelLayoutMode;
+  panelIds: PanelId[];
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -85,25 +91,134 @@ export function WorkspaceContextMenuPopover({
   };
   const isNavigationTab = tab?.kind === "navigation";
   const isDirectoryTab = tab?.kind === "directory";
+  const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
+  const canPaste = Boolean(clipboard?.paths.length);
+  const commentEntry =
+    tab?.kind === "directory" && contextMenu.entryPath
+      ? tab.snapshot.entries.find((entry) => entry.path === contextMenu.entryPath)
+      : undefined;
 
-  const renderViewSubmenu = () => (
-    <div className="context-menu__submenu">
-      <span className="context-menu__submenu-label">查看</span>
-      <div className="context-menu__submenu-items">
-        {TAB_VIEW_MODE_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className="context-menu__item"
-            onClick={() => handleAction(() => actions.setTabViewMode(contextMenu.panelId, contextMenu.tabId, option.id))}
-          >
-            <span className="context-menu__check">{viewMode === option.id ? "✓" : ""}</span>
-            <span>{option.label}</span>
-          </button>
-        ))}
+  const selectedEntries =
+    tab?.kind === "directory" && tab.snapshot.entries
+      ? tab.snapshot.entries.filter((entry) => (tab.selectedEntryIds ?? []).includes(entry.id))
+      : [];
+  const selectedFolders = selectedEntries.filter((entry) => entry.kind === "folder");
+  const hasSelectedFolders = selectedFolders.length > 0;
+  const adjacentPanelId = panelIds.length > 1
+    ? panelIds[(panelIds.indexOf(contextMenu.panelId) + 1) % panelIds.length]
+    : undefined;
+  const writeClipboard = (text: string) => {
+    navigator.clipboard?.writeText(text).catch(() => {});
+  };
+
+  const adjustSubmenuPosition = (wrapper: HTMLElement) => {
+    const items = wrapper.querySelector(".context-menu__submenu-items") as HTMLElement | null;
+    if (!items) return;
+    items.style.removeProperty("left");
+    items.style.removeProperty("right");
+    items.style.removeProperty("top");
+    const rect = items.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (rect.right > vw - MENU_VIEWPORT_PADDING) {
+      items.style.left = "auto";
+      items.style.right = "calc(100% - 1px)";
+    }
+    if (rect.bottom > vh - MENU_VIEWPORT_PADDING) {
+      items.style.top = `${-3 - (rect.bottom - vh + MENU_VIEWPORT_PADDING)}px`;
+    }
+  };
+
+  const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
+    <div
+      className={`context-menu__submenu${disabled ? " is-disabled" : ""}`}
+      role="none"
+      onMouseEnter={(e) => adjustSubmenuPosition(e.currentTarget)}
+      onFocusCapture={(e) => adjustSubmenuPosition(e.currentTarget)}
+    >
+      <button
+        type="button"
+        className="context-menu__item context-menu__item--submenu-trigger"
+        disabled={disabled}
+        aria-haspopup="menu"
+      >
+        <span className="context-menu__check" />
+        <span>{label}</span>
+      </button>
+      <div className="context-menu__submenu-items" role="menu">
+        {children}
       </div>
     </div>
   );
+
+  const renderViewSubmenu = () =>
+    renderSubmenu(
+      "视图",
+      <WorkspaceViewMenuItems
+        classNames={{
+          item: "context-menu__item",
+          check: "context-menu__check"
+        }}
+        viewMode={viewMode}
+        onSelect={(nextViewMode) =>
+          handleAction(() => actions.setTabViewMode(contextMenu.panelId, contextMenu.tabId, nextViewMode))
+        }
+      />,
+      !isDirectoryTab
+    );
+
+  const renderSortSubmenu = () =>
+    renderSubmenu(
+      "排序方式",
+      <WorkspaceSortMenuItems
+        classNames={{
+          item: "context-menu__item",
+          check: "context-menu__check",
+          separator: "context-menu__separator"
+        }}
+        sort={currentSort}
+        onSelectColumn={(columnId) => handleAction(() => actions.setSort(contextMenu.panelId, contextMenu.tabId, { columnId }))}
+        onSelectDirection={(direction) =>
+          handleAction(() => actions.setSort(contextMenu.panelId, contextMenu.tabId, { direction }))
+        }
+      />,
+      !isDirectoryTab
+    );
+
+  const renderClipboardSubmenu = () => {
+    if (!isDirectoryTab || selectedEntries.length === 0) return null;
+    const namesWithoutExt = selectedEntries.map((e) => {
+      const dot = e.name.lastIndexOf(".");
+      return dot > 0 ? e.name.slice(0, dot) : e.name;
+    });
+    const extensions = selectedEntries.map((e) => e.extension.replace(/^\./, "")).filter(Boolean);
+    return renderSubmenu("到剪切板", (
+      <>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.name).join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制文件名</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.path).join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制完整路径</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard([...new Set(selectedEntries.map((e) => e.parentPath))].join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制所在文件夹路径</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(namesWithoutExt.join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制文件名（不含扩展名）</span>
+        </button>
+        {extensions.length > 0 && (
+          <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(extensions.join("\n")))}>
+            <span className="context-menu__check" />
+            <span>复制扩展名</span>
+          </button>
+        )}
+      </>
+    ));
+  };
 
   const renderTabMenu = () => (
     <>
@@ -153,14 +268,26 @@ export function WorkspaceContextMenuPopover({
 
   const renderPanelMenu = () => (
     <>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
-        <span className="context-menu__check" />
-        <span>新建文件夹</span>
-      </button>
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFile(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建文件</span>
       </button>
+      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
+        <span className="context-menu__check" />
+        <span>新建文件夹</span>
+      </button>
+      {renderViewSubmenu()}
+      {renderSortSubmenu()}
+      <button
+        type="button"
+        className="context-menu__item"
+        disabled={!isDirectoryTab || !canPaste}
+        onClick={() => handleAction(() => actions.pasteIntoPanel(contextMenu.panelId))}
+      >
+        <span className="context-menu__check" />
+        <span>粘贴</span>
+      </button>
+      <div className="context-menu__separator" />
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
         <span className="context-menu__check" />
         <span>复制路径</span>
@@ -169,7 +296,6 @@ export function WorkspaceContextMenuPopover({
         <span className="context-menu__check" />
         <span>添加当前文件夹到导航页</span>
       </button>
-      {renderViewSubmenu()}
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab && !isNavigationTab} onClick={() => handleAction(() => actions.refreshPanel(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>刷新</span>
@@ -180,11 +306,27 @@ export function WorkspaceContextMenuPopover({
       </button>
       {contextMenu.scope === "selection" ? (
         <>
+          {hasSelectedFolders && (
+            <>
+              <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.openNewTab(contextMenu.panelId, f.path)))}>
+                <span className="context-menu__check" />
+                <span>在新标签页打开</span>
+              </button>
+              {layoutMode !== "single" && adjacentPanelId && (
+                <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.navigateToPath(adjacentPanelId, f.path)))}>
+                  <span className="context-menu__check" />
+                  <span>在相邻窗格打开</span>
+                </button>
+              )}
+              <div className="context-menu__separator" />
+            </>
+          )}
           <div className="context-menu__separator" />
           <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addSelectedEntriesToNavigation(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>添加到导航页</span>
           </button>
+          {renderClipboardSubmenu()}
           <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copySelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>复制</span>
@@ -206,13 +348,66 @@ export function WorkspaceContextMenuPopover({
     </>
   );
 
+  const renderCommentMenu = () => {
+    const entryPath = contextMenu.entryPath;
+    const hasComment = Boolean(commentEntry?.comment);
+    return (
+      <>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath}
+          onClick={() => entryPath && handleAction(() => actions.editEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>编辑注释</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath || !hasComment}
+          onClick={() => entryPath && handleAction(() => actions.copyEntryComment(entryPath, commentEntry?.comment ?? ""))}
+        >
+          <span className="context-menu__check" />
+          <span>复制注释</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath}
+          onClick={() => entryPath && handleAction(() => actions.pasteEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>粘贴注释（从剪切板）</span>
+        </button>
+        <button
+          type="button"
+          className="context-menu__item"
+          disabled={!entryPath || !hasComment}
+          onClick={() => entryPath && handleAction(() => actions.removeEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
+        >
+          <span className="context-menu__check" />
+          <span>移除注释</span>
+        </button>
+      </>
+    );
+  };
+
   const menu = (
     <div ref={menuRef} className="context-menu" style={menuStyle}>
       <div className="context-menu__header">
-        <strong>{contextMenu.scope === "tab" ? "标签页" : contextMenu.scope === "panel" ? "面板操作" : "项目操作"}</strong>
+        <strong>
+          {contextMenu.scope === "tab"
+            ? "标签页"
+            : contextMenu.scope === "panel"
+              ? "面板操作"
+              : contextMenu.scope === "comment"
+                ? "注释"
+                : "项目操作"}
+        </strong>
         <span>{contextMenu.mode === "custom" ? "应用右键菜单" : "系统菜单不可用，已回退到应用菜单"}</span>
       </div>
-      {contextMenu.scope === "tab" ? renderTabMenu() : renderPanelMenu()}
+      {contextMenu.scope === "tab" ? renderTabMenu() : contextMenu.scope === "comment" ? renderCommentMenu() : renderPanelMenu()}
     </div>
   );
 

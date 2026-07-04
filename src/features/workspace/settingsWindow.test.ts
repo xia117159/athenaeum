@@ -10,6 +10,8 @@ import {
   type SettingsWindowOptions,
   type WebviewWindowConstructor
 } from "./settingsWindow";
+import { COMMENT_WINDOW_LABEL } from "./commentWindow";
+import { ABOUT_WINDOW_LABEL } from "./aboutWindow";
 
 function assertTest(name: string, fn: () => Promise<void> | void) {
   return Promise.resolve()
@@ -110,8 +112,8 @@ export const completion = (async () => {
       title: "设置",
       width: 920,
       height: 720,
-      minWidth: 720,
-      minHeight: 520,
+      minWidth: 800,
+      minHeight: 560,
       resizable: true,
       decorations: true,
       focus: true,
@@ -143,7 +145,7 @@ export const completion = (async () => {
   });
 
   await assertTest("workspace source opens settings from the top menu only", () => {
-    const workspaceSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
+    const workspaceSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceMenuBar.tsx"), "utf8");
 
     assert.equal(workspaceSource.includes("SettingsDialog"), false);
     assert.equal(workspaceSource.includes("<SettingsSurface"), false);
@@ -163,6 +165,14 @@ export const completion = (async () => {
     assert.equal(settingsWindowSource.includes("onCancel"), true);
     assert.equal(settingsWindowSource.includes("onUpdateTagRule"), false);
     assert.equal(settingsWindowSource.includes("onToggleColumn"), false);
+    assert.equal(settingsWindowSource.includes("onUpdateActiveTabBackground"), true);
+    assert.equal(settingsWindowSource.includes("activeTabBackground: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("onUpdateDropHighlightFill"), true);
+    assert.equal(settingsWindowSource.includes("onUpdateDropHighlightBorder"), true);
+    assert.equal(settingsWindowSource.includes("dropHighlightFill: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("dropHighlightBorder: normalizeThemeAccentColor(color)"), true);
+    assert.equal(settingsWindowSource.includes("navigationColumns: model.navigationColumns.map"), true);
+    assert.equal(settingsWindowSource.includes("!hasSameJsonShape(pm.navigationColumns, dm.navigationColumns)"), true);
 
     const remoteUpsertsIndex = settingsWindowSource.indexOf("await applyRemoteProfileUpserts()");
     const settingsModelIndex = settingsWindowSource.indexOf("await actions.applySettingsModel");
@@ -178,10 +188,20 @@ export const completion = (async () => {
       permissions: string[];
     };
 
-    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL]);
+    assert.deepEqual(capability.windows, ["main", SETTINGS_WINDOW_LABEL, COMMENT_WINDOW_LABEL, ABOUT_WINDOW_LABEL]);
+    assert.equal(capability.permissions.includes("core:event:allow-emit"), true);
     assert.equal(capability.permissions.includes("core:webview:allow-create-webview-window"), true);
     assert.equal(capability.permissions.includes("core:window:allow-show"), true);
     assert.equal(capability.permissions.includes("core:window:allow-set-focus"), true);
     assert.equal(capability.permissions.includes("core:window:allow-close"), true);
+  });
+
+  await assertTest("Tauri runtime closes the settings window when the main window closes", () => {
+    const libSource = fs.readFileSync(path.join(process.cwd(), "src-tauri/src/lib.rs"), "utf8");
+
+    assert.equal(libSource.includes("WindowEvent::CloseRequested"), true);
+    assert.equal(libSource.includes('window.label() == "main"'), true);
+    assert.equal(libSource.includes('webview.label() != "main"'), true);
+    assert.equal(libSource.includes("webview.close()"), true);
   });
 })();

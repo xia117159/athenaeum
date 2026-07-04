@@ -9,6 +9,8 @@ import {
   toBackendShortcut,
   toRemoteProfileUpsertRequest
 } from "./workspaceBackendDtos";
+import { DEFAULT_COLUMNS } from "./workspaceMappers";
+import { NAVIGATION_COLUMNS } from "./NavigationTabColumns";
 import type { NavigationItem, RemoteConnectionProfile, SettingsModel } from "./types";
 
 function assertTest(name: string, fn: () => void) {
@@ -30,12 +32,13 @@ assertTest("toBackendLayout converts workspace ratios into persisted UI layout",
       quadRightSecondary: 0.56,
       tree: 0.25,
       search: 0.3
-    }),
+    },
+    false),
     {
       layoutMode: "quad",
       panelProportions: [0.62, 0.38],
       sidebarWidth: 240,
-      showTree: true,
+      showTree: false,
       showSearch: true
     }
   );
@@ -46,14 +49,14 @@ assertTest("toBackendShortcut persists stable shortcut ids and accelerator bindi
     id: "copy",
     action: "Copy",
     scope: "listing",
-    binding: "Ctrl+C",
+    binding: " alt + ctrl + c ",
     description: "Copy selected entries"
   };
 
   assert.deepEqual(toBackendShortcut(shortcut), {
     id: "copy",
     action: "copy",
-    accelerator: "Ctrl+C",
+    accelerator: "Ctrl+Alt+C",
     scope: "listing"
   });
 });
@@ -97,10 +100,22 @@ assertTest("toBackendColorRule maps matcher tokens to backend mode and pattern",
 });
 
 assertTest("toBackendTheme persists normalized theme values", () => {
-  assert.deepEqual(toBackendTheme({ panelFocusAccent: "#c02f7a", tabMinWidth: 4096 }), {
-    panelFocusAccent: "#c02f7a",
-    tabMinWidth: 4096
-  });
+  assert.deepEqual(
+    toBackendTheme({
+      panelFocusAccent: "#c02f7a99",
+      activeTabBackground: "#FFFFFF80",
+      dropHighlightFill: "#ABCDEFAA",
+      dropHighlightBorder: "not-a-color",
+      tabMinWidth: 4096
+    }),
+    {
+      panelFocusAccent: "#c02f7a99",
+      activeTabBackground: "#ffffff80",
+      dropHighlightFill: "#abcdefaa",
+      dropHighlightBorder: "#0f6cbd",
+      tabMinWidth: 4096
+    }
+  );
 });
 
 assertTest("toBackendSettingsModelUpdate serializes the complete settings model", () => {
@@ -110,7 +125,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
         id: "navigate-forward",
         action: "回到下一级",
         scope: "panel",
-        binding: "Alt+Right",
+        binding: " right + alt ",
         description: "回到历史中的下一级文件夹。"
       }
     ],
@@ -125,9 +140,18 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     ],
     tagRules: [],
     columns: [],
+    navigationColumns: [],
     detailsRowHeight: 46,
+    tooltipHoverDelayMs: 125,
+    metadataRetentionHours: null,
+    contextMenu: {
+      defaultMenu: "custom"
+    },
     theme: {
       panelFocusAccent: "invalid",
+      activeTabBackground: "invalid",
+      dropHighlightFill: "#ABCDEF",
+      dropHighlightBorder: "invalid",
       tabMinWidth: 4096
     }
   };
@@ -145,9 +169,19 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
         priority: 1
       }
     ],
+    columns: DEFAULT_COLUMNS,
+    navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: 46,
+    tooltipHoverDelayMs: 125,
+    metadataRetentionHours: null,
+    contextMenu: {
+      defaultMenu: "custom"
+    },
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#abcdef",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 4096
     }
   });
@@ -197,8 +231,12 @@ assertTest("createBrowserSettingsSnapshot provides a complete settings fallback 
   assert.equal(snapshot.bookmarks.length, 1);
   assert.equal(snapshot.hotlist.length, 0);
   assert.equal(snapshot.detailsRowHeight, 24);
+  assert.deepEqual(snapshot.navigationColumns, NAVIGATION_COLUMNS);
   assert.equal(snapshot.layout.layoutMode, "dual");
   assert.equal(snapshot.theme!.panelFocusAccent, "#0f6cbd");
+  assert.equal(snapshot.theme!.activeTabBackground, "#ffffff");
+  assert.equal(snapshot.theme!.dropHighlightFill, "#0f6cbd");
+  assert.equal(snapshot.theme!.dropHighlightBorder, "#0f6cbd");
   assert.equal(snapshot.theme!.tabMinWidth, 96);
   assert.deepEqual(snapshot.remoteProfiles, []);
   assert.deepEqual(snapshot.navigationItems, []);

@@ -66,7 +66,7 @@ export function WorkspaceTreeBranch({
             onNavigate(node);
           }}
         >
-          <FileSystemIcon kind={node.kind} path={node.path} className="tree-node__icon" size={18} imageList="sys-small" />
+          <FileSystemIcon kind={node.kind} path={node.path} className="tree-node__icon" size={18} imageList="sys-small" hidden={node.isHidden} />
           <span>{node.label}</span>
         </button>
       </div>

@@ -1,0 +1,360 @@
+.workspace-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.workspace-menubar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-bottom: 1px solid #cfcfcf;
+  background: #f7f7f7;
+}
+
+.workspace-menubar__menus {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.workspace-menubar__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-menubar__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workspace-menubar__badge--mock {
+  background: rgba(15, 108, 189, 0.1);
+  color: var(--accent);
+}
+
+.workspace-menubar__badge--tauri {
+  background: rgba(16, 124, 16, 0.1);
+  color: var(--success);
+}
+
+.menu-root {
+  position: relative;
+}
+
+.menu-button,
+.menu-dropdown__item,
+.toolbar-button,
+.tab-strip__tab,
+.tab-strip__add,
+.tree-node__toggle,
+.tree-node__label,
+.context-menu__item,
+.settings-window__nav-item,
+.search-result,
+.address-history__item,
+.address-bar__history-toggle,
+.file-header-button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.menu-button:hover,
+.menu-button.is-open {
+  background: #eaf2fc;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.12);
+}
+
+.menu-dropdown__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 3px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-dropdown__item-label,
+.menu-dropdown__item > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-dropdown__shortcut {
+  justify-self: end;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.menu-dropdown__item--submenu-trigger {
+  position: relative;
+  padding-right: 24px;
+}
+
+.menu-dropdown__item--submenu-trigger::after {
+  content: ">";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #444;
+  font-size: 11px;
+}
+
+.menu-dropdown__item:hover,
+.menu-dropdown__submenu:not(.is-disabled):hover > .menu-dropdown__item {
+  background: #eef4fb;
+}
+
+.menu-dropdown__item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.menu-dropdown__check {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.menu-dropdown__separator {
+  height: 1px;
+  margin: 4px 4px 4px 18px;
+  background: #e5e5e5;
+}
+
+.menu-dropdown__submenu {
+  position: relative;
+}
+
+.menu-dropdown__submenu-items {
+  position: absolute;
+  left: calc(100% - 1px);
+  top: -4px;
+  display: none;
+  width: max-content;
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.12);
+  z-index: 1;
+}
+
+.menu-dropdown__submenu:not(.is-disabled):hover > .menu-dropdown__submenu-items,
+.menu-dropdown__submenu:not(.is-disabled):focus-within > .menu-dropdown__submenu-items {
+  display: block;
+}
+
+.toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #c8c8c8;
+  border-radius: 0;
+  background: #f8f8f8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolbar-button--icon {
+  width: 28px;
+  padding: 0;
+}
+
+.toolbar-button:hover {
+  background: #f5f8fb;
+}
+
+.toolbar-button.is-active {
+  border-color: #8ab6e6;
+  background: #e8f2fd;
+  color: #0f5fa8;
+}
+
+.toolbar-button--ghost,
+.toolbar-button--flat {
+  background: #fbfbfb;
+}
+
+.toolbar-button:disabled {
+  color: #8d99a8;
+  background: #f5f5f5;
+  cursor: default;
+}
+
+.workspace-commandbar,
+.workspace-addressbar {
+  position: relative;
+  display: grid;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px 4px;
+  border-bottom: 1px solid #cfcfcf;
+  background: #f1f3f6;
+}
+
+.workspace-commandbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-addressbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-toolbar__separator {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: #cfd5dd;
+}
+
+.workspace-toolbar__nav,
+.workspace-toolbar__actions,
+.workspace-toolbar__history {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-toolbar__actions {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.workspace-toolbar__history {
+  justify-content: flex-end;
+}
+
+.address-bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.address-bar input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid #c8c8c8;
+  border-right: 0; /* 与下拉按钮融合 */
+  border-radius: 0;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+}
+
+.address-bar input:focus {
+  outline: none;
+  border-color: var(--accent, #0f6cbd);
+  box-shadow: inset 0 0 0 1px var(--accent, #0f6cbd);
+}
+
+.address-bar__history-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #c8c8c8;
+  border-radius: 0;
+  background: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.address-bar__history-toggle:hover {
+  background: #f5f8fb;
+}
+
+/* 当输入框获得焦点时，下拉按钮也跟随高亮 */
+.address-bar input:focus + .address-bar__history-toggle {
+  border-color: var(--accent, #0f6cbd);
+  box-shadow: inset 0 0 0 1px var(--accent, #0f6cbd);
+}
+
+.address-history {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 55;
+  display: grid;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.12);
+}
+
+.address-history__item {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 3px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.address-history__item:hover {
+  background: #edf4fc;
+}

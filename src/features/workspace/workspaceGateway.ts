@@ -7,6 +7,7 @@ import {
 } from "./remoteUri";
 import {
   listRemoteProfilesRequired,
+  listWorkspaceDriveRoots,
   loadWorkspaceTreeChildren,
   resolveWorkspaceDirectory
 } from "./workspaceDirectoryGateway";
@@ -17,9 +18,14 @@ import {
 import {
   hasTauriRuntime,
   invokeWithBrowserFallback,
+  readSystemFileClipboard as readNativeSystemFileClipboard,
+  setSystemFileClipboard as setNativeSystemFileClipboard,
+  startSystemFileDrag as startNativeSystemFileDrag,
+  showNativeBackgroundContextMenu as openNativeBackgroundContextMenu,
   showNativeContextMenu as openNativeContextMenu
 } from "./workspaceIpc";
 import {
+  migrateLegacyWorkspaceSession,
   readPersistedSession,
   writeWorkspaceSession
 } from "./workspaceSessionStore";
@@ -32,12 +38,10 @@ import {
   deleteWorkspaceEntries,
   listWorkspaceOperationHistory,
   listWorkspaceOperationTasks,
-  listenWorkspaceOperationConflicts,
   listenWorkspaceOperationHistory,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
   renameWorkspaceEntry,
-  resolveWorkspaceOperationConflict,
   undoLatestWorkspaceOperation,
   undoWorkspaceOperation
 } from "./workspaceOperationsGateway";
@@ -57,8 +61,13 @@ import {
   saveWorkspaceSettingsModel,
   saveWorkspaceShortcuts,
   saveWorkspaceTheme,
+  getWorkspaceEntryComment,
+  saveWorkspaceEntryComment,
+  removeWorkspaceEntryComment,
+  markWorkspaceEntryMetadataDeleted,
   reorderWorkspaceNavigationItems,
   listenWorkspaceSettingsChanged,
+  listenWorkspaceEntryMetadataChanged,
   testWorkspaceRemoteProfile,
   getWorkspaceRemoteHostKey,
   trustWorkspaceRemoteHostKey,
@@ -69,12 +78,17 @@ import {
   resolveWorkspaceNavigationTargets
 } from "./workspaceNavigationGateway";
 import {
+  listenWorkspaceFsChanges,
+  setWorkspaceWatchRoots
+} from "./workspaceLiveRefreshGateway";
+import {
   mapWorkspaceBootstrap
 } from "./workspaceMappers";
+import {
+  getWorkspaceItemProperties
+} from "./workspacePropertiesGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
-  OperationConflictRequest,
-  OperationConflictResolution,
   OperationHistoryEventEnvelope,
   OperationHistoryListSnapshot,
   OperationIntent,
@@ -88,21 +102,31 @@ import type {
 import type {
   DirectoryNode,
   DirectorySnapshot,
+  GitFileStatus,
   LayoutRatios,
   NavigationItem,
   NavigationItemUpsertRequest,
+  NativeBackgroundContextMenuOptions,
+  NativeBackgroundContextMenuResult,
+  NativeSelectionContextMenuResult,
+  NativeSelectionContextMenuShortcuts,
   NavigationTargetInfo,
   PanelLayoutMode,
   RemoteConnectionProfile,
   SearchProgressState,
   SettingsModel,
+  SystemFileClipboard,
+  WorkspaceFsChangedEvent,
+  WorkspaceWatchRootsRequest,
   WorkspaceBootstrap,
-  WorkspaceState
+  WorkspaceState,
+  ItemProperties
 } from "./types";
 
 export interface WorkspaceGateway {
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
+  listDriveRoots(): Promise<import("../../app/types").DriveRoot[]>;
   loadTreeChildren(path: string): Promise<DirectoryNode[]>;
   search(
     query: WorkspaceState["search"]["query"],
@@ -110,13 +134,19 @@ export interface WorkspaceGateway {
     options?: { searchId?: string; onProgress?: (progress: SearchProgressState) => void }
   ): Promise<WorkspaceState["search"]["results"]>;
   cancelSearch(searchId: string): Promise<void>;
+  getItemProperties(requestId: string, path: string, includeDirectorySize?: boolean): Promise<ItemProperties>;
+  getGitStatus(directory: string): Promise<{ statuses: Record<string, GitFileStatus>; isGitRepo: boolean }>;
   saveSession(state: WorkspaceState): Promise<void>;
-  saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios): Promise<void>;
+  saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios, treeVisible: boolean): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
   saveColorRules(colorRules: SettingsModel["colorRules"]): Promise<void>;
   saveDetailsRowHeight(value: number): Promise<void>;
   saveTheme(theme: SettingsModel["theme"]): Promise<void>;
   saveSettingsModel(model: SettingsModel): Promise<void>;
+  getEntryComment(path: string): Promise<string | null>;
+  saveEntryComment(path: string, comment: string): Promise<string | null>;
+  removeEntryComment(path: string): Promise<void>;
+  markEntryMetadataDeleted(paths: string[]): Promise<void>;
   saveBookmark(path: string, label: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
   deleteBookmark(id: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
   saveHotlist(path: string, label: string): Promise<Pick<WorkspaceState, "bookmarks" | "hotlist">>;
@@ -135,9 +165,11 @@ export interface WorkspaceGateway {
   listOperationTasks(): Promise<OperationTaskListSnapshot>;
   listOperationHistory(): Promise<OperationHistoryListSnapshot>;
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
-  listenOperationConflicts(handler: (event: OperationConflictRequest) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
+  listenEntryMetadataChanged(handler: (paths: string[]) => void): Promise<() => void>;
+  setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
+  listenFileSystemChanges(handler: (event: WorkspaceFsChangedEvent) => void): Promise<() => void>;
   copyEntries(
     paths: string[],
     destination: string,
@@ -168,10 +200,18 @@ export interface WorkspaceGateway {
     options?: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">>
   ): Promise<OperationTaskSnapshot | void>;
   cancelOperation(taskId: string): Promise<OperationTaskSnapshot>;
-  resolveOperationConflict(resolution: OperationConflictResolution): Promise<OperationTaskSnapshot>;
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
-  showNativeContextMenu(paths: string[], x: number, y: number): Promise<boolean>;
+  setSystemFileClipboard(paths: string[], mode: SystemFileClipboard["mode"]): Promise<void>;
+  readSystemFileClipboard(): Promise<SystemFileClipboard | null>;
+  startSystemFileDrag(paths: string[]): Promise<SystemFileClipboard["mode"] | null>;
+  showNativeContextMenu(paths: string[], x: number, y: number, shortcuts: NativeSelectionContextMenuShortcuts): Promise<NativeSelectionContextMenuResult>;
+  showNativeBackgroundContextMenu(
+    directoryPath: string,
+    x: number,
+    y: number,
+    options: NativeBackgroundContextMenuOptions
+  ): Promise<NativeBackgroundContextMenuResult>;
 }
 
 export {
@@ -190,6 +230,9 @@ export {
 } from "./workspaceMappers";
 
 export function createWorkspaceGateway(): WorkspaceGateway {
+  // 防护：维护当前 watch roots 状态，防止频繁调用后端
+  let currentWatchRootsKey = "";
+
   return {
     async loadBootstrap() {
       if (!hasTauriRuntime()) {
@@ -206,21 +249,23 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
       let bootstrap = mapWorkspaceBootstrap(backendBootstrap);
       const remoteProfiles = backendBootstrap.settings.remoteProfiles;
-      const seedPaths = [
-        backendBootstrap.initialPath,
-        backendBootstrap.settings.bookmarks[0]?.path,
-        backendBootstrap.settings.hotlist[0]?.path,
-        remoteProfiles[0] ? createRemoteRootUri(remoteProfiles[0]) : undefined,
-        backendBootstrap.drives[1]?.path
-      ].filter((value): value is string => Boolean(value));
+
+      // 性能优化：启动时只加载 initialPath，避免被慢速路径（远程连接、网络驱动器）阻塞
+      // 其他路径会在用户切换标签页或从会话恢复时按需加载
+      const seedPaths = [backendBootstrap.initialPath].filter((value): value is string => Boolean(value));
 
       bootstrap = await hydratePanels(bootstrap, seedPaths, remoteProfiles);
+      migrateLegacyWorkspaceSession();
       return mergeBootstrapWithSession(bootstrap, readPersistedSession(), remoteProfiles);
     },
 
     async resolveDirectory(path: string) {
       const profiles = await listRemoteProfilesRequired();
       return resolveWorkspaceDirectory(path, profiles);
+    },
+
+    async listDriveRoots() {
+      return listWorkspaceDriveRoots();
     },
 
     async loadTreeChildren(path: string) {
@@ -248,12 +293,36 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       await cancelWorkspaceSearch(searchId);
     },
 
+    async getItemProperties(requestId, path, includeDirectorySize = false) {
+      const profiles = await listRemoteProfilesRequired();
+      return getWorkspaceItemProperties(
+        {
+          requestId,
+          path,
+          includeDirectorySize
+        },
+        profiles
+      );
+    },
+
+async getGitStatus(directory: string) {
+try {
+return await invokeWithBrowserFallback<{ statuses: Record<string, GitFileStatus>; isGitRepo: boolean }>(
+"get_git_status",
+{ directory },
+() => ({ statuses: {}, isGitRepo: false })
+);
+} catch {
+return { statuses: {}, isGitRepo: false };
+}
+},
+
     async saveSession(state: WorkspaceState) {
       writeWorkspaceSession(state);
     },
 
-    async saveLayout(layoutMode, layoutRatios) {
-      await saveWorkspaceLayout(layoutMode, layoutRatios);
+    async saveLayout(layoutMode, layoutRatios, treeVisible) {
+      await saveWorkspaceLayout(layoutMode, layoutRatios, treeVisible);
     },
 
     async saveShortcuts(shortcuts) {
@@ -274,6 +343,22 @@ export function createWorkspaceGateway(): WorkspaceGateway {
 
     async saveSettingsModel(model) {
       await saveWorkspaceSettingsModel(model);
+    },
+
+    async getEntryComment(path) {
+      return getWorkspaceEntryComment(path);
+    },
+
+    async saveEntryComment(path, comment) {
+      return saveWorkspaceEntryComment(path, comment);
+    },
+
+    async removeEntryComment(path) {
+      await removeWorkspaceEntryComment(path);
+    },
+
+    async markEntryMetadataDeleted(paths) {
+      await markWorkspaceEntryMetadataDeleted(paths);
     },
 
     async saveBookmark(path, label) {
@@ -348,16 +433,31 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return listenWorkspaceOperationTasks(handler);
     },
 
-    async listenOperationConflicts(handler) {
-      return listenWorkspaceOperationConflicts(handler);
-    },
-
     async listenOperationHistory(handler) {
       return listenWorkspaceOperationHistory(handler);
     },
 
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
+    },
+    async listenEntryMetadataChanged(handler) {
+      return listenWorkspaceEntryMetadataChanged(handler);
+    },
+    async setWatchRoots(request) {
+      // 防护：只在 roots 真正变化时才调用后端
+      const key = JSON.stringify({
+        dir: request.directoryPaths.sort(),
+        nav: request.navigationParentPaths.sort(),
+        git: (request.gitSentinelPaths ?? []).sort()
+      });
+      if (currentWatchRootsKey === key) {
+        return;
+      }
+      currentWatchRootsKey = key;
+      return setWorkspaceWatchRoots(request);
+    },
+    async listenFileSystemChanges(handler) {
+      return listenWorkspaceFsChanges(handler);
     },
 
     async copyEntries(paths, destination, options) {
@@ -388,10 +488,6 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return cancelWorkspaceOperation(taskId);
     },
 
-    async resolveOperationConflict(resolution) {
-      return resolveWorkspaceOperationConflict(resolution);
-    },
-
     async undoLatestOperation(requestId) {
       return undoLatestWorkspaceOperation(requestId);
     },
@@ -400,8 +496,24 @@ export function createWorkspaceGateway(): WorkspaceGateway {
       return undoWorkspaceOperation(recordId, requestId);
     },
 
-    async showNativeContextMenu(paths, x, y) {
-      return openNativeContextMenu(paths, x, y);
+    async setSystemFileClipboard(paths, mode) {
+      await setNativeSystemFileClipboard(paths, mode);
+    },
+
+    async readSystemFileClipboard() {
+      return readNativeSystemFileClipboard();
+    },
+
+    async startSystemFileDrag(paths) {
+      return startNativeSystemFileDrag(paths);
+    },
+
+    async showNativeContextMenu(paths, x, y, shortcuts) {
+      return openNativeContextMenu(paths, x, y, shortcuts);
+    },
+
+    async showNativeBackgroundContextMenu(directoryPath, x, y, options) {
+      return openNativeBackgroundContextMenu(directoryPath, x, y, options);
     }
   };
 }

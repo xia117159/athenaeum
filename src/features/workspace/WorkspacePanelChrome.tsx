@@ -22,10 +22,35 @@ type TabDropTarget = {
   targetIndex: number;
 };
 
+let sharedTabDropIndicator: TabDropTarget | null = null;
+const tabDropIndicatorListeners = new Set<(target: TabDropTarget | null) => void>();
+
+function publishTabDropIndicator(target: TabDropTarget | null) {
+  sharedTabDropIndicator = target;
+  tabDropIndicatorListeners.forEach((listener) => listener(target));
+}
+
+function subscribeTabDropIndicator(listener: (target: TabDropTarget | null) => void) {
+  tabDropIndicatorListeners.add(listener);
+  listener(sharedTabDropIndicator);
+  return () => {
+    tabDropIndicatorListeners.delete(listener);
+  };
+}
+
 type DropOperation = "copy" | "move";
 
 type BreadcrumbRenderItem = BreadcrumbItem & {
   future?: boolean;
+};
+
+// 拖动跟随元素的状态
+type DragFollower = {
+  visible: boolean;
+  x: number;
+  y: number;
+  tabTitle: string;
+  tabIcon: "lock" | "none";
 };
 
 function isRemotePath(path: string) {
@@ -73,6 +98,10 @@ function getDeepestForwardPath(currentPath: string, history: string[] | undefine
       ? normalizedHistoryPath
       : deepestPath;
   }, null);
+}
+
+function isExternalFileDrag(dataTransfer: DataTransfer | null) {
+  return Array.from(dataTransfer?.types ?? []).includes("Files");
 }
 
 function getForwardBreadcrumbs(breadcrumbs: BreadcrumbItem[], history: string[] | undefined, historyIndex: number | undefined) {
@@ -188,7 +217,17 @@ export function WorkspacePanelChrome({
   const activePointerDragRef = useRef<ActiveTabPointerDrag | null>(null);
   const cleanupPointerDragRef = useRef<(() => void) | null>(null);
   const suppressNextClickTabIdRef = useRef<string | null>(null);
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
   const [entryDropTargetTabId, setEntryDropTargetTabId] = useState<string | null>(null);
+  const [dragFollower, setDragFollower] = useState<DragFollower>({
+    visible: false,
+    x: 0,
+    y: 0,
+    tabTitle: "",
+    tabIcon: "none"
+  });
+  const [dropIndicator, setDropIndicator] = useState<TabDropTarget | null>(sharedTabDropIndicator);
+
   const breadcrumbItems: BreadcrumbRenderItem[] = [
     ...breadcrumbs,
     ...getForwardBreadcrumbs(breadcrumbs, history, historyIndex)
@@ -202,6 +241,8 @@ export function WorkspacePanelChrome({
     []
   );
 
+  useEffect(() => subscribeTabDropIndicator(setDropIndicator), []);
+
   const startTabPointerDrag = (event: ReactPointerEvent<HTMLButtonElement>, tabId: string) => {
     if (event.button !== 0 || tabs.length <= 1) {
       return;
@@ -211,6 +252,11 @@ export function WorkspacePanelChrome({
     }
 
     cleanupPointerDragRef.current?.();
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) {
+      return;
+    }
+
     const pointerDrag: ActiveTabPointerDrag = {
       sourcePanelId: panelId,
       tabId,
@@ -226,6 +272,9 @@ export function WorkspacePanelChrome({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerCancel);
       cleanupPointerDragRef.current = null;
+      // 清除拖动跟随效果和插入指示器
+      setDragFollower({ visible: false, x: 0, y: 0, tabTitle: "", tabIcon: "none" });
+      publishTabDropIndicator(null);
     };
 
     const finishDrag = (finishEvent: PointerEvent) => {
@@ -268,8 +317,33 @@ export function WorkspacePanelChrome({
         return;
       }
 
-      activeDrag.dragging = true;
+      if (!activeDrag.dragging) {
+        activeDrag.dragging = true;
+        // 显示拖动跟随效果（使用非空断言，因为在外层已验证 tab 存在）
+        setDragFollower({
+          visible: true,
+          x: moveEvent.clientX,
+          y: moveEvent.clientY,
+          tabTitle: tab!.title,
+          tabIcon: tab!.locked ? "lock" : "none"
+        });
+      }
+
       moveEvent.preventDefault();
+
+      // 更新跟随元素位置
+      setDragFollower((prev) => ({
+        ...prev,
+        x: moveEvent.clientX,
+        y: moveEvent.clientY
+      }));
+
+      // 更新插入指示器
+      const target = getTabPointerDropTarget(
+        document.elementFromPoint(moveEvent.clientX, moveEvent.clientY),
+        moveEvent.clientX
+      );
+      publishTabDropIndicator(target);
     }
 
     function handlePointerUp(upEvent: PointerEvent) {
@@ -328,6 +402,16 @@ export function WorkspacePanelChrome({
       return false;
     }
 
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setEntryDropTargetTabId(tab.id);
+      return true;
+    }
+
     const payload = readEntryDragPayload(event.dataTransfer, panelId, tab.id);
     if (!payload && !hasEntryDragPayload(event.dataTransfer)) {
       return false;
@@ -346,6 +430,13 @@ export function WorkspacePanelChrome({
   const handleEntryDropOnTab = (event: ReactDragEvent<HTMLElement>, tab: TabState) => {
     if (!canDropEntriesOnTab(tab)) {
       return false;
+    }
+
+    if (isExternalFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearEntryDropTarget(tab.id);
+      return true;
     }
 
     const payload = readEntryDragPayload(event.dataTransfer, panelId, tab.id);
@@ -387,7 +478,10 @@ export function WorkspacePanelChrome({
     const tab = getEntryDropTabFromEvent(event);
     if (tab) {
       handleEntryDragOverTab(event, tab);
+      return;
     }
+
+    clearEntryDropTarget();
   };
 
   const handleStripEntryDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -402,7 +496,10 @@ export function WorkspacePanelChrome({
     const tab = getEntryDropTabFromEvent(event);
     if (tab) {
       handleEntryDropOnTab(event, tab);
+      return;
     }
+
+    clearEntryDropTarget();
   };
 
   return (
@@ -416,7 +513,7 @@ export function WorkspacePanelChrome({
         onDragLeave={handleStripEntryDragLeave}
         onDrop={handleStripEntryDrop}
       >
-        <div className="tab-strip__tabs">
+        <div ref={tabStripRef} className="tab-strip__tabs">
           {tabs.map((tab, index) => (
             <button
               key={tab.id}
@@ -451,7 +548,7 @@ export function WorkspacePanelChrome({
             >
               {tab.locked ? <Lock className="tab-strip__lock" size={10} strokeWidth={2} aria-hidden="true" /> : null}
               <span className="tab-strip__title">{tab.title}</span>
-              {tab.id === activeTabId ? (
+              {tab.id === activeTabId && !tab.locked ? (
                 <span
                   className="tab-strip__close"
                   role="button"
@@ -465,7 +562,7 @@ export function WorkspacePanelChrome({
                     onCloseTab(tab.id);
                   }}
                 >
-                  <X className="tab-strip__close-icon" size={10} strokeWidth={2} aria-hidden="true" />
+                  <X className="tab-strip__close-icon" size={8} strokeWidth={2} aria-hidden="true" />
                 </span>
               ) : null}
             </button>
@@ -483,6 +580,59 @@ export function WorkspacePanelChrome({
             <Plus className="tab-strip__add-icon" size={10} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
+
+        {/* 插入指示器 - 使用绝对定位，动态计算位置 */}
+        {dropIndicator && dropIndicator.targetPanelId === panelId && (
+          <div
+            className="tab-strip__drop-indicator"
+            style={{
+              left: (() => {
+                const targetIndex = dropIndicator.targetIndex;
+                const tabElement = tabStripRef.current?.querySelector(
+                  `[data-tab-index="${targetIndex}"]`
+                ) as HTMLElement;
+
+                if (tabElement) {
+                  const stripRect = tabStripRef.current?.getBoundingClientRect();
+                  const tabRect = tabElement.getBoundingClientRect();
+                  return `${tabRect.left - (stripRect?.left || 0)}px`;
+                }
+
+                // 如果找不到目标 Tab（末尾插入），使用最后一个 Tab 的右边缘
+                if (targetIndex >= tabs.length && tabs.length > 0) {
+                  const lastTabElement = tabStripRef.current?.querySelector(
+                    `[data-tab-index="${tabs.length - 1}"]`
+                  ) as HTMLElement;
+                  if (lastTabElement) {
+                    const stripRect = tabStripRef.current?.getBoundingClientRect();
+                    const lastTabRect = lastTabElement.getBoundingClientRect();
+                    return `${lastTabRect.right - (stripRect?.left || 0)}px`;
+                  }
+                }
+
+                return '0px';
+              })()
+            }}
+          />
+        )}
+
+        {/* 拖动跟随元素 */}
+        {dragFollower.visible && (
+          <div
+            className="tab-drag-follower"
+            style={{
+              left: dragFollower.x,
+              top: dragFollower.y
+            }}
+          >
+            <div className="tab-drag-follower__content">
+              {dragFollower.tabIcon === "lock" && (
+                <Lock className="tab-drag-follower__lock" size={10} strokeWidth={2} aria-hidden="true" />
+              )}
+              <span className="tab-drag-follower__title">{dragFollower.tabTitle}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="panel-breadcrumbs" aria-label="current folder path">

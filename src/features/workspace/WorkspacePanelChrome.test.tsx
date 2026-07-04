@@ -5,7 +5,7 @@ import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { cloneColumns } from "./workspaceMappers";
 import type { BreadcrumbItem, TabState } from "./types";
 
-const ENTRY_DRAG_MIME = "application/x-simplefilemanager-entry-list";
+const ENTRY_DRAG_MIME = "application/x-athenaeum-entry-list";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -103,10 +103,24 @@ function createDataTransfer() {
   };
 }
 
+function createExternalFileDataTransfer() {
+  return {
+    dropEffect: "none",
+    effectAllowed: "copy",
+    types: ["Files"],
+    setData() {
+      return undefined;
+    },
+    getData() {
+      return "";
+    }
+  };
+}
+
 function dispatchDragEvent(
   target: Element,
   type: string,
-  dataTransfer: ReturnType<typeof createDataTransfer>,
+  dataTransfer: ReturnType<typeof createDataTransfer> | ReturnType<typeof createExternalFileDataTransfer>,
   modifiers: { ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean; metaKey?: boolean } = {}
 ): Event {
   const event = new Event(type, {
@@ -117,7 +131,7 @@ function dispatchDragEvent(
     altKey: boolean;
     metaKey: boolean;
     shiftKey: boolean;
-    dataTransfer: ReturnType<typeof createDataTransfer>;
+    dataTransfer: ReturnType<typeof createDataTransfer> | ReturnType<typeof createExternalFileDataTransfer>;
   };
 
   Object.defineProperties(event, {
@@ -479,6 +493,79 @@ export const completion = (async () => {
       ]);
     });
 
+    await assertTest("WorkspacePanelChrome shows the tab drop indicator in the target panel during cross-panel drags", async () => {
+      movedTabs.length = 0;
+      const targetTabs = [
+        createTab("panel-2-tab-1", "B", "F:\\B"),
+        createTab("panel-2-tab-2", "C", "F:\\C")
+      ];
+
+      await act(async () => {
+        root.render(
+          React.createElement(
+            "div",
+            null,
+            React.createElement(WorkspacePanelChrome, {
+              panelId: "panel-1",
+              tabs,
+              activeTabId: "panel-1-tab-2",
+              breadcrumbs,
+              onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+              onCloseTab: (tabId: string) => closedTabs.push(tabId),
+              onMoveTab: recordMovedTab(movedTabs),
+              onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+              onOpenNewTab: () => {
+                openCount += 1;
+              },
+              onNavigateToPath: (path: string) => navigatedPaths.push(path)
+            }),
+            React.createElement(WorkspacePanelChrome, {
+              panelId: "panel-2",
+              tabs: targetTabs,
+              activeTabId: "panel-2-tab-1",
+              breadcrumbs: targetTabs[0].snapshot.breadcrumbs,
+              onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+              onCloseTab: (tabId: string) => closedTabs.push(tabId),
+              onMoveTab: recordMovedTab(movedTabs),
+              onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+              onOpenNewTab: () => {
+                openCount += 1;
+              },
+              onNavigateToPath: (path: string) => navigatedPaths.push(path)
+            })
+          )
+        );
+        await flushEffects();
+      });
+
+      const sourceTab = container.querySelector(".tab-strip__tab");
+      const strips = container.querySelectorAll(".tab-strip");
+      const sourceStrip = strips[0];
+      const targetStrip = strips[1];
+      assert.ok(sourceTab);
+      assert.ok(sourceStrip);
+      assert.ok(targetStrip);
+
+      const restoreElementFromPoint = stubElementFromPoint(targetStrip);
+      try {
+        await act(async () => {
+          sourceTab.dispatchEvent(createPointerEvent("pointerdown", { clientX: 10, clientY: 8 }));
+          window.dispatchEvent(createPointerEvent("pointermove", { clientX: 520, clientY: 8 }));
+          await flushEffects();
+        });
+
+        assert.equal(sourceStrip.querySelector(".tab-strip__drop-indicator"), null);
+        assert.ok(targetStrip.querySelector(".tab-strip__drop-indicator"));
+
+        await act(async () => {
+          window.dispatchEvent(createPointerEvent("pointerup", { clientX: 520, clientY: 8, buttons: 0 }));
+          await flushEffects();
+        });
+      } finally {
+        restoreElementFromPoint();
+      }
+    });
+
     await assertTest("WorkspacePanelChrome copies dragged entries onto directory tabs and uses the configured move modifier", async () => {
       droppedEntries.length = 0;
 
@@ -586,6 +673,90 @@ export const completion = (async () => {
       assert.equal(tabButtons[0].getAttribute("data-entry-drop-path"), "C:\\Workspace");
       assert.equal(tabButtons[1].hasAttribute("data-entry-drop-kind"), false);
       assert.equal(tabButtons[1].hasAttribute("data-entry-drop-path"), false);
+    });
+
+    await assertTest("WorkspacePanelChrome accepts external file drags over ready directory tabs", async () => {
+      droppedEntries.length = 0;
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspacePanelChrome, {
+            panelId: "panel-1",
+            tabs,
+            activeTabId: "panel-1-tab-1",
+            breadcrumbs,
+            onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+            onCloseTab: (tabId: string) => closedTabs.push(tabId),
+            onMoveTab: recordMovedTab(movedTabs),
+            onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+            onOpenNewTab: () => {
+              openCount += 1;
+            },
+            onNavigateToPath: (path: string) => navigatedPaths.push(path),
+            onDropEntries: (paths: string[], destination: string, operation: "copy" | "move") =>
+              droppedEntries.push({ paths, destination, operation })
+          })
+        );
+        await flushEffects();
+      });
+
+      const targetTab = Array.from(container.querySelectorAll(".tab-strip__tab"))[1];
+      assert.ok(targetTab);
+      const transfer = createExternalFileDataTransfer();
+      let overEvent: Event | undefined;
+      await act(async () => {
+        overEvent = dispatchDragEvent(targetTab, "dragover", transfer);
+        dispatchDragEvent(targetTab, "drop", transfer);
+        await flushEffects();
+      });
+
+      assert.equal(overEvent?.defaultPrevented, true);
+      assert.equal(transfer.dropEffect, "copy");
+      assert.deepEqual(droppedEntries, []);
+    });
+
+    await assertTest("WorkspacePanelChrome does not advertise external drops on blank tab strip space", async () => {
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspacePanelChrome, {
+            panelId: "panel-1",
+            tabs,
+            activeTabId: "panel-1-tab-1",
+            breadcrumbs,
+            onActivateTab: (tabId: string) => activatedTabs.push(tabId),
+            onCloseTab: (tabId: string) => closedTabs.push(tabId),
+            onMoveTab: recordMovedTab(movedTabs),
+            onOpenTabContextMenu: (tabId: string, x: number, y: number) => tabMenus.push({ tabId, x, y }),
+            onOpenNewTab: () => {
+              openCount += 1;
+            },
+            onNavigateToPath: (path: string) => navigatedPaths.push(path),
+            onDropEntries: (paths: string[], destination: string, operation: "copy" | "move") =>
+              droppedEntries.push({ paths, destination, operation })
+          })
+        );
+        await flushEffects();
+      });
+
+      const tabStrip = container.querySelector(".tab-strip");
+      assert.ok(tabStrip);
+      const restoreElementFromPoint = stubElementFromPoint(tabStrip);
+      try {
+        const transfer = createExternalFileDataTransfer();
+        let overEvent: Event | undefined;
+        let dropEvent: Event | undefined;
+        await act(async () => {
+          overEvent = dispatchDragEvent(tabStrip, "dragover", transfer);
+          dropEvent = dispatchDragEvent(tabStrip, "drop", transfer);
+          await flushEffects();
+        });
+
+        assert.equal(overEvent?.defaultPrevented, false);
+        assert.equal(dropEvent?.defaultPrevented, false);
+        assert.equal(transfer.dropEffect, "none");
+      } finally {
+        restoreElementFromPoint();
+      }
     });
 
     await assertTest("WorkspacePanelChrome resolves tab drops from the strip hit-test target", async () => {

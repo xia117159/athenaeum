@@ -1,12 +1,19 @@
-export const WORKSPACE_SEARCH_HISTORY_STORAGE_KEY = "SimpleFileManager.workspace.searchHistory.v1";
-export const WORKSPACE_SEARCH_NAME_HISTORY_STORAGE_KEY = "SimpleFileManager.workspace.searchNameHistory.v1";
+export const WORKSPACE_SEARCH_HISTORY_STORAGE_KEY = "Athenaeum.workspace.searchHistory.v1";
+export const WORKSPACE_SEARCH_NAME_HISTORY_STORAGE_KEY = "Athenaeum.workspace.searchNameHistory.v1";
 export const MAX_WORKSPACE_SEARCH_HISTORY_ITEMS = 20;
 
+const LEGACY_SEARCH_HISTORY_KEY = "SimpleFileManager.workspace.searchHistory.v1";
+const LEGACY_SEARCH_NAME_HISTORY_KEY = "SimpleFileManager.workspace.searchNameHistory.v1";
+
 export type WorkspaceSearchHistoryKind = "name" | "content";
-type WorkspaceStorage = Pick<Storage, "getItem" | "setItem">;
+type WorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function getStorageKey(kind: WorkspaceSearchHistoryKind) {
   return kind === "name" ? WORKSPACE_SEARCH_NAME_HISTORY_STORAGE_KEY : WORKSPACE_SEARCH_HISTORY_STORAGE_KEY;
+}
+
+function getLegacyStorageKey(kind: WorkspaceSearchHistoryKind) {
+  return kind === "name" ? LEGACY_SEARCH_NAME_HISTORY_KEY : LEGACY_SEARCH_HISTORY_KEY;
 }
 
 function getDefaultStorage(): WorkspaceStorage | undefined {
@@ -39,6 +46,27 @@ export function normalizeSearchHistory(items: string[]) {
   }
 
   return history;
+}
+
+export function migrateLegacySearchHistory(storage: WorkspaceStorage | null | undefined = getDefaultStorage()) {
+  if (!storage) {
+    return;
+  }
+
+  try {
+    for (const kind of ["content", "name"] as const) {
+      const legacyKey = getLegacyStorageKey(kind);
+      const newKey = getStorageKey(kind);
+      const legacyValue = storage.getItem(legacyKey);
+
+      if (legacyValue && !storage.getItem(newKey)) {
+        storage.setItem(newKey, legacyValue);
+        storage.removeItem(legacyKey);
+      }
+    }
+  } catch {
+    // Migration is best-effort
+  }
 }
 
 export function readSearchHistory(

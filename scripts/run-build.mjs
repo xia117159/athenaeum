@@ -12,6 +12,8 @@ const srcDir = path.join(rootDir, "src");
 const tempDir = path.join(rootDir, ".build-ts");
 const distDir = path.join(rootDir, "dist");
 const assetsDir = path.join(distDir, "assets");
+const staticAssetNames = ["128x128.png"];
+const localCssImportPattern = /@import\s+(?:url\()?["']([^"']+)["']\)?\s*;/g;
 
 const formatHost = {
   getCanonicalFileName: (fileName) => fileName,
@@ -66,10 +68,40 @@ function createCssPlugin(collectedCss) {
   };
 }
 
+function isLocalCssImport(importPath) {
+  return importPath.endsWith(".css") && !/^(?:[a-z]+:)?\/\//i.test(importPath);
+}
+
+export async function readCssWithImports(filePath, seen = new Set()) {
+  const resolvedPath = path.resolve(filePath);
+  if (seen.has(resolvedPath)) {
+    return "";
+  }
+  seen.add(resolvedPath);
+
+  const css = await fs.readFile(resolvedPath, "utf8");
+  const parts = [];
+  let cursor = 0;
+
+  for (const match of css.matchAll(localCssImportPattern)) {
+    const importPath = match[1];
+    parts.push(css.slice(cursor, match.index));
+    if (isLocalCssImport(importPath)) {
+      parts.push(await readCssWithImports(path.resolve(path.dirname(resolvedPath), importPath), seen));
+    } else {
+      parts.push(match[0]);
+    }
+    cursor = match.index + match[0].length;
+  }
+
+  parts.push(css.slice(cursor));
+  return parts.join("");
+}
+
 async function writeCssBundle(collectedCss) {
   const cssParts = [];
   for (const filePath of [...collectedCss].sort()) {
-    cssParts.push(await fs.readFile(filePath, "utf8"));
+    cssParts.push(await readCssWithImports(filePath));
   }
   await fs.writeFile(path.join(assetsDir, "app.css"), cssParts.join("\n\n"));
 }
@@ -80,7 +112,7 @@ async function writeHtml() {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WenjianGuanliqi</title>
+    <title>Athenaeum</title>
     <link rel="stylesheet" href="./assets/app.css" />
   </head>
   <body>
@@ -90,6 +122,17 @@ async function writeHtml() {
 </html>
 `;
   await fs.writeFile(path.join(distDir, "index.html"), html);
+}
+
+export async function copyStaticAssets({
+  sourceDir = path.join(rootDir, "src-tauri", "icons"),
+  outputDir = distDir
+} = {}) {
+  await Promise.all(
+    staticAssetNames.map((assetName) =>
+      fs.copyFile(path.join(sourceDir, assetName), path.join(outputDir, assetName))
+    )
+  );
 }
 
 export default async function runBuild() {
@@ -121,6 +164,7 @@ export default async function runBuild() {
     format: "esm"
   });
   await bundle.close();
+  await copyStaticAssets();
   await writeCssBundle(collectedCss);
   await writeHtml();
 }

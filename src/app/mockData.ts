@@ -104,11 +104,17 @@ function createEntry(
     size: kind === "file" ? Math.round(Math.random() * 1024 * 1024) : null,
     modifiedAt: now,
     isHidden: name.startsWith("."),
+    isSystem: false,
+    isProtectedOperatingSystem: false,
     isReadOnly: false,
     isSymlink: false,
     location: { kind: "local", path },
     decoration
   };
+}
+
+function createTreeNode(path: string, name: string, hasChildren: boolean): TreeNode {
+  return { path, name, hasChildren, isHidden: false, isSystem: false, isProtectedOperatingSystem: false };
 }
 
 const listings = new Map<string, DirectoryListing>([
@@ -178,29 +184,29 @@ const listings = new Map<string, DirectoryListing>([
 ]);
 
 const tree = new Map<string, TreeNode[]>([
-  ["C:\\", [{ path: "C:\\Users", name: "Users", hasChildren: true }]],
+  ["C:\\", [createTreeNode("C:\\Users", "Users", true)]],
   [
     "C:\\Users",
     [
-      { path: "C:\\Users\\Administrator", name: "Administrator", hasChildren: true },
-      { path: "C:\\Users\\Public", name: "Public", hasChildren: true }
+      createTreeNode("C:\\Users\\Administrator", "Administrator", true),
+      createTreeNode("C:\\Users\\Public", "Public", true)
     ]
   ],
   [
     "C:\\Users\\Administrator",
     [
-      { path: "C:\\Users\\Administrator\\Desktop", name: "Desktop", hasChildren: false },
-      { path: "C:\\Users\\Administrator\\Documents", name: "Documents", hasChildren: false },
-      { path: "C:\\Users\\Administrator\\Downloads", name: "Downloads", hasChildren: false }
+      createTreeNode("C:\\Users\\Administrator\\Desktop", "Desktop", false),
+      createTreeNode("C:\\Users\\Administrator\\Documents", "Documents", false),
+      createTreeNode("C:\\Users\\Administrator\\Downloads", "Downloads", false)
     ]
   ],
   [
     "D:\\",
-    [{ path: "D:\\Projects", name: "Projects", hasChildren: true }]
+    [createTreeNode("D:\\Projects", "Projects", true)]
   ],
   [
     "D:\\Projects",
-    [{ path: "D:\\Projects\\SimpleFileManager", name: "SimpleFileManager", hasChildren: true }]
+    [createTreeNode("D:\\Projects\\SimpleFileManager", "SimpleFileManager", true)]
   ]
 ]);
 

@@ -21,7 +21,7 @@ import {
   type WorkspaceOperationCommand
 } from "./remoteUri";
 import { listRemoteProfilesRequired } from "./workspaceDirectoryGateway";
-import { hasTauriRuntime, invokeRequired, type WorkspaceInvoke } from "./workspaceIpc";
+import { hasTauriRuntime, invokeRequired, performSystemFileOperation, type WorkspaceInvoke } from "./workspaceIpc";
 
 type BackendOperationResult = {
   affectedPaths: string[];
@@ -92,6 +92,31 @@ export function createPathRef(path: string, profiles: BackendRemoteProfile[]): O
     kind: "local",
     path
   };
+}
+
+function allPathRefsAreLocal(paths: OperationPathRef[]) {
+  return paths.every((path) => path.kind === "local");
+}
+
+function anyPathRefIsRemote(paths: OperationPathRef[]) {
+  return paths.some((path) => path.kind === "remote");
+}
+
+async function maybePerformSystemCopyOrMove(
+  paths: string[],
+  destination: string,
+  operation: "copy" | "move",
+  profiles: BackendRemoteProfile[],
+  runtime: WorkspaceOperationRuntime
+) {
+  const sources = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (sources.length === 0 || destinationRef.kind !== "local" || !allPathRefsAreLocal(sources)) {
+    return false;
+  }
+
+  await performSystemFileOperation(paths, destination, operation, runtime.invoke, runtime.runtimeHost);
+  return true;
 }
 
 function createBrowserTaskSnapshot(intent: OperationIntent): OperationTaskSnapshot {
@@ -252,6 +277,15 @@ export async function copyWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (destinationRef.kind === "remote" || anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planCopyOrMoveEntries("copy", paths, destination, profiles), runtime);
+    return undefined;
+  }
+  if (await maybePerformSystemCopyOrMove(paths, destination, "copy", profiles, runtime)) {
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("copy"),
@@ -277,6 +311,15 @@ export async function moveWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  const destinationRef = createPathRef(destination, profiles);
+  if (destinationRef.kind === "remote" || anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planCopyOrMoveEntries("move", paths, destination, profiles), runtime);
+    return undefined;
+  }
+  if (await maybePerformSystemCopyOrMove(paths, destination, "move", profiles, runtime)) {
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("move"),
@@ -301,6 +344,11 @@ export async function deleteWorkspaceEntries(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const pathRefs = paths.map((path) => createPathRef(path, profiles));
+  if (anyPathRefIsRemote(pathRefs)) {
+    await runWorkspaceOperationCommands(planDeleteEntries(paths, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("delete"),
@@ -321,6 +369,11 @@ export async function renameWorkspaceEntry(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const sourceRef = createPathRef(source, profiles);
+  if (sourceRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planRenameEntry(source, newName, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("rename"),
@@ -342,6 +395,11 @@ export async function createWorkspaceDirectory(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const parentRef = createPathRef(parent, profiles);
+  if (parentRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planCreateDirectory(parent, name, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("create-directory"),
@@ -367,6 +425,11 @@ export async function createWorkspaceFile(
   options: Partial<Pick<OperationIntent, "requestId" | "source" | "panelId" | "tabId">> = {}
 ) {
   const profiles = await listOperationRemoteProfiles(runtime);
+  const parentRef = createPathRef(parent, profiles);
+  if (parentRef.kind === "remote") {
+    await runWorkspaceOperationCommands(planCreateFile(parent, name, profiles), runtime);
+    return undefined;
+  }
   return startWorkspaceOperation(
     {
       requestId: options.requestId ?? createOperationRequestId("create-file"),

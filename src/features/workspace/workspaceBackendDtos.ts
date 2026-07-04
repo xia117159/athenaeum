@@ -12,18 +12,32 @@ import type {
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
   DEFAULT_DETAILS_ROW_HEIGHT,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_COLUMNS,
+  DEFAULT_CONTEXT_MENU_SETTINGS,
   DEFAULT_LAYOUT_RATIOS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS,
   DEFAULT_THEME,
+  normalizeContextMenuDefault,
+  normalizeColumns,
+  normalizeMetadataRetentionHours,
   normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
   normalizeThemeAccentColor
 } from "./workspaceMappers";
+import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
+import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
 
-export function toBackendLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios): BackendUiLayout {
+export function toBackendLayout(
+  layoutMode: PanelLayoutMode,
+  layoutRatios: LayoutRatios,
+  treeVisible = true
+): BackendUiLayout {
   return {
     layoutMode,
     panelProportions: [layoutRatios.primary, 1 - layoutRatios.primary],
     sidebarWidth: Math.round(layoutRatios.tree * 960),
-    showTree: true,
+    showTree: treeVisible,
     showSearch: true
   };
 }
@@ -32,7 +46,7 @@ export function toBackendShortcut(shortcut: SettingsModel["shortcuts"][number]):
   return {
     id: shortcut.id,
     action: shortcut.id,
-    accelerator: shortcut.binding,
+    accelerator: normalizeShortcutBindingForStorage(shortcut.binding),
     scope: shortcut.scope
   };
 }
@@ -55,6 +69,9 @@ export function toBackendColorRule(rule: SettingsModel["colorRules"][number], in
 export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
   return {
     panelFocusAccent: normalizeThemeAccentColor(theme.panelFocusAccent),
+    activeTabBackground: normalizeThemeAccentColor(theme.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+    dropHighlightFill: normalizeThemeAccentColor(theme.dropHighlightFill),
+    dropHighlightBorder: normalizeThemeAccentColor(theme.dropHighlightBorder),
     tabMinWidth: normalizeTabMinWidth(theme.tabMinWidth)
   };
 }
@@ -63,7 +80,14 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
   return {
     shortcuts: model.shortcuts.map(toBackendShortcut),
     colorRules: model.colorRules.map(toBackendColorRule),
+    columns: normalizeColumns(model.columns),
+    navigationColumns: normalizeNavigationColumns(model.navigationColumns),
     detailsRowHeight: model.detailsRowHeight,
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(model.contextMenu?.defaultMenu)
+    },
     theme: toBackendTheme(model.theme)
   };
 }
@@ -119,7 +143,12 @@ export function createBrowserSettingsSnapshot(
     entryTags: [],
     colorRules: [],
     shortcuts: [],
+    columns: DEFAULT_COLUMNS,
+    navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
+    tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
+    metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
+    contextMenu: DEFAULT_CONTEXT_MENU_SETTINGS,
     theme: toBackendTheme(DEFAULT_THEME),
     layout: toBackendLayout("dual", DEFAULT_LAYOUT_RATIOS),
     remoteProfiles: [],

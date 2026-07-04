@@ -1,60 +1,36 @@
-import { type CSSProperties, type FormEvent, useEffect, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Copy,
-  FilePlus,
-  FolderPlus,
-  PanelTopOpen,
-  RefreshCw,
-  Scissors,
-  Search,
-  Trash2,
-  ClipboardPaste,
-  TextCursorInput
-} from "lucide-react";
+import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
-import { OperationConflictDialog, OperationSummaryButton, OperationTaskCenter } from "./OperationTaskCenter";
+import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
 import { WorkspaceTreeBranch } from "./WorkspaceTreeBranch";
 import { openSettingsWindow } from "./settingsWindow";
+import { listenSystemFileDrops } from "./systemDragDrop";
+import { disposeQuietly } from "./workspaceIpc";
 import { useWorkspaceController } from "./useWorkspaceController";
-import { getActiveTab } from "./workspaceReducer";
+import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import type { ColumnDefinition, DirectoryNode, EntryViewModel, PanelId, PanelState, SearchResult, TabState, WorkspaceState } from "./types";
+import { filterDirectoryNodesByFileVisibility, filterEntriesByFileVisibility } from "./workspaceVisibility";
+import type {
+  ColumnDefinition,
+  ColumnId,
+  ContextMenuDefault,
+  DirectoryNode,
+  EntryViewModel,
+  PanelId,
+  PanelState,
+  TabState,
+  WindowsDragDropEnvironment,
+  WorkspaceState
+} from "./types";
 import "./workspace.css";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
-
-type MenuItemDefinition = {
-  label: string;
-  disabled?: boolean;
-  checked?: boolean;
-  onSelect: () => void;
-};
-
-type MenuDefinition = {
-  id: string;
-  label: string;
-  items: MenuItemDefinition[];
-};
-
-const LAYOUT_LABELS: Array<{ mode: WorkspaceState["layoutMode"]; label: string }> = [
-  { mode: "single", label: "单面板" },
-  { mode: "dual", label: "双面板" },
-  { mode: "triple", label: "三面板" },
-  { mode: "quad", label: "四面板" }
-];
-
-function getSourceLabel(source: WorkspaceState["source"]) {
-  return source === "mock" ? "模拟数据" : "Tauri 后端";
-}
 
 function getPanelDisplayLabel(panelId: PanelId) {
   return `面板 ${panelId.replace("panel-", "")}`;
@@ -102,15 +78,19 @@ export function WorkspaceView() {
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  const activeEntries = isActiveNavigationTab ? [] : activeTab.snapshot.entries;
+  const activeEntries = isActiveNavigationTab
+    ? []
+    : filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility);
   const selectedEntries = isActiveNavigationTab ? [] : getSelectedEntriesForTab(activeEntries, activeTab.selectedEntryIds);
   const filteredActiveEntries = isActiveNavigationTab ? [] : filterEntries(activeEntries, state.search.filterText);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
-  const menuRootRef = useRef<HTMLDivElement | null>(null);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
+  const actionsRef = useRef(actions);
+  const explorerDragWarningShownRef = useRef(false);
   const recentPaths = isActiveNavigationTab ? [] : getUniqueRecentPaths(activeTab.history, activeTab.snapshot.location.path);
-  const navigationTabOpen = Object.values(state.panels).some((panel) => panel.tabs.some((tab) => tab.kind === "navigation"));
+
+  actionsRef.current = actions;
 
   const handleOpenSettingsWindow = () => {
     void openSettingsWindow().catch((error) => {
@@ -124,12 +104,18 @@ export function WorkspaceView() {
         return;
       }
 
-      if (menuRootRef.current && !menuRootRef.current.contains(event.target)) {
-        setOpenMenuId(null);
-      }
-
       if (addressBarRef.current && !addressBarRef.current.contains(event.target)) {
         setAddressHistoryOpen(false);
+        // 点击地址栏外部时，让输入框失去焦点
+        if (addressInputRef.current && document.activeElement === addressInputRef.current) {
+          addressInputRef.current.blur();
+        }
+      }
+      if (event.target instanceof Element && !event.target.closest(".inline-edit-input")) {
+        const owningListing = event.target.closest(".file-listing");
+        if (!owningListing?.querySelector(".inline-edit-input")) {
+          actions.commitActiveInlineEdits();
+        }
       }
     };
 
@@ -137,7 +123,7 @@ export function WorkspaceView() {
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, []);
+  }, [actions]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -158,9 +144,92 @@ export function WorkspaceView() {
     };
   }, []);
 
-  const handleMenuAction = (action: () => void) => {
-    action();
-    setOpenMenuId(null);
+  const handleExplorerFileDropsBlocked = useCallback(
+    (environment: WindowsDragDropEnvironment) => {
+      if (explorerDragWarningShownRef.current) {
+        return;
+      }
+      explorerDragWarningShownRef.current = true;
+      actionsRef.current.showNotification(
+        "warning",
+        `Windows 已阻止从资源管理器拖入文件：当前应用为 ${environment.integrityLevel} 完整性级别。请用普通权限重新启动应用。`
+      );
+    },
+    []
+  );
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listenSystemFileDrops(
+      (paths, destination) => {
+        actionsRef.current.dropEntries(paths, destination, "copy");
+      },
+      {
+        onExplorerFileDropsBlocked: handleExplorerFileDropsBlocked
+      }
+    )
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      disposeQuietly(unlisten);
+    };
+  }, [handleExplorerFileDropsBlocked]);
+
+  const handleExternalFileDrag = (event: ReactDragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  };
+
+  const handleAddressInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const isCtrl = event.ctrlKey || event.metaKey;
+
+    // 当地址栏输入框获得焦点时，处理特定快捷键
+    if (isCtrl) {
+      const key = event.key.toLowerCase();
+
+      // Ctrl+A: 全选输入框文字（浏览器原生行为，阻止冒泡到全局处理器）
+      if (key === 'a') {
+        event.stopPropagation();
+        // 让浏览器原生处理全选，不需要 preventDefault
+        return;
+      }
+
+      // Ctrl+F: 打开程序搜索面板（阻止浏览器默认搜索）
+      if (key === 'f') {
+        event.preventDefault();
+        event.stopPropagation();
+        actions.toggleSearch(true);
+        return;
+      }
+
+      // Ctrl+C/X/V: 剪贴板操作（浏览器原生行为，阻止冒泡到全局处理器）
+      if (['c', 'x', 'v'].includes(key)) {
+        event.stopPropagation();
+        return;
+      }
+
+      // Ctrl+Z/Y: 撤销/重做（浏览器原生行为，阻止冒泡）
+      if (['z', 'y'].includes(key)) {
+        event.stopPropagation();
+        return;
+      }
+    }
   };
 
   const handleAddressSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -175,133 +244,21 @@ export function WorkspaceView() {
   const canUseDirectoryCommands = isDirectoryTab(activeTab);
   const canGoBack = canUseDirectoryCommands && activeTab.historyIndex > 0;
   const canGoForward = canUseDirectoryCommands && activeTab.historyIndex < activeTab.history.length - 1;
-  const menuDefinitions: MenuDefinition[] = [
-    {
-      id: "file",
-      label: "文件",
-      items: [
-        { label: "新建标签页", onSelect: () => actions.openNewTab(state.activePanelId) },
-        { label: "新建文件夹", disabled: !canUseDirectoryCommands, onSelect: () => actions.createFolder(state.activePanelId) },
-        { label: "新建文件", disabled: !canUseDirectoryCommands, onSelect: () => actions.createFile(state.activePanelId) },
-        { label: "关闭当前标签页", onSelect: () => actions.closeTab(state.activePanelId, activeTab.id) }
-      ]
-    },
-    {
-      id: "edit",
-      label: "编辑",
-      items: [
-        { label: "复制", disabled: !canUseDirectoryCommands, onSelect: () => actions.copySelection(state.activePanelId) },
-        { label: "剪切", disabled: !canUseDirectoryCommands, onSelect: () => actions.cutSelection(state.activePanelId) },
-        { label: "粘贴", disabled: !canUseDirectoryCommands, onSelect: () => actions.pasteIntoPanel(state.activePanelId) },
-        { label: "重命名", disabled: !canUseDirectoryCommands, onSelect: () => actions.renameSelection(state.activePanelId) },
-        { label: "删除", disabled: !canUseDirectoryCommands, onSelect: () => actions.deleteSelection(state.activePanelId) }
-      ]
-    },
-    {
-      id: "view",
-      label: "查看",
-      items: [
-        ...LAYOUT_LABELS.map((layout) => ({
-          label: layout.label,
-          checked: state.layoutMode === layout.mode,
-          onSelect: () => actions.setLayoutMode(layout.mode)
-        })),
-        { label: "打开搜索面板", onSelect: () => actions.toggleSearch(true) }
-      ]
-    },
-    {
-      id: "go",
-      label: "跳转",
-      items: [
-        { label: "后退", disabled: !canGoBack, onSelect: () => actions.navigateHistory(state.activePanelId, -1) },
-        { label: "前进", disabled: !canGoForward, onSelect: () => actions.navigateHistory(state.activePanelId, 1) },
-        { label: "上一级", disabled: !canUseDirectoryCommands, onSelect: () => actions.navigateUp(state.activePanelId) },
-        { label: "刷新", onSelect: () => actions.refreshPanel(state.activePanelId) }
-      ]
-    },
-    {
-      id: "tab",
-      label: "标签页",
-      items: [
-        { label: "新建标签页", onSelect: () => actions.openNewTab(state.activePanelId) },
-        { label: "关闭当前标签页", onSelect: () => actions.closeTab(state.activePanelId, activeTab.id) },
-        { label: "切换到下一个面板", onSelect: () => actions.focusNextPanel() }
-      ]
-    },
-    {
-      id: "tools",
-      label: "工具",
-      items: [
-        {
-          label: navigationTabOpen ? "隐藏导航页" : "显示导航页",
-          checked: navigationTabOpen,
-          onSelect: () => (navigationTabOpen ? actions.closeNavigationTab() : actions.openNavigationTab())
-        },
-        { label: "搜索", onSelect: () => actions.toggleSearch(true) },
-        { label: "设置", onSelect: handleOpenSettingsWindow }
-      ]
-    },
-    {
-      id: "help",
-      label: "帮助",
-      items: [
-        {
-          label: "关于",
-          onSelect: () => {
-            if (typeof window !== "undefined") {
-              window.alert("简单文件管理器桌面原型\n当前为精简工作区界面。");
-            }
-          }
-        }
-      ]
-    }
-  ];
-
   return (
-    <div className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}>
-      <header className="workspace-menubar" ref={menuRootRef}>
-        <div className="workspace-menubar__menus">
-          {menuDefinitions.map((menu) => (
-            <div
-              key={menu.id}
-              className="menu-root"
-              onMouseEnter={() => {
-                if (openMenuId) {
-                  setOpenMenuId(menu.id);
-                }
-              }}
-            >
-              <button
-                type="button"
-                className={`menu-button${openMenuId === menu.id ? " is-open" : ""}`}
-                onClick={() => setOpenMenuId((current) => (current === menu.id ? null : menu.id))}
-              >
-                {menu.label}
-              </button>
-              {openMenuId === menu.id ? (
-                <div className="menu-dropdown">
-                  {menu.items.map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      className="menu-dropdown__item"
-                      disabled={item.disabled}
-                      onClick={() => handleMenuAction(item.onSelect)}
-                    >
-                      <span className="menu-dropdown__check">{item.checked ? "√" : ""}</span>
-                      <span>{item.label}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-
-        <div className="workspace-menubar__meta">
-          <span className={`workspace-menubar__badge workspace-menubar__badge--${state.source}`}>{getSourceLabel(state.source)}</span>
-        </div>
-      </header>
+    <div
+      className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}
+      onDragEnter={handleExternalFileDrag}
+      onDragOver={handleExternalFileDrag}
+      onDrop={handleExternalFileDrag}
+    >
+      <WorkspaceMenuBar
+        state={state}
+        actions={actions}
+        activeTab={activeTab}
+        canUseDirectoryCommands={canUseDirectoryCommands}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+      />
 
       <section className="workspace-commandbar">
         <div className="workspace-toolbar__actions">
@@ -317,6 +274,16 @@ export function WorkspaceView() {
             </button>
             <button type="button" className="toolbar-button toolbar-button--icon" title="刷新" aria-label="刷新" onClick={() => actions.refreshPanel(state.activePanelId)}>
               <RefreshCw size={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`toolbar-button toolbar-button--icon${state.treeVisible ? " is-active" : ""}`}
+              title={state.treeVisible ? "隐藏目录树" : "显示目录树"}
+              aria-label={state.treeVisible ? "隐藏目录树" : "显示目录树"}
+              aria-pressed={state.treeVisible}
+              onClick={() => actions.setTreeVisible(!state.treeVisible)}
+            >
+              {state.treeVisible ? <PanelLeftClose size={16} aria-hidden="true" /> : <PanelLeftOpen size={16} aria-hidden="true" />}
             </button>
           </div>
           <span className="workspace-toolbar__separator" aria-hidden="true" />
@@ -351,19 +318,17 @@ export function WorkspaceView() {
           </button>
         </div>
 
-        <div className="workspace-toolbar__history">
-          <OperationSummaryButton operations={state.operations} onOpen={() => actions.setOperationTasksOpen(true)} />
-        </div>
       </section>
 
       <section className="workspace-addressbar" ref={addressBarRef}>
         <form className="address-bar" onSubmit={handleAddressSubmit}>
-          <span className="address-bar__prefix">路径</span>
           <input
+            ref={addressInputRef}
             type="text"
             value={isActiveNavigationTab ? "导航" : activeTab.addressDraft}
             readOnly={isActiveNavigationTab}
             onChange={(event) => actions.updateAddressDraft(state.activePanelId, activeTab.id, event.target.value)}
+            onKeyDown={handleAddressInputKeyDown}
             onFocus={() => setAddressHistoryOpen(false)}
             aria-label="当前路径"
           />
@@ -374,9 +339,6 @@ export function WorkspaceView() {
             onClick={() => setAddressHistoryOpen((open) => !open)}
           >
             ▾
-          </button>
-          <button type="submit" className="toolbar-button toolbar-button--flat" disabled={isActiveNavigationTab}>
-            转到
           </button>
 
           {addressHistoryOpen && recentPaths.length > 0 ? (
@@ -401,29 +363,39 @@ export function WorkspaceView() {
       </section>
 
       <section className="workspace-main">
-        <div className="workspace-main__content">
-          <ResizableSplit
-            direction="horizontal"
-            ratio={state.layoutRatios.tree}
-            min={0.12}
-            max={0.36}
-            minSizePx={160}
-            handleSize={8}
-            onRatioChange={(value) => actions.setSplitRatio("tree", value)}
-          >
-            <ExplorerTreePane
-              nodes={state.directoryTree}
-              activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
-              expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
-              onToggle={(path) => {
-                if (isActiveNavigationTab) {
-                  return;
-                }
-                const isExpanded = activeTab.expandedNodePaths.includes(path);
-                actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
-              }}
-              onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}
-            />
+        <div className={`workspace-main__content${state.treeVisible ? "" : " workspace-main__content--tree-hidden"}`}>
+          {state.treeVisible ? (
+            <ResizableSplit
+              direction="horizontal"
+              ratio={state.layoutRatios.tree}
+              min={0.12}
+              max={0.36}
+              minSizePx={160}
+              handleSize={8}
+              onRatioChange={(value) => actions.setSplitRatio("tree", value)}
+            >
+              <ExplorerTreePane
+                nodes={filterDirectoryNodesByFileVisibility(state.directoryTree, state.fileVisibility)}
+                activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
+                expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
+                onToggle={(path) => {
+                  if (isActiveNavigationTab) {
+                    return;
+                  }
+                  const isExpanded = activeTab.expandedNodePaths.includes(path);
+                  actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
+                }}
+                onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}
+              />
+              <WorkspaceRightContent
+                state={state}
+                actions={actions}
+                activeFilterText={state.search.filterText}
+                activeEntries={filteredActiveEntries}
+                selectedEntries={selectedEntries}
+              />
+            </ResizableSplit>
+          ) : (
             <WorkspaceRightContent
               state={state}
               actions={actions}
@@ -431,7 +403,7 @@ export function WorkspaceView() {
               activeEntries={filteredActiveEntries}
               selectedEntries={selectedEntries}
             />
-          </ResizableSplit>
+          )}
         </div>
       </section>
 
@@ -443,25 +415,36 @@ export function WorkspaceView() {
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
           tab={state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)}
+          clipboard={state.clipboard}
           actions={actions}
+          layoutMode={state.layoutMode}
+          panelIds={getVisiblePanelIds(state.layoutMode)}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
 
-      <OperationTaskCenter
-        operations={state.operations}
-        onOpenChange={actions.setOperationTasksOpen}
-        onCancelTask={actions.cancelOperation}
-        onUndoLatest={actions.undoLatestOperation}
-        onUndoRecord={actions.undoOperation}
-      />
-
-      <OperationConflictDialog
-        dialog={state.operations.conflictDialog}
-        onUpdate={actions.updateOperationConflictDialog}
-        onResolve={actions.resolveOperationConflict}
-        onCancelTask={actions.cancelOperation}
-      />
+      {state.notifications.length > 0 ? (
+        <div className="workspace-notification-stack" role="region" aria-label="通知">
+          {state.notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`workspace-notification workspace-notification--${notification.intent}`}
+              role={notification.intent === "danger" ? "alert" : "status"}
+            >
+              <span>{notification.message}</span>
+              <button
+                type="button"
+                className="workspace-notification__close"
+                title="关闭通知"
+                aria-label="关闭通知"
+                onClick={() => actions.dismissNotification(notification.id)}
+              >
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {state.status === "loading" ? (
         <div className="workspace-loading">
@@ -473,7 +456,6 @@ export function WorkspaceView() {
     </div>
   );
 }
-
 function ExplorerTreePane({
   nodes,
   activePath,
@@ -525,8 +507,36 @@ function WorkspaceRightContent({
 }) {
   const panels = <PanelLayout state={state} actions={actions} activeFilterText={activeFilterText} />;
 
-  if (!state.search.open) {
-    return <div className="workspace-main__right">{panels}</div>;
+  const informationPanel = (
+    <WorkspaceInformationPanel
+      informationPanel={state.informationPanel}
+      search={state.search}
+      operations={state.operations}
+      activeEntries={activeEntries}
+      selectedEntries={selectedEntries}
+      onToggleExpanded={actions.setInformationPanelExpanded}
+      onSelectInformationTab={actions.selectInformationPanelTab}
+      onOpenHistory={actions.openOperationHistory}
+      onRunSearch={() => actions.runSearch()}
+      onStopSearch={() => actions.stopSearch()}
+      onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
+      onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
+      onUpdateFilter={(value) => actions.updateSearchFilter(value)}
+      onSelectHistory={(index) => actions.selectSearchHistory(index)}
+      onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
+      onCancelTask={actions.cancelOperation}
+      onUndoLatest={actions.undoLatestOperation}
+      onUndoRecord={actions.undoOperation}
+    />
+  );
+
+  if (!state.informationPanel.expanded) {
+    return (
+      <div className="workspace-main__right workspace-main__right--with-summary">
+        {panels}
+        {informationPanel}
+      </div>
+    );
   }
 
   return (
@@ -537,25 +547,13 @@ function WorkspaceRightContent({
         min={0.5}
         max={0.82}
         minSizePx={240}
-        secondMinSizePx={180}
+        secondMinSizePx={222}
         handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("search", 1 - value)}
         className="workspace-main__right-split"
       >
         {panels}
-        <WorkspaceInformationPanel
-          search={state.search}
-          activeEntries={activeEntries}
-          selectedEntries={selectedEntries}
-          onToggle={(open) => actions.toggleSearch(open)}
-          onRunSearch={() => actions.runSearch()}
-          onStopSearch={() => actions.stopSearch()}
-          onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
-          onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
-          onUpdateFilter={(value) => actions.updateSearchFilter(value)}
-          onSelectHistory={(index) => actions.selectSearchHistory(index)}
-          onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
-        />
+        {informationPanel}
       </ResizableSplit>
     </div>
   );
@@ -570,6 +568,26 @@ function PanelLayout({
   actions: WorkspaceActions;
   activeFilterText: string;
 }) {
+  const handleSyncScroll = useCallback(
+    (sourcePanelId: PanelId, deltaX: number, deltaY: number) => {
+      if (!state.syncScroll || (deltaX === 0 && deltaY === 0)) {
+        return;
+      }
+
+      const visiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
+      const scrollContainers = Array.from(document.querySelectorAll<HTMLElement>(".file-listing__scroll[data-panel-id]"));
+      for (const scrollContainer of scrollContainers) {
+        const panelId = scrollContainer.dataset.panelId as PanelId | undefined;
+        if (!panelId || panelId === sourcePanelId || !visiblePanelIds.has(panelId)) {
+          continue;
+        }
+        scrollContainer.scrollLeft += deltaX;
+        scrollContainer.scrollTop += deltaY;
+      }
+    },
+    [state.layoutMode, state.syncScroll]
+  );
+
   const renderPanel = (panelId: PanelId) => (
     <PanelSurface
       key={panelId}
@@ -577,12 +595,24 @@ function PanelLayout({
       isFocused={state.activePanelId === panelId}
       filterText={activeFilterText}
       columns={state.settings.model.columns}
+      navigationColumns={state.settings.model.navigationColumns}
+      clipboard={state.clipboard}
       detailsRowHeight={state.settings.model.detailsRowHeight}
+      tooltipHoverDelayMs={state.settings.model.tooltipHoverDelayMs}
       entryDropMoveBinding={getShortcutBinding(state.settings.model.shortcuts, "drag-move")}
+      contextMenuDefault={state.settings.model.contextMenu.defaultMenu}
+      contextMenuToggleBinding={getShortcutBinding(state.settings.model.shortcuts, "context-menu-toggle")}
       panelFocusAccent={state.settings.model.theme.panelFocusAccent}
+      activeTabBackground={state.settings.model.theme.activeTabBackground}
+      dropHighlightFill={state.settings.model.theme.dropHighlightFill}
+      dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
+      fileVisibility={state.fileVisibility}
+      syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
+      keyboardNavToken={state.keyboardNavToken}
       actions={actions}
+      onSyncScroll={handleSyncScroll}
     />
   );
 
@@ -684,38 +714,93 @@ function PanelSurface({
   isFocused,
   filterText,
   columns,
+  navigationColumns,
+  clipboard,
   detailsRowHeight,
+  tooltipHoverDelayMs,
   entryDropMoveBinding,
+  contextMenuDefault,
+  contextMenuToggleBinding,
   panelFocusAccent,
+  activeTabBackground,
+  dropHighlightFill,
+  dropHighlightBorder,
   tabMinWidth,
+  fileVisibility,
+  syncScrollEnabled,
   navigation,
-  actions
+  keyboardNavToken,
+  actions,
+  onSyncScroll
 }: {
   panel: PanelState;
   isFocused: boolean;
   filterText: string;
   columns: ColumnDefinition[];
+  navigationColumns: WorkspaceState["settings"]["model"]["navigationColumns"];
+  clipboard: WorkspaceState["clipboard"];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
   entryDropMoveBinding: string;
+  contextMenuDefault: ContextMenuDefault;
+  contextMenuToggleBinding: string;
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
+  fileVisibility: WorkspaceState["fileVisibility"];
+  syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
+  keyboardNavToken?: symbol;
   actions: WorkspaceActions;
+  onSyncScroll: (sourcePanelId: PanelId, deltaX: number, deltaY: number) => void;
 }) {
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
   const directoryContextEntries = directoryContextTab
     ? getSelectedEntriesForTab(directoryContextTab.snapshot.entries, directoryContextTab.selectedEntryIds)
     : [];
-  const entries = isNavigationTab(activeTab) ? [] : isFocused ? filterEntries(activeTab.snapshot.entries, filterText) : activeTab.snapshot.entries;
-  const isSearchResultsTab = activeTab.kind === "search-results";
+  const visibleEntries = isNavigationTab(activeTab) ? [] : filterEntriesByFileVisibility(activeTab.snapshot.entries, fileVisibility);
+  const entries = isNavigationTab(activeTab) ? [] : isFocused ? filterEntries(visibleEntries, filterText) : visibleEntries;
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
+
+  // Memoize selection callbacks to prevent useEffect re-registration in FileListing
+  const handleSelectMultiple = useCallback(
+    (entryIds: string[]) => {
+      actions.selectMultipleEntries(panel.id, activeTab.id, entryIds);
+    },
+    [actions, panel.id, activeTab.id]
+  );
+
+  const handleSelectAll = useCallback(() => {
+    actions.selectAllEntries(panel.id, activeTab.id);
+  }, [actions, panel.id, activeTab.id]);
+
+  const handleSelectRange = useCallback(
+    (fromId: string, toId: string, orderedEntryIds?: string[]) => {
+      actions.selectEntryRange(panel.id, activeTab.id, fromId, toId, orderedEntryIds);
+    },
+    [actions, panel.id, activeTab.id]
+  );
+
+  const handleClearSelection = useCallback(() => {
+    actions.clearSelection(panel.id, activeTab.id);
+  }, [actions, panel.id, activeTab.id]);
 
   return (
     <section
       className={`panel-surface${isFocused ? " is-focused" : ""}`}
-      style={{ "--panel-focus-accent": panelFocusAccent, "--tab-min-width": `${tabMinWidth}px` } as CSSProperties}
+      style={
+        {
+          "--panel-focus-accent": panelFocusAccent,
+          "--active-tab-background": activeTabBackground,
+          "--drop-highlight-fill": dropHighlightFill,
+          "--drop-highlight-border": dropHighlightBorder,
+          "--tab-min-width": `${tabMinWidth}px`
+        } as CSSProperties
+      }
       onMouseDown={() => actions.focusPanel(panel.id)}
     >
       <WorkspacePanelChrome
@@ -753,6 +838,7 @@ function PanelSurface({
           <NavigationTabView
             panelId={panel.id}
             navigation={navigation}
+            navigationColumns={navigationColumns}
             currentFolder={
               directoryContextTab
                 ? {
@@ -763,12 +849,6 @@ function PanelSurface({
             }
             selectedEntries={directoryContextEntries}
             actions={actions}
-          />
-        ) : isSearchResultsTab ? (
-          <SearchResultsListing
-            tab={activeTab}
-            filterText={isFocused ? filterText : ""}
-            onOpenResult={(result) => actions.navigateToPath(panel.id, result.openPath)}
           />
         ) : (
           <WorkspaceFileListingShell
@@ -781,15 +861,43 @@ function PanelSurface({
             selectedEntryIds={activeTab.selectedEntryIds}
             viewMode={activeTab.viewMode}
             inlineEdit={activeTab.inlineEdit}
+            clipboard={clipboard}
+            gitStatus={activeTab.gitStatus}
+            keyboardNavToken={keyboardNavToken}
+            selectionCursorId={activeTab.selectionCursorId}
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
+            onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>
+              actions.setColumnVisibility(panel.id, activeTab.id, columnId, visible)
+            }
+            onMoveColumn={(sourceId: ColumnId, targetId: ColumnId, placement: "before" | "after") =>
+              actions.moveColumn(panel.id, activeTab.id, sourceId, targetId, placement)
+            }
+            onShowAllColumns={(columnIds: ColumnId[]) => actions.showAllColumns(panel.id, activeTab.id, columnIds)}
             onSelect={(entry, multi) => actions.selectEntry(panel.id, activeTab.id, entry.id, multi)}
-            onOpen={(entry) => actions.openEntry(panel.id, entry)}
+            onSelectMultiple={handleSelectMultiple}
+            onSelectAll={handleSelectAll}
+            onSelectRange={handleSelectRange}
+            onClearSelection={handleClearSelection}
+            onOpen={(entry) => {
+              if (activeTab.kind === "search-results") {
+                actions.openSearchResult(panel.id, entry);
+                return;
+              }
+              actions.openEntry(panel.id, entry);
+            }}
             detailsRowHeight={detailsRowHeight}
+            tooltipHoverDelayMs={tooltipHoverDelayMs}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
             onDropEntries={(paths, destination, operation) => actions.dropEntries(paths, destination, operation)}
+            onAddEntriesToNavigation={(paths) => actions.addPathsToNavigation(paths)}
+            onStartSystemFileDrag={(paths) => actions.startSystemFileDrag(paths)}
             entryDropMoveBinding={entryDropMoveBinding}
+            contextMenuDefault={contextMenuDefault}
+            contextMenuToggleBinding={contextMenuToggleBinding}
+            syncScrollEnabled={syncScrollEnabled}
+            onSyncScroll={onSyncScroll}
             onInlineEditChange={(value) => actions.updateInlineEdit(panel.id, activeTab.id, value)}
             onInlineEditCommit={(value) => actions.commitInlineEdit(panel.id, activeTab.id, value)}
             onInlineEditCancel={() => actions.cancelInlineEdit(panel.id, activeTab.id)}
@@ -808,72 +916,6 @@ function ReconnectPanel({ tab, onReconnect }: { tab: TabState; onReconnect: () =
       </button>
       <span title={tab.reconnect?.path ?? tab.snapshot.location.path}>{tab.reconnect?.path ?? tab.snapshot.location.path}</span>
       {tab.reconnect?.message ? <small>{tab.reconnect.message}</small> : null}
-    </div>
-  );
-}
-
-function filterSearchResults(results: SearchResult[], filterText: string) {
-  const normalized = filterText.trim().toLowerCase();
-  if (!normalized) {
-    return results;
-  }
-
-  return results.filter((result) =>
-    [result.name, result.path, result.parentPath, result.match].join(" ").toLowerCase().includes(normalized)
-  );
-}
-
-function SearchResultsListing({
-  tab,
-  filterText,
-  onOpenResult
-}: {
-  tab: TabState;
-  filterText: string;
-  onOpenResult: (result: SearchResult) => void;
-}) {
-  const results = filterSearchResults(tab.search?.results ?? [], filterText);
-  const progressText = tab.search?.progress?.statusText ?? `${results.length} 个结果`;
-
-  return (
-    <div className="search-results-tab">
-      <div className="search-results-tab__header">
-        <div>
-          <strong>{tab.title}</strong>
-          <span title={tab.search?.sourcePath}>{tab.search?.sourcePath ?? tab.snapshot.location.path}</span>
-        </div>
-        <span>{progressText}</span>
-      </div>
-
-      <div className="search-results-tab__table" role="table" aria-label="搜索结果">
-        <div className="search-results-tab__row search-results-tab__row--header" role="row">
-          <span role="columnheader">名称</span>
-          <span role="columnheader">类型</span>
-          <span role="columnheader">位置</span>
-          <span role="columnheader">匹配</span>
-        </div>
-        <div className="search-results-tab__body">
-          {results.length === 0 ? (
-            <div className="search-results-tab__empty">无结果</div>
-          ) : (
-            results.map((result) => (
-              <button
-                key={result.id}
-                type="button"
-                className="search-results-tab__row search-results-tab__result"
-                role="row"
-                title={result.path}
-                onClick={() => onOpenResult(result)}
-              >
-                <span role="cell">{result.name}</span>
-                <span role="cell">{result.kind === "folder" ? "文件夹" : "文件"}</span>
-                <span role="cell">{result.parentPath}</span>
-                <span role="cell">{result.match}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   );
 }

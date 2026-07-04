@@ -19,12 +19,17 @@ export interface EntryViewModel {
   extension?: string | null;
   kind: EntryKind;
   size?: number | null;
+  createdAt?: string | null;
   modifiedAt?: string | null;
+  accessedAt?: string | null;
   isHidden: boolean;
+  isSystem: boolean;
+  isProtectedOperatingSystem: boolean;
   isReadOnly: boolean;
   isSymlink: boolean;
   location: LocationDescriptor;
   decoration: EntryDecoration;
+  comment?: string | null;
 }
 
 export interface DirectoryListing {
@@ -34,15 +39,101 @@ export interface DirectoryListing {
   canGoUp: boolean;
 }
 
+export type ItemPropertyField =
+  | "name"
+  | "extension"
+  | "kind"
+  | "parentPath"
+  | "sizeBytes"
+  | "allocatedBytes"
+  | "createdAt"
+  | "modifiedAt"
+  | "accessedAt"
+  | "attributes"
+  | "directorySize";
+
+export type ItemPropertyFieldAvailability =
+  | "available"
+  | "notAvailable"
+  | "unsupported"
+  | "permissionDenied"
+  | "readFailed"
+  | "notComputed"
+  | "computing";
+
+export interface ItemPropertyFieldState {
+  field: ItemPropertyField;
+  state: ItemPropertyFieldAvailability;
+  message?: string | null;
+}
+
+export interface DirectorySizeState {
+  state: "notApplicable" | "notComputed" | "computing" | "available" | "failed";
+  sizeBytes?: number | null;
+  message?: string | null;
+}
+
+export type ItemPropertiesTarget =
+  | {
+      kind: "local";
+      path: string;
+    }
+  | {
+      kind: "remote";
+      protocol: Exclude<LocationKind, "local">;
+      profileId: string;
+      remotePath: string;
+      displayPath: string;
+    };
+
+export interface ItemPropertiesRequest {
+  requestId: string;
+  target: ItemPropertiesTarget;
+  includeDirectorySize?: boolean;
+}
+
+export interface ItemProperties {
+  requestId: string;
+  target: ItemPropertiesTarget;
+  displayPath: string;
+  actualPath: string;
+  parentPath?: string | null;
+  name: string;
+  extension?: string | null;
+  kind: EntryKind;
+  sizeBytes?: number | null;
+  allocatedBytes?: number | null;
+  createdAt?: string | null;
+  modifiedAt?: string | null;
+  accessedAt?: string | null;
+  isHidden: boolean;
+  isReadOnly: boolean;
+  isSymlink: boolean;
+  directorySizeState: DirectorySizeState;
+  fieldStates: ItemPropertyFieldState[];
+  errorMessage?: string | null;
+}
+
 export interface TreeNode {
   path: string;
   name: string;
   hasChildren: boolean;
+  isHidden: boolean;
+  isSystem: boolean;
+  isProtectedOperatingSystem: boolean;
 }
 
 export interface DriveInfo {
   path: string;
   label: string;
+}
+
+export interface DriveRoot {
+  path: string;
+  label: string;
+  driveType: string;
+  totalBytes: number | null;
+  availableBytes: number | null;
 }
 
 export interface Bookmark {
@@ -109,6 +200,7 @@ export interface TagDefinition {
 export interface EntryTag {
   path: string;
   tagIds: string[];
+  expiresAt?: string | null;
 }
 
 export interface ColorRule {
@@ -131,7 +223,50 @@ export interface UiLayout {
 
 export interface UiTheme {
   panelFocusAccent: string;
+  activeTabBackground: string;
+  dropHighlightFill: string;
+  dropHighlightBorder: string;
   tabMinWidth: number;
+}
+
+export interface ContextMenuSettings {
+  defaultMenu: "native" | "custom";
+}
+
+export interface DetailColumnDefinition {
+  id: string;
+  label: string;
+  visible: boolean;
+  width: string;
+  align: "left" | "right";
+}
+
+export type NativeBackgroundContextMenuAction =
+  | { type: "createFile" }
+  | { type: "createFolder" }
+  | { type: "setViewMode"; viewMode: "extra-large-icons" | "large-icons" | "medium-icons" | "small-icons" | "list" | "details" | "tiles" | "content" }
+  | { type: "setSort"; columnId?: "name" | "modified" | "type" | "size"; direction?: "asc" | "desc" }
+  | { type: "paste" };
+
+export interface NativeBackgroundContextMenuOptions {
+  viewMode: "extra-large-icons" | "large-icons" | "medium-icons" | "small-icons" | "list" | "details" | "tiles" | "content";
+  sort: {
+    columnId: "name" | "modified" | "type" | "size";
+    direction: "asc" | "desc";
+  };
+  canPaste: boolean;
+}
+
+export interface NativeBackgroundContextMenuResult {
+  opened: boolean;
+  action?: NativeBackgroundContextMenuAction;
+}
+
+export type SystemFileClipboardMode = "copy" | "cut";
+
+export interface SystemFileClipboard {
+  mode: SystemFileClipboardMode;
+  paths: string[];
 }
 
 export interface ShortcutBinding {
@@ -157,6 +292,8 @@ export interface RemoteProfile {
   ignoreHostKey?: boolean;
   connectTimeoutSecs?: number;
   commandTimeoutSecs?: number;
+  credentialTarget?: string | null;
+  password?: string | null;
 }
 
 export interface RemoteProfileUpsertRequest {
@@ -198,7 +335,12 @@ export interface SettingsSnapshot {
   entryTags: EntryTag[];
   colorRules: ColorRule[];
   shortcuts: ShortcutBinding[];
+  columns?: DetailColumnDefinition[];
+  navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
+  tooltipHoverDelayMs?: number;
+  metadataRetentionHours?: number | null;
+  contextMenu?: ContextMenuSettings;
   theme?: UiTheme;
   layout: UiLayout;
   remoteProfiles: RemoteProfile[];
@@ -207,7 +349,12 @@ export interface SettingsSnapshot {
 export interface SettingsModelUpdate {
   shortcuts: ShortcutBinding[];
   colorRules: ColorRule[];
+  columns: DetailColumnDefinition[];
+  navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
+  tooltipHoverDelayMs: number;
+  metadataRetentionHours: number | null;
+  contextMenu: ContextMenuSettings;
   theme: UiTheme;
 }
 

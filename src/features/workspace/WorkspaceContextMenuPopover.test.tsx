@@ -60,13 +60,15 @@ async function flushEffects() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function createActions() {
+function createActions(overrides: Record<string, unknown> = {}) {
   return {
     setTabViewMode() {},
+    setSort() {},
     pasteIntoPanel() {},
     createFolder() {},
     createFile() {},
     openNewTab() {},
+    navigateToPath() {},
     refreshPanel() {},
     copySelection() {},
     cutSelection() {},
@@ -79,8 +81,13 @@ function createActions() {
     copyTabPath() {},
     addCurrentFolderToNavigation() {},
     addSelectedEntriesToNavigation() {},
+    editEntryComment() {},
+    copyEntryComment() {},
+    pasteEntryComment() {},
+    removeEntryComment() {},
     moveTab() {},
-    activateTab() {}
+    activateTab() {},
+    ...overrides
   };
 }
 
@@ -92,6 +99,25 @@ const contextMenu = {
   mode: "system-fallback",
   scope: "selection"
 } satisfies ContextMenuState;
+
+const directoryTab = {
+  id: "panel-1-tab-1",
+  title: "Documents",
+  kind: "directory",
+  locked: false,
+  viewMode: "details",
+  sort: {
+    columnId: "name",
+    direction: "asc"
+  },
+  snapshot: {
+    location: {
+      path: "D:\\Projects",
+      label: "Projects",
+      kind: "folder"
+    }
+  }
+};
 
 export const completion = (async () => {
   const dom = installDomEnvironment();
@@ -128,7 +154,10 @@ export const completion = (async () => {
           React.createElement(WorkspaceContextMenuPopover, {
             contextMenu,
             viewMode: "details" as TabViewMode,
+            tab: directoryTab as never,
             actions: createActions() as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );
@@ -143,25 +172,160 @@ export const completion = (async () => {
       assert.equal(menu.style.zIndex, "10000");
     });
 
-    await assertTest("WorkspaceContextMenuPopover orders panel actions for common file-manager use", async () => {
+    await assertTest("WorkspaceContextMenuPopover renders Explorer-style panel commands with nested menus", async () => {
       await act(async () => {
         root.render(
           React.createElement(WorkspaceContextMenuPopover, {
             contextMenu: { ...contextMenu, mode: "custom", scope: "panel" },
             viewMode: "details" as TabViewMode,
+            tab: directoryTab as never,
             actions: createActions() as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );
         await flushEffects();
       });
 
-      const labels = Array.from(document.body.querySelectorAll(".context-menu__item span:last-child")).map((item) =>
+      const topLabels = Array.from(
+        document.body.querySelectorAll(
+          ".context-menu > .context-menu__item span:last-child, .context-menu > .context-menu__submenu > .context-menu__item span:last-child"
+        )
+      ).map((item) => item.textContent?.trim());
+      assert.deepEqual(topLabels.slice(0, 5), ["新建文件", "新建文件夹", "视图", "排序方式", "粘贴"]);
+
+      const submenus = Array.from(document.body.querySelectorAll(".context-menu__submenu"));
+      const submenuLabels = (index: number) =>
+        Array.from(submenus[index].querySelectorAll(".context-menu__submenu-items .context-menu__item span:last-child")).map((item) =>
+          item.textContent?.trim()
+        );
+
+      assert.deepEqual(submenuLabels(0), ["超大图标", "大图标", "中等图标", "小图标", "列表", "详细信息列表", "平铺", "内容"]);
+      assert.deepEqual(submenuLabels(1), ["名称", "修改日期", "类型", "大小", "递增", "递减"]);
+
+      const pasteButton = Array.from(document.body.querySelectorAll(".context-menu > .context-menu__item")).find((item) =>
+        item.textContent?.includes("粘贴")
+      ) as HTMLButtonElement | undefined;
+      assert.equal(pasteButton?.disabled, true);
+      assert.equal(topLabels.includes("刷新"), true);
+      assert.equal(topLabels.includes("新建标签页"), true);
+    });
+
+    await assertTest("WorkspaceContextMenuPopover enables paste when clipboard has entries and routes sort choices", async () => {
+      const sortCalls: unknown[] = [];
+      let pasteCalls = 0;
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceContextMenuPopover, {
+            contextMenu: { ...contextMenu, mode: "custom", scope: "panel" },
+            viewMode: "details" as TabViewMode,
+            tab: directoryTab as never,
+            clipboard: { mode: "copy", paths: ["D:\\Source\\note.txt"] },
+            actions: createActions({
+              pasteIntoPanel: () => {
+                pasteCalls += 1;
+              },
+              setSort: (...args: unknown[]) => {
+                sortCalls.push(args);
+              }
+            }) as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
+            onClose: () => undefined
+          })
+        );
+        await flushEffects();
+      });
+
+      const pasteButton = Array.from(document.body.querySelectorAll(".context-menu > .context-menu__item")).find((item) =>
+        item.textContent?.includes("粘贴")
+      ) as HTMLButtonElement | undefined;
+      assert.equal(pasteButton?.disabled, false);
+      pasteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      assert.equal(pasteCalls, 1);
+
+      const sizeButton = Array.from(document.body.querySelectorAll(".context-menu__submenu-items .context-menu__item")).find((item) =>
+        item.textContent?.includes("大小")
+      ) as HTMLButtonElement | undefined;
+      sizeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(sortCalls[0], ["panel-1", "panel-1-tab-1", { columnId: "size" }]);
+
+      const descendingButton = Array.from(document.body.querySelectorAll(".context-menu__submenu-items .context-menu__item")).find((item) =>
+        item.textContent?.includes("递减")
+      ) as HTMLButtonElement | undefined;
+      descendingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(sortCalls[1], ["panel-1", "panel-1-tab-1", { direction: "desc" }]);
+    });
+
+    await assertTest("WorkspaceContextMenuPopover renders the comment-only menu for comment cells", async () => {
+      const calls: unknown[][] = [];
+      const commentTab = {
+        ...directoryTab,
+        snapshot: {
+          ...directoryTab.snapshot,
+          entries: [
+            {
+              id: "file-source",
+              name: "report.txt",
+              kind: "file",
+              path: "D:\\Projects\\report.txt",
+              parentPath: "D:\\Projects",
+              sizeLabel: "2 KB",
+              modifiedLabel: "2026-04-21 10:00",
+              extension: ".txt",
+              attributes: ["A"],
+              accentColor: "#0f6cbd",
+              tags: [],
+              comment: "Existing note",
+              description: "Text report"
+            }
+          ]
+        }
+      };
+
+      await act(async () => {
+        root.render(
+          React.createElement(WorkspaceContextMenuPopover, {
+            contextMenu: {
+              ...contextMenu,
+              mode: "custom",
+              scope: "comment",
+              columnId: "comment",
+              entryPath: "D:\\Projects\\report.txt"
+            },
+            viewMode: "details" as TabViewMode,
+            tab: commentTab as never,
+            actions: createActions({
+              editEntryComment: (...args: unknown[]) => calls.push(["edit", ...args]),
+              copyEntryComment: (...args: unknown[]) => calls.push(["copy", ...args]),
+              pasteEntryComment: (...args: unknown[]) => calls.push(["paste", ...args]),
+              removeEntryComment: (...args: unknown[]) => calls.push(["remove", ...args])
+            }) as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
+            onClose: () => undefined
+          })
+        );
+        await flushEffects();
+      });
+
+      const labels = Array.from(document.body.querySelectorAll(".context-menu > .context-menu__item span:last-child")).map((item) =>
         item.textContent?.trim()
       );
-      assert.deepEqual(labels.slice(0, 7), ["新建文件夹", "新建文件", "复制路径", "添加当前文件夹到导航页", "超大图标", "大图标", "中等图标"]);
-      assert.equal(labels.includes("刷新"), true);
-      assert.equal(labels.includes("新建标签页"), true);
+      assert.deepEqual(labels, ["编辑注释", "复制注释", "粘贴注释（从剪切板）", "移除注释"]);
+
+      const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".context-menu > .context-menu__item"));
+      buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[2].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      buttons[3].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(calls, [
+        ["edit", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"],
+        ["copy", "D:\\Projects\\report.txt", "Existing note"],
+        ["paste", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"],
+        ["remove", "panel-1", "panel-1-tab-1", "D:\\Projects\\report.txt"]
+      ]);
     });
   } finally {
     await act(async () => {

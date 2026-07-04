@@ -3,10 +3,15 @@ import type {
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  EntryFocusMove,
+  FileVisibilityState,
+  GitFileStatus,
+  InformationPanelTab,
+  ItemProperties,
   InlineEditState,
-  NavigationItem,
+  NavigationColumnDefinition, NavigationItem,
   NavigationTargetInfo,
-  OperationConflictRequest,
+  MultiSelectionPropertiesSummary,
   OperationHistoryRecord,
   OperationTaskSnapshot,
   PanelId,
@@ -18,21 +23,37 @@ import type {
   SearchResult,
   SearchTabId,
   SearchTabState,
+  SelectionPathReplacement,
   SettingsSection,
   SettingsModel,
+  SortState,
   TabState,
   TabViewMode,
   WorkspaceBootstrap,
   WorkspaceState
-} from "./types";
-import { normalizeLocationPath } from "./mockData";
-import { cloneColumns, normalizeSettingsModel, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceMappers";
+} from "./types";import { normalizeLocationPath } from "./mockData";
+import {
+  cloneColumns,
+  normalizeContextMenuDefault,
+  normalizeDetailsRowHeight as normalizeMappedDetailsRowHeight,
+  normalizeColumns,
+  normalizeMetadataRetentionHours,
+  normalizeSettingsSection,
+  normalizeSettingsModel,
+  normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
+  normalizeThemeAccentColor
+} from "./workspaceMappers";
+import { devLog } from "./devLog";
 import {
   createNavigationTab,
   isDirectoryLikeTab,
+  isDirectoryTab,
   isNavigationTab,
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
+import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
+import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -41,6 +62,9 @@ export type WorkspaceAction =
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
+  | { type: "treeVisibilitySet"; payload: boolean }
+  | { type: "fileVisibilitySet"; payload: Partial<FileVisibilityState> }
+  | { type: "syncScrollSet"; payload: boolean }
   | { type: "panelFocused"; payload: { panelId: PanelId } }
   | { type: "focusNextPanel" }
   | { type: "tabOpened"; payload: { panelId: PanelId; tab: TabState } }
@@ -51,6 +75,7 @@ export type WorkspaceAction =
   | { type: "tabLockedToggled"; payload: { panelId: PanelId; tabId: string } }
   | { type: "tabTitleRenamed"; payload: { panelId: PanelId; tabId: string; title: string } }
   | { type: "otherTabsClosed"; payload: { panelId: PanelId; tabId: string; includeLocked: boolean } }
+  | { type: "workspaceKeyboardNavTokenSet"; payload: { payload?: symbol } }
   | {
       type: "tabSnapshotCommitted";
       payload: {
@@ -61,8 +86,11 @@ export type WorkspaceAction =
         activatePanel?: boolean;
         historyIndex?: number;
         history?: string[];
+        selectionReplacements?: SelectionPathReplacement[];
+        previousPath?: string;
       };
     }
+  | { type: "tabGitStatusUpdated"; payload: { panelId: PanelId; tabId: string; gitStatus: Record<string, GitFileStatus> | undefined } }
   | { type: "addressDraftChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
   | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[] } }
   | { type: "treeNodeConnectionStarted"; payload: { path: string } }
@@ -72,11 +100,49 @@ export type WorkspaceAction =
   | { type: "tabReconnectRequired"; payload: { panelId: PanelId; tabId: string; path: string; profileId?: string; message?: string } }
   | { type: "tabReconnectStarted"; payload: { panelId: PanelId; tabId: string } }
   | { type: "entrySelectionChanged"; payload: { panelId: PanelId; tabId: string; entryId: string; multi: boolean } }
+  | { type: "entrySelectionSet"; payload: { panelId: PanelId; tabId: string; entryIds: string[] } }
+  | {
+      type: "entryRangeSelected";
+      payload: { panelId: PanelId; tabId: string; fromEntryId: string; toEntryId: string; orderedEntryIds?: string[] };
+    }
+  | { type: "allEntriesSelected"; payload: { panelId: PanelId; tabId: string } }
+  | { type: "entrySelectionCleared"; payload: { panelId: PanelId; tabId: string } }
+  | {
+      type: "entryFocusMoved";
+      payload: {
+        panelId: PanelId;
+        tabId: string;
+        orderedEntryIds: string[];
+        move: EntryFocusMove;
+      };
+    }
+  | {
+      type: "entryRangeExtended";
+      payload: {
+        panelId: PanelId;
+        tabId: string;
+        orderedEntryIds: string[];
+        move: EntryFocusMove;
+      };
+    }
   | { type: "tabSortChanged"; payload: { panelId: PanelId; tabId: string; columnId: ColumnId } }
+  | { type: "tabSortSet"; payload: { panelId: PanelId; tabId: string; sort: Partial<SortState> } }
   | { type: "tabViewModeSet"; payload: { panelId: PanelId; tabId: string; viewMode: TabViewMode } }
   | { type: "inlineEditStarted"; payload: { panelId: PanelId; tabId: string; edit: InlineEditState } }
   | { type: "inlineEditChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
   | { type: "inlineEditCanceled"; payload: { panelId: PanelId; tabId: string } }
+  | { type: "informationPanelExpandedSet"; payload: boolean }
+  | { type: "informationPanelTabChanged"; payload: InformationPanelTab }
+  | { type: "informationPanelHistoryRequested" }
+  | { type: "searchPanelRequested"; payload?: SearchTabId }
+  | { type: "propertiesRequestStarted"; payload: { requestId: string; targetKey: string } }
+  | {
+      type: "propertiesRequestSucceeded";
+      payload: { requestId: string; targetKey: string; item?: ItemProperties; summary?: MultiSelectionPropertiesSummary };
+    }
+  | { type: "propertiesRequestFailed"; payload: { requestId: string; targetKey: string; errorMessage: string } }
+  | { type: "propertiesSummaryReady"; payload: { targetKey: string; summary: MultiSelectionPropertiesSummary } }
+  | { type: "propertiesCleared" }
   | { type: "searchToggled"; payload?: boolean }
   | { type: "searchTabChanged"; payload: SearchTabId }
   | { type: "searchStarted"; payload?: { searchId?: string } }
@@ -103,19 +169,32 @@ export type WorkspaceAction =
   | { type: "favoritesUpdated"; payload: Pick<WorkspaceState, "bookmarks" | "hotlist"> }
   | { type: "navigationItemsUpdated"; payload: NavigationItem[] }
   | { type: "navigationTargetStatusUpdated"; payload: NavigationTargetInfo[] }
-  | { type: "navigationSelectionSet"; payload: string[] }
+  | { type: "navigationSelectionSet"; payload: string[] | { itemIds: string[]; anchorId?: string | null; cursorId?: string | null } }
   | { type: "navigationItemSelectionChanged"; payload: { itemId: string; multi: boolean } }
   | { type: "navigationFilterChanged"; payload: string }
   | { type: "navigationStatusSet"; payload: WorkspaceState["navigation"]["status"] }
+  | { type: "navigation/git-status-loading"; payload: { directory: string } }
+  | { type: "navigation/git-status-loaded"; payload: { directory: string; statuses: Record<string, GitFileStatus> } }
   | { type: "remoteProfilesUpdated"; payload: RemoteConnectionProfile[] }
   | { type: "settingsSectionSet"; payload: SettingsSection }
   | { type: "shortcutBindingUpdated"; payload: { id: string; binding: string } }
   | { type: "colorRuleUpdated"; payload: { id: string; color: string } }
   | { type: "tagRuleUpdated"; payload: { id: string; quickFilter: string } }
   | { type: "columnVisibilityToggled"; payload: { id: string } }
+  | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
+  | { type: "columnsShown"; payload: { panelId?: PanelId; tabId?: string; ids?: ColumnId[] } }
   | { type: "columnWidthSet"; payload: { panelId: PanelId; tabId: string; id: ColumnId; width: string } }
+  | { type: "columnOrderChanged"; payload: { panelId: PanelId; tabId: string; sourceId: ColumnId; targetId: ColumnId; placement: "before" | "after" } }
+  | { type: "navigationColumnsUpdated"; payload: NavigationColumnDefinition[] }
+  | { type: "navigationColumnWidthSet"; payload: { id: NavigationColumnDefinition["id"]; width: string } }
   | { type: "detailsRowHeightSet"; payload: { value: number } }
+  | { type: "tooltipHoverDelaySet"; payload: { value: number } }
+  | { type: "metadataRetentionHoursSet"; payload: { value: number | null } }
+  | { type: "contextMenuDefaultSet"; payload: { value: SettingsModel["contextMenu"]["defaultMenu"] } }
   | { type: "themePanelFocusAccentSet"; payload: { color: string } }
+  | { type: "themeActiveTabBackgroundSet"; payload: { color: string } }
+  | { type: "themeDropHighlightFillSet"; payload: { color: string } }
+  | { type: "themeDropHighlightBorderSet"; payload: { color: string } }
   | { type: "themeTabMinWidthSet"; payload: { value: number } }
   | { type: "settingsModelApplied"; payload: { model: SettingsModel; section?: SettingsSection } }
   | {
@@ -131,23 +210,11 @@ export type WorkspaceAction =
   | { type: "operationTaskEventReceived"; payload: OperationTaskSnapshot }
   | { type: "operationHistorySnapshotLoaded"; payload: { records: OperationHistoryRecord[]; historySequence: number } }
   | { type: "operationHistoryEventReceived"; payload: { record: OperationHistoryRecord; historySequence: number } }
-  | { type: "operationConflictRequested"; payload: OperationConflictRequest }
-  | {
-      type: "operationConflictDialogChanged";
-      payload: Partial<
-        Pick<NonNullable<WorkspaceState["operations"]["conflictDialog"]>, "selectedResolution" | "renameValue" | "applyToAll" | "resolving">
-      >;
-    }
-  | { type: "operationConflictDialogClosed"; payload?: { conflictId?: string } }
   | { type: "notificationAdded"; payload: WorkspaceState["notifications"][number] }
   | { type: "notificationDismissed"; payload: { id: string } }
   | { type: "contextMenuSet"; payload?: WorkspaceState["contextMenu"] };
 
 const PANEL_ORDER: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
-const MIN_DETAILS_ROW_HEIGHT = 24;
-const MAX_DETAILS_ROW_HEIGHT = 72;
-const MIN_COLUMN_WIDTH = 48;
-const MAX_COLUMN_WIDTH = 960;
 
 const DEFAULT_SEARCH_PROGRESS: SearchProgressState = {
   scannedEntries: 0,
@@ -157,6 +224,30 @@ const DEFAULT_SEARCH_PROGRESS: SearchProgressState = {
 };
 
 const MAX_SEARCH_HISTORY_ITEMS = 20;
+
+function cloneInformationPanelState(panel: WorkspaceBootstrap["informationPanel"]): WorkspaceState["informationPanel"] {
+  return {
+    expanded: panel.expanded,
+    activeTab: panel.activeTab,
+    properties: {
+      ...panel.properties,
+      item: panel.properties.item
+        ? {
+            ...panel.properties.item,
+            target: { ...panel.properties.item.target },
+            directorySizeState: { ...panel.properties.item.directorySizeState },
+            fieldStates: panel.properties.item.fieldStates.map((fieldState) => ({ ...fieldState }))
+          }
+        : undefined,
+      summary: panel.properties.summary
+        ? {
+            ...panel.properties.summary,
+            fieldStates: panel.properties.summary.fieldStates.map((fieldState) => ({ ...fieldState }))
+          }
+        : undefined
+    }
+  };
+}
 
 function normalizeRemotePath(path: string) {
   const normalized = path
@@ -204,7 +295,7 @@ function cloneRecoveredTab(tab: TabState, panelId: PanelId): TabState {
     expandedNodePaths: [...tab.expandedNodePaths],
     history: [...tab.history],
     sort: { ...tab.sort },
-    columns: cloneColumns(tab.columns),
+    columns: normalizeColumns(tab.columns),
     snapshot: {
       location: { ...tab.snapshot.location },
       breadcrumbs: tab.snapshot.breadcrumbs.map((breadcrumb) => ({ ...breadcrumb })),
@@ -253,6 +344,9 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     source: bootstrap.source,
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
+    treeVisible: bootstrap.treeVisible,
+    fileVisibility: { ...DEFAULT_FILE_VISIBILITY },
+    syncScroll: false,
     panels: normalizedPanels,
     activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
     directoryTree: bootstrap.directoryTree,
@@ -262,11 +356,12 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       items: sortNavigationItems(bootstrap.navigationItems),
       selectedItemIds: [],
       filterText: "",
-      status: "idle"
+      status: "idle",
+      gitStatusCache: {},
+      gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
     search: {
-      open: false,
       loading: false,
       filterText: "",
       query: {
@@ -290,6 +385,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       history: [],
       progress: DEFAULT_SEARCH_PROGRESS
     },
+    informationPanel: cloneInformationPanelState(bootstrap.informationPanel),
     settings: {
       section: "shortcuts",
       model: normalizeSettingsModel(bootstrap.settingsModel)
@@ -414,15 +510,28 @@ function normalizePanelTabs(panel: PanelState): PanelState {
     seen.add(tab.id);
     return true;
   });
+  const normalizedTabs = tabs.map((tab) => {
+    const columns = normalizeColumns(tab.columns);
+    return hasSameJsonShape(columns, tab.columns)
+      ? tab
+      : {
+          ...tab,
+          columns
+        };
+  });
   const activeTabId = tabs.some((tab) => tab.id === panel.activeTabId) ? panel.activeTabId : tabs[0]?.id ?? panel.activeTabId;
 
-  if (tabs.length === panel.tabs.length && activeTabId === panel.activeTabId) {
+  if (
+    tabs.length === panel.tabs.length &&
+    activeTabId === panel.activeTabId &&
+    normalizedTabs.every((tab, index) => tab === tabs[index])
+  ) {
     return panel;
   }
 
   return {
     ...panel,
-    tabs,
+    tabs: normalizedTabs,
     activeTabId
   };
 }
@@ -541,6 +650,7 @@ function createSearchResultsSnapshot(sourceTab: TabState, tabId: string, results
       attributes: result.kind === "folder" ? ["D"] : ["A"],
       accentColor: result.kind === "folder" ? "#2f6b57" : "#29659f",
       tags: [],
+      comment: result.match,
       description: result.match
     }))
   };
@@ -682,11 +792,7 @@ function toggleExpandedPath(expandedNodePaths: string[], path: string) {
 }
 
 function normalizeDetailsRowHeight(value: number) {
-  if (!Number.isFinite(value)) {
-    return 24;
-  }
-
-  return Math.min(MAX_DETAILS_ROW_HEIGHT, Math.max(MIN_DETAILS_ROW_HEIGHT, Math.round(value)));
+  return normalizeMappedDetailsRowHeight(value);
 }
 
 function normalizeSearchHistory(items: string[]) {
@@ -729,31 +835,45 @@ function createSearchHistoryState(
   };
 }
 
-function normalizeColumnWidth(width: string) {
-  const trimmed = width.trim();
-  const pixelMatch = /^(\d+(?:\.\d+)?)px$/i.exec(trimmed);
-  if (!pixelMatch) {
-    return trimmed || `${MIN_COLUMN_WIDTH}px`;
-  }
-
-  const nextWidth = Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(Number(pixelMatch[1]))));
-  return `${nextWidth}px`;
+function getEntryPathKey(path: string) {
+  const normalized = normalizeLocationPath(path);
+  return normalized.startsWith("ftp://") || normalized.startsWith("sftp://") ? normalized : normalized.toLowerCase();
 }
 
-function setColumnWidth(columns: ColumnDefinition[], columnId: ColumnId, width: string) {
-  let changed = false;
-  const normalizedWidth = normalizeColumnWidth(width);
-  const nextColumns = columns.map((column) => {
-    if (column.id !== columnId) {
-      return column;
+function preserveSelectedEntryIds(
+  tab: TabState,
+  snapshot: DirectorySnapshot,
+  replacements: SelectionPathReplacement[] = []
+) {
+  if (tab.selectedEntryIds.length === 0) {
+    return [];
+  }
+
+  const nextEntryIds = new Set(snapshot.entries.map((entry) => entry.id));
+  const nextEntryIdByPath = new Map(snapshot.entries.map((entry) => [getEntryPathKey(entry.path), entry.id]));
+  const previousEntryById = new Map(tab.snapshot.entries.map((entry) => [entry.id, entry]));
+  const replacementByPath = new Map(
+    replacements.map((replacement) => [getEntryPathKey(replacement.fromPath), replacement.toPath] as const)
+  );
+  const preservedIds: string[] = [];
+
+  for (const selectedId of tab.selectedEntryIds) {
+    let nextId: string | undefined;
+    if (nextEntryIds.has(selectedId)) {
+      nextId = selectedId;
+    } else {
+      const previousEntry = previousEntryById.get(selectedId);
+      const previousPath = previousEntry?.path ?? selectedId;
+      const replacementPath = replacementByPath.get(getEntryPathKey(previousPath));
+      nextId = nextEntryIdByPath.get(getEntryPathKey(replacementPath ?? previousPath));
     }
-    changed = true;
-    return {
-      ...column,
-      width: normalizedWidth
-    };
-  });
-  return changed ? nextColumns : columns;
+
+    if (nextId && !preservedIds.includes(nextId)) {
+      preservedIds.push(nextId);
+    }
+  }
+
+  return preservedIds;
 }
 
 function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
@@ -781,8 +901,11 @@ function updateTreeNode(nodes: DirectoryNode[], targetPath: string, updater: (no
   const nextNodes = nodes.map((node) => {
     const normalizedNode = normalizeDirectoryNode(node);
     if (normalizeLocationPath(normalizedNode.path) === normalizedTargetPath) {
-      changed = true;
-      return updater(normalizedNode);
+      const updated = updater(normalizedNode);
+      if (updated !== normalizedNode) {
+        changed = true;
+      }
+      return updated;
     }
 
     if (normalizedNode.children.length === 0) {
@@ -876,6 +999,184 @@ function selectEntries(selectedEntryIds: string[], entryId: string, multi: boole
     : [...selectedEntryIds, entryId];
 }
 
+/**
+ * 计算"当前焦点"在有序列表中的 index。
+ * 焦点取 selectedEntryIds 的最后一项（最近焦点项，符合 Shift 扩展时的起点直觉）；
+ * 若无选中，则视作首项之前（delta<0 时退到末项，delta>0 时落到首项），与方向键无选中时的 Windows 行为一致。
+ */
+function resolveFocusIndex(selectedEntryIds: string[], orderedEntryIds: string[]): number {
+  if (selectedEntryIds.length === 0) {
+    return -1;
+  }
+  const lastSelected = selectedEntryIds[selectedEntryIds.length - 1];
+  const index = orderedEntryIds.indexOf(lastSelected);
+  return index;
+}
+
+/**
+ * 根据 EntryFocusMove 与起点 index 计算目标 index（含边界 clamp）。
+ * 无选中(startIndex=-1)时：向下(delta>0/page-down)落到首项、向上(delta<0/page-up)落到末项。
+ */
+function resolveTargetIndex(startIndex: number, orderedCount: number, move: EntryFocusMove): number {
+  if (orderedCount <= 0) {
+    return -1;
+  }
+  if (move.kind === "absolute") {
+    return move.position === "first" ? 0 : orderedCount - 1;
+  }
+  const step =
+    move.kind === "delta"
+      ? move.delta
+      : move.direction === "up"
+        ? -move.pageSize
+        : move.pageSize;
+  const base = startIndex === -1 ? (step > 0 ? -1 : orderedCount) : startIndex;
+  return Math.min(Math.max(base + step, 0), orderedCount - 1);
+}
+
+/** 返回当前多选区间的可见端点。 */
+function selectionRangeEdges(selectedEntryIds: string[], orderedEntryIds: string[]): { min: number; max: number } {
+  const indices = selectedEntryIds.map((id) => orderedEntryIds.indexOf(id)).filter((index) => index >= 0);
+  if (indices.length === 0) {
+    return { min: -1, max: -1 };
+  }
+  return { min: Math.min(...indices), max: Math.max(...indices) };
+}
+
+function findIndexById(orderedEntryIds: string[], id: string | null | undefined): number {
+  if (!id) {
+    return -1;
+  }
+  return orderedEntryIds.indexOf(id);
+}
+
+function isMultiRange(selectedEntryIds: string[], orderedEntryIds: string[]): boolean {
+  const edges = selectionRangeEdges(selectedEntryIds, orderedEntryIds);
+  return edges.min >= 0 && edges.max > edges.min;
+}
+
+function nextSelectionForSingleMove(targetIndex: number, orderedEntryIds: string[]): string[] {
+  const targetId = orderedEntryIds[targetIndex];
+  return targetId ? [targetId] : [];
+}
+
+/**
+ * 单选移动（纯方向键 / Home / End / PageUp / PageDown）：
+ * - 单项选择：从焦点按 move 移动一格/到端点/翻页，塌缩为单项，锚点=目标。
+ * - 多选区间：先塌缩到区间"近端外侧一格"——朝移动方向取区间近端再加一格 move（边界 clamp），
+ *   塌缩为单项，锚点=目标。即 Shift+End 得到 [B,C,D] 后单独 ↑ 会落到上端 B 的上一项 A，
+ *   单独 End 会落 到下端 D 的再下端（若已是末项则停在末项）。
+ */
+function moveFocusSelection(
+  tab: TabState,
+  orderedEntryIds: string[],
+  move: EntryFocusMove
+): TabState {
+  const count = orderedEntryIds.length;
+  if (count <= 0) {
+    return tab;
+  }
+  const targetIndex = resolveTargetIndex(focusStartForPlainMove(tab, orderedEntryIds, move), count, move);
+  if (targetIndex < 0) {
+    return tab;
+  }
+  const targetId = orderedEntryIds[targetIndex];
+  if (!targetId) {
+    return tab;
+  }
+  return {
+    ...tab,
+    selectedEntryIds: nextSelectionForSingleMove(targetIndex, orderedEntryIds),
+    selectionAnchorId: targetId,
+    selectionCursorId: null
+  };
+}
+
+/**
+ * 纯方向键时的移动起点：
+ * - 多选区间：朝移动方向取区间近端（↑/Home/PageUp→上端 min；↓/End/PageDown→下端 max），
+ *   再由 resolveTargetIndex 在该近端基础上加一格 move（即塌缩到近端外侧一格）。
+ * - 单项 / 无选中：取焦点 index（无选中按 resolveTargetIndex 内部的端点直觉处理）。
+ */
+function focusStartForPlainMove(tab: TabState, orderedEntryIds: string[], move: EntryFocusMove): number {
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  if (isMultiRange(tab.selectedEntryIds, orderedEntryIds)) {
+    const edges = selectionRangeEdges(tab.selectedEntryIds, orderedEntryIds);
+    const upward =
+      move.kind === "absolute"
+        ? move.position === "first"
+        : move.kind === "delta"
+          ? move.delta < 0
+          : move.direction === "up";
+    return upward ? edges.min : edges.max;
+  }
+  return focusIndex;
+}
+
+/**
+ * Shift 多选扩展：锚点固定，只移动光标端。
+ * - 锚点（id）：首次 Shift 时确立为当前光标条目 id；后续 Shift 操作保持锚点不变。
+ *   若状态里没有锚点（null/undefined），用当前焦点 id 作为锚点；无选中时锚点退化为首项。
+ * - 光标端（id）：上一次光标位置取状态保存的 selectionCursorId（命中 ordered 时使用），
+ *   缺失时退化为焦点 index；再按 move 计算新光标 index。
+ * - 选中集 = ordered[ min(anchor,cursor) .. max(anchor,cursor) ]，天然支持越锚反向（区间随光标收缩）。
+ * - 把新光标 id 持久到 selectionCursorId，确保后续连续 Shift 移动的"起点"始终是上一次光标位置。
+ */
+function extendRangeSelection(
+  tab: TabState,
+  orderedEntryIds: string[],
+  move: EntryFocusMove
+): TabState {
+  const count = orderedEntryIds.length;
+  if (count <= 0) {
+    return tab;
+  }
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  const anchorIndex = resolveAnchorIndex(tab, orderedEntryIds);
+  const storedCursor = findIndexById(orderedEntryIds, tab.selectionCursorId);
+  const cursorStart = storedCursor !== -1 ? storedCursor : (focusIndex === -1 ? anchorIndex : focusIndex);
+  const cursorIndex = resolveTargetIndex(cursorStart, count, move);
+  if (cursorIndex < 0) {
+    return { ...tab, selectionAnchorId: orderedEntryIds[anchorIndex] ?? null };
+  }
+  const from = Math.min(anchorIndex, cursorIndex);
+  const to = Math.max(anchorIndex, cursorIndex);
+  return {
+    ...tab,
+    selectedEntryIds: orderedEntryIds.slice(from, to + 1),
+    selectionAnchorId: orderedEntryIds[anchorIndex] ?? null,
+    selectionCursorId: orderedEntryIds[cursorIndex] ?? null
+  };
+}
+
+/** 把 selectionAnchorId 解析成在 orderedEntryIds 中的 index；缺失/无效时退化为焦点或首项。 */
+function resolveAnchorIndex(tab: TabState, orderedEntryIds: string[]): number {
+  const stored = findIndexById(orderedEntryIds, tab.selectionAnchorId);
+  if (stored !== -1) {
+    return stored;
+  }
+  const focusIndex = resolveFocusIndex(tab.selectedEntryIds, orderedEntryIds);
+  return focusIndex === -1 ? 0 : focusIndex;
+}
+
+function selectEntryRange(entries: { id: string }[], fromEntryId: string, toEntryId: string, orderedEntryIds?: string[]): string[] {
+  const validEntryIds = new Set(entries.map((entry) => entry.id));
+  const orderedEntries = orderedEntryIds
+    ? orderedEntryIds.filter((entryId) => validEntryIds.has(entryId)).map((id) => ({ id }))
+    : entries;
+  const fromIndex = orderedEntries.findIndex((entry) => entry.id === fromEntryId);
+  const toIndex = orderedEntries.findIndex((entry) => entry.id === toEntryId);
+
+  if (fromIndex === -1 || toIndex === -1) {
+    return [];
+  }
+
+  const startIndex = Math.min(fromIndex, toIndex);
+  const endIndex = Math.max(fromIndex, toIndex);
+
+  return orderedEntries.slice(startIndex, endIndex + 1).map((entry) => entry.id);
+}
+
 function clearActiveTabSelectionForPanel(panel: PanelState): PanelState {
   return updateTab(panel, panel.activeTabId, (tab) =>
     tab.selectedEntryIds.length === 0
@@ -887,19 +1188,50 @@ function clearActiveTabSelectionForPanel(panel: PanelState): PanelState {
   );
 }
 
+function getCurrentPropertiesTargetKey(state: WorkspaceState): string | undefined {
+  const panel = state.panels[state.activePanelId];
+  if (!panel) {
+    return undefined;
+  }
+  const tab = getActiveTab(panel);
+  if (!isDirectoryTab(tab)) {
+    return undefined;
+  }
+  const selectedEntries = tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
+  if (selectedEntries.length > 1) {
+    return `multi:${selectedEntries.map((entry) => entry.id).join("|")}`;
+  }
+  return `single:${selectedEntries[0]?.path ?? tab.snapshot.location.path}`;
+}
+
+function invalidatePropertiesIfTargetChanged(state: WorkspaceState): WorkspaceState {
+  if (state.informationPanel.properties.targetKey === getCurrentPropertiesTargetKey(state)) {
+    return state;
+  }
+  return {
+    ...state,
+    informationPanel: {
+      ...state.informationPanel,
+      properties: {
+        status: "idle"
+      }
+    }
+  };
+}
+
 function focusPanel(state: WorkspaceState, panelId: PanelId): WorkspaceState {
   if (state.activePanelId === panelId) {
     return state;
   }
 
-  return updatePanel(
+  return invalidatePropertiesIfTargetChanged(updatePanel(
     {
       ...state,
       activePanelId: panelId
     },
     state.activePanelId,
     clearActiveTabSelectionForPanel
-  );
+  ));
 }
 
 function updateSettingsModel<T extends keyof WorkspaceState["settings"]["model"]>(
@@ -919,6 +1251,30 @@ function updateSettingsModel<T extends keyof WorkspaceState["settings"]["model"]
   };
 }
 
+function updateColumnsForSettingsAndTab(
+  state: WorkspaceState,
+  panelId: PanelId | undefined,
+  tabId: string | undefined,
+  updater: (columns: ColumnDefinition[]) => ColumnDefinition[]
+) {
+  const withSettings = updateSettingsModel(state, "columns", updater);
+  if (!panelId || !tabId) {
+    return withSettings;
+  }
+
+  return updatePanel(withSettings, panelId, (panel) =>
+    updateTab(panel, tabId, (tab) => {
+      const nextColumns = updater(tab.columns);
+      return nextColumns === tab.columns
+        ? tab
+        : {
+            ...tab,
+            columns: nextColumns
+          };
+    })
+  );
+}
+
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "bootstrapLoaded":
@@ -931,11 +1287,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "layoutModeSet":
-      return {
+      return invalidatePropertiesIfTargetChanged({
         ...state,
         layoutMode: action.payload,
         activePanelId: ensureVisibleActivePanel(action.payload, state.activePanelId)
-      };
+      });
 
     case "splitRatioSet":
       return {
@@ -945,6 +1301,23 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           [action.payload.key]: clampRatio(action.payload.key, action.payload.value)
         }
       };
+
+    case "treeVisibilitySet":
+      return state.treeVisible === action.payload
+        ? state
+        : {
+            ...state,
+            treeVisible: action.payload
+          };
+
+    case "fileVisibilitySet":
+      {
+        const fileVisibility = { ...state.fileVisibility, ...action.payload };
+        return hasSameJsonShape(fileVisibility, state.fileVisibility) ? state : { ...state, fileVisibility };
+      }
+
+    case "syncScrollSet":
+      return state.syncScroll === action.payload ? state : { ...state, syncScroll: action.payload };
 
     case "panelFocused":
       if (!getVisiblePanelIds(state.layoutMode).includes(action.payload.panelId)) {
@@ -965,7 +1338,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       if (panelHasTab(state.panels[action.payload.panelId], action.payload.tab.id)) {
         return state;
       }
-      return updatePanel(
+      return invalidatePropertiesIfTargetChanged(updatePanel(
         focusPanel(state, action.payload.panelId),
         action.payload.panelId,
         (panel) => ({
@@ -973,14 +1346,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           tabs: [...panel.tabs, action.payload.tab],
           activeTabId: action.payload.tab.id
         })
-      );
+      ));
 
     case "navigationTabOpened":
       {
         const targetPanelId = getNavigationOpenPanelId(state, action.payload?.panelId);
         const existing = findNavigationTabInPanels(state.panels);
         if (!existing) {
-          return {
+          return invalidatePropertiesIfTargetChanged({
             ...updatePanel(focusPanel(state, targetPanelId), targetPanelId, (panel) => ({
               ...panel,
               tabs: [...panel.tabs, createNavigationTab(NAVIGATION_TAB_ID)],
@@ -991,7 +1364,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               selectedItemIds: [],
               filterText: ""
             }
-          };
+          });
         }
 
         const visiblePanelIds = getVisiblePanelIds(state.layoutMode);
@@ -1026,13 +1399,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               }
             }
           };
-          return {
+          return invalidatePropertiesIfTargetChanged({
             ...nextState,
             panels: dedupeNavigationTabs(nextState.panels, targetPanelId, existing.tab.id)
-          };
+          });
         }
 
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...updatePanel(focusPanel(state, existing.panelId), existing.panelId, (panel) => ({
             ...panel,
             activeTabId: existing.tab.id
@@ -1042,24 +1415,27 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             selectedItemIds: [],
             filterText: ""
           }
-        };
+        });
       }
 
     case "tabActivated":
       if (!panelHasTab(state.panels[action.payload.panelId], action.payload.tabId)) {
         return state;
       }
-      return updatePanel(
+      if (state.activePanelId === action.payload.panelId && state.panels[action.payload.panelId].activeTabId === action.payload.tabId) {
+        return state;
+      }
+      return invalidatePropertiesIfTargetChanged(updatePanel(
         focusPanel(state, action.payload.panelId),
         action.payload.panelId,
         (panel) => ({
           ...panel,
           activeTabId: action.payload.tabId
         })
-      );
+      ));
 
     case "tabClosed":
-      return updatePanel(state, action.payload.panelId, (panel) => {
+      return invalidatePropertiesIfTargetChanged(updatePanel(state, action.payload.panelId, (panel) => {
         if (panel.tabs.length === 1) {
           return panel;
         }
@@ -1086,7 +1462,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           tabs: nextTabs,
           activeTabId: nextActiveTabId
         };
-      });
+      }));
 
     case "tabMoved":
       {
@@ -1097,7 +1473,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
 
         const sourceTab = sourcePanel.tabs[sourceIndex];
-        if (isNavigationTab(sourceTab) && state.panels[action.payload.targetPanelId].tabs.some(isNavigationTab)) {
+        if (
+          isNavigationTab(sourceTab) &&
+          action.payload.sourcePanelId !== action.payload.targetPanelId &&
+          state.panels[action.payload.targetPanelId].tabs.some(isNavigationTab)
+        ) {
           return state;
         }
         if (action.payload.sourcePanelId === action.payload.targetPanelId) {
@@ -1105,11 +1485,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           const adjustedTargetIndex =
             action.payload.targetIndex > sourceIndex ? action.payload.targetIndex - 1 : action.payload.targetIndex;
           const nextTabs = insertTabAt(remainingTabs, sourceTab, adjustedTargetIndex);
-          return updatePanel(state, action.payload.sourcePanelId, (panel) => ({
+          return invalidatePropertiesIfTargetChanged(updatePanel(state, action.payload.sourcePanelId, (panel) => ({
             ...panel,
             tabs: nextTabs,
             activeTabId: sourceTab.id
-          }));
+          })));
         }
 
         const targetPanel = state.panels[action.payload.targetPanelId];
@@ -1121,7 +1501,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             ? nextSourceTabs[Math.max(0, sourceIndex - 1)]?.id ?? nextSourceTabs[0].id
             : sourcePanel.activeTabId;
 
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...state,
           activePanelId: action.payload.targetPanelId,
           panels: {
@@ -1137,7 +1517,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               activeTabId: movedTab.id
             }
           }
-        };
+        });
       }
 
     case "tabLockedToggled":
@@ -1168,7 +1548,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       }
 
     case "otherTabsClosed":
-      return updatePanel(state, action.payload.panelId, (panel) => {
+      return invalidatePropertiesIfTargetChanged(updatePanel(state, action.payload.panelId, (panel) => {
         const targetTab = panel.tabs.find((tab) => tab.id === action.payload.tabId);
         if (!targetTab) {
           return panel;
@@ -1188,7 +1568,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               tabs: nextTabs,
               activeTabId: action.payload.tabId
             };
-      });
+      }));
 
     case "tabSnapshotCommitted":
       if (!panelHasTab(state.panels[action.payload.panelId], action.payload.tabId)) {
@@ -1197,7 +1577,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       if (isNavigationTab(state.panels[action.payload.panelId].tabs.find((tab) => tab.id === action.payload.tabId))) {
         return state;
       }
-      return updatePanel(
+      return invalidatePropertiesIfTargetChanged(updatePanel(
         action.payload.activatePanel === false
           ? state
           : {
@@ -1243,25 +1623,51 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               tab.expandedNodePaths
             );
 
+            const anchorEntry = pathChanged
+              ? (action.payload.previousPath
+                  ? action.payload.snapshot.entries.find((entry) =>
+                      normalizeLocationPath(entry.path) === normalizeLocationPath(action.payload.previousPath!))
+                  : undefined)
+              : undefined;
+            const fallbackEntry = action.payload.snapshot.entries[0];
+            const selectedEntry = anchorEntry ?? fallbackEntry;
+
             return {
               ...tab,
-              title: tab.titleOverride ?? action.payload.snapshot.location.label,
+              title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
+              titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
               snapshot: action.payload.snapshot,
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,
               historyIndex: nextHistoryIndex,
-              selectedEntryIds: [],
+              selectedEntryIds: pathChanged
+                ? (selectedEntry ? [selectedEntry.id] : [])
+                : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
+              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : tab.selectionAnchorId ?? null,
+              selectionCursorId: pathChanged ? null : tab.selectionCursorId ?? null,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
               inlineEdit: undefined,
               search: undefined,
-              reconnect: undefined
+              reconnect: undefined,
+              gitStatus: pathChanged ? undefined : tab.gitStatus
             };
           });
 
           return pathChanged ? unbindSearchTabsForSource(updatedPanel, action.payload.tabId) : updatedPanel;
         }
+      ));
+
+    case "tabGitStatusUpdated":
+      if (!panelHasTab(state.panels[action.payload.panelId], action.payload.tabId)) {
+        return state;
+      }
+      return updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => ({
+          ...tab,
+          gitStatus: action.payload.gitStatus
+        }))
       );
 
     case "addressDraftChanged":
@@ -1318,11 +1724,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "treeNodeConnectionFailed":
       return {
         ...state,
-        directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) => ({
-          ...node,
-          connectionState: "error",
-          errorMessage: action.payload.message
-        }))
+        directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) =>
+          node.connectionState === "error" && node.errorMessage === action.payload.message
+            ? node
+            : { ...node, connectionState: "error", errorMessage: action.payload.message }
+        )
       };
 
     case "treeNodeExpansionSet":
@@ -1380,7 +1786,30 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       );
 
     case "entrySelectionChanged":
-      return updatePanel(
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : (() => {
+                  const nextSelected = selectEntries(tab.selectedEntryIds, action.payload.entryId, action.payload.multi);
+                  // 点击/单选切换时锚点跟随单选焦点重置：multi 模式下保留原锚点以维持区间扩展的可预期性，
+                  // 非 multi（普通单点）塌缩为单项 → 锚点设为新单项 id。
+                  const anchorId = action.payload.multi
+                    ? tab.selectionAnchorId ?? null
+                    : nextSelected.length === 0
+                      ? null
+                      : nextSelected[0];
+                  return { ...tab, selectedEntryIds: nextSelected, selectionAnchorId: anchorId, selectionCursorId: null };
+                })()
+          )
+      ));
+
+    case "entrySelectionSet":
+      devLog("[workspaceReducer] entrySelectionSet:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
         focusPanel(state, action.payload.panelId),
         action.payload.panelId,
         (panel) =>
@@ -1389,10 +1818,101 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: selectEntries(tab.selectedEntryIds, action.payload.entryId, action.payload.multi)
+                  selectedEntryIds: action.payload.entryIds,
+                  selectionAnchorId:
+                    action.payload.entryIds.length === 1 ? action.payload.entryIds[0] : null,
+                  selectionCursorId: null
                 }
           )
-      );
+      ));
+
+    case "entryRangeSelected":
+      devLog("[workspaceReducer] entryRangeSelected:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: selectEntryRange(
+                    tab.snapshot.entries,
+                    action.payload.fromEntryId,
+                    action.payload.toEntryId,
+                    action.payload.orderedEntryIds
+                  ),
+                  selectionAnchorId: null,
+                  selectionCursorId: null
+                }
+          )
+      ));
+
+    case "allEntriesSelected":
+      devLog("[workspaceReducer] allEntriesSelected:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id),
+                  selectionAnchorId: null,
+                  selectionCursorId: null
+                }
+          )
+      ));
+
+    case "entrySelectionCleared":
+      devLog("[workspaceReducer] entrySelectionCleared:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : {
+                  ...tab,
+                  selectedEntryIds: [],
+                  selectionAnchorId: null,
+                  selectionCursorId: null
+                }
+          )
+      ));
+
+    case "entryFocusMoved":
+      devLog("[workspaceReducer] entryFocusMoved:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : moveFocusSelection(tab, action.payload.orderedEntryIds, action.payload.move)
+          )
+      ));
+
+    case "entryRangeExtended":
+      devLog("[workspaceReducer] entryRangeExtended:", action.payload);
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        focusPanel(state, action.payload.panelId),
+        action.payload.panelId,
+        (panel) =>
+          updateTab(panel, action.payload.tabId, (tab) =>
+            isNavigationTab(tab)
+              ? tab
+              : extendRangeSelection(tab, action.payload.orderedEntryIds, action.payload.move)
+          )
+      ));
+
+    case "workspaceKeyboardNavTokenSet":
+      return { ...state, keyboardNavToken: action.payload.payload ?? Symbol() };
 
     case "tabSortChanged":
       return updatePanel(state, action.payload.panelId, (panel) =>
@@ -1412,6 +1932,21 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                     direction: "asc"
                   }
             }
+        )
+      );
+
+    case "tabSortSet":
+      return updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) =>
+          isNavigationTab(tab)
+            ? tab
+            : {
+                ...tab,
+                sort: {
+                  columnId: action.payload.sort.columnId ?? tab.sort.columnId,
+                  direction: action.payload.sort.direction ?? tab.sort.direction
+                }
+              }
         )
       );
 
@@ -1466,12 +2001,137 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         )
       );
 
+    case "informationPanelExpandedSet":
+      if (state.informationPanel.expanded === action.payload) {
+        return state;
+      }
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          expanded: action.payload
+        }
+      };
+
+    case "informationPanelTabChanged":
+      if (state.informationPanel.activeTab === action.payload) {
+        return state;
+      }
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          activeTab: action.payload
+        }
+      };
+
+    case "informationPanelHistoryRequested":
+      return {
+        ...state,
+        operations: {
+          ...state.operations,
+          tasksOpen: true
+        },
+        informationPanel: {
+          ...state.informationPanel,
+          expanded: true,
+          activeTab: "history"
+        }
+      };
+
+    case "searchPanelRequested":
+      {
+        const search = action.payload
+          ? { ...state.search, activeTab: action.payload, history: state.search.histories[action.payload], selectedHistoryIndex: undefined }
+          : state.search;
+        return { ...state, informationPanel: { ...state.informationPanel, expanded: true, activeTab: "search" }, search };
+      }
+
+    case "propertiesRequestStarted":
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          properties: {
+            requestId: action.payload.requestId,
+            targetKey: action.payload.targetKey,
+            status: "loading"
+          }
+        }
+      };
+
+    case "propertiesRequestSucceeded":
+      if (
+        state.informationPanel.properties.requestId !== action.payload.requestId ||
+        state.informationPanel.properties.targetKey !== action.payload.targetKey
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          properties: {
+            requestId: action.payload.requestId,
+            targetKey: action.payload.targetKey,
+            status: "ready",
+            item: action.payload.item,
+            summary: action.payload.summary
+          }
+        }
+      };
+
+    case "propertiesRequestFailed":
+      if (
+        state.informationPanel.properties.requestId !== action.payload.requestId ||
+        state.informationPanel.properties.targetKey !== action.payload.targetKey
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          properties: {
+            requestId: action.payload.requestId,
+            targetKey: action.payload.targetKey,
+            status: "failed",
+            errorMessage: action.payload.errorMessage
+          }
+        }
+      };
+
+    case "propertiesSummaryReady":
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          properties: {
+            targetKey: action.payload.targetKey,
+            status: "ready",
+            summary: action.payload.summary
+          }
+        }
+      };
+
+    case "propertiesCleared":
+      return {
+        ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          properties: {
+            status: "idle"
+          }
+        }
+      };
+
     case "searchToggled":
       return {
         ...state,
-        search: {
-          ...state.search,
-          open: action.payload ?? !state.search.open
+        informationPanel: {
+          ...state.informationPanel,
+          expanded: action.payload ?? !state.informationPanel.expanded,
+          activeTab: "search"
         }
       };
 
@@ -1500,9 +2160,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         };
         return {
           ...state,
+          informationPanel: {
+            ...state.informationPanel,
+            expanded: true,
+            activeTab: "search"
+          },
           search: {
             ...state.search,
-            open: true,
             loading: true,
             results: [],
             ...createSearchHistoryState(state.search, nextHistories, undefined),
@@ -1518,6 +2182,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "searchQueryChanged":
       return {
         ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          activeTab: "search"
+        },
         search: {
           ...state.search,
           query: {
@@ -1530,6 +2198,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "searchFilterChanged":
       return {
         ...state,
+        informationPanel: {
+          ...state.informationPanel,
+          activeTab: "search"
+        },
         search: {
           ...state.search,
           filterText: action.payload
@@ -1562,6 +2234,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
         return {
           ...state,
+          informationPanel: {
+            ...state.informationPanel,
+            activeTab: "search"
+          },
           search: {
             ...state.search,
             selectedHistoryIndex: action.payload.index,
@@ -1720,23 +2396,37 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         };
       }
 
-    case "navigationSelectionSet":
+    case "navigationSelectionSet": {
+      const payload = action.payload;
+      const itemIds = Array.isArray(payload) ? payload : payload.itemIds;
+      const anchorId = Array.isArray(payload) ? undefined : payload.anchorId;
+      const cursorId = Array.isArray(payload) ? undefined : payload.cursorId;
       return {
         ...state,
         navigation: {
           ...state.navigation,
-          selectedItemIds: action.payload.filter((id, index, ids) => ids.indexOf(id) === index)
+          selectedItemIds: itemIds.filter((id, index, ids) => ids.indexOf(id) === index),
+          selectionAnchorId: anchorId === undefined ? state.navigation.selectionAnchorId ?? null : anchorId,
+          selectionCursorId: cursorId === undefined ? state.navigation.selectionCursorId ?? null : cursorId
         }
       };
+    }
 
-    case "navigationItemSelectionChanged":
+    case "navigationItemSelectionChanged": {
+      const nextSelected = selectEntries(state.navigation.selectedItemIds, action.payload.itemId, action.payload.multi);
       return {
         ...state,
         navigation: {
           ...state.navigation,
-          selectedItemIds: selectEntries(state.navigation.selectedItemIds, action.payload.itemId, action.payload.multi)
+          selectedItemIds: nextSelected,
+          // 与文件列表一致：multi 模式保留原锚点；普通单点塌缩为单项 → 锚点设为该项、光标清空。
+          selectionAnchorId: action.payload.multi
+            ? state.navigation.selectionAnchorId ?? null
+            : nextSelected.length === 0 ? null : nextSelected[0],
+          selectionCursorId: null
         }
       };
+    }
 
     case "navigationFilterChanged":
       return {
@@ -1756,6 +2446,30 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
       };
 
+    case "navigation/git-status-loading":
+      return {
+        ...state,
+        navigation: {
+          ...state.navigation,
+          gitStatusLoadingDirs: state.navigation.gitStatusLoadingDirs.includes(action.payload.directory)
+            ? state.navigation.gitStatusLoadingDirs
+            : [...state.navigation.gitStatusLoadingDirs, action.payload.directory]
+        }
+      };
+
+    case "navigation/git-status-loaded":
+      return {
+        ...state,
+        navigation: {
+          ...state.navigation,
+          gitStatusCache: {
+            ...state.navigation.gitStatusCache,
+            [action.payload.directory]: action.payload.statuses
+          },
+          gitStatusLoadingDirs: state.navigation.gitStatusLoadingDirs.filter((dir) => dir !== action.payload.directory)
+        }
+      };
+
     case "remoteProfilesUpdated":
       return {
         ...state,
@@ -1768,7 +2482,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         settings: {
           ...state.settings,
-          section: action.payload
+          section: normalizeSettingsSection(action.payload)
         }
       };
 
@@ -1798,6 +2512,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         )
       );
 
+    case "columnVisibilitySet":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) =>
+        setColumnVisibility(columns, [action.payload.id], action.payload.visible)
+      );
+
+    case "columnsShown":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) => {
+        const columnIds = action.payload.ids ?? columns.map((column) => column.id);
+        return setColumnVisibility(columns, columnIds, true);
+      });
+
     case "columnWidthSet":
       return updatePanel(state, action.payload.panelId, (panel) =>
         updateTab(panel, action.payload.tabId, (tab) => {
@@ -1811,8 +2536,28 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         })
       );
 
+    case "columnOrderChanged":
+      return updateColumnsForSettingsAndTab(state, action.payload.panelId, action.payload.tabId, (columns) =>
+        moveColumn(columns, action.payload.sourceId, action.payload.targetId, action.payload.placement)
+      );
+
+    case "navigationColumnsUpdated": return updateSettingsModel(state, "navigationColumns", () => action.payload);
+    case "navigationColumnWidthSet": return updateSettingsModel(state, "navigationColumns", (columns) => setColumnWidth(columns, action.payload.id, action.payload.width));
+
     case "detailsRowHeightSet":
       return updateSettingsModel(state, "detailsRowHeight", () => normalizeDetailsRowHeight(action.payload.value));
+
+    case "tooltipHoverDelaySet":
+      return updateSettingsModel(state, "tooltipHoverDelayMs", () => normalizeTooltipHoverDelayMs(action.payload.value));
+
+    case "metadataRetentionHoursSet":
+      return updateSettingsModel(state, "metadataRetentionHours", () => normalizeMetadataRetentionHours(action.payload.value));
+
+    case "contextMenuDefaultSet":
+      return updateSettingsModel(state, "contextMenu", (contextMenu) => ({
+        ...contextMenu,
+        defaultMenu: normalizeContextMenuDefault(action.payload.value)
+      }));
 
     case "themePanelFocusAccentSet":
       {
@@ -1823,6 +2568,42 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return updateSettingsModel(state, "theme", (theme) => ({
           ...theme,
           panelFocusAccent: nextColor
+        }));
+      }
+
+    case "themeActiveTabBackgroundSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          activeTabBackground: nextColor
+        }));
+      }
+
+    case "themeDropHighlightFillSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          dropHighlightFill: nextColor
+        }));
+      }
+
+    case "themeDropHighlightBorderSet":
+      {
+        const nextColor = normalizeThemeAccentColor(action.payload.color);
+        if (nextColor !== action.payload.color.trim().toLowerCase()) {
+          return state;
+        }
+        return updateSettingsModel(state, "theme", (theme) => ({
+          ...theme,
+          dropHighlightBorder: nextColor
         }));
       }
 
@@ -1844,7 +2625,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return {
           ...state,
           settings: {
-            section: action.payload.section ?? state.settings.section,
+            section: normalizeSettingsSection(action.payload.section ?? state.settings.section),
             model
           }
         };
@@ -1854,8 +2635,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       {
         const model = normalizeSettingsModel({
           ...action.payload.settingsModel,
-          tagRules: state.settings.model.tagRules,
-          columns: state.settings.model.columns
+          tagRules: state.settings.model.tagRules
         });
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));
@@ -1896,6 +2676,18 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "operationTasksOpenSet":
       return {
         ...state,
+        informationPanel: action.payload
+          ? {
+              ...state.informationPanel,
+              expanded: true,
+              activeTab: "history"
+            }
+          : state.informationPanel.activeTab === "history"
+            ? {
+                ...state.informationPanel,
+                expanded: false
+              }
+            : state.informationPanel,
         operations: {
           ...state.operations,
           tasksOpen: action.payload
@@ -1966,54 +2758,6 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ...state.operations,
           history: upsertOperationHistoryRecord(state.operations.history, action.payload.record),
           historySequence: action.payload.historySequence
-        }
-      };
-
-    case "operationConflictRequested":
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasksOpen: true,
-          conflictDialog: {
-            request: action.payload,
-            renameValue: action.payload.suggestedName ?? "",
-            selectedResolution: action.payload.allowedResolutions.includes("keepBoth")
-              ? "keepBoth"
-              : action.payload.allowedResolutions[0] ?? "skip",
-            applyToAll: false,
-            resolving: false
-          }
-        }
-      };
-
-    case "operationConflictDialogChanged":
-      if (!state.operations.conflictDialog) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          conflictDialog: {
-            ...state.operations.conflictDialog,
-            ...action.payload
-          }
-        }
-      };
-
-    case "operationConflictDialogClosed":
-      if (
-        action.payload?.conflictId &&
-        state.operations.conflictDialog?.request.conflictId !== action.payload.conflictId
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          conflictDialog: undefined
         }
       };
 

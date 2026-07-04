@@ -13,6 +13,14 @@ import type {
   TabState,
   WorkspaceBootstrap
 } from "./types";
+import { THIS_PC_PATH } from "./types";
+import {
+  cloneColumns,
+  DEFAULT_COLUMNS,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS
+} from "./workspaceFileListDefaults";
+import { DEFAULT_SHORTCUTS } from "./workspaceMappers";
 
 type CatalogDirectory = {
   path: string;
@@ -23,17 +31,8 @@ type CatalogDirectory = {
   entries: EntryViewModel[];
 };
 
-const DEFAULT_MOCK_COLUMNS: SettingsModel["columns"] = [
-  { id: "name", label: "鍚嶇О", visible: true, width: "2.2fr", align: "left" },
-  { id: "type", label: "绫诲瀷", visible: true, width: "1.1fr", align: "left" },
-  { id: "size", label: "澶у皬", visible: true, width: "0.9fr", align: "right" },
-  { id: "modified", label: "淇敼鏃堕棿", visible: true, width: "1.2fr", align: "left" },
-  { id: "tags", label: "鏍囩", visible: true, width: "1.1fr", align: "left" },
-  { id: "location", label: "浣嶇疆", visible: false, width: "1.3fr", align: "left" }
-];
-
-function cloneMockColumns(columns: SettingsModel["columns"] = DEFAULT_MOCK_COLUMNS) {
-  return columns.map((column) => ({ ...column }));
+function cloneMockColumns(columns: SettingsModel["columns"] = DEFAULT_COLUMNS) {
+  return cloneColumns(columns);
 }
 
 const ROOT_PATHS = ["C:\\", "D:\\", "sftp://deploy@edge-01/", "ftp://media@archive-server/shared"];
@@ -89,27 +88,44 @@ function getRemoteRootPath(path: string) {
   });
 }
 
+function parseMockSizeLabel(sizeLabel: string) {
+  const match = /^([\d.]+)\s*(B|KB|MB|GB|TB)$/i.exec(sizeLabel.trim());
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const unit = match[2].toUpperCase();
+  const multiplier = unit === "B" ? 1 : unit === "KB" ? 1024 : unit === "MB" ? 1024 ** 2 : unit === "GB" ? 1024 ** 3 : 1024 ** 4;
+  return Math.round(value * multiplier);
+}
+
 function createFileEntry(
   parentPath: string,
   name: string,
   options: Partial<
     Pick<
       EntryViewModel,
-      "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "tags" | "description" | "contentText"
+      "sizeBytes" | "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "tags" | "description" | "contentText"
     >
   > = {}
 ): EntryViewModel {
   const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
+  const sizeLabel = options.sizeLabel ?? "24 KB";
+  const attributes = options.attributes ?? ["A"];
   return {
     id: `${parentPath}:${name}`,
     name,
     kind: "file",
     path: joinLocationPath(parentPath, name),
     parentPath,
-    sizeLabel: options.sizeLabel ?? "24 KB",
+    sizeBytes: options.sizeBytes ?? parseMockSizeLabel(sizeLabel),
+    sizeLabel,
     modifiedLabel: options.modifiedLabel ?? "2026-04-18 09:24",
     extension,
-    attributes: options.attributes ?? ["A"],
+    attributes, isHidden: attributes.includes("H"), isSystem: attributes.includes("S"), isProtectedOperatingSystem: attributes.includes("H") && attributes.includes("S"),
     accentColor: options.accentColor ?? "#29659f",
     tags: options.tags ?? [],
     description: options.description ?? "用于前端渲染的模拟文件。",
@@ -130,6 +146,7 @@ function createFolderEntry(
     kind: "folder",
     path,
     parentPath,
+    sizeBytes: null,
     sizeLabel: "--",
     modifiedLabel: "2026-04-18 08:12",
     extension: "",
@@ -671,6 +688,10 @@ export function normalizeLocationPath(input: string): string {
 export function getParentLocationPath(path: string): string | null {
   const normalized = normalizeLocationPath(path);
 
+  if (normalized === THIS_PC_PATH) {
+    return null;
+  }
+
   if (normalized.startsWith("sftp://") || normalized.startsWith("ftp://")) {
     const remoteRoot = getRemoteRootPath(normalized);
     if (!remoteRoot) {
@@ -874,92 +895,9 @@ export function createTabState(
 
 function createSettingsModel(): SettingsModel {
   return {
-    shortcuts: [
-      {
-        id: "focus-next-panel",
-        action: "切换到下一个面板",
-        scope: "workspace",
-        binding: "Tab",
-        description: "按顺序切换可见面板焦点。"
-      },
-      {
-        id: "open-search",
-        action: "打开搜索面板",
-        scope: "workspace",
-        binding: "Ctrl+F",
-        description: "打开停靠式搜索面板。"
-      },
-      {
-        id: "copy",
-        action: "复制",
-        scope: "listing",
-        binding: "Ctrl+C",
-        description: "复制当前选中项。"
-      },
-      {
-        id: "paste",
-        action: "粘贴",
-        scope: "listing",
-        binding: "Ctrl+V",
-        description: "将剪贴板内容粘贴到当前目录。"
-      },
-      {
-        id: "cut",
-        action: "剪切",
-        scope: "listing",
-        binding: "Ctrl+X",
-        description: "剪切当前选中项。"
-      },
-      {
-        id: "drag-move",
-        action: "拖放时移动",
-        scope: "listing",
-        binding: "Shift",
-        description: "拖放文件或文件夹时执行移动而不是复制。"
-      },
-      {
-        id: "create-folder",
-        action: "新建文件夹",
-        scope: "listing",
-        binding: "Ctrl+Shift+N",
-        description: "在当前目录中新建文件夹。"
-      },
-      {
-        id: "delete",
-        action: "删除",
-        scope: "listing",
-        binding: "Delete",
-        description: "删除当前选中项。"
-      },
-      {
-        id: "rename",
-        action: "重命名",
-        scope: "listing",
-        binding: "F2",
-        description: "重命名当前选中项。"
-      },
-      {
-        id: "refresh",
-        action: "刷新",
-        scope: "panel",
-        binding: "F5",
-        description: "刷新当前面板。"
-      },
-      {
-        id: "new-tab",
-        action: "新建标签页",
-        scope: "panel",
-        binding: "Ctrl+T",
-        description: "在新标签页中打开当前目录。"
-      },
-      {
-        id: "close-tab",
-        action: "关闭标签页",
-        scope: "panel",
-        binding: "Ctrl+W",
-        description: "当存在多个标签页时关闭当前标签页。"
-      }
-    ],
+    // 复用 `DEFAULT_SHORTCUTS`（与设置界面的可配置快捷键默认表同源），
+    // 避免在此处维护一份重复的快捷键清单导致与本任务的列表导航新增项漂移。
+    shortcuts: DEFAULT_SHORTCUTS.map((shortcut) => ({ ...shortcut })),
     colorRules: [
       {
         id: "rule-release",
@@ -1000,9 +938,17 @@ function createSettingsModel(): SettingsModel {
       { id: "tags", label: "标签", visible: true, width: "1.1fr", align: "left" },
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
-    detailsRowHeight: 24,
+    navigationColumns: [], detailsRowHeight: 24,
+    tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
+    metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
+    contextMenu: {
+      defaultMenu: "native"
+    },
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#0f6cbd",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 96
     }
   };
@@ -1077,6 +1023,14 @@ export function createMockWorkspaceBootstrap(source: WorkspaceBootstrap["source"
       quadRightSecondary: 0.54,
       tree: 0.28,
       search: 0.28
+    },
+    treeVisible: true,
+    informationPanel: {
+      expanded: false,
+      activeTab: "properties",
+      properties: {
+        status: "idle"
+      }
     },
     panels: {
       "panel-1": createPanelState(

@@ -1,7 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SettingsSurface } from "./SettingsSurface";
 import type { RemoteConnectionProfile, SettingsModel, SettingsSection, WorkspaceState } from "./types";
-import { normalizeDetailsRowHeight, normalizeSettingsModel, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceMappers";
+import {
+  normalizeContextMenuDefault,
+  normalizeDetailsRowHeight,
+  normalizeMetadataRetentionHours,
+  normalizeSettingsModel,
+  normalizeTabMinWidth,
+  normalizeTooltipHoverDelayMs,
+  normalizeThemeAccentColor
+} from "./workspaceMappers";
 import { useWorkspaceController } from "./useWorkspaceController";
 import "./workspace.css";
 
@@ -11,7 +19,11 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     colorRules: model.colorRules.map((rule) => ({ ...rule })),
     tagRules: model.tagRules.map((rule) => ({ ...rule })),
     columns: model.columns.map((column) => ({ ...column })),
+    navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
+    tooltipHoverDelayMs: model.tooltipHoverDelayMs,
+    metadataRetentionHours: model.metadataRetentionHours,
+    contextMenu: { ...model.contextMenu },
     theme: { ...model.theme }
   };
 }
@@ -43,6 +55,40 @@ function getSettingsErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function computeDirtySections(
+  persisted: WorkspaceState,
+  draft: WorkspaceState,
+  normalizedPersistedModel: SettingsModel,
+  deletedRemoteProfileIds: string[],
+  remoteProfilePasswords: Record<string, string | undefined>
+): Set<SettingsSection> {
+  const sections = new Set<SettingsSection>();
+  const dm = draft.settings.model;
+  const pm = normalizedPersistedModel;
+  if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
+  if (
+    !hasSameJsonShape(pm.columns, dm.columns) ||
+    !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
+    pm.detailsRowHeight !== dm.detailsRowHeight ||
+    pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
+    pm.metadataRetentionHours !== dm.metadataRetentionHours
+  ) {
+    sections.add("file-list");
+  }
+  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu)) sections.add("menu-mouse");
+  if (!hasSameJsonShape(pm.theme, dm.theme)) sections.add("appearance");
+  if (!hasSameJsonShape(pm.colorRules, dm.colorRules)) sections.add("color-rules");
+  if (!hasSameJsonShape(pm.tagRules, dm.tagRules)) sections.add("tag-rules");
+  if (
+    !hasSameJsonShape(persisted.remoteProfiles, draft.remoteProfiles) ||
+    deletedRemoteProfileIds.length > 0 ||
+    Object.keys(remoteProfilePasswords).length > 0
+  ) {
+    sections.add("connections");
+  }
+  return sections;
+}
+
 async function closeSettingsWindow() {
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -69,6 +115,16 @@ export function SettingsWindowView() {
   const [remoteProfilePasswords, setRemoteProfilePasswords] = useState<Record<string, string | undefined>>({});
   const [deletedRemoteProfileIds, setDeletedRemoteProfileIds] = useState<string[]>([]);
 
+  const normalizedPersistedModel = useMemo(
+    () => normalizeSettingsModel(state.settings.model),
+    [state.settings.model]
+  );
+
+  const dirtySections = useMemo(
+    () => computeDirtySections(state, draftState, normalizedPersistedModel, deletedRemoteProfileIds, remoteProfilePasswords),
+    [state, draftState, normalizedPersistedModel, deletedRemoteProfileIds, remoteProfilePasswords]
+  );
+
   useEffect(() => {
     if (!settingsReady) {
       return;
@@ -76,7 +132,11 @@ export function SettingsWindowView() {
     if (dirty || applying) {
       return;
     }
-    setDraftState(createDraftState(state));
+    setDraftState((current) => {
+      const next = createDraftState(state);
+      next.settings.section = current.settings.section;
+      return next;
+    });
     setRemoteProfilePasswords({});
     setDeletedRemoteProfileIds([]);
     setErrorMessage(null);
@@ -201,6 +261,7 @@ export function SettingsWindowView() {
     <div className="settings-window-shell">
       <SettingsSurface
         state={draftState}
+        dirtySections={dirtySections}
         onSelectSection={updateDraftSection}
         onUpdateShortcut={(id, binding) =>
           updateDraftModel((model) => ({
@@ -223,6 +284,33 @@ export function SettingsWindowView() {
             }
           }))
         }
+        onUpdateActiveTabBackground={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              activeTabBackground: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
+        onUpdateDropHighlightFill={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              dropHighlightFill: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
+        onUpdateDropHighlightBorder={(color) =>
+          updateDraftModel((model) => ({
+            ...model,
+            theme: {
+              ...model.theme,
+              dropHighlightBorder: normalizeThemeAccentColor(color)
+            }
+          }))
+        }
         onUpdateTabMinWidth={(value) =>
           updateDraftModel((model) => ({
             ...model,
@@ -236,6 +324,27 @@ export function SettingsWindowView() {
           updateDraftModel((model) => ({
             ...model,
             detailsRowHeight: normalizeDetailsRowHeight(value)
+          }))
+        }
+        onUpdateTooltipHoverDelay={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(value)
+          }))
+        }
+        onUpdateMetadataRetentionHours={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            metadataRetentionHours: normalizeMetadataRetentionHours(value)
+          }))
+        }
+        onUpdateContextMenuDefault={(value) =>
+          updateDraftModel((model) => ({
+            ...model,
+            contextMenu: {
+              ...model.contextMenu,
+              defaultMenu: normalizeContextMenuDefault(value)
+            }
           }))
         }
         onSaveRemoteProfile={saveDraftRemoteProfile}

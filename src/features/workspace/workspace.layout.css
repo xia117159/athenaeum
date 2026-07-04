@@ -1,0 +1,139 @@
+.workspace-main {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.workspace-main__content {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-main__content--tree-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-main__right {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-main__right--with-summary {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 30px;
+}
+
+.workspace-main__right-split {
+  background: #ffffff;
+}
+
+.split-pane,
+.split-pane__segment,
+.panel-layout,
+.panel-layout--single,
+.panel-surface,
+.panel-listing,
+.workspace-main__right,
+.file-listing,
+.file-listing__scroll,
+.tree-pane,
+.directory-tree,
+.settings-list {
+  min-height: 0;
+}
+
+.panel-layout,
+.panel-layout--single {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+.split-pane {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.split-pane--horizontal {
+  flex-direction: row;
+}
+
+.split-pane--vertical {
+  flex-direction: column;
+}
+
+.split-pane__segment {
+  flex: 0 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-pane__segment--fill {
+  flex: 1 1 auto;
+}
+
+.split-pane__segment > * {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-pane__handle {
+  position: relative;
+  flex: 0 0 var(--split-handle-size, 4px);
+  background: #ececec;
+}
+
+.split-pane--horizontal .split-pane__handle {
+  cursor: col-resize;
+}
+
+.split-pane--vertical .split-pane__handle {
+  cursor: row-resize;
+}
+
+.split-pane__handle::before {
+  content: "";
+  position: absolute;
+  background: #bdbdbd;
+  border-radius: 0;
+}
+
+.split-pane--horizontal .split-pane__handle::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.split-pane--vertical .split-pane__handle::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.tree-pane,
+.panel-surface,
+.information-panel,
+.context-menu,
+.workspace-statusbar {
+  border: 1px solid #cfcfcf;
+  border-radius: 0;
+  background: #ffffff;
+}

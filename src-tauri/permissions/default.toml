@@ -1,8 +1,10 @@
 [default]
-description = "Allows SimpleFileManager workspace commands required by the main desktop window."
+description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
   "allow-initialize-workspace",
   "allow-list-directory",
+  "allow-set-workspace-watch-roots",
+  "allow-get-item-properties",
   "allow-get-tree-children",
   "allow-resolve-system-icon",
   "allow-copy-entries",
@@ -32,6 +34,10 @@ permissions = [
   "allow-save-shortcuts",
   "allow-save-details-row-height",
   "allow-save-settings-model",
+  "allow-get-entry-comment",
+  "allow-save-entry-comment",
+  "allow-remove-entry-comment",
+  "allow-mark-entry-metadata-deleted",
   "allow-save-ui-layout",
   "allow-save-ui-theme",
   "allow-save-navigation-item",
@@ -40,6 +46,11 @@ permissions = [
   "allow-mark-navigation-item-opened",
   "allow-resolve-navigation-targets",
   "allow-open-path-with-system-default",
+  "allow-set-system-file-clipboard",
+  "allow-read-system-file-clipboard",
+  "allow-get-windows-drag-drop-environment",
+  "allow-start-system-file-drag",
+  "allow-perform-system-file-operation",
   "allow-list-remote-profiles",
   "allow-save-remote-profile",
   "allow-delete-remote-profile",
@@ -48,6 +59,7 @@ permissions = [
   "allow-trust-remote-host-key",
   "allow-list-remote-directory",
   "allow-create-remote-directory",
+  "allow-create-remote-file",
   "allow-delete-remote-entries",
   "allow-rename-remote-entry",
   "allow-upload-remote-files",
@@ -55,7 +67,10 @@ permissions = [
   "allow-copy-remote-entries",
   "allow-move-remote-entries",
   "allow-transfer-remote-entries",
-  "allow-show-native-context-menu"
+  "allow-show-native-background-context-menu",
+  "allow-show-native-context-menu",
+  "allow-get-git-status",
+  "allow-list-drive-roots"
 ]
 
 [[permission]]
@@ -67,6 +82,16 @@ commands.allow = ["initialize_workspace"]
 identifier = "allow-list-directory"
 description = "Allows listing local directories."
 commands.allow = ["list_directory"]
+
+[[permission]]
+identifier = "allow-set-workspace-watch-roots"
+description = "Allows replacing the visible local directories watched for live refresh events."
+commands.allow = ["set_workspace_watch_roots"]
+
+[[permission]]
+identifier = "allow-get-item-properties"
+description = "Allows reading local and remote item properties for the workspace information panel."
+commands.allow = ["get_item_properties"]
 
 [[permission]]
 identifier = "allow-get-tree-children"
@@ -214,6 +239,26 @@ description = "Allows saving the settings model in one confirmed update."
 commands.allow = ["save_settings_model"]
 
 [[permission]]
+identifier = "allow-get-entry-comment"
+description = "Allows reading a file or folder comment by workspace path."
+commands.allow = ["get_entry_comment"]
+
+[[permission]]
+identifier = "allow-save-entry-comment"
+description = "Allows saving a file or folder comment by workspace path."
+commands.allow = ["save_entry_comment"]
+
+[[permission]]
+identifier = "allow-remove-entry-comment"
+description = "Allows removing a file or folder comment by workspace path."
+commands.allow = ["remove_entry_comment"]
+
+[[permission]]
+identifier = "allow-mark-entry-metadata-deleted"
+description = "Allows applying metadata retention after file operations remove or move entries."
+commands.allow = ["mark_entry_metadata_deleted"]
+
+[[permission]]
 identifier = "allow-save-ui-layout"
 description = "Allows saving workspace layout."
 commands.allow = ["save_ui_layout"]
@@ -252,6 +297,31 @@ commands.allow = ["resolve_navigation_targets"]
 identifier = "allow-open-path-with-system-default"
 description = "Allows opening a local navigation target with the Windows default application."
 commands.allow = ["open_path_with_system_default"]
+
+[[permission]]
+identifier = "allow-set-system-file-clipboard"
+description = "Allows writing local file selections to the Windows file clipboard."
+commands.allow = ["set_system_file_clipboard"]
+
+[[permission]]
+identifier = "allow-read-system-file-clipboard"
+description = "Allows reading local file selections from the Windows file clipboard."
+commands.allow = ["read_system_file_clipboard"]
+
+[[permission]]
+identifier = "allow-get-windows-drag-drop-environment"
+description = "Allows reading Windows drag-and-drop runtime diagnostics for the current process."
+commands.allow = ["get_windows_drag_drop_environment"]
+
+[[permission]]
+identifier = "allow-start-system-file-drag"
+description = "Allows starting native Windows file drag operations from the workspace."
+commands.allow = ["start_system_file_drag"]
+
+[[permission]]
+identifier = "allow-perform-system-file-operation"
+description = "Allows local copy and move operations through the Windows shell."
+commands.allow = ["perform_system_file_operation"]
 
 [[permission]]
 identifier = "allow-list-remote-profiles"
@@ -294,6 +364,11 @@ description = "Allows creating remote directories."
 commands.allow = ["create_remote_directory"]
 
 [[permission]]
+identifier = "allow-create-remote-file"
+description = "Allows creating remote files."
+commands.allow = ["create_remote_file"]
+
+[[permission]]
 identifier = "allow-delete-remote-entries"
 description = "Allows deleting remote entries."
 commands.allow = ["delete_remote_entries"]
@@ -332,3 +407,18 @@ commands.allow = ["transfer_remote_entries"]
 identifier = "allow-show-native-context-menu"
 description = "Allows the workspace to open the Windows native context menu for local selected paths."
 commands.allow = ["show_native_context_menu"]
+
+[[permission]]
+identifier = "allow-show-native-background-context-menu"
+description = "Allows the workspace to open the Windows native context menu for a local folder background."
+commands.allow = ["show_native_background_context_menu"]
+
+[[permission]]
+identifier = "allow-get-git-status"
+description = "Allows reading Git status for local directories to display overlay badges."
+commands.allow = ["get_git_status"]
+
+[[permission]]
+identifier = "allow-list-drive-roots"
+description = "Allows enumerating local drive roots for the 此电脑 virtual directory."
+commands.allow = ["list_drive_roots"]

@@ -2,15 +2,20 @@ import assert from "node:assert/strict";
 import {
   deleteWorkspaceBookmark,
   deleteWorkspaceNavigationItem,
+  getWorkspaceEntryComment,
   getWorkspaceRemoteHostKey,
   listenWorkspaceSettingsChanged,
+  markWorkspaceEntryMetadataDeleted,
   markWorkspaceNavigationItemOpened,
+  removeWorkspaceEntryComment,
   saveWorkspaceBookmark,
   saveWorkspaceColorRules,
+  saveWorkspaceEntryComment,
   saveWorkspaceLayout,
   saveWorkspaceNavigationItem,
   saveWorkspaceRemoteProfile,
   saveWorkspaceSettingsModel,
+  saveWorkspaceShortcuts,
   saveWorkspaceTheme,
   reorderWorkspaceNavigationItems,
   trustWorkspaceRemoteHostKey
@@ -20,6 +25,7 @@ import type {
   SettingsSnapshot as BackendSettingsSnapshot
 } from "../../app/types";
 import type { RemoteConnectionProfile, SettingsModel } from "./types";
+import { NAVIGATION_COLUMNS } from "./NavigationTabColumns";
 import type { WorkspaceInvoke } from "./workspaceIpc";
 
 async function assertAsyncTest(name: string, fn: () => Promise<void>) {
@@ -46,6 +52,9 @@ function createSettingsSnapshot(overrides: Partial<BackendSettingsSnapshot> = {}
     detailsRowHeight: 36,
     theme: {
       panelFocusAccent: "#0f6cbd",
+      activeTabBackground: "#ffffff",
+      dropHighlightFill: "#0f6cbd",
+      dropHighlightBorder: "#0f6cbd",
       tabMinWidth: 96
     },
     layout: {
@@ -100,6 +109,7 @@ export const workspaceSettingsGatewayTests = (async () => {
         tree: 0.25,
         search: 0.3
       },
+      false,
       { invoke, runtimeHost }
     );
 
@@ -111,7 +121,7 @@ export const workspaceSettingsGatewayTests = (async () => {
             layoutMode: "quad",
             panelProportions: [0.62, 0.38],
             sidebarWidth: 240,
-            showTree: true,
+            showTree: false,
             showSearch: true
           }
         }
@@ -177,17 +187,37 @@ export const workspaceSettingsGatewayTests = (async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return createSettingsSnapshot({ theme: { panelFocusAccent: "#c02f7a", tabMinWidth: 132 } }) as T;
+      return createSettingsSnapshot({
+        theme: {
+          panelFocusAccent: "#c02f7a80",
+          activeTabBackground: "#ffffffcc",
+          dropHighlightFill: "#abcdef66",
+          dropHighlightBorder: "#336699",
+          tabMinWidth: 132
+        }
+      }) as T;
     };
 
-    await saveWorkspaceTheme({ panelFocusAccent: "#c02f7a", tabMinWidth: 132 }, { invoke, runtimeHost });
+    await saveWorkspaceTheme(
+      {
+        panelFocusAccent: "#c02f7a80",
+        activeTabBackground: "#ffffffcc",
+        dropHighlightFill: "#abcdef66",
+        dropHighlightBorder: "#336699",
+        tabMinWidth: 132
+      },
+      { invoke, runtimeHost }
+    );
 
     assert.deepEqual(invocations, [
       {
         command: "save_ui_theme",
         args: {
           theme: {
-            panelFocusAccent: "#c02f7a",
+            panelFocusAccent: "#c02f7a80",
+            activeTabBackground: "#ffffffcc",
+            dropHighlightFill: "#abcdef66",
+            dropHighlightBorder: "#336699",
             tabMinWidth: 132
           }
         }
@@ -199,7 +229,15 @@ export const workspaceSettingsGatewayTests = (async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return createSettingsSnapshot({ theme: { panelFocusAccent: "#c02f7a", tabMinWidth: 4096 } }) as T;
+      return createSettingsSnapshot({
+        theme: {
+          panelFocusAccent: "#c02f7a",
+          activeTabBackground: "#ffffff80",
+          dropHighlightFill: "#abcdef",
+          dropHighlightBorder: "#336699",
+          tabMinWidth: 4096
+        }
+      }) as T;
     };
     const model: SettingsModel = {
       shortcuts: [
@@ -207,7 +245,7 @@ export const workspaceSettingsGatewayTests = (async () => {
           id: "navigate-up",
           action: "上一级",
           scope: "panel",
-          binding: "Alt+Up",
+          binding: " up + alt ",
           description: "打开当前文件夹的上一级。"
         }
       ],
@@ -221,10 +259,25 @@ export const workspaceSettingsGatewayTests = (async () => {
         }
       ],
       tagRules: [],
-      columns: [],
+      columns: [
+        { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
+        { id: "comment", label: "注释", visible: true, width: "220px", align: "left" }
+      ],
+      navigationColumns: [
+        { id: "name", label: "Name", visible: true, width: "220px", align: "left" },
+        { id: "path", label: "Path", visible: true, width: "180px", align: "left" }
+      ],
       detailsRowHeight: 44,
+      tooltipHoverDelayMs: 125,
+      metadataRetentionHours: null,
+      contextMenu: {
+        defaultMenu: "custom"
+      },
       theme: {
         panelFocusAccent: "#c02f7a",
+        activeTabBackground: "#ffffff80",
+        dropHighlightFill: "#abcdef",
+        dropHighlightBorder: "#336699",
         tabMinWidth: 4096
       }
     };
@@ -248,12 +301,69 @@ export const workspaceSettingsGatewayTests = (async () => {
                 priority: 1
               }
             ],
+            columns: [
+              { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
+              { id: "type", label: "类型", visible: true, width: "112px", align: "left" },
+              { id: "extension", label: "扩展名", visible: true, width: "96px", align: "left" },
+              { id: "size", label: "大小", visible: true, width: "96px", align: "right" },
+              { id: "created", label: "创建日期", visible: true, width: "148px", align: "left" },
+              { id: "modified", label: "修改日期", visible: true, width: "148px", align: "left" },
+              { id: "accessed", label: "访问日期", visible: true, width: "148px", align: "left" },
+              { id: "tags", label: "标签", visible: true, width: "120px", align: "left" },
+              { id: "comment", label: "注释", visible: true, width: "220px", align: "left" },
+              { id: "location", label: "位置", visible: false, width: "220px", align: "left" }
+            ],
+            navigationColumns: NAVIGATION_COLUMNS.map((column) =>
+              column.id === "name"
+                ? { ...column, label: "Name" }
+                : column.id === "path"
+                  ? { ...column, label: "Path" }
+                  : column
+            ),
             detailsRowHeight: 44,
+            tooltipHoverDelayMs: 125,
+            metadataRetentionHours: null,
+            contextMenu: {
+              defaultMenu: "custom"
+            },
             theme: {
               panelFocusAccent: "#c02f7a",
+              activeTabBackground: "#ffffff80",
+              dropHighlightFill: "#abcdef",
+              dropHighlightBorder: "#336699",
               tabMinWidth: 4096
             }
           }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("saveWorkspaceShortcuts normalizes legacy bindings through the same DTO boundary", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return createSettingsSnapshot() as T;
+    };
+
+    await saveWorkspaceShortcuts(
+      [
+        {
+          id: "open-search",
+          action: "open-search",
+          scope: "workspace",
+          binding: " alt + ctrl + p ",
+          description: "Open search"
+        }
+      ],
+      { invoke, runtimeHost }
+    );
+
+    assert.deepEqual(invocations, [
+      {
+        command: "save_shortcuts",
+        args: {
+          shortcuts: [{ id: "open-search", action: "open-search", accelerator: "Ctrl+Alt+P", scope: "workspace" }]
         }
       }
     ]);
@@ -264,6 +374,9 @@ export const workspaceSettingsGatewayTests = (async () => {
     const unlisten = await listenWorkspaceSettingsChanged(
       (payload) => {
         assert.equal(payload.settingsModel.theme.tabMinWidth, 4096);
+        assert.equal(payload.settingsModel.theme.activeTabBackground, "#ffffff80");
+        assert.equal(payload.settingsModel.theme.dropHighlightFill, "#0f6cbd");
+        assert.equal(payload.settingsModel.theme.dropHighlightBorder, "#0f6cbd");
         assert.equal(payload.settingsModel.shortcuts.find((shortcut) => shortcut.id === "navigate-up")?.binding, "Alt+Up");
         assert.equal(payload.navigationItems.length, 0);
       },
@@ -274,7 +387,13 @@ export const workspaceSettingsGatewayTests = (async () => {
           handler({
             payload: createSettingsSnapshot({
               shortcuts: [{ id: "navigate-up", action: "navigate-up", accelerator: "Alt+Up", scope: "panel" }],
-              theme: { panelFocusAccent: "#0f6cbd", tabMinWidth: 4096 }
+              theme: {
+                panelFocusAccent: "#0f6cbd",
+                activeTabBackground: "#ffffff80",
+                dropHighlightFill: "#0f6cbd",
+                dropHighlightBorder: "#0f6cbd",
+                tabMinWidth: 4096
+              }
             }) as unknown as T
           });
           return () => listened.push("unlisten");
@@ -392,6 +511,47 @@ export const workspaceSettingsGatewayTests = (async () => {
       {
         command: "mark_navigation_item_opened",
         args: { id: "nav-2" }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("entry comment helpers keep command arguments stable", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      if (command === "get_entry_comment") {
+        return "existing comment" as T;
+      }
+      if (command === "save_entry_comment") {
+        return (args.comment as string) as T;
+      }
+      return undefined as T;
+    };
+    const path = "D:\\Docs\\report.txt";
+
+    const loaded = await getWorkspaceEntryComment(path, { invoke, runtimeHost });
+    const saved = await saveWorkspaceEntryComment(path, "updated comment", { invoke, runtimeHost });
+    await removeWorkspaceEntryComment(path, { invoke, runtimeHost });
+    await markWorkspaceEntryMetadataDeleted([path], { invoke, runtimeHost });
+
+    assert.equal(loaded, "existing comment");
+    assert.equal(saved, "updated comment");
+    assert.deepEqual(invocations, [
+      {
+        command: "get_entry_comment",
+        args: { path }
+      },
+      {
+        command: "save_entry_comment",
+        args: { path, comment: "updated comment" }
+      },
+      {
+        command: "remove_entry_comment",
+        args: { path }
+      },
+      {
+        command: "mark_entry_metadata_deleted",
+        args: { paths: [path] }
       }
     ]);
   });

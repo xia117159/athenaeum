@@ -1,4 +1,32 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type {
+  NativeBackgroundContextMenuOptions,
+  NativeBackgroundContextMenuResult,
+  NativeSelectionContextMenuResult,
+  NativeSelectionContextMenuShortcuts,
+  SystemFileClipboard,
+  WindowsDragDropEnvironment
+} from "./types";
+
+export type SystemFileOperationKind = "copy" | "move";
+
+/**
+ * Safely calls a Tauri unlisten function, catching errors that arise during
+ * teardown races (React StrictMode double-unmount, HMR, etc.) where Tauri's
+ * internal listener registry may be in an inconsistent state.
+ * The canonical error is: "Cannot read properties of undefined (reading 'handlerId')".
+ */
+export function disposeQuietly(unlisten: (() => void) | undefined | null): void {
+  if (!unlisten) return;
+  try {
+    const result = unlisten() as unknown;
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      void (result as Promise<unknown>).catch(() => undefined);
+    }
+  } catch {
+    // Listener already disposed or torn down mid-flight; nothing to do.
+  }
+}
 
 export type WorkspaceInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
 
@@ -41,29 +69,132 @@ export async function invokeRequired<T>(
   invokeFn: WorkspaceInvoke = invoke,
   runtimeHost: RuntimeHost = getRuntimeHost()
 ): Promise<T> {
-  return invokeWithBrowserFallback(command, args, browserFallback, invokeFn, runtimeHost);
+  const result = await invokeWithBrowserFallback(command, args, browserFallback, invokeFn, runtimeHost);
+  return result;
 }
 
 export async function showNativeContextMenu(
   paths: string[],
   x: number,
   y: number,
+  shortcuts: NativeSelectionContextMenuShortcuts,
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+): Promise<NativeSelectionContextMenuResult> {
+  const fallbackResult: NativeSelectionContextMenuResult = { opened: false };
+  if (!hasTauriRuntime(runtimeHost)) {
+    return fallbackResult;
+  }
+
+  try {
+    const result = await invokeFn<NativeSelectionContextMenuResult | boolean>("show_native_context_menu", {
+      paths,
+      x: Math.round(x),
+      y: Math.round(y),
+      shortcuts
+    });
+    return typeof result === "boolean" ? { opened: result } : result;
+  } catch (error) {
+    console.warn("Falling back from show_native_context_menu", error);
+    return fallbackResult;
+  }
+}
+
+export async function showNativeBackgroundContextMenu(
+  directoryPath: string,
+  x: number,
+  y: number,
+  options: NativeBackgroundContextMenuOptions,
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  const fallbackResult: NativeBackgroundContextMenuResult = { opened: false };
+  if (!hasTauriRuntime(runtimeHost)) {
+    return fallbackResult;
+  }
+
+  try {
+    const result = await invokeFn<NativeBackgroundContextMenuResult | boolean>("show_native_background_context_menu", {
+      directoryPath,
+      x: Math.round(x),
+      y: Math.round(y),
+      options
+    });
+    return typeof result === "boolean" ? { opened: result } : result;
+  } catch (error) {
+    console.warn("Falling back from show_native_background_context_menu", error);
+    return fallbackResult;
+  }
+}
+
+export async function setSystemFileClipboard(
+  paths: string[],
+  mode: SystemFileClipboard["mode"],
   invokeFn: WorkspaceInvoke = invoke,
   runtimeHost: RuntimeHost = getRuntimeHost()
 ) {
   if (!hasTauriRuntime(runtimeHost)) {
-    return false;
+    return;
+  }
+
+  await invokeFn<void>("set_system_file_clipboard", { paths, mode });
+}
+
+export async function readSystemFileClipboard(
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
+  }
+
+  return invokeFn<SystemFileClipboard | null>("read_system_file_clipboard", {});
+}
+
+export async function getWindowsDragDropEnvironment(
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+): Promise<WindowsDragDropEnvironment | null> {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
   }
 
   try {
-    const opened = await invokeFn<boolean>("show_native_context_menu", {
-      paths,
-      x: Math.round(x),
-      y: Math.round(y)
-    });
-    return opened;
+    return await invokeFn<WindowsDragDropEnvironment>("get_windows_drag_drop_environment", {});
   } catch (error) {
-    console.warn("Falling back from show_native_context_menu", error);
-    return false;
+    console.warn("Unable to read Windows drag-and-drop environment", error);
+    return null;
   }
+}
+
+export async function startSystemFileDrag(
+  paths: string[],
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return null;
+  }
+
+  return invokeFn<SystemFileClipboard["mode"]>("start_system_file_drag", { paths });
+}
+
+export async function performSystemFileOperation(
+  sources: string[],
+  destination: string,
+  operation: SystemFileOperationKind,
+  invokeFn: WorkspaceInvoke = invoke,
+  runtimeHost: RuntimeHost = getRuntimeHost()
+) {
+  if (!hasTauriRuntime(runtimeHost)) {
+    return;
+  }
+
+  await invokeFn<void>("perform_system_file_operation", {
+    request: {
+      sources,
+      destination,
+      operation
+    }
+  });
 }

@@ -9,6 +9,7 @@ export type SystemIconRequest = {
   extension?: string;
   size?: number;
   imageList?: SystemIconImageList;
+  includeOverlays?: boolean;
 };
 
 type SystemIconBitmap = {
@@ -72,8 +73,33 @@ function normalizeSize(size: number | undefined, imageList: SystemIconImageList)
   return Math.max(1, Math.round(size));
 }
 
+function isLocalPath(path: string | undefined): boolean {
+  if (!path) {
+    return false;
+  }
+  // Remote URIs (sftp://, ftp://) and virtual paths are not local filesystem.
+  if (/^[a-z]+:\/\//i.test(path)) {
+    return false;
+  }
+  // Windows drive-letter paths (C:\, D:\) and UNC paths (\\server\share).
+  return /^[a-z]:\\/i.test(path) || path.startsWith("\\\\");
+}
+
+function normalizeLocalPath(path: string): string {
+  return path.trim().toLowerCase().replace(/\//g, "\\");
+}
+
 export function getSystemIconCacheKey(request: SystemIconRequest) {
   const imageList = normalizeImageList(request.imageList, request.size);
+  const wantsOverlay =
+    request.includeOverlays === true &&
+    (request.kind === "file" || request.kind === "folder") &&
+    isLocalPath(request.path);
+
+  if (wantsOverlay) {
+    const normalizedPath = normalizeLocalPath(request.path!);
+    return `${request.kind}-overlay:${normalizedPath}:${imageList}`;
+  }
 
   switch (request.kind) {
     case "file": {

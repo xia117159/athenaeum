@@ -91,6 +91,44 @@ export const workspaceBootstrapSessionTests = (async () => {
     assert.equal(await mergeBootstrapWithSession(base, null, []), base);
   });
 
+  await assertAsyncTest("mergeBootstrapWithSession carries normalized information panel session state into bootstrap", async () => {
+    const base = createMockWorkspaceBootstrap("tauri");
+    const session = {
+      layoutMode: "single",
+      layoutRatios: {},
+      informationPanel: {
+        expanded: true,
+        activeTab: "search"
+      },
+      activePanelId: "panel-1",
+      panels: {
+        "panel-1": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-2": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-3": {
+          activeTabId: "missing",
+          tabs: []
+        },
+        "panel-4": {
+          activeTabId: "missing",
+          tabs: []
+        }
+      },
+      settingsModel: base.settingsModel
+    } as PersistedWorkspaceSession;
+
+    const merged = await mergeBootstrapWithSession(base, session, []);
+
+    assert.equal(merged.informationPanel.expanded, true);
+    assert.equal(merged.informationPanel.activeTab, "search");
+    assert.equal(merged.informationPanel.properties.status, "idle");
+  });
+
   await assertAsyncTest("hydratePanels resolves unique seed paths into panel order", async () => {
     const base = createMockWorkspaceBootstrap("tauri");
     const resolvedPaths: string[] = [];
@@ -347,5 +385,93 @@ export const workspaceBootstrapSessionTests = (async () => {
     assert.equal(navigationTabs.length, 1);
     assert.equal(navigationTabs[0].id, "navigation-tab-b");
     assert.equal(merged.panels["panel-2"].activeTabId, "navigation-tab-b");
+  });
+
+  await assertAsyncTest("reviveTab renormalizes stale remote path when port is missing but profile matches by host+username", async () => {
+    const stalePath = "sftp://cheng@192.168.1.3/";
+    const currentProfile = {
+      id: "wsl-sftp",
+      name: "WSL",
+      protocol: "sftp" as const,
+      host: "192.168.1.3",
+      port: 6666,
+      username: "cheng",
+      rootPath: "/"
+    };
+    const resolvedPaths: string[] = [];
+
+    const tab = await reviveTab(
+      createPersistedTab(stalePath, "stale-tab"),
+      createSnapshot("C:\\Fallback"),
+      [currentProfile],
+      async (path) => {
+        resolvedPaths.push(path);
+        return createSnapshot(path);
+      }
+    );
+
+    assert.deepEqual(resolvedPaths, []);
+    assert.equal(tab.status, "reconnect-required");
+    assert.equal(tab.snapshot.location.path, "sftp://cheng@192.168.1.3:6666/");
+    assert.equal(tab.reconnect?.path, "sftp://cheng@192.168.1.3:6666/");
+    assert.equal(tab.reconnect?.profileId, "wsl-sftp");
+    // History should be renormalized: base path gets port, child suffix is preserved
+    assert.deepEqual(tab.history, ["sftp://cheng@192.168.1.3:6666/", "sftp://cheng@192.168.1.3:6666/child"]);
+  });
+
+  await assertAsyncTest("reviveTab does not renormalize when multiple profiles match same host+username", async () => {
+    const stalePath = "sftp://deploy@server.local/";
+    const profiles = [
+      { id: "prod", name: "Prod", protocol: "sftp" as const, host: "server.local", port: 2022, username: "deploy", rootPath: "/" },
+      { id: "staging", name: "Staging", protocol: "sftp" as const, host: "server.local", port: 2222, username: "deploy", rootPath: "/" }
+    ];
+    const resolvedPaths: string[] = [];
+
+    const tab = await reviveTab(
+      createPersistedTab(stalePath, "ambiguous-tab"),
+      createSnapshot("C:\\Fallback"),
+      profiles,
+      async (path) => {
+        resolvedPaths.push(path);
+        return createSnapshot(path);
+      }
+    );
+
+    assert.deepEqual(resolvedPaths, []);
+    assert.equal(tab.status, "reconnect-required");
+    // Should NOT renormalize since multiple profiles match
+    assert.equal(tab.snapshot.location.path, stalePath);
+    assert.equal(tab.reconnect?.path, stalePath);
+    assert.equal(tab.reconnect?.profileId, undefined);
+  });
+
+  await assertAsyncTest("reviveTab keeps exact match when port is present and matches", async () => {
+    const exactPath = "sftp://cheng@192.168.1.3:6666/";
+    const currentProfile = {
+      id: "wsl-sftp",
+      name: "WSL",
+      protocol: "sftp" as const,
+      host: "192.168.1.3",
+      port: 6666,
+      username: "cheng",
+      rootPath: "/"
+    };
+    const resolvedPaths: string[] = [];
+
+    const tab = await reviveTab(
+      createPersistedTab(exactPath, "exact-tab"),
+      createSnapshot("C:\\Fallback"),
+      [currentProfile],
+      async (path) => {
+        resolvedPaths.push(path);
+        return createSnapshot(path);
+      }
+    );
+
+    assert.deepEqual(resolvedPaths, []);
+    assert.equal(tab.status, "reconnect-required");
+    assert.equal(tab.snapshot.location.path, exactPath);
+    assert.equal(tab.reconnect?.path, exactPath);
+    assert.equal(tab.reconnect?.profileId, "wsl-sftp");
   });
 })();

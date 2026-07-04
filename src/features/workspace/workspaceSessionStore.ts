@@ -1,9 +1,19 @@
 import { normalizeLocationPath } from "./mockData";
 import { DEFAULT_LAYOUT_RATIOS, PANEL_IDS } from "./workspaceMappers";
-import type { ColumnDefinition, LayoutRatios, PanelId, PanelLayoutMode, SettingsModel, TabState, WorkspaceState } from "./types";
+import type {
+  ColumnDefinition,
+  InformationPanelTab,
+  LayoutRatios,
+  PanelId,
+  PanelLayoutMode,
+  SettingsModel,
+  TabState,
+  WorkspaceState
+} from "./types";
 import { isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
-export const WORKSPACE_SESSION_STORAGE_KEY = "SimpleFileManager.workspace.session.v1";
+export const WORKSPACE_SESSION_STORAGE_KEY = "Athenaeum.workspace.session.v1";
+const LEGACY_SESSION_STORAGE_KEY = "SimpleFileManager.workspace.session.v1";
 
 export type PersistedTab = {
   id: string;
@@ -30,15 +40,22 @@ export type PersistedLayoutRatios = Partial<LayoutRatios> & {
   secondary?: number;
 };
 
+export type PersistedInformationPanel = {
+  expanded: boolean;
+  activeTab: InformationPanelTab;
+};
+
 export type PersistedWorkspaceSession = {
   layoutMode: PanelLayoutMode;
   layoutRatios: PersistedLayoutRatios;
+  treeVisible?: boolean;
+  informationPanel?: PersistedInformationPanel;
   activePanelId: PanelId;
   panels: Record<PanelId, PersistedPanel>;
   settingsModel: SettingsModel;
 };
 
-type WorkspaceStorage = Pick<Storage, "getItem" | "setItem">;
+type WorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function getDefaultStorage(): WorkspaceStorage | undefined {
   if (typeof window === "undefined") {
@@ -52,6 +69,22 @@ function getDefaultStorage(): WorkspaceStorage | undefined {
   }
 }
 
+export function migrateLegacyWorkspaceSession(storage: WorkspaceStorage | null | undefined = getDefaultStorage()) {
+  if (!storage) {
+    return;
+  }
+
+  try {
+    const legacyValue = storage.getItem(LEGACY_SESSION_STORAGE_KEY);
+    if (legacyValue && !storage.getItem(WORKSPACE_SESSION_STORAGE_KEY)) {
+      storage.setItem(WORKSPACE_SESSION_STORAGE_KEY, legacyValue);
+      storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Migration is best-effort
+  }
+}
+
 export function readPersistedSession(storage: WorkspaceStorage | null | undefined = getDefaultStorage()): PersistedWorkspaceSession | null {
   if (!storage) {
     return null;
@@ -62,7 +95,12 @@ export function readPersistedSession(storage: WorkspaceStorage | null | undefine
     if (!raw) {
       return null;
     }
-    return JSON.parse(raw) as PersistedWorkspaceSession;
+    const parsed = JSON.parse(raw) as PersistedWorkspaceSession;
+    return {
+      ...parsed,
+      treeVisible: parsed.treeVisible !== false,
+      informationPanel: normalizePersistedInformationPanel(parsed.informationPanel)
+    };
   } catch {
     return null;
   }
@@ -93,6 +131,22 @@ export function normalizeLayoutRatios(layoutRatios?: PersistedLayoutRatios | nul
     quadRightSecondary: layoutRatios?.quadRightSecondary ?? legacySecondary ?? DEFAULT_LAYOUT_RATIOS.quadRightSecondary,
     tree: layoutRatios?.tree ?? DEFAULT_LAYOUT_RATIOS.tree,
     search: layoutRatios?.search ?? DEFAULT_LAYOUT_RATIOS.search
+  };
+}
+
+export function normalizePersistedInformationPanel(
+  informationPanel?: Partial<PersistedInformationPanel> | null
+): PersistedInformationPanel {
+  const activeTab =
+    informationPanel?.activeTab === "properties" ||
+    informationPanel?.activeTab === "search" ||
+    informationPanel?.activeTab === "history"
+      ? informationPanel.activeTab
+      : "properties";
+
+  return {
+    expanded: informationPanel?.expanded === true,
+    activeTab
   };
 }
 
@@ -156,6 +210,11 @@ export function toPersistedSession(state: WorkspaceState): PersistedWorkspaceSes
   return {
     layoutMode: state.layoutMode,
     layoutRatios: state.layoutRatios,
+    treeVisible: state.treeVisible,
+    informationPanel: {
+      expanded: state.informationPanel.expanded,
+      activeTab: state.informationPanel.activeTab
+    },
     activePanelId: state.activePanelId,
     panels: Object.fromEntries(
       PANEL_IDS.map((panelId) => [panelId, toPersistedPanel(state, panelId)])

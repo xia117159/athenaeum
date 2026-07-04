@@ -9,36 +9,92 @@ import type {
   WorkspaceBootstrap as BackendWorkspaceBootstrap
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
+import { normalizeNavigationColumns } from "./NavigationTabColumns";
 import { createRemoteRootUri, createRemoteUri, resolveRemotePath, trimTrailingSlash } from "./remoteUri";
+import {
+  cloneColumns,
+  DEFAULT_COLUMNS,
+  DEFAULT_METADATA_RETENTION_HOURS,
+  DEFAULT_TOOLTIP_HOVER_DELAY_MS
+} from "./workspaceFileListDefaults";
 import type {
   BookmarkItem,
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  InformationPanelState,
   LayoutRatios,
   NavigationItem,
   PanelId,
   PanelState,
   RemoteConnectionProfile,
+  SettingsSection,
   SettingsModel,
   TabState,
   WorkspaceBootstrap
 } from "./types";
 
-export const DEFAULT_COLUMNS: ColumnDefinition[] = [
-  { id: "name", label: "名称", visible: true, width: "2.2fr", align: "left" },
-  { id: "type", label: "类型", visible: true, width: "1.1fr", align: "left" },
-  { id: "size", label: "大小", visible: true, width: "0.9fr", align: "right" },
-  { id: "modified", label: "修改时间", visible: true, width: "1.2fr", align: "left" },
-  { id: "tags", label: "标签", visible: true, width: "1.1fr", align: "left" },
-  { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
-];
+export { cloneColumns, DEFAULT_COLUMNS, DEFAULT_METADATA_RETENTION_HOURS, DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "./workspaceFileListDefaults";
+export { cloneNavigationColumns, NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 
-export function cloneColumns(columns: ColumnDefinition[] = DEFAULT_COLUMNS): ColumnDefinition[] {
-  return columns.map((column) => ({ ...column }));
+const DEFAULT_COLUMN_BY_ID = new Map(DEFAULT_COLUMNS.map((column) => [column.id, column] as const));
+
+function normalizeColumnId(value?: string | null): ColumnDefinition["id"] | null {
+  return DEFAULT_COLUMNS.some((column) => column.id === value) ? (value as ColumnDefinition["id"]) : null;
 }
 
-const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
+function normalizeColumnAlign(value?: string | null): ColumnDefinition["align"] {
+  return value === "right" ? "right" : "left";
+}
+
+export function normalizeColumns(
+  columns?: Array<{
+    id?: string | null;
+    label?: string | null;
+    visible?: boolean | null;
+    width?: string | null;
+    align?: string | null;
+  }> | null
+): ColumnDefinition[] {
+  if (!columns || columns.length === 0) {
+    return cloneColumns();
+  }
+
+  const seen = new Set<ColumnDefinition["id"]>();
+  const normalized: ColumnDefinition[] = [];
+  const normalizedById = new Map<ColumnDefinition["id"], ColumnDefinition>();
+  for (const column of columns) {
+    const id = normalizeColumnId(column.id);
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    const fallback = DEFAULT_COLUMN_BY_ID.get(id)!;
+    seen.add(id);
+    const normalizedColumn = {
+      id,
+      label: typeof column.label === "string" && column.label.trim() ? column.label : fallback.label,
+      visible: typeof column.visible === "boolean" ? column.visible : fallback.visible,
+      width: typeof column.width === "string" && column.width.trim() ? column.width : fallback.width,
+      align: normalizeColumnAlign(column.align)
+    };
+    normalized.push(normalizedColumn);
+    normalizedById.set(id, normalizedColumn);
+  }
+
+  if (seen.size < DEFAULT_COLUMNS.length) {
+    return DEFAULT_COLUMNS.map((column) => normalizedById.get(column.id) ?? { ...column });
+  }
+
+  for (const column of DEFAULT_COLUMNS) {
+    if (!seen.has(column.id)) {
+      normalized.push({ ...column });
+    }
+  }
+
+  return normalized.length > 0 ? normalized : cloneColumns();
+}
+
+export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
   {
     id: "focus-next-panel",
     action: "切换到下一个面板",
@@ -61,6 +117,20 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     description: "复制当前选中项。"
   },
   {
+    id: "copy-name",
+    action: "复制名称",
+    scope: "listing",
+    binding: "Alt+Shift+N",
+    description: "复制当前选中项的名称到系统剪贴板。"
+  },
+  {
+    id: "copy-path",
+    action: "复制路径",
+    scope: "listing",
+    binding: "Alt+Shift+P",
+    description: "复制当前选中项的完整路径到系统剪贴板。"
+  },
+  {
     id: "paste",
     action: "粘贴",
     scope: "listing",
@@ -80,6 +150,13 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "listing",
     binding: "Shift",
     description: "拖放文件或文件夹时执行移动而不是复制。"
+  },
+  {
+    id: "context-menu-toggle",
+    action: "右键菜单切换",
+    scope: "context-menu",
+    binding: "Shift",
+    description: "右键时临时切换 Windows 系统菜单与软件自定义菜单。"
   },
   {
     id: "create-folder",
@@ -136,13 +213,124 @@ const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "panel",
     binding: "Ctrl+W",
     description: "当存在多个标签页时关闭当前标签页。"
+  },
+  {
+    id: "select-previous",
+    action: "上一项",
+    scope: "listing",
+    binding: "Up",
+    description: "在列表中单选上一项。"
+  },
+  {
+    id: "select-next",
+    action: "下一项",
+    scope: "listing",
+    binding: "Down",
+    description: "在列表中单选下一项。"
+  },
+  {
+    id: "select-first",
+    action: "第一项",
+    scope: "listing",
+    binding: "Home",
+    description: "单选列表第一项。"
+  },
+  {
+    id: "select-last",
+    action: "最后一项",
+    scope: "listing",
+    binding: "End",
+    description: "单选列表最后一项。"
+  },
+  {
+    id: "select-previous-page",
+    action: "上一页",
+    scope: "listing",
+    binding: "PageUp",
+    description: "在列表中向上翻页单选。"
+  },
+  {
+    id: "select-next-page",
+    action: "下一页",
+    scope: "listing",
+    binding: "PageDown",
+    description: "在列表中向下翻页单选。"
+  },
+  {
+    id: "select-previous-column",
+    action: "上一列",
+    scope: "listing",
+    binding: "Left",
+    description: "在图标/平铺/内容视图中单选左一列。"
+  },
+  {
+    id: "select-next-column",
+    action: "下一列",
+    scope: "listing",
+    binding: "Right",
+    description: "在图标/平铺/内容视图中单选右一列。"
+  },
+  {
+    id: "extend-previous",
+    action: "扩展到上一项",
+    scope: "listing",
+    binding: "Shift+Up",
+    description: "以当前选中项为起点，多选到上一项。"
+  },
+  {
+    id: "extend-next",
+    action: "扩展到下一项",
+    scope: "listing",
+    binding: "Shift+Down",
+    description: "以当前选中项为起点，多选到下一项。"
+  },
+  {
+    id: "extend-first",
+    action: "扩展到第一项",
+    scope: "listing",
+    binding: "Shift+Home",
+    description: "以当前选中项为起点，多选到列表顶。"
+  },
+  {
+    id: "extend-last",
+    action: "扩展到最后一项",
+    scope: "listing",
+    binding: "Shift+End",
+    description: "以当前选中项为起点，多选到列表底。"
+  },
+  {
+    id: "select-all",
+    action: "全选",
+    scope: "listing",
+    binding: "Ctrl+A",
+    description: "选中当前列表中的全部项。"
+  },
+  {
+    id: "clear-selection",
+    action: "清除选择",
+    scope: "listing",
+    binding: "Escape",
+    description: "清除列表中的多选，恢复为无选中。"
+  },
+  {
+    id: "open-entry",
+    action: "打开",
+    scope: "listing",
+    binding: "Enter",
+    description: "打开当前选中的文件夹或文件。"
   }
 ];
 
 export const DEFAULT_DETAILS_ROW_HEIGHT = 24;
 export const DEFAULT_THEME: SettingsModel["theme"] = {
   panelFocusAccent: "#0f6cbd",
+  activeTabBackground: "#ffffff",
+  dropHighlightFill: "#0f6cbd",
+  dropHighlightBorder: "#0f6cbd",
   tabMinWidth: 96
+};
+export const DEFAULT_CONTEXT_MENU_SETTINGS: SettingsModel["contextMenu"] = {
+  defaultMenu: "native"
 };
 export const DEFAULT_LAYOUT_RATIOS: LayoutRatios = {
   primary: 0.52,
@@ -151,6 +339,13 @@ export const DEFAULT_LAYOUT_RATIOS: LayoutRatios = {
   quadRightSecondary: 0.54,
   tree: 0.28,
   search: 0.28
+};
+export const DEFAULT_INFORMATION_PANEL: InformationPanelState = {
+  expanded: false,
+  activeTab: "properties",
+  properties: {
+    status: "idle"
+  }
 };
 export const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
 
@@ -163,7 +358,26 @@ export function normalizeDetailsRowHeight(value?: number | null) {
     return DEFAULT_DETAILS_ROW_HEIGHT;
   }
 
-  return clamp(24, Math.round(value), 72);
+  return clamp(12, Math.round(value), 72);
+}
+
+export function normalizeTooltipHoverDelayMs(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_TOOLTIP_HOVER_DELAY_MS;
+  }
+
+  return clamp(0, Math.round(value), 5000);
+}
+
+export function normalizeMetadataRetentionHours(value?: number | null) {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_METADATA_RETENTION_HOURS;
+  }
+
+  return Math.max(0, Math.round(value));
 }
 
 export function normalizeTabMinWidth(value?: number | null) {
@@ -174,12 +388,35 @@ export function normalizeTabMinWidth(value?: number | null) {
   return Math.max(1, Math.round(value));
 }
 
-export function normalizeThemeAccentColor(value?: string | null) {
-  if (!value || !/^#[0-9a-fA-F]{6}$/.test(value.trim())) {
-    return DEFAULT_THEME.panelFocusAccent;
+export function normalizeThemeAccentColor(value?: string | null, fallback = DEFAULT_THEME.panelFocusAccent) {
+  if (!value || !/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value.trim())) {
+    return fallback;
   }
 
   return value.trim().toLowerCase();
+}
+
+export function normalizeContextMenuDefault(value?: string | null): SettingsModel["contextMenu"]["defaultMenu"] {
+  return value === "custom" ? "custom" : "native";
+}
+
+export function normalizeSettingsSection(value?: string | null): SettingsSection {
+  switch (value) {
+    case "shortcuts":
+    case "file-list":
+    case "menu-mouse":
+    case "appearance":
+    case "color-rules":
+    case "tag-rules":
+    case "connections":
+      return value;
+    case "theme":
+      return "appearance";
+    case "rules":
+      return "file-list";
+    default:
+      return "shortcuts";
+  }
 }
 
 export function labelFromPath(path: string) {
@@ -279,12 +516,12 @@ function formatFileSize(size?: number | null) {
   return `${rendered} ${units[unitIndex]}`;
 }
 
-function formatModifiedLabel(modifiedAt?: string | null) {
-  if (!modifiedAt) {
+function formatDateLabel(value?: string | null) {
+  if (!value) {
     return "--";
   }
 
-  const date = new Date(modifiedAt);
+  const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "--";
   }
@@ -296,6 +533,12 @@ function formatModifiedLabel(modifiedAt?: string | null) {
 }
 
 function describeEntry(entry: BackendEntryViewModel) {
+  if (entry.isProtectedOperatingSystem) {
+    return "受保护的操作系统文件";
+  }
+  if (entry.isSystem) {
+    return entry.kind === "directory" ? "系统文件夹" : "系统文件";
+  }
   if (entry.kind === "directory") {
     return entry.isHidden ? "隐藏文件夹" : "文件夹";
   }
@@ -353,6 +596,8 @@ function localizeShortcutAction(action: string) {
     "navigate-forward": "回到下一级",
     "Drag move": "拖放时移动",
     "drag-move": "拖放时移动",
+    "Context menu toggle": "右键菜单切换",
+    "context-menu-toggle": "右键菜单切换",
     "create-folder": "新建文件夹"
   };
   return dictionary[action] ?? action;
@@ -386,6 +631,8 @@ function localizeShortcutDescription(action: string) {
     "navigate-forward": "回到历史中的下一级文件夹。",
     "Drag move": "拖放文件或文件夹时执行移动而不是复制。",
     "drag-move": "拖放文件或文件夹时执行移动而不是复制。",
+    "Context menu toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
+    "context-menu-toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
     "create-folder": "在当前目录中新建文件夹。"
   };
   return dictionary[action] ?? action;
@@ -437,6 +684,8 @@ function mapEntryViewModel(
   const attributes = [
     entry.kind === "directory" ? "D" : "A",
     ...(entry.isHidden ? ["H"] : []),
+    ...(entry.isSystem ? ["S"] : []),
+    ...(entry.isProtectedOperatingSystem ? ["P"] : []),
     ...(entry.isReadOnly ? ["R"] : []),
     ...(entry.isSymlink ? ["L"] : [])
   ];
@@ -447,12 +696,19 @@ function mapEntryViewModel(
     kind: entry.kind === "directory" ? "folder" : "file",
     path: resolvedPath,
     parentPath: currentPath,
+    sizeBytes: entry.kind === "directory" ? null : entry.size ?? null,
     sizeLabel: entry.kind === "directory" ? "--" : formatFileSize(entry.size),
-    modifiedLabel: formatModifiedLabel(entry.modifiedAt),
+    createdLabel: formatDateLabel(entry.createdAt),
+    modifiedLabel: formatDateLabel(entry.modifiedAt),
+    accessedLabel: formatDateLabel(entry.accessedAt),
     extension,
     attributes,
+    isHidden: entry.isHidden,
+    isSystem: entry.isSystem ?? false,
+    isProtectedOperatingSystem: entry.isProtectedOperatingSystem ?? false,
     accentColor: entry.decoration.colorHex ?? (entry.kind === "directory" ? "#2f6b57" : "#29659f"),
     tags: entry.decoration.tags ? [...entry.decoration.tags] : [],
+    comment: entry.comment ?? "",
     description: describeEntry(entry)
   } satisfies DirectorySnapshot["entries"][number];
 }
@@ -464,7 +720,11 @@ function cloneDirectorySnapshot(snapshot: DirectorySnapshot): DirectorySnapshot 
     entries: snapshot.entries.map((entry) => ({
       ...entry,
       attributes: [...entry.attributes],
-      tags: [...entry.tags]
+      isHidden: entry.isHidden,
+      isSystem: entry.isSystem,
+      isProtectedOperatingSystem: entry.isProtectedOperatingSystem,
+      tags: [...entry.tags],
+      driveInfo: entry.driveInfo ? { ...entry.driveInfo } : undefined
     }))
   };
 }
@@ -549,7 +809,9 @@ export function mapRemoteProfile(profile: BackendRemoteProfile): RemoteConnectio
     passiveMode: profile.passiveMode ?? true,
     ignoreHostKey: profile.ignoreHostKey ?? false,
     connectTimeoutSecs: profile.connectTimeoutSecs ?? 10,
-    commandTimeoutSecs: profile.commandTimeoutSecs ?? 20
+    commandTimeoutSecs: profile.commandTimeoutSecs ?? 20,
+    credentialTarget: profile.credentialTarget ?? undefined,
+    password: profile.password ?? undefined
   };
 }
 
@@ -564,12 +826,10 @@ function buildColorRuleMatcher(rule: BackendColorRule) {
 
 function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
   const byId = new Map(shortcuts.map((shortcut) => [shortcut.id, shortcut]));
-  const merged = DEFAULT_SHORTCUTS.map((shortcut) => ({
+  return DEFAULT_SHORTCUTS.map((shortcut) => ({
     ...shortcut,
     ...(byId.get(shortcut.id) ?? {})
   }));
-  const knownIds = new Set(merged.map((shortcut) => shortcut.id));
-  return [...merged, ...shortcuts.filter((shortcut) => !knownIds.has(shortcut.id))];
 }
 
 export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsModel {
@@ -579,7 +839,10 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
         id: shortcut.id,
         action: localizeShortcutAction(shortcut.action),
         scope:
-          shortcut.scope === "listing" || shortcut.scope === "panel" || shortcut.scope === "workspace"
+          shortcut.scope === "listing" ||
+          shortcut.scope === "panel" ||
+          shortcut.scope === "workspace" ||
+          shortcut.scope === "context-menu"
             ? shortcut.scope
             : "workspace",
         binding: shortcut.accelerator,
@@ -600,10 +863,19 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
       accentColor: definition.colorHex,
       quickFilter: definition.name
     })),
-    columns: cloneColumns(),
+    columns: normalizeColumns(settings.columns),
+    navigationColumns: normalizeNavigationColumns(settings.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(settings.contextMenu?.defaultMenu)
+    },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settings.theme?.panelFocusAccent),
+      activeTabBackground: normalizeThemeAccentColor(settings.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+      dropHighlightFill: normalizeThemeAccentColor(settings.theme?.dropHighlightFill),
+      dropHighlightBorder: normalizeThemeAccentColor(settings.theme?.dropHighlightBorder),
       tabMinWidth: normalizeTabMinWidth(settings.theme?.tabMinWidth)
     }
   };
@@ -624,10 +896,19 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     shortcuts: mergeShortcutDefaults(settingsModel.shortcuts),
     colorRules: settingsModel.colorRules,
     tagRules: settingsModel.tagRules,
-    columns: settingsModel.columns.length > 0 ? cloneColumns(settingsModel.columns) : cloneColumns(),
+    columns: normalizeColumns(settingsModel.columns),
+    navigationColumns: normalizeNavigationColumns(settingsModel.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
+    tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
+    metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),
+    contextMenu: {
+      defaultMenu: normalizeContextMenuDefault(settingsModel.contextMenu?.defaultMenu)
+    },
     theme: {
       panelFocusAccent: normalizeThemeAccentColor(settingsModel.theme?.panelFocusAccent),
+      activeTabBackground: normalizeThemeAccentColor(settingsModel.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
+      dropHighlightFill: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightFill),
+      dropHighlightBorder: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightBorder),
       tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)
     }
   };
@@ -724,16 +1005,19 @@ function mapDirectoryTree(drives: BackendWorkspaceBootstrap["drives"], remotePro
     children: []
   }));
 
-  const remoteRoots: DirectoryNode[] = remoteProfiles.map((profile) => ({
-    id: profile.id,
-    label: profile.name,
-    path: createRemoteRootUri(profile),
-    kind: "remote-root",
-    badge: `${profile.protocol.toUpperCase()} 远程`,
-    expandable: true,
-    loaded: false,
-    children: []
-  }));
+  const remoteRoots: DirectoryNode[] = remoteProfiles.map((profile) => {
+    const path = createRemoteRootUri(profile);
+    return {
+      id: profile.id,
+      label: profile.name,
+      path,
+      kind: "remote-root",
+      badge: `${profile.protocol.toUpperCase()} 远程`,
+      expandable: true,
+      loaded: false,
+      children: []
+    };
+  });
 
   return [...localRoots, ...remoteRoots];
 }
@@ -752,6 +1036,8 @@ export function mapWorkspaceBootstrap(bootstrap: BackendWorkspaceBootstrap): Wor
     source: "tauri",
     layoutMode: bootstrap.settings.layout.layoutMode,
     layoutRatios: mapLayoutRatios(bootstrap.settings.layout),
+    treeVisible: bootstrap.settings.layout.showTree !== false,
+    informationPanel: { ...DEFAULT_INFORMATION_PANEL },
     panels,
     activePanelId: "panel-1",
     directoryTree: mapDirectoryTree(bootstrap.drives, bootstrap.settings.remoteProfiles),

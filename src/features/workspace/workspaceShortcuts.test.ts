@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import {
+  eventToShortcutCaptureCandidate,
   eventToShortcutBinding,
+  formatShortcutBindingForDisplay,
   getShortcutBinding,
   getShortcutBindingMap,
+  isReservedSystemShortcutCandidate,
   modifiersMatchShortcutBinding,
   normalizeShortcutBinding,
+  normalizeShortcutBindingForStorage,
   shortcutMatches
 } from "./workspaceShortcuts";
 import type { SettingsModel } from "./types";
@@ -50,9 +54,12 @@ assertTest("getShortcutBinding returns user bindings and falls back to drag move
 
   assert.equal(getShortcutBinding(shortcuts, "drag-move"), "Alt");
   assert.equal(getShortcutBinding([], "drag-move"), "Shift");
+  assert.equal(getShortcutBinding([], "context-menu-toggle"), "Shift");
   assert.equal(getShortcutBinding([], "undo"), "Ctrl+Z");
   assert.equal(getShortcutBinding([], "navigate-up"), "Alt+Up");
   assert.equal(getShortcutBinding([], "navigate-forward"), "Alt+Right");
+  assert.equal(getShortcutBinding([], "copy-name"), "Alt+Shift+N");
+  assert.equal(getShortcutBinding([], "copy-path"), "Alt+Shift+P");
 });
 
 assertTest("shortcutMatches does not treat empty user bindings as active shortcuts", () => {
@@ -85,4 +92,106 @@ assertTest("eventToShortcutBinding supports single-key arrow bindings", () => {
     shortcutMatches(new Map([["navigate-up", normalizeShortcutBinding("Up")]]), "navigate-up", "up"),
     true
   );
+});
+
+assertTest("normalizeShortcutBindingForStorage keeps saved accelerators aligned with backend validation", () => {
+  assert.equal(normalizeShortcutBindingForStorage(" Alt + Ctrl + p "), "Ctrl+Alt+P");
+  assert.equal(normalizeShortcutBindingForStorage("ctrl+shift+n"), "Ctrl+Shift+N");
+  assert.equal(normalizeShortcutBindingForStorage("ArrowUp"), "Up");
+  assert.equal(normalizeShortcutBindingForStorage("delete"), "Delete");
+  assert.equal(normalizeShortcutBindingForStorage("Ctrl+Alt"), "Ctrl+Alt");
+  assert.equal(formatShortcutBindingForDisplay(" ctrl + alt + p "), "Ctrl+Alt+P");
+});
+
+assertTest("eventToShortcutCaptureCandidate creates live capture labels from key events", () => {
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "Control",
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false
+    } as KeyboardEvent),
+    "Ctrl"
+  );
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "p",
+      ctrlKey: true,
+      metaKey: false,
+      altKey: true,
+      shiftKey: false
+    } as KeyboardEvent),
+    "Ctrl+Alt+P"
+  );
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "ArrowUp",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: true,
+      shiftKey: false
+    } as KeyboardEvent),
+    "Alt+Up"
+  );
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "Dead",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false
+    } as KeyboardEvent),
+    ""
+  );
+  for (const blockedKey of ["Unidentified", "Process"]) {
+    assert.equal(
+      eventToShortcutCaptureCandidate({
+        key: blockedKey,
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      } as KeyboardEvent),
+      ""
+    );
+  }
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "p",
+      ctrlKey: false,
+      metaKey: true,
+      altKey: false,
+      shiftKey: false
+    } as KeyboardEvent),
+    ""
+  );
+  assert.equal(
+    eventToShortcutCaptureCandidate({
+      key: "p",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      isComposing: true
+    } as KeyboardEvent),
+    ""
+  );
+});
+
+assertTest("navigate-parent is removed from default shortcut bindings", () => {
+  assert.equal(getShortcutBinding([], "navigate-parent"), "");
+  assert.equal(
+    shortcutMatches(new Map(), "navigate-parent", normalizeShortcutBinding("Backspace")),
+    false
+  );
+});
+
+assertTest("isReservedSystemShortcutCandidate protects OS-level key combinations", () => {
+  assert.equal(isReservedSystemShortcutCandidate("Alt"), true);
+  assert.equal(isReservedSystemShortcutCandidate("Alt+Tab"), true);
+  assert.equal(isReservedSystemShortcutCandidate("Alt+F4"), true);
+  assert.equal(isReservedSystemShortcutCandidate("Meta+P"), true);
+  assert.equal(isReservedSystemShortcutCandidate("Ctrl+Alt+Delete"), true);
+  assert.equal(isReservedSystemShortcutCandidate("Ctrl+Alt+P"), false);
 });

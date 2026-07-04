@@ -1,5 +1,6 @@
 import type {
   DirectoryListing as BackendDirectoryListing,
+  DriveRoot as BackendDriveRoot,
   EntryViewModel as BackendEntryViewModel,
   RemoteProfile as BackendRemoteProfile,
   TreeNode as BackendTreeNode
@@ -8,7 +9,8 @@ import { normalizeLocationPath } from "./mockData";
 import { normalizeRemotePath, resolveRemotePath } from "./remoteUri";
 import { invokeRequired, invokeWithBrowserFallback, type WorkspaceInvoke } from "./workspaceIpc";
 import { mapDirectoryListingToSnapshot } from "./workspaceMappers";
-import type { DirectoryNode, DirectorySnapshot } from "./types";
+import type { DirectoryNode, DirectorySnapshot, EntryViewModel } from "./types";
+import { THIS_PC_PATH } from "./types";
 
 type RuntimeHost = object | null | undefined;
 
@@ -31,11 +33,91 @@ export async function listRemoteProfilesRequired(runtime: WorkspaceDirectoryRunt
   );
 }
 
+export async function listWorkspaceDriveRoots(
+  runtime: WorkspaceDirectoryRuntime = {}
+): Promise<BackendDriveRoot[]> {
+  return invokeWithBrowserFallback<BackendDriveRoot[]>(
+    "list_drive_roots",
+    {},
+    async () => getMockDriveRoots(),
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
+function getMockDriveRoots(): BackendDriveRoot[] {
+  return [
+    { path: "C:\\", label: "本地磁盘 (C:)", driveType: "local", totalBytes: 500_000_000_000, availableBytes: 120_000_000_000 },
+    { path: "D:\\", label: "数据 (D:)", driveType: "local", totalBytes: 1_000_000_000_000, availableBytes: 600_000_000_000 },
+    { path: "E:\\", label: "可移动磁盘 (E:)", driveType: "removable", totalBytes: 32_000_000_000, availableBytes: 10_000_000_000 },
+    { path: "Z:\\", label: "网络驱动器 (Z:)", driveType: "network", totalBytes: null, availableBytes: null }
+  ];
+}
+
+export function formatDriveSize(size?: number | null) {
+  if (size == null) return "--";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = size;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  if (unitIndex === 0) return `${Math.round(value)} ${units[unitIndex]}`;
+  const rendered = Number.isInteger(value) ? value.toFixed(0) : value.toFixed(value >= 10 ? 0 : 1);
+  return `${rendered} ${units[unitIndex]}`;
+}
+
+function buildDriveEntry(drive: BackendDriveRoot): EntryViewModel {
+  const enterable = drive.driveType !== "network" && drive.driveType !== "unknown";
+  return {
+    id: drive.path,
+    name: drive.label,
+    kind: "folder",
+    path: drive.path,
+    parentPath: THIS_PC_PATH,
+    sizeBytes: drive.totalBytes,
+    sizeLabel: drive.totalBytes != null ? formatDriveSize(drive.totalBytes) : "--",
+    modifiedLabel: "--",
+    extension: "",
+    attributes: enterable ? [] : ["N"],
+    accentColor: "#29659f",
+    tags: [],
+    description: enterable ? drive.label : `${drive.label} (不可进入)`,
+    driveInfo: {
+      driveType: drive.driveType,
+      totalBytes: drive.totalBytes,
+      availableBytes: drive.availableBytes,
+      enterable
+    }
+  };
+}
+
+export function buildThisPcSnapshot(drives: BackendDriveRoot[]): DirectorySnapshot {
+  return {
+    location: {
+      kind: "virtual",
+      label: THIS_PC_PATH,
+      path: THIS_PC_PATH,
+      subtitle: "此电脑"
+    },
+    breadcrumbs: [
+      { id: THIS_PC_PATH, label: THIS_PC_PATH, path: THIS_PC_PATH }
+    ],
+    entries: drives.map(buildDriveEntry)
+  };
+}
+
 export async function resolveWorkspaceDirectory(
   path: string,
   profiles: BackendRemoteProfile[],
   runtime: WorkspaceDirectoryRuntime = {}
 ) {
+  if (path === THIS_PC_PATH) {
+    const drives = await listWorkspaceDriveRoots(runtime);
+    return buildThisPcSnapshot(drives);
+  }
+
   const remote = resolveRemotePath(path, profiles);
   if (remote) {
     const entries = await invokeRequired<BackendEntryViewModel[]>(
@@ -93,6 +175,9 @@ export function mapTreeNodes(
     label: node.name,
     path: node.path,
     kind,
+    isHidden: node.isHidden ?? false,
+    isSystem: node.isSystem ?? false,
+    isProtectedOperatingSystem: node.isProtectedOperatingSystem ?? false,
     expandable: node.hasChildren,
     loaded: false,
     children: []
@@ -108,6 +193,9 @@ export function buildRemoteTreeNodes(path: string, snapshot: DirectorySnapshot):
       path: entry.path,
       kind: "folder",
       badge: path,
+      isHidden: entry.isHidden ?? false,
+      isSystem: entry.isSystem ?? false,
+      isProtectedOperatingSystem: entry.isProtectedOperatingSystem ?? false,
       expandable: true,
       loaded: false,
       children: []

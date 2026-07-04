@@ -1,361 +1,32 @@
-﻿import assert from "node:assert/strict";
+﻿﻿import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
-import { getParentPathForRefresh, useWorkspaceController } from "./useWorkspaceController";
+import { useWorkspaceController, planNotificationDismissals } from "./useWorkspaceController";
+import { getParentPathForRefresh } from "./workspaceRefreshPlanner";
+import {
+  assertTest,
+  createEntry,
+  createTestGateway,
+  findTreeNode,
+  flushEffects,
+  installDomEnvironment,
+  waitFor
+} from "./workspaceControllerTestHarness";
 import { createNavigationTab, getActiveTab } from "./workspaceReducer";
 import type {
   DirectoryNode,
   EntryViewModel,
+  GitFileStatus,
+  NativeBackgroundContextMenuOptions,
   OperationTaskSnapshot,
   RemoteConnectionProfile,
   SettingsModel,
-  WorkspaceBootstrap
+  WorkspaceBootstrap,
+  WorkspaceFsChangedEvent,
+  WorkspaceWatchRootsRequest
 } from "./types";
 import type { WorkspaceGateway } from "./workspaceGateway";
-
-const { JSDOM } = require("jsdom") as {
-  JSDOM: new (
-    html?: string,
-    options?: {
-      url?: string;
-    }
-  ) => {
-    window: Window & typeof globalThis;
-  };
-};
-
-function assertTest(name: string, fn: () => Promise<void>) {
-  return fn()
-    .then(() => {
-      console.log(`ok - ${name}`);
-    })
-    .catch((error) => {
-      console.error(`not ok - ${name}`);
-      throw error;
-    });
-}
-
-function createTestGateway(
-  onLoadBootstrap: () => void,
-  interactions: {
-    resolvedPaths: string[];
-    copyCalls: Array<{ paths: string[]; destination: string }>;
-    moveCalls: Array<{ paths: string[]; destination: string }>;
-    deleteCalls: Array<{ paths: string[] }>;
-    renameCalls: Array<{ source: string; newName: string }>;
-    createDirectoryCalls: Array<{ parent: string; name: string }>;
-    createFileCalls: Array<{ parent: string; name: string }>;
-    treeLoadPaths: string[];
-    savedDetailsRowHeights: number[];
-    savedSettingsModels?: SettingsModel[];
-    nativeContextMenus: Array<{ paths: string[]; x: number; y: number }>;
-    navigationSaves?: Array<{ displayName?: string; description: string; path: string; id?: string }>;
-    navigationDeletes?: string[];
-    navigationReorders?: string[][];
-    navigationMarks?: string[];
-    navigationResolves?: string[][];
-    systemOpens?: string[];
-    hostKeyLookups?: string[];
-    trustedHostKeys?: Array<{ profileId: string; keyBase64: string }>;
-    cancelSearchIds?: string[];
-  },
-  overrides: {
-    loadBootstrap?: () => WorkspaceBootstrap | Promise<WorkspaceBootstrap>;
-    loadTreeChildren?: (path: string) => DirectoryNode[] | Promise<DirectoryNode[]>;
-  } = {}
-): WorkspaceGateway {
-  const emptyFavorites = { bookmarks: [], hotlist: [] };
-  const emptyRemoteProfiles = { remoteProfiles: [] as RemoteConnectionProfile[] };
-  const createOperationTask = (taskId = "operation-test"): OperationTaskSnapshot => ({
-    taskId,
-    requestId: `request-${taskId}`,
-    kind: "copy",
-    label: "Test operation",
-    status: "succeeded",
-    createdAt: "2026-06-10T08:00:00Z",
-    startedAt: "2026-06-10T08:00:00Z",
-    finishedAt: "2026-06-10T08:00:01Z",
-    totalEntries: 1,
-    completedEntries: 1,
-    failedEntries: 0,
-    totalBytes: null,
-    completedBytes: null,
-    currentPath: null,
-    message: null,
-    cancelable: false,
-    undoable: true,
-    affectedRoots: [],
-    entryResults: [],
-    sequence: 1,
-    updatedAt: "2026-06-10T08:00:01Z"
-  });
-
-  return {
-    async loadBootstrap() {
-      onLoadBootstrap();
-      return overrides.loadBootstrap ? overrides.loadBootstrap() : createMockWorkspaceBootstrap("tauri");
-    },
-    async resolveDirectory(path) {
-      interactions.resolvedPaths.push(path);
-      return resolveMockDirectory(path);
-    },
-    async loadTreeChildren(path) {
-      interactions.treeLoadPaths.push(path);
-      return overrides.loadTreeChildren ? overrides.loadTreeChildren(path) : [];
-    },
-    async search() {
-      return [];
-    },
-    async cancelSearch(searchId: string) {
-      interactions.cancelSearchIds?.push(searchId);
-    },
-    async saveSession() {},
-    async saveLayout() {},
-    async saveShortcuts() {},
-    async saveColorRules() {},
-    async saveDetailsRowHeight(value: number) {
-      interactions.savedDetailsRowHeights.push(value);
-    },
-    async saveTheme() {},
-    async saveSettingsModel(model: SettingsModel) {
-      interactions.savedSettingsModels?.push(model);
-    },
-    async listOperationTasks() {
-      return { tasks: [], taskSequence: 0 };
-    },
-    async listOperationHistory() {
-      return { records: [], historySequence: 0 };
-    },
-    async listenOperationTasks() {
-      return () => undefined;
-    },
-    async listenOperationConflicts() {
-      return () => undefined;
-    },
-    async listenOperationHistory() {
-      return () => undefined;
-    },
-    async listenSettingsChanged() {
-      return () => undefined;
-    },
-    async saveBookmark() {
-      return emptyFavorites;
-    },
-    async deleteBookmark() {
-      return emptyFavorites;
-    },
-    async saveHotlist() {
-      return emptyFavorites;
-    },
-    async deleteHotlist() {
-      return emptyFavorites;
-    },
-    async saveRemoteProfile() {
-      return emptyRemoteProfiles;
-    },
-    async deleteRemoteProfile() {
-      return emptyRemoteProfiles;
-    },
-    async testRemoteProfile() {
-      return { success: true, adapter: "unsupported" as const, message: "ok", details: [] };
-    },
-    async getRemoteHostKey(profileId: string) {
-      interactions.hostKeyLookups?.push(profileId);
-      return {
-        profileId,
-        host: "edge-01",
-        port: 22,
-        algorithm: "ssh-ed25519",
-        fingerprintSha256: "SHA256:test",
-        keyBase64: "AAAA",
-        knownHostsEntry: "edge-01 ssh-ed25519 AAAA",
-        trustState: "unknown" as const
-      };
-    },
-    async trustRemoteHostKey(request) {
-      interactions.trustedHostKeys?.push({ profileId: request.profileId, keyBase64: request.keyBase64 });
-      return {
-        profileId: request.profileId,
-        host: request.host,
-        port: request.port,
-        algorithm: request.algorithm,
-        fingerprintSha256: "SHA256:test",
-        keyBase64: request.keyBase64,
-        knownHostsEntry: `${request.host} ${request.algorithm} ${request.keyBase64}`,
-        trustState: "trusted" as const
-      };
-    },
-    async copyEntries(paths, destination) {
-      interactions.copyCalls.push({ paths: [...paths], destination });
-    },
-    async moveEntries(paths, destination) {
-      interactions.moveCalls.push({ paths: [...paths], destination });
-    },
-    async deleteEntries(paths) {
-      interactions.deleteCalls.push({ paths: [...paths] });
-    },
-    async renameEntry(source, newName) {
-      interactions.renameCalls.push({ source, newName });
-    },
-    async createDirectory(parent, name) {
-      interactions.createDirectoryCalls.push({ parent, name });
-    },
-    async createFile(parent, name) {
-      interactions.createFileCalls.push({ parent, name });
-    },
-    async cancelOperation(taskId) {
-      return { ...createOperationTask(taskId), status: "cancelled" };
-    },
-    async resolveOperationConflict() {
-      return createOperationTask("resolved-conflict");
-    },
-    async undoLatestOperation() {
-      return { ...createOperationTask("undo-latest"), kind: "undo" };
-    },
-    async undoOperation(recordId) {
-      return { ...createOperationTask(`undo-${recordId}`), kind: "undo" };
-    },
-    async showNativeContextMenu(paths: string[], x: number, y: number) {
-      interactions.nativeContextMenus.push({ paths: [...paths], x, y });
-      return true;
-    },
-    async saveNavigationItem(request) {
-      interactions.navigationSaves?.push({ ...request });
-      const item = {
-        id: request.id ?? `nav-${(interactions.navigationSaves?.length ?? 1).toString()}`,
-        displayName: request.displayName?.trim() || request.path.split(/[\\/]/).filter(Boolean).pop() || request.path,
-        description: request.description.trim(),
-        path: request.path.trim(),
-        targetKind: "missing" as const,
-        targetStatus: "missing" as const,
-        sortOrder: interactions.navigationSaves?.length ?? 1,
-        createdAt: "2026-06-08T09:00:00Z",
-        updatedAt: "2026-06-08T09:00:00Z"
-      };
-      return { navigationItems: [item] };
-    },
-    async deleteNavigationItem(id) {
-      interactions.navigationDeletes?.push(id);
-      return { navigationItems: [] };
-    },
-    async reorderNavigationItems(ids) {
-      interactions.navigationReorders?.push([...ids]);
-      return { navigationItems: [] };
-    },
-    async markNavigationItemOpened(id) {
-      interactions.navigationMarks?.push(id);
-      return {
-        navigationItems: [
-          {
-            id,
-            displayName: id,
-            description: "",
-            path: id,
-            targetKind: "missing" as const,
-            targetStatus: "missing" as const,
-            sortOrder: 1,
-            createdAt: "2026-06-08T09:00:00Z",
-            updatedAt: "2026-06-08T10:00:00Z",
-            lastOpenedAt: "2026-06-08T10:00:00Z"
-          }
-        ]
-      };
-    },
-    async resolveNavigationTargets(paths) {
-      interactions.navigationResolves?.push([...paths]);
-      return paths.map((path) => ({
-        path,
-        normalizedPath: path,
-        canonicalPath: null,
-        displayName: path.split(/[\\/]/).filter(Boolean).pop() || path,
-        targetKind: "missing" as const,
-        targetStatus: "missing" as const,
-        message: "missing",
-        exists: false,
-        isLocal: true,
-        parentPath: null
-      }));
-    },
-    async openPathWithSystemDefault(path) {
-      interactions.systemOpens?.push(path);
-    }
-  };
-}
-
-function installDomEnvironment() {
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    url: "http://localhost"
-  });
-
-  globalThis.window = dom.window as typeof globalThis.window;
-  globalThis.document = dom.window.document;
-  globalThis.HTMLElement = dom.window.HTMLElement;
-  globalThis.Node = dom.window.Node;
-  Object.defineProperty(globalThis, "navigator", {
-    configurable: true,
-    value: dom.window.navigator
-  });
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: dom.window.localStorage
-  });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-  return dom;
-}
-
-async function flushEffects() {
-  await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-async function waitFor(predicate: () => boolean, message: string) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (predicate()) {
-      return;
-    }
-    await act(async () => {
-      await flushEffects();
-    });
-  }
-
-  assert.fail(message);
-}
-
-function findTreeNode(nodes: DirectoryNode[], path: string): DirectoryNode | undefined {
-  for (const node of nodes) {
-    if (node.path === path) {
-      return node;
-    }
-
-    const nested = findTreeNode(node.children, path);
-    if (nested) {
-      return nested;
-    }
-  }
-
-  return undefined;
-}
-
-function createEntry(parentPath: string, name: string, kind: EntryViewModel["kind"] = "file"): EntryViewModel {
-  const separator = parentPath.startsWith("ftp://") || parentPath.startsWith("sftp://") ? "/" : "\\";
-  const path = parentPath.endsWith(separator) ? `${parentPath}${name}` : `${parentPath}${separator}${name}`;
-  return {
-    id: `${parentPath}:${name}`,
-    name,
-    kind,
-    path,
-    parentPath,
-    sizeLabel: kind === "folder" ? "--" : "1 KB",
-    modifiedLabel: "2026-04-21 10:00",
-    extension: kind === "folder" ? "" : name.includes(".") ? `.${name.split(".").pop()}` : "",
-    attributes: kind === "folder" ? ["D"] : ["A"],
-    accentColor: "#0f6cbd",
-    tags: [],
-    description: name
-  };
-}
 
 export const completion = (async () => {
   const dom = installDomEnvironment();
@@ -376,8 +47,13 @@ export const completion = (async () => {
     createFileCalls: [] as Array<{ parent: string; name: string }>,
     treeLoadPaths: [] as string[],
     savedDetailsRowHeights: [] as number[],
+    savedSettingsModels: [] as SettingsModel[],
     nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
-    systemOpens: [] as string[]
+    systemOpens: [] as string[],
+    propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>,
+    systemClipboardWrites: [] as Array<{ paths: string[]; mode: "copy" | "cut" }>,
+    systemClipboardReads: 0,
+    systemDragStarts: [] as string[][]
   };
 
   const gateway = createTestGateway(() => {
@@ -423,6 +99,50 @@ export const completion = (async () => {
       assert.equal(latestController?.state.layoutMode, "dual");
     });
 
+    await assertTest("planNotificationDismissals schedules non-danger notifications and clears stale timers", async () => {
+      const plan = planNotificationDismissals(
+        [
+          { id: "a", intent: "success" },
+          { id: "b", intent: "danger" },
+          { id: "c", intent: "warning" },
+          { id: "d", intent: "info" }
+        ],
+        new Set(["c", "stale"])
+      );
+      // success/info/warning that are not yet scheduled get a timer; danger never does.
+      assert.deepEqual(plan.toSchedule, ["a", "d"]);
+      // timers for notifications that no longer exist are cleared.
+      assert.deepEqual(plan.toClear, ["stale"]);
+    });
+
+    await assertTest("planNotificationDismissals never schedules danger notifications", async () => {
+      const plan = planNotificationDismissals([{ id: "err", intent: "danger" }], new Set());
+      assert.deepEqual(plan.toSchedule, []);
+      assert.deepEqual(plan.toClear, []);
+    });
+
+    await assertTest("useWorkspaceController exposes dismissible warning notifications", async () => {
+      await act(async () => {
+        latestController?.actions.showNotification("warning", "Explorer drag is blocked while elevated.");
+        await flushEffects();
+      });
+
+      const notification = latestController?.state.notifications.find((item) =>
+        item.message.includes("Explorer drag is blocked")
+      );
+      assert.equal(notification?.intent, "warning");
+
+      await act(async () => {
+        latestController?.actions.dismissNotification(notification!.id);
+        await flushEffects();
+      });
+
+      assert.equal(
+        latestController?.state.notifications.some((item) => item.id === notification!.id),
+        false
+      );
+    });
+
     await assertTest("useWorkspaceController opens file entries through the system default app", async () => {
       interactions.systemOpens.length = 0;
       const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
@@ -436,6 +156,382 @@ export const completion = (async () => {
 
       await waitFor(() => interactions.systemOpens.includes(file.path), "file entry was not opened through the system default app");
       assert.deepEqual(interactions.systemOpens, [file.path]);
+    });
+
+    await assertTest("useWorkspaceController opens folder entries in place for locked directory tabs", async () => {
+      const panelId = "panel-1";
+      const panelBeforeLock = latestController!.state.panels[panelId];
+      const activeTab = getActiveTab(panelBeforeLock);
+      assert.equal(activeTab.kind, "directory");
+      assert.equal(activeTab.locked, undefined);
+
+      const lockedTabId = activeTab.id;
+      const originalPath = activeTab.snapshot.location.path;
+      const tabCountBefore = panelBeforeLock.tabs.length;
+      const childFolder = createEntry(originalPath, "LockedChild", "folder");
+
+      await act(async () => {
+        latestController?.actions.toggleTabLock(panelId, lockedTabId);
+        await flushEffects();
+      });
+      await waitFor(
+        () => latestController!.state.panels[panelId].tabs.find((tab) => tab.id === lockedTabId)?.locked === true,
+        "tab was not locked"
+      );
+
+      interactions.resolvedPaths.length = 0;
+      await act(async () => {
+        latestController?.actions.openEntry(panelId, childFolder);
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => getActiveTab(latestController!.state.panels[panelId]).snapshot.location.path === childFolder.path,
+        "locked tab did not navigate to the child folder"
+      );
+
+      const panelAfterOpen = latestController!.state.panels[panelId];
+      const activeAfterOpen = getActiveTab(panelAfterOpen);
+      assert.equal(activeAfterOpen.id, lockedTabId);
+      assert.equal(activeAfterOpen.locked, true);
+      assert.equal(panelAfterOpen.tabs.length, tabCountBefore);
+      assert.deepEqual(interactions.resolvedPaths, [childFolder.path]);
+
+      await act(async () => {
+        latestController?.actions.toggleTabLock(panelId, lockedTabId);
+        latestController?.actions.navigateToPath(panelId, originalPath, false);
+        await flushEffects();
+      });
+      await waitFor(
+        () => getActiveTab(latestController!.state.panels[panelId]).snapshot.location.path === originalPath,
+        "locked-tab navigation test did not restore the original path"
+      );
+    });
+
+    await assertTest("useWorkspaceController stores git status returned after local navigation", async () => {
+      const panelId = "panel-1";
+      const activeTab = getActiveTab(latestController!.state.panels[panelId]);
+      assert.equal(activeTab.snapshot.location.kind, "local");
+      const targetPath = activeTab.snapshot.location.path;
+      const probeKey = `${targetPath}\\__git_probe__.txt`;
+
+      const originalGetGitStatus = gateway.getGitStatus;
+      gateway.getGitStatus = async () => ({
+        statuses: { [probeKey]: "modified" } as Record<string, GitFileStatus>,
+        isGitRepo: true
+      });
+
+      try {
+        await act(async () => {
+          latestController?.actions.navigateToPath(panelId, targetPath, false);
+          await flushEffects();
+        });
+        await waitFor(
+          () => getActiveTab(latestController!.state.panels[panelId]).gitStatus?.[probeKey] === "modified",
+          "git status was not stored on the tab after local navigation"
+        );
+      } finally {
+        gateway.getGitStatus = originalGetGitStatus;
+      }
+    });
+
+    await assertTest("useWorkspaceController broadcasts git status to all tabs sharing the same path", async () => {
+      const panelId = "panel-1";
+      const activeTab = getActiveTab(latestController!.state.panels[panelId]);
+      const targetPath = activeTab.snapshot.location.path;
+      const probeKey = `${targetPath}\\__git_probe__.txt`;
+
+      const originalGetGitStatus = gateway.getGitStatus;
+      gateway.getGitStatus = async () => ({
+        statuses: { [probeKey]: "modified" } as Record<string, GitFileStatus>,
+        isGitRepo: true
+      });
+
+      try {
+        // Open a second tab at the same path — both tabs share the same directory.
+        await act(async () => {
+          latestController?.actions.openNewTab(panelId, targetPath);
+          await flushEffects();
+        });
+        await waitFor(
+          () => latestController!.state.panels[panelId].tabs.length >= 2,
+          "second tab was not opened"
+        );
+
+        const tabs = latestController!.state.panels[panelId].tabs;
+        const tabA = tabs[0];
+        const tabB = tabs[tabs.length - 1];
+        assert.notEqual(tabA.id, tabB.id, "expected two distinct tabs");
+        assert.equal(tabB.snapshot.location.path, targetPath, "second tab should have the same path");
+
+        // Wait for both tabs to receive git status.
+        await waitFor(
+          () => tabA.gitStatus?.[probeKey] === "modified",
+          "first tab did not receive git status"
+        );
+        // Re-read the state after waitFor, since the controller state may have updated.
+        const updatedTabs = latestController!.state.panels[panelId].tabs;
+        const updatedTabB = updatedTabs.find((t) => t.id === tabB.id);
+        assert.equal(
+          updatedTabB?.gitStatus?.[probeKey],
+          "modified",
+          "second tab with the same path did not receive git status broadcast"
+        );
+      } finally {
+        gateway.getGitStatus = originalGetGitStatus;
+      }
+    });
+
+    await assertTest("useWorkspaceController loads properties for the current folder and selected item", async () => {
+      interactions.propertyCalls.length = 0;
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+      assert.ok(selectedEntry);
+
+      await act(async () => {
+        latestController?.actions.setInformationPanelExpanded(true);
+        latestController?.actions.selectInformationPanelTab("properties");
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.propertyCalls.length >= 1, "current folder properties were not requested");
+      assert.deepEqual(interactions.propertyCalls.at(-1), {
+        requestId: "properties-1",
+        path: activeTab.snapshot.location.path,
+        includeDirectorySize: false
+      });
+
+      await act(async () => {
+        latestController?.actions.selectEntry("panel-1", activeTab.id, selectedEntry.id, false);
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => interactions.propertyCalls.some((call) => call.path === selectedEntry.path),
+        "selected item properties were not requested"
+      );
+      assert.equal(latestController?.state.informationPanel.properties.status, "ready");
+      assert.equal(latestController?.state.informationPanel.properties.item?.actualPath, selectedEntry.path);
+    });
+
+    await assertTest("useWorkspaceController creates multi-selection properties summary without per-entry IPC", async () => {
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      const selectableEntries = activeTab.snapshot.entries.slice(0, 2);
+      assert.equal(selectableEntries.length, 2);
+      interactions.propertyCalls.length = 0;
+
+      await act(async () => {
+        latestController?.actions.selectMultipleEntries(
+          "panel-1",
+          activeTab.id,
+          selectableEntries.map((entry) => entry.id)
+        );
+        await flushEffects();
+      });
+
+      await waitFor(
+        () => latestController?.state.informationPanel.properties.summary?.count === 2,
+        "multi-selection properties summary was not created"
+      );
+      assert.deepEqual(interactions.propertyCalls, []);
+      assert.equal(latestController?.state.informationPanel.properties.summary?.knownSizeBytes, selectableEntries.reduce((sum, entry) => sum + (entry.sizeBytes ?? 0), 0));
+    });
+
+    await assertTest("useWorkspaceController sets common extension only when every selected entry is a file with that extension", async () => {
+      const extensionInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
+      };
+      const extensionBootstrap = createMockWorkspaceBootstrap("tauri");
+      const extensionPanel = extensionBootstrap.panels["panel-1"];
+      const extensionTab = getActiveTab(extensionPanel);
+      const parentPath = extensionTab.snapshot.location.path;
+      const txtFile = createEntry(parentPath, "report.txt");
+      const secondTxtFile = createEntry(parentPath, "notes.txt");
+      const noExtensionFile = createEntry(parentPath, "README");
+      const folder = createEntry(parentPath, "src", "folder");
+      extensionPanel.tabs = extensionPanel.tabs.map((tab) =>
+        tab.id === extensionTab.id
+          ? {
+              ...tab,
+              snapshot: {
+                ...tab.snapshot,
+                entries: [txtFile, secondTxtFile, noExtensionFile, folder]
+              }
+            }
+          : tab
+      );
+
+      let extensionController: ReturnType<typeof useWorkspaceController> | undefined;
+      const extensionGateway = createTestGateway(() => undefined, extensionInteractions, {
+        loadBootstrap: () => extensionBootstrap
+      });
+
+      function ExtensionHarness() {
+        extensionController = useWorkspaceController(extensionGateway);
+        return React.createElement("div", null, extensionController.state.status);
+      }
+
+      const extensionContainer = document.createElement("div");
+      document.body.appendChild(extensionContainer);
+      const extensionRoot = ReactDOM.createRoot(extensionContainer);
+
+      async function selectForSummary(ids: string[]) {
+        await act(async () => {
+          extensionController?.actions.setInformationPanelExpanded(true);
+          extensionController?.actions.selectInformationPanelTab("properties");
+          extensionController?.actions.selectMultipleEntries("panel-1", extensionTab.id, ids);
+          await flushEffects();
+        });
+        await waitFor(
+          () => extensionController?.state.informationPanel.properties.summary?.selectionKey === ids.join("|"),
+          "multi-selection extension summary was not updated"
+        );
+        return extensionController!.state.informationPanel.properties.summary;
+      }
+
+      try {
+        await act(async () => {
+          extensionRoot.render(React.createElement(ExtensionHarness));
+          await flushEffects();
+        });
+        await waitFor(() => extensionController?.state.status === "ready", "extension controller did not bootstrap");
+
+        assert.equal((await selectForSummary([txtFile.id, folder.id]))?.commonExtension, undefined);
+        assert.equal((await selectForSummary([txtFile.id, noExtensionFile.id]))?.commonExtension, undefined);
+        assert.equal((await selectForSummary([txtFile.id, secondTxtFile.id]))?.commonExtension, ".txt");
+        assert.deepEqual(extensionInteractions.propertyCalls, []);
+      } finally {
+        await act(async () => {
+          extensionRoot.unmount();
+          await flushEffects();
+        });
+        extensionContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController ignores a deferred properties result after selection changes", async () => {
+      const raceInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        propertyCalls: [] as Array<{ requestId: string; path: string; includeDirectorySize?: boolean }>
+      };
+      type DeferredPropertyRequest = {
+        requestId: string;
+        path: string;
+        resolve: (path: string) => void;
+      };
+      const pendingRequests: DeferredPropertyRequest[] = [];
+      const createPropertyItem = (requestId: string, path: string) => ({
+        requestId,
+        target: {
+          kind: "local" as const,
+          path
+        },
+        displayPath: path,
+        actualPath: path,
+        parentPath: "D:\\Projects\\Atlas",
+        name: path.split("\\").pop() ?? path,
+        extension: ".txt",
+        kind: "file" as const,
+        sizeBytes: 1024,
+        allocatedBytes: null,
+        createdAt: null,
+        modifiedAt: "2026-06-10T08:00:00Z",
+        accessedAt: null,
+        isHidden: false,
+        isReadOnly: false,
+        isSymlink: false,
+        directorySizeState: {
+          state: "notApplicable" as const
+        },
+        fieldStates: []
+      });
+
+      let raceController: ReturnType<typeof useWorkspaceController> | undefined;
+      const raceGateway = createTestGateway(() => undefined, raceInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        getItemProperties: (requestId, path) =>
+          new Promise((resolve) => {
+            pendingRequests.push({
+              requestId,
+              path,
+              resolve: (resolvedPath: string) => resolve(createPropertyItem(requestId, resolvedPath))
+            });
+          })
+      });
+
+      function RaceHarness() {
+        raceController = useWorkspaceController(raceGateway);
+        return React.createElement("div", null, raceController.state.status);
+      }
+
+      const raceContainer = document.createElement("div");
+      document.body.appendChild(raceContainer);
+      const raceRoot = ReactDOM.createRoot(raceContainer);
+
+      try {
+        await act(async () => {
+          raceRoot.render(React.createElement(RaceHarness));
+          await flushEffects();
+        });
+        await waitFor(() => raceController?.state.status === "ready", "race controller did not bootstrap");
+
+        const activeTab = getActiveTab(raceController!.state.panels["panel-1"]);
+        const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+        assert.ok(selectedEntry);
+
+        await act(async () => {
+          raceController?.actions.setInformationPanelExpanded(true);
+          raceController?.actions.selectInformationPanelTab("properties");
+          await flushEffects();
+        });
+        await waitFor(() => pendingRequests.length >= 1, "initial properties request did not start");
+        const folderRequest = pendingRequests[0];
+
+        await act(async () => {
+          raceController?.actions.selectEntry("panel-1", activeTab.id, selectedEntry.id, false);
+          folderRequest.resolve(folderRequest.path);
+          await flushEffects();
+        });
+
+        assert.notEqual(raceController?.state.informationPanel.properties.item?.actualPath, folderRequest.path);
+
+        await waitFor(() => pendingRequests.some((request) => request.path === selectedEntry.path), "selected properties request did not start");
+        const selectedRequest = pendingRequests.find((request) => request.path === selectedEntry.path);
+        assert.ok(selectedRequest);
+        await act(async () => {
+          selectedRequest.resolve(selectedEntry.path);
+          await flushEffects();
+        });
+        await waitFor(
+          () => raceController?.state.informationPanel.properties.item?.actualPath === selectedEntry.path,
+          "selected properties result was not stored"
+        );
+      } finally {
+        await act(async () => {
+          raceRoot.unmount();
+          await flushEffects();
+        });
+        raceContainer.remove();
+      }
     });
 
     await assertTest("useWorkspaceController opens new tabs with unique ids and isolated editable state", async () => {
@@ -621,6 +717,364 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController watches the visible active directory tab and refreshes it after file changes", async () => {
+      const liveInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>
+      };
+      const liveBootstrap = createMockWorkspaceBootstrap("tauri");
+      liveBootstrap.layoutMode = "single";
+      liveBootstrap.panels["panel-1"] = {
+        ...liveBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState("D:\\Projects\\Atlas", "live-atlas"),
+          createTabState("C:\\Users\\Admin\\Documents", "live-documents")
+        ],
+        activeTabId: "live-atlas"
+      };
+      let liveController: ReturnType<typeof useWorkspaceController> | undefined;
+      const liveGateway = createTestGateway(() => undefined, liveInteractions, {
+        loadBootstrap: () => liveBootstrap
+      });
+
+      function LiveHarness() {
+        liveController = useWorkspaceController(liveGateway);
+        return React.createElement("div", null, liveController.state.status);
+      }
+
+      const liveContainer = document.createElement("div");
+      document.body.appendChild(liveContainer);
+      const liveRoot = ReactDOM.createRoot(liveContainer);
+
+      try {
+        await act(async () => {
+          liveRoot.render(React.createElement(LiveHarness));
+          await flushEffects();
+        });
+        await waitFor(() => liveController?.state.status === "ready", "live controller did not bootstrap");
+        await waitFor(() => liveInteractions.watchRootUpdates.length > 0, "visible watch roots were not registered");
+        assert.deepEqual(liveInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: ["D:\\Projects\\Atlas"],
+          navigationParentPaths: []
+        });
+
+        liveInteractions.resolvedPaths.length = 0;
+        await act(async () => {
+          liveController?.actions.activateTab("panel-1", "live-documents");
+          await flushEffects();
+        });
+        await waitFor(
+          () => liveInteractions.watchRootUpdates.at(-1)?.directoryPaths[0] === "C:\\Users\\Admin\\Documents",
+          "watch roots did not move to the newly visible tab"
+        );
+        await waitFor(
+          () => liveInteractions.resolvedPaths.includes("C:\\Users\\Admin\\Documents"),
+          "newly visible tab was not refreshed once"
+        );
+
+        liveInteractions.resolvedPaths.length = 0;
+        const listener = liveInteractions.fileSystemChangeListeners[0];
+        assert.ok(listener);
+        await act(async () => {
+          await listener({
+            roots: ["d:\\projects\\atlas", "c:\\users\\admin\\documents"],
+            directoryRoots: ["d:\\projects\\atlas", "c:\\users\\admin\\documents"],
+            navigationParentRoots: [],
+            sequence: 1
+          });
+          await new Promise((resolve) => setTimeout(resolve, 420));
+          await flushEffects();
+        });
+
+        assert.deepEqual(liveInteractions.resolvedPaths, ["C:\\Users\\Admin\\Documents"]);
+      } finally {
+        await act(async () => {
+          liveRoot.unmount();
+          await flushEffects();
+        });
+        liveContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes a directory tab once when its panel becomes visible", async () => {
+      const visibilityInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>
+      };
+      const visibilityBootstrap = createMockWorkspaceBootstrap("tauri");
+      visibilityBootstrap.layoutMode = "single";
+      visibilityBootstrap.panels["panel-1"] = {
+        ...visibilityBootstrap.panels["panel-1"],
+        tabs: [createTabState("D:\\Projects\\Atlas", "visible-atlas")],
+        activeTabId: "visible-atlas"
+      };
+      visibilityBootstrap.panels["panel-2"] = {
+        ...visibilityBootstrap.panels["panel-2"],
+        tabs: [createTabState("C:\\Users\\Admin\\Downloads", "hidden-downloads")],
+        activeTabId: "hidden-downloads"
+      };
+      let visibilityController: ReturnType<typeof useWorkspaceController> | undefined;
+      const visibilityGateway = createTestGateway(() => undefined, visibilityInteractions, {
+        loadBootstrap: () => visibilityBootstrap
+      });
+
+      function VisibilityHarness() {
+        visibilityController = useWorkspaceController(visibilityGateway);
+        return React.createElement("div", null, visibilityController.state.status);
+      }
+
+      const visibilityContainer = document.createElement("div");
+      document.body.appendChild(visibilityContainer);
+      const visibilityRoot = ReactDOM.createRoot(visibilityContainer);
+
+      try {
+        await act(async () => {
+          visibilityRoot.render(React.createElement(VisibilityHarness));
+          await flushEffects();
+        });
+        await waitFor(() => visibilityController?.state.status === "ready", "visibility controller did not bootstrap");
+        await waitFor(() => visibilityInteractions.watchRootUpdates.length > 0, "initial visible roots were not registered");
+        assert.deepEqual(visibilityInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: ["D:\\Projects\\Atlas"],
+          navigationParentPaths: []
+        });
+
+        visibilityInteractions.resolvedPaths.length = 0;
+        await act(async () => {
+          visibilityController?.actions.setLayoutMode("dual");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => visibilityInteractions.watchRootUpdates.at(-1)?.directoryPaths.includes("C:\\Users\\Admin\\Downloads") === true,
+          "newly visible panel was not registered for live refresh"
+        );
+        await waitFor(
+          () => visibilityInteractions.resolvedPaths.includes("C:\\Users\\Admin\\Downloads"),
+          "newly visible directory tab was not refreshed once"
+        );
+        assert.deepEqual(visibilityInteractions.resolvedPaths, ["C:\\Users\\Admin\\Downloads"]);
+      } finally {
+        await act(async () => {
+          visibilityRoot.unmount();
+          await flushEffects();
+        });
+        visibilityContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController watches navigation parents only while the navigation tab is visible", async () => {
+      const liveNavigationInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        watchRootUpdates: [] as WorkspaceWatchRootsRequest[],
+        fileSystemChangeListeners: [] as Array<(event: WorkspaceFsChangedEvent) => void | Promise<void>>,
+        navigationResolves: [] as string[][]
+      };
+      const liveNavigationBootstrap = createMockWorkspaceBootstrap("tauri");
+      const navigationTab = createNavigationTab("live-navigation-tab");
+      liveNavigationBootstrap.layoutMode = "single";
+      liveNavigationBootstrap.panels["panel-1"] = {
+        ...liveNavigationBootstrap.panels["panel-1"],
+        tabs: [navigationTab, createTabState("D:\\Projects\\Atlas", "live-navigation-directory")],
+        activeTabId: navigationTab.id
+      };
+      liveNavigationBootstrap.navigationItems = [
+        {
+          id: "nav-report",
+          displayName: "Report",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\report.txt",
+          targetKind: "file",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        },
+        {
+          id: "nav-remote",
+          displayName: "Remote",
+          description: "",
+          path: "sftp://deploy@edge-01/releases/manifest.yml",
+          targetKind: "remoteUnsupported",
+          targetStatus: "unsupportedRemote",
+          sortOrder: 2,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+      let liveNavigationController: ReturnType<typeof useWorkspaceController> | undefined;
+      const liveNavigationGateway = createTestGateway(() => undefined, liveNavigationInteractions, {
+        loadBootstrap: () => liveNavigationBootstrap
+      });
+
+      function LiveNavigationHarness() {
+        liveNavigationController = useWorkspaceController(liveNavigationGateway);
+        return React.createElement("div", null, liveNavigationController.state.status);
+      }
+
+      const liveNavigationContainer = document.createElement("div");
+      document.body.appendChild(liveNavigationContainer);
+      const liveNavigationRoot = ReactDOM.createRoot(liveNavigationContainer);
+
+      try {
+        await act(async () => {
+          liveNavigationRoot.render(React.createElement(LiveNavigationHarness));
+          await flushEffects();
+        });
+        await waitFor(() => liveNavigationController?.state.status === "ready", "live navigation controller did not bootstrap");
+        await waitFor(() => liveNavigationInteractions.watchRootUpdates.length > 0, "navigation watch roots were not registered");
+        assert.deepEqual(liveNavigationInteractions.watchRootUpdates.at(-1), {
+          directoryPaths: [],
+          navigationParentPaths: ["C:\\Users\\Admin\\Documents"]
+        });
+
+        liveNavigationInteractions.navigationResolves.length = 0;
+        const listener = liveNavigationInteractions.fileSystemChangeListeners[0];
+        assert.ok(listener);
+        await act(async () => {
+          await listener({
+            roots: ["C:\\Users\\Admin\\Documents"],
+            directoryRoots: [],
+            navigationParentRoots: ["C:\\Users\\Admin\\Documents"],
+            sequence: 1
+          });
+          await new Promise((resolve) => setTimeout(resolve, 420));
+          await flushEffects();
+        });
+        assert.deepEqual(liveNavigationInteractions.navigationResolves, [["C:\\Users\\Admin\\Documents\\report.txt", "sftp://deploy@edge-01/releases/manifest.yml"]]);
+
+        liveNavigationInteractions.navigationResolves.length = 0;
+        await act(async () => {
+          liveNavigationController?.actions.activateTab("panel-1", "live-navigation-directory");
+          await flushEffects();
+        });
+        await waitFor(
+          () => liveNavigationInteractions.watchRootUpdates.at(-1)?.directoryPaths[0] === "D:\\Projects\\Atlas",
+          "navigation watch roots were not cleared after hiding the navigation tab"
+        );
+        assert.deepEqual(liveNavigationInteractions.watchRootUpdates.at(-1)?.navigationParentPaths, []);
+      } finally {
+        await act(async () => {
+          liveNavigationRoot.unmount();
+          await flushEffects();
+        });
+        liveNavigationContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refuses native navigation context menus for multiple items", async () => {
+      const nativeNavigationInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        navigationResolves: [] as string[][]
+      };
+      const nativeNavigationBootstrap = createMockWorkspaceBootstrap("tauri");
+      nativeNavigationBootstrap.navigationItems = [
+        {
+          id: "nav-report",
+          displayName: "Report",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\report.txt",
+          targetKind: "file",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        },
+        {
+          id: "nav-archive",
+          displayName: "Archive",
+          description: "",
+          path: "C:\\Users\\Admin\\Documents\\Archive",
+          targetKind: "folder",
+          targetStatus: "ok",
+          sortOrder: 2,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+      let nativeNavigationController: ReturnType<typeof useWorkspaceController> | undefined;
+      const nativeNavigationGateway = createTestGateway(() => undefined, nativeNavigationInteractions, {
+        loadBootstrap: () => nativeNavigationBootstrap
+      });
+
+      function NativeNavigationHarness() {
+        nativeNavigationController = useWorkspaceController(nativeNavigationGateway);
+        return React.createElement("div", null, nativeNavigationController.state.status);
+      }
+
+      const nativeNavigationContainer = document.createElement("div");
+      document.body.appendChild(nativeNavigationContainer);
+      const nativeNavigationRoot = ReactDOM.createRoot(nativeNavigationContainer);
+
+      try {
+        await act(async () => {
+          nativeNavigationRoot.render(React.createElement(NativeNavigationHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeNavigationController?.state.status === "ready", "native navigation controller did not bootstrap");
+
+        let opened = true;
+        await act(async () => {
+          opened = await nativeNavigationController!.actions.openNavigationNativeContextMenu(
+            ["nav-report", "nav-archive"],
+            10,
+            12,
+            100,
+            120
+          );
+          await flushEffects();
+        });
+
+        assert.equal(opened, false);
+        assert.deepEqual(nativeNavigationInteractions.navigationResolves, []);
+        assert.deepEqual(nativeNavigationInteractions.nativeContextMenus, []);
+      } finally {
+        await act(async () => {
+          nativeNavigationRoot.unmount();
+          await flushEffects();
+        });
+        nativeNavigationContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController moves a single navigation tab after creating a fallback directory tab", async () => {
       const moveInteractions = {
         resolvedPaths: [] as string[],
@@ -803,9 +1257,9 @@ export const completion = (async () => {
       openedBootstrap.navigationItems = [
         {
           id: "nav-folder",
-          displayName: "Archive",
+          displayName: "Helix",
           description: "",
-          path: "D:\\Archive",
+          path: "D:\\Projects\\Helix",
           targetKind: "folder",
           targetStatus: "ok",
           sortOrder: 1,
@@ -841,13 +1295,100 @@ export const completion = (async () => {
         });
 
         await waitFor(() => openedInteractions.navigationMarks.includes("nav-folder"), "navigation open was not marked");
-        assert.equal(openedInteractions.resolvedPaths.includes("D:\\Archive"), true);
+        assert.equal(openedInteractions.resolvedPaths.includes("D:\\Projects\\Helix"), true);
       } finally {
         await act(async () => {
           openedRoot.unmount();
           await flushEffects();
         });
         openedContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController opens navigation folders by reusing matching visible tabs and checks the navigation panel last", async () => {
+      const reuseInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        navigationMarks: [] as string[]
+      };
+      const reuseBootstrap = createMockWorkspaceBootstrap("tauri");
+      const navigationTab = createNavigationTab("navigation-tab");
+      const samePathInNavigationPanel = createTabState("D:\\Archive", "panel-1-archive");
+      const samePathInTopLeftSearch = createTabState("D:\\Archive", "panel-2-archive");
+      reuseBootstrap.layoutMode = "dual";
+      reuseBootstrap.activePanelId = "panel-1";
+      reuseBootstrap.panels["panel-1"] = {
+        ...reuseBootstrap.panels["panel-1"],
+        tabs: [navigationTab, samePathInNavigationPanel],
+        activeTabId: navigationTab.id
+      };
+      reuseBootstrap.panels["panel-2"] = {
+        ...reuseBootstrap.panels["panel-2"],
+        tabs: [samePathInTopLeftSearch],
+        activeTabId: samePathInTopLeftSearch.id
+      };
+      reuseBootstrap.navigationItems = [
+        {
+          id: "nav-archive",
+          displayName: "Archive",
+          description: "",
+          path: "D:\\Archive",
+          targetKind: "folder",
+          targetStatus: "ok",
+          sortOrder: 1,
+          createdAt: "2026-06-08T09:00:00Z",
+          updatedAt: "2026-06-08T09:00:00Z"
+        }
+      ];
+
+      let reuseController: ReturnType<typeof useWorkspaceController> | undefined;
+      const reuseGateway = createTestGateway(() => undefined, reuseInteractions, {
+        loadBootstrap: () => reuseBootstrap
+      });
+
+      function ReuseHarness() {
+        reuseController = useWorkspaceController(reuseGateway);
+        return React.createElement("div", null, reuseController.state.status);
+      }
+
+      const reuseContainer = document.createElement("div");
+      document.body.appendChild(reuseContainer);
+      const reuseRoot = ReactDOM.createRoot(reuseContainer);
+
+      try {
+        await act(async () => {
+          reuseRoot.render(React.createElement(ReuseHarness));
+          await flushEffects();
+        });
+        await waitFor(() => reuseController?.state.status === "ready", "reuse controller did not bootstrap");
+
+        await act(async () => {
+          reuseController?.actions.openNavigationItem("panel-1", "nav-archive");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => reuseInteractions.navigationMarks.includes("nav-archive"),
+          "reused navigation open was not marked"
+        );
+        assert.equal(reuseController!.state.activePanelId, "panel-2");
+        assert.equal(reuseController!.state.panels["panel-2"].activeTabId, "panel-2-archive");
+        assert.equal(reuseController!.state.panels["panel-1"].activeTabId, "navigation-tab");
+        assert.equal(reuseInteractions.resolvedPaths.includes("D:\\Archive"), false);
+      } finally {
+        await act(async () => {
+          reuseRoot.unmount();
+          await flushEffects();
+        });
+        reuseContainer.remove();
       }
     });
 
@@ -1288,6 +1829,85 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController ignores hard-coded history shortcuts from readOnly inputs", async () => {
+      const editableShortcutContainer = document.createElement("div");
+      document.body.appendChild(editableShortcutContainer);
+      const editableShortcutRoot = ReactDOM.createRoot(editableShortcutContainer);
+      const editableShortcutInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let editableShortcutController: ReturnType<typeof useWorkspaceController> | undefined;
+      const editableShortcutBootstrap = createMockWorkspaceBootstrap("tauri");
+      const baseActiveTab = editableShortcutBootstrap.panels["panel-1"].tabs[0];
+      const activeTabWithBackHistory: typeof baseActiveTab = {
+        ...baseActiveTab,
+        history: ["D:\\Projects", "D:\\Projects\\Atlas"],
+        historyIndex: 1
+      };
+      const editableShortcutGateway = createTestGateway(() => undefined, editableShortcutInteractions, {
+        loadBootstrap: () => ({
+          ...editableShortcutBootstrap,
+          activePanelId: "panel-1",
+          panels: {
+            ...editableShortcutBootstrap.panels,
+            "panel-1": {
+              ...editableShortcutBootstrap.panels["panel-1"],
+              tabs: [activeTabWithBackHistory, ...editableShortcutBootstrap.panels["panel-1"].tabs.slice(1)],
+              activeTabId: activeTabWithBackHistory.id
+            }
+          }
+        })
+      });
+
+      function EditableShortcutHarness() {
+        editableShortcutController = useWorkspaceController(editableShortcutGateway);
+        return React.createElement("div", null, editableShortcutController.state.status);
+      }
+
+      const readOnlyInput = document.createElement("input");
+      readOnlyInput.readOnly = true;
+      document.body.appendChild(readOnlyInput);
+
+      try {
+        await act(async () => {
+          editableShortcutRoot.render(React.createElement(EditableShortcutHarness));
+          await flushEffects();
+        });
+        await waitFor(() => editableShortcutController?.state.status === "ready", "editable shortcut controller did not bootstrap");
+
+        const event = new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          altKey: true,
+          bubbles: true,
+          cancelable: true
+        });
+        await act(async () => {
+          readOnlyInput.dispatchEvent(event);
+          await flushEffects();
+        });
+
+        assert.equal(event.defaultPrevented, false);
+        assert.deepEqual(editableShortcutInteractions.resolvedPaths, []);
+        assert.equal(getActiveTab(editableShortcutController!.state.panels["panel-1"]).snapshot.location.path, "D:\\Projects\\Atlas");
+      } finally {
+        await act(async () => {
+          editableShortcutRoot.unmount();
+          await flushEffects();
+        });
+        editableShortcutContainer.remove();
+        readOnlyInput.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController preserves the full descendant chain for breadcrumb navigation", async () => {
       const breadcrumbContainer = document.createElement("div");
       document.body.appendChild(breadcrumbContainer);
@@ -1412,6 +2032,422 @@ export const completion = (async () => {
       assert.equal(interactions.resolvedPaths.includes("C:\\Users\\Admin\\Downloads"), true);
     });
 
+    await assertTest("useWorkspaceController dedupes identical drag-drop copy requests while one is in flight", async () => {
+      const dedupeInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      const pendingCopyReleases: Array<() => void> = [];
+      let dedupeController: ReturnType<typeof useWorkspaceController> | undefined;
+      const dedupeGateway = createTestGateway(() => undefined, dedupeInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        copyEntries: async (paths, destination) => {
+          dedupeInteractions.copyCalls.push({ paths: [...paths], destination });
+          await new Promise<void>((resolve) => {
+            pendingCopyReleases.push(resolve);
+          });
+        }
+      });
+
+      function DedupeHarness() {
+        dedupeController = useWorkspaceController(dedupeGateway);
+        return React.createElement("div", null, dedupeController.state.status);
+      }
+
+      const dedupeContainer = document.createElement("div");
+      document.body.appendChild(dedupeContainer);
+      const dedupeRoot = ReactDOM.createRoot(dedupeContainer);
+
+      try {
+        await act(async () => {
+          dedupeRoot.render(React.createElement(DedupeHarness));
+          await flushEffects();
+        });
+        await waitFor(() => dedupeController?.state.status === "ready", "dedupe controller did not bootstrap");
+
+        let firstDrop: Promise<void> | undefined;
+        await act(async () => {
+          firstDrop = dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await waitFor(() => dedupeInteractions.copyCalls.length === 1, "first drop copy did not start");
+        });
+
+        await act(async () => {
+          await dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(dedupeInteractions.copyCalls.length, 1);
+        pendingCopyReleases.shift()?.();
+
+        await act(async () => {
+          await firstDrop;
+          await flushEffects();
+        });
+
+        await act(async () => {
+          const nextDrop = dedupeController?.actions.dropEntries(
+            ["D:\\Projects\\Atlas\\README.md"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await waitFor(() => dedupeInteractions.copyCalls.length === 2, "new drop after completion did not start");
+          pendingCopyReleases.shift()?.();
+          await nextDrop;
+          await flushEffects();
+        });
+
+        assert.deepEqual(dedupeInteractions.copyCalls, [
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          },
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+      } finally {
+        pendingCopyReleases.splice(0).forEach((release) => release());
+        await act(async () => {
+          dedupeRoot.unmount();
+          await flushEffects();
+        });
+        dedupeContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController syncs local copy and cut selections to the Windows file clipboard", async () => {
+      interactions.systemClipboardWrites.length = 0;
+      const activeTab = getActiveTab(latestController!.state.panels["panel-1"]);
+      assert.equal(activeTab.kind, "directory");
+      const firstEntry = activeTab.snapshot.entries[0];
+      assert.ok(firstEntry);
+
+      await act(async () => {
+        latestController?.actions.selectEntry("panel-1", activeTab.id, firstEntry.id, false);
+        await flushEffects();
+      });
+
+      await act(async () => {
+        latestController?.actions.copySelection("panel-1");
+        await flushEffects();
+      });
+
+      await act(async () => {
+        latestController?.actions.cutSelection("panel-1");
+        await flushEffects();
+      });
+
+      assert.deepEqual(interactions.systemClipboardWrites, [
+        {
+          paths: [firstEntry.path],
+          mode: "copy"
+        },
+        {
+          paths: [firstEntry.path],
+          mode: "cut"
+        }
+      ]);
+      assert.deepEqual(latestController?.state.clipboard, {
+        paths: [firstEntry.path],
+        mode: "cut"
+      });
+    });
+
+    await assertTest("useWorkspaceController pastes Windows file clipboard entries into the selected folder", async () => {
+      const pasteInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let pasteController: ReturnType<typeof useWorkspaceController> | undefined;
+      const pasteGateway = createTestGateway(() => undefined, pasteInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "cut",
+          paths: ["D:\\Projects\\Atlas\\README.md"]
+        })
+      });
+
+      function PasteHarness() {
+        pasteController = useWorkspaceController(pasteGateway);
+        return React.createElement("div", null, pasteController.state.status);
+      }
+
+      const pasteContainer = document.createElement("div");
+      document.body.appendChild(pasteContainer);
+      const pasteRoot = ReactDOM.createRoot(pasteContainer);
+
+      try {
+        await act(async () => {
+          pasteRoot.render(React.createElement(PasteHarness));
+          await flushEffects();
+        });
+        await waitFor(() => pasteController?.state.status === "ready", "paste controller did not bootstrap");
+
+        await act(async () => {
+          await pasteController?.actions.pasteIntoPanel("panel-2");
+          await flushEffects();
+        });
+
+        assert.equal(pasteInteractions.systemClipboardReads, 1);
+        assert.deepEqual(pasteInteractions.moveCalls, [
+          {
+            paths: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+        assert.equal(pasteInteractions.copyCalls.length, 0);
+        assert.equal(pasteController?.state.clipboard, undefined);
+      } finally {
+        await act(async () => {
+          pasteRoot.unmount();
+          await flushEffects();
+        });
+        pasteContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController lets same-parent copy paste and drop operations reach the shell gateway", async () => {
+      const noOpInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let noOpController: ReturnType<typeof useWorkspaceController> | undefined;
+      const noOpGateway = createTestGateway(() => undefined, noOpInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "copy",
+          paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"]
+        })
+      });
+
+      function NoOpHarness() {
+        noOpController = useWorkspaceController(noOpGateway);
+        return React.createElement("div", null, noOpController.state.status);
+      }
+
+      const noOpContainer = document.createElement("div");
+      document.body.appendChild(noOpContainer);
+      const noOpRoot = ReactDOM.createRoot(noOpContainer);
+
+      try {
+        await act(async () => {
+          noOpRoot.render(React.createElement(NoOpHarness));
+          await flushEffects();
+        });
+        await waitFor(() => noOpController?.state.status === "ready", "no-op controller did not bootstrap");
+
+        await act(async () => {
+          await noOpController?.actions.pasteIntoPanel("panel-2");
+          await noOpController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            "C:\\Users\\Admin\\Downloads",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(noOpInteractions.systemClipboardReads, 1);
+        assert.deepEqual([...noOpInteractions.copyCalls].sort((left, right) => left.paths[0].localeCompare(right.paths[0])), [
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          },
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"],
+            destination: "C:\\Users\\Admin\\Downloads"
+          }
+        ]);
+        assert.deepEqual(noOpInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          noOpRoot.unmount();
+          await flushEffects();
+        });
+        noOpContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController skips same-parent cut paste and move drop operations", async () => {
+      const noOpInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let noOpController: ReturnType<typeof useWorkspaceController> | undefined;
+      const noOpGateway = createTestGateway(() => undefined, noOpInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+        readSystemFileClipboard: async () => ({
+          mode: "cut",
+          paths: ["C:\\Users\\Admin\\Downloads\\Installer.msi"]
+        })
+      });
+
+      function NoOpHarness() {
+        noOpController = useWorkspaceController(noOpGateway);
+        return React.createElement("div", null, noOpController.state.status);
+      }
+
+      const noOpContainer = document.createElement("div");
+      document.body.appendChild(noOpContainer);
+      const noOpRoot = ReactDOM.createRoot(noOpContainer);
+
+      try {
+        await act(async () => {
+          noOpRoot.render(React.createElement(NoOpHarness));
+          await flushEffects();
+        });
+        await waitFor(() => noOpController?.state.status === "ready", "no-op controller did not bootstrap");
+
+        await act(async () => {
+          await noOpController?.actions.pasteIntoPanel("panel-2");
+          await noOpController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads\\Desktop.zip"],
+            "C:\\Users\\Admin\\Downloads",
+            "move"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(noOpInteractions.systemClipboardReads, 1);
+        assert.deepEqual(noOpInteractions.copyCalls, []);
+        assert.deepEqual(noOpInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          noOpRoot.unmount();
+          await flushEffects();
+        });
+        noOpContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController blocks paste operations into a source folder descendant", async () => {
+      const descendantInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let descendantController: ReturnType<typeof useWorkspaceController> | undefined;
+      const descendantBootstrap = createMockWorkspaceBootstrap("tauri");
+      descendantBootstrap.panels["panel-2"] = {
+        ...descendantBootstrap.panels["panel-2"],
+        tabs: [createTabState("C:\\Users\\Admin\\Downloads\\Child", "panel-2-descendant")],
+        activeTabId: "panel-2-descendant"
+      };
+      let clipboardMode: "copy" | "cut" = "copy";
+      const descendantGateway = createTestGateway(() => undefined, descendantInteractions, {
+        loadBootstrap: () => descendantBootstrap,
+        readSystemFileClipboard: async () => ({
+          mode: clipboardMode,
+          paths: ["C:\\Users\\Admin\\Downloads"]
+        })
+      });
+
+      function DescendantHarness() {
+        descendantController = useWorkspaceController(descendantGateway);
+        return React.createElement("div", null, descendantController.state.status);
+      }
+
+      const descendantContainer = document.createElement("div");
+      document.body.appendChild(descendantContainer);
+      const descendantRoot = ReactDOM.createRoot(descendantContainer);
+
+      try {
+        await act(async () => {
+          descendantRoot.render(React.createElement(DescendantHarness));
+          await flushEffects();
+        });
+        await waitFor(() => descendantController?.state.status === "ready", "descendant controller did not bootstrap");
+
+        await act(async () => {
+          await descendantController?.actions.pasteIntoPanel("panel-2");
+          clipboardMode = "cut";
+          await descendantController?.actions.pasteIntoPanel("panel-2");
+          await descendantController?.actions.dropEntries(
+            ["C:\\Users\\Admin\\Downloads"],
+            "C:\\Users\\Admin\\Downloads\\Child",
+            "copy"
+          );
+          await flushEffects();
+        });
+
+        assert.equal(descendantInteractions.systemClipboardReads, 2);
+        assert.deepEqual(descendantInteractions.copyCalls, []);
+        assert.deepEqual(descendantInteractions.moveCalls, []);
+      } finally {
+        await act(async () => {
+          descendantRoot.unmount();
+          await flushEffects();
+        });
+        descendantContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController starts native system file drag only for local file paths", async () => {
+      interactions.systemDragStarts.length = 0;
+
+      await act(async () => {
+        latestController?.actions.startSystemFileDrag([
+          "D:\\Projects\\Atlas\\README.md",
+          "sftp://deploy@edge-01/releases/manifest.yml"
+        ]);
+        await flushEffects();
+      });
+
+      assert.deepEqual(interactions.systemDragStarts, [["D:\\Projects\\Atlas\\README.md"]]);
+    });
+
     await assertTest("useWorkspaceController routes remote clipboard and mutation actions through the gateway", async () => {
       interactions.resolvedPaths.length = 0;
       interactions.copyCalls.length = 0;
@@ -1419,6 +2455,7 @@ export const completion = (async () => {
       interactions.deleteCalls.length = 0;
       interactions.renameCalls.length = 0;
       interactions.createDirectoryCalls.length = 0;
+      interactions.systemClipboardWrites.length = 0;
 
       const remoteFileId = "sftp://deploy@edge-01/releases:manifest.yml";
       const remoteFilePath = "sftp://deploy@edge-01/releases/manifest.yml";
@@ -1433,6 +2470,7 @@ export const completion = (async () => {
         await flushEffects();
       });
       assert.deepEqual(latestController?.state.clipboard?.paths, [remoteFilePath]);
+      assert.deepEqual(interactions.systemClipboardWrites, []);
 
       await act(async () => {
         await latestController?.actions.pasteIntoPanel("panel-2");
@@ -1587,6 +2625,287 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController does not convert search result tabs during directory refreshes", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const searchRefreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let searchRefreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const searchRefreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      const directoryTab = createTabState(sharedPath, "panel-1-directory", {
+        selectedEntryIds: ["C:\\Users\\Admin\\Downloads:desktop-build.msi"]
+      });
+      const searchResultTab = {
+        ...createTabState(sharedPath, "panel-1-search-results"),
+        title: "搜索结果",
+        kind: "search-results" as const,
+        search: {
+          sourceTabId: directoryTab.id,
+          sourcePath: sharedPath,
+          query: {
+            name: "build",
+            content: "",
+            nameMode: "normal" as const,
+            contentMode: "normal" as const,
+            extensionFilterText: "",
+            extensionFilterMode: "include" as const,
+            includeFolders: true,
+            recursive: true,
+            caseSensitive: false,
+            scope: "active-panel" as const
+          },
+          results: []
+        }
+      };
+      searchRefreshBootstrap.panels["panel-1"] = {
+        ...searchRefreshBootstrap.panels["panel-1"],
+        tabs: [directoryTab, searchResultTab],
+        activeTabId: directoryTab.id
+      };
+
+      const searchRefreshGateway = createTestGateway(() => undefined, searchRefreshInteractions, {
+        loadBootstrap: () => searchRefreshBootstrap
+      });
+
+      function SearchRefreshHarness() {
+        searchRefreshController = useWorkspaceController(searchRefreshGateway);
+        return React.createElement("div", null, searchRefreshController.state.status);
+      }
+
+      const searchRefreshContainer = document.createElement("div");
+      document.body.appendChild(searchRefreshContainer);
+      const searchRefreshRoot = ReactDOM.createRoot(searchRefreshContainer);
+      const originalConfirm = window.confirm;
+      window.confirm = () => true;
+
+      try {
+        await act(async () => {
+          searchRefreshRoot.render(React.createElement(SearchRefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => searchRefreshController?.state.status === "ready", "search refresh controller did not bootstrap");
+
+        await act(async () => {
+          searchRefreshController?.actions.deleteSelection("panel-1");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => searchRefreshInteractions.resolvedPaths.includes(sharedPath),
+          "directory tab did not refresh after delete"
+        );
+        const searchTab = searchRefreshController?.state.panels["panel-1"].tabs.find((tab) => tab.id === searchResultTab.id);
+        assert.equal(searchTab?.kind, "search-results");
+      } finally {
+        window.confirm = originalConfirm;
+        await act(async () => {
+          searchRefreshRoot.unmount();
+          await flushEffects();
+        });
+        searchRefreshContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController polls non-terminal delete tasks and refreshes affected tabs", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const deletePath = "C:\\Users\\Admin\\Downloads\\desktop-build.msi";
+      const pollingInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let pollingController: ReturnType<typeof useWorkspaceController> | undefined;
+      let listTasksCalls = 0;
+      const taskBase: OperationTaskSnapshot = {
+        taskId: "delete-running-task",
+        requestId: "delete-running-request",
+        kind: "delete",
+        label: "Delete",
+        status: "running",
+        createdAt: "2026-06-10T08:00:00Z",
+        startedAt: "2026-06-10T08:00:00Z",
+        finishedAt: null,
+        totalEntries: 1,
+        completedEntries: 0,
+        failedEntries: 0,
+        totalBytes: null,
+        completedBytes: null,
+        currentPath: deletePath,
+        message: null,
+        cancelable: true,
+        undoable: false,
+        affectedRoots: [{ kind: "local", path: sharedPath }],
+        entryResults: [],
+        sequence: 1,
+        updatedAt: "2026-06-10T08:00:00Z"
+      };
+      const pollingBootstrap = createMockWorkspaceBootstrap("tauri");
+      pollingBootstrap.layoutMode = "dual";
+      pollingBootstrap.panels["panel-1"] = {
+        ...pollingBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(sharedPath, "panel-1-delete", {
+            selectedEntryIds: ["C:\\Users\\Admin\\Downloads:desktop-build.msi"]
+          })
+        ],
+        activeTabId: "panel-1-delete"
+      };
+      pollingBootstrap.panels["panel-2"] = {
+        ...pollingBootstrap.panels["panel-2"],
+        tabs: [createTabState(sharedPath, "panel-2-delete")],
+        activeTabId: "panel-2-delete"
+      };
+
+      const pollingGateway = createTestGateway(() => undefined, pollingInteractions, {
+        loadBootstrap: () => pollingBootstrap,
+        deleteEntries: async (paths) => {
+          pollingInteractions.deleteCalls.push({ paths: [...paths] });
+          return taskBase;
+        },
+        listOperationTasks: async () => {
+          listTasksCalls += 1;
+          return {
+            tasks: [{ ...taskBase, status: "succeeded", completedEntries: 1, cancelable: false, undoable: true, sequence: 2 }],
+            taskSequence: 2
+          };
+        }
+      });
+
+      function PollingHarness() {
+        pollingController = useWorkspaceController(pollingGateway);
+        return React.createElement("div", null, pollingController.state.status);
+      }
+
+      const pollingContainer = document.createElement("div");
+      document.body.appendChild(pollingContainer);
+      const pollingRoot = ReactDOM.createRoot(pollingContainer);
+      const originalConfirm = window.confirm;
+      window.confirm = () => true;
+
+      try {
+        await act(async () => {
+          pollingRoot.render(React.createElement(PollingHarness));
+          await flushEffects();
+        });
+        await waitFor(() => pollingController?.state.status === "ready", "polling controller did not bootstrap");
+
+        await act(async () => {
+          pollingController?.actions.deleteSelection("panel-1");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => pollingInteractions.resolvedPaths.filter((path) => path === sharedPath).length === 2,
+          "non-terminal delete task did not refresh every affected tab"
+        );
+        assert.equal(listTasksCalls > 0, true);
+      } finally {
+        window.confirm = originalConfirm;
+        await act(async () => {
+          pollingRoot.unmount();
+          await flushEffects();
+        });
+        pollingContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes local parent folders after native context menu closes", async () => {
+      const sharedPath = "C:\\Users\\Admin\\Downloads";
+      const nativeRefreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let nativeRefreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const nativeRefreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      nativeRefreshBootstrap.layoutMode = "dual";
+      nativeRefreshBootstrap.panels["panel-1"] = {
+        ...nativeRefreshBootstrap.panels["panel-1"],
+        tabs: [createTabState(sharedPath, "panel-1-native-menu")],
+        activeTabId: "panel-1-native-menu"
+      };
+      nativeRefreshBootstrap.panels["panel-2"] = {
+        ...nativeRefreshBootstrap.panels["panel-2"],
+        tabs: [createTabState(sharedPath, "panel-2-native-menu")],
+        activeTabId: "panel-2-native-menu"
+      };
+      const nativeRefreshGateway = createTestGateway(() => undefined, nativeRefreshInteractions, {
+        loadBootstrap: () => nativeRefreshBootstrap
+      });
+
+      function NativeRefreshHarness() {
+        nativeRefreshController = useWorkspaceController(nativeRefreshGateway);
+        return React.createElement("div", null, nativeRefreshController.state.status);
+      }
+
+      const nativeRefreshContainer = document.createElement("div");
+      document.body.appendChild(nativeRefreshContainer);
+      const nativeRefreshRoot = ReactDOM.createRoot(nativeRefreshContainer);
+
+      try {
+        await act(async () => {
+          nativeRefreshRoot.render(React.createElement(NativeRefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeRefreshController?.state.status === "ready", "native refresh controller did not bootstrap");
+
+        await act(async () => {
+          nativeRefreshController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-native-menu",
+            target: "selection",
+            paths: ["C:\\Users\\Admin\\Downloads\\desktop-build.msi"],
+            clientX: 10,
+            clientY: 12,
+            screenX: 100,
+            screenY: 120
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativeRefreshInteractions.resolvedPaths.filter((path) => path === sharedPath).length === 2,
+          "native context menu did not refresh every open parent folder tab"
+        );
+        assert.deepEqual(nativeRefreshInteractions.nativeContextMenus, [
+          {
+            paths: ["C:\\Users\\Admin\\Downloads\\desktop-build.msi"],
+            x: 100,
+            y: 120
+          }
+        ]);
+      } finally {
+        await act(async () => {
+          nativeRefreshRoot.unmount();
+          await flushEffects();
+        });
+        nativeRefreshContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController starts inline edits for create folder and rename before mutating through the gateway", async () => {
       const inlineInteractions = {
         resolvedPaths: [] as string[],
@@ -1674,7 +2993,7 @@ export const completion = (async () => {
 
         const createEdit = inlineController?.state.panels["panel-1"].tabs[0].inlineEdit;
         assert.equal(createEdit?.mode, "create-folder");
-        assert.equal(createEdit?.value, "新建文件夹");
+        assert.equal(createEdit?.value, "新文件夹");
         assert.equal(promptCalls, 0);
 
         await act(async () => {
@@ -1701,7 +3020,7 @@ export const completion = (async () => {
 
         const createFileEdit = inlineController?.state.panels["panel-1"].tabs[0].inlineEdit;
         assert.equal(createFileEdit?.mode, "create-file");
-        assert.equal(createFileEdit?.value, "新建文件.txt");
+        assert.equal(createFileEdit?.value, "新文件");
 
         await act(async () => {
           inlineController?.actions.updateInlineEdit("panel-1", "inline-tab", "notes.txt");
@@ -1726,6 +3045,351 @@ export const completion = (async () => {
           await flushEffects();
         });
         inlineContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController commits inactive tab inline edits from a workspace-level outside click", async () => {
+      const inactiveInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let inactiveController: ReturnType<typeof useWorkspaceController> | undefined;
+      const inactiveBootstrap = createMockWorkspaceBootstrap("tauri");
+      const editingTab = createTabState("D:\\Projects\\Atlas", "inactive-editing-tab", {
+        selectedEntryIds: ["D:\\Projects\\Atlas:sprint-plan.md"]
+      });
+      const activeTab = createTabState("D:\\Projects\\Atlas\\src", "inactive-active-tab");
+      inactiveBootstrap.layoutMode = "single";
+      inactiveBootstrap.panels["panel-1"] = {
+        ...inactiveBootstrap.panels["panel-1"],
+        tabs: [editingTab, activeTab],
+        activeTabId: editingTab.id
+      };
+      const inactiveGateway = createTestGateway(() => undefined, inactiveInteractions, {
+        loadBootstrap: () => inactiveBootstrap
+      });
+
+      function InactiveHarness() {
+        inactiveController = useWorkspaceController(inactiveGateway);
+        return React.createElement("div", null, inactiveController.state.status);
+      }
+
+      const inactiveContainer = document.createElement("div");
+      document.body.appendChild(inactiveContainer);
+      const inactiveRoot = ReactDOM.createRoot(inactiveContainer);
+
+      try {
+        await act(async () => {
+          inactiveRoot.render(React.createElement(InactiveHarness));
+          await flushEffects();
+        });
+        await waitFor(() => inactiveController?.state.status === "ready", "inactive controller did not bootstrap");
+
+        await act(async () => {
+          inactiveController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+        await waitFor(
+          () => inactiveController?.state.panels["panel-1"].tabs[0].inlineEdit?.mode === "rename",
+          "rename edit was not started on the first tab"
+        );
+
+        await act(async () => {
+          inactiveController?.actions.updateInlineEdit("panel-1", editingTab.id, "sprint-plan-final.md");
+          inactiveController?.actions.activateTab("panel-1", activeTab.id);
+          await flushEffects();
+        });
+
+        await act(async () => {
+          inactiveController?.actions.commitActiveInlineEdits();
+          await flushEffects();
+        });
+
+        await waitFor(() => inactiveInteractions.renameCalls.length === 1, "inactive inline rename was not committed");
+        assert.deepEqual(inactiveInteractions.renameCalls, [
+          {
+            source: "D:\\Projects\\Atlas\\sprint-plan.md",
+            newName: "sprint-plan-final.md"
+          }
+        ]);
+        await waitFor(
+          () => inactiveInteractions.resolvedPaths.includes("D:\\Projects\\Atlas"),
+          "inactive inline rename did not refresh the source directory"
+        );
+      } finally {
+        await act(async () => {
+          inactiveRoot.unmount();
+          await flushEffects();
+        });
+        inactiveContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes the source directory and keeps renamed entry selected", async () => {
+      const refreshInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let refreshController: ReturnType<typeof useWorkspaceController> | undefined;
+      const refreshPath = "sftp://deploy@edge-01/releases";
+      const refreshBootstrap = createMockWorkspaceBootstrap("tauri");
+      refreshBootstrap.layoutMode = "single";
+      refreshBootstrap.panels["panel-1"] = {
+        ...refreshBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(refreshPath, "rename-refresh-tab", {
+            selectedEntryIds: [`${refreshPath}:manifest.yml`]
+          })
+        ],
+        activeTabId: "rename-refresh-tab"
+      };
+      const refreshGateway = createTestGateway(() => undefined, refreshInteractions, {
+        loadBootstrap: () => refreshBootstrap,
+        resolveDirectory: async (path) => {
+          const snapshot = resolveMockDirectory(path);
+          if (path !== refreshPath) {
+            return snapshot;
+          }
+          const renamedPath = `${refreshPath}/manifest-final.yml`;
+          return {
+            ...snapshot,
+            entries: snapshot.entries.map((entry) =>
+              entry.name === "manifest.yml"
+                ? {
+                    ...entry,
+                    id: `${refreshPath}:manifest-final.yml`,
+                    name: "manifest-final.yml",
+                    path: renamedPath
+                  }
+                : entry
+            )
+          };
+        },
+        renameEntry: async (source, newName) => {
+          refreshInteractions.renameCalls.push({ source, newName });
+          const now = "2026-06-10T08:00:00Z";
+          return {
+            taskId: "rename-refresh-task",
+            requestId: "request-rename-refresh-task",
+            kind: "rename",
+            label: "Rename manifest.yml",
+            status: "succeeded",
+            createdAt: now,
+            startedAt: now,
+            finishedAt: now,
+            totalEntries: 1,
+            completedEntries: 1,
+            failedEntries: 0,
+            totalBytes: null,
+            completedBytes: null,
+            currentPath: null,
+            message: null,
+            cancelable: false,
+            undoable: true,
+            affectedRoots: [],
+            entryResults: [],
+            sequence: 1,
+            updatedAt: now
+          } satisfies OperationTaskSnapshot;
+        }
+      });
+
+      function RefreshHarness() {
+        refreshController = useWorkspaceController(refreshGateway);
+        return React.createElement("div", null, refreshController.state.status);
+      }
+
+      const refreshContainer = document.createElement("div");
+      document.body.appendChild(refreshContainer);
+      const refreshRoot = ReactDOM.createRoot(refreshContainer);
+
+      try {
+        await act(async () => {
+          refreshRoot.render(React.createElement(RefreshHarness));
+          await flushEffects();
+        });
+        await waitFor(() => refreshController?.state.status === "ready", "refresh controller did not bootstrap");
+
+        await act(async () => {
+          refreshController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+
+        await act(async () => {
+          refreshController?.actions.updateInlineEdit("panel-1", "rename-refresh-tab", "manifest-final.yml");
+          refreshController?.actions.commitInlineEdit("panel-1", "rename-refresh-tab", "manifest-final.yml");
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => refreshInteractions.resolvedPaths.includes(refreshPath),
+          "completed inline rename did not refresh the source directory"
+        );
+        assert.deepEqual(refreshInteractions.renameCalls, [
+          {
+            source: `${refreshPath}/manifest.yml`,
+            newName: "manifest-final.yml"
+          }
+        ]);
+        await waitFor(
+          () =>
+            getActiveTab(refreshController!.state.panels["panel-1"]).selectedEntryIds.includes(
+              `${refreshPath}:manifest-final.yml`
+            ),
+          "renamed entry was not selected after the refreshed directory snapshot"
+        );
+      } finally {
+        await act(async () => {
+          refreshRoot.unmount();
+          await flushEffects();
+        });
+        refreshContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController refreshes inline rename parent after the background task finishes", async () => {
+      const taskInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      let taskController: ReturnType<typeof useWorkspaceController> | undefined;
+      let taskListener: Parameters<WorkspaceGateway["listenOperationTasks"]>[0] | undefined;
+      let currentTask: OperationTaskSnapshot;
+      const taskPath = "sftp://deploy@edge-01/releases";
+      const taskNow = "2026-06-10T08:00:00Z";
+      const baseTask: OperationTaskSnapshot = {
+        taskId: "rename-background-task",
+        requestId: "request-rename-background-task",
+        kind: "rename",
+        label: "Rename manifest.yml",
+        status: "running",
+        createdAt: taskNow,
+        startedAt: taskNow,
+        finishedAt: null,
+        totalEntries: 1,
+        completedEntries: 0,
+        failedEntries: 0,
+        totalBytes: null,
+        completedBytes: null,
+        currentPath: null,
+        message: null,
+        cancelable: true,
+        undoable: false,
+        affectedRoots: [],
+        entryResults: [],
+        sequence: 1,
+        updatedAt: taskNow
+      };
+      currentTask = baseTask;
+      const taskBootstrap = createMockWorkspaceBootstrap("tauri");
+      taskBootstrap.layoutMode = "single";
+      taskBootstrap.panels["panel-1"] = {
+        ...taskBootstrap.panels["panel-1"],
+        tabs: [
+          createTabState(taskPath, "rename-background-tab", {
+            selectedEntryIds: [`${taskPath}:manifest.yml`]
+          })
+        ],
+        activeTabId: "rename-background-tab"
+      };
+      const taskGateway = createTestGateway(() => undefined, taskInteractions, {
+        loadBootstrap: () => taskBootstrap,
+        renameEntry: async (source, newName) => {
+          taskInteractions.renameCalls.push({ source, newName });
+          return currentTask;
+        },
+        listOperationTasks: async () => ({ tasks: [currentTask], taskSequence: currentTask.sequence }),
+        listenOperationTasks: async (handler) => {
+          taskListener = handler;
+          return () => undefined;
+        }
+      });
+
+      function TaskHarness() {
+        taskController = useWorkspaceController(taskGateway);
+        return React.createElement("div", null, taskController.state.status);
+      }
+
+      const taskContainer = document.createElement("div");
+      document.body.appendChild(taskContainer);
+      const taskRoot = ReactDOM.createRoot(taskContainer);
+
+      try {
+        await act(async () => {
+          taskRoot.render(React.createElement(TaskHarness));
+          await flushEffects();
+        });
+        await waitFor(() => taskController?.state.status === "ready", "task controller did not bootstrap");
+        await waitFor(() => Boolean(taskListener), "operation task listener was not registered");
+
+        await act(async () => {
+          taskController?.actions.renameSelection("panel-1");
+          await flushEffects();
+        });
+
+        await act(async () => {
+          taskController?.actions.updateInlineEdit("panel-1", "rename-background-tab", "manifest-final.yml");
+          taskController?.actions.commitInlineEdit("panel-1", "rename-background-tab", "manifest-final.yml");
+          await flushEffects();
+        });
+
+        assert.equal(taskInteractions.resolvedPaths.includes(taskPath), false);
+
+        currentTask = {
+          ...baseTask,
+          status: "succeeded",
+          finishedAt: "2026-06-10T08:00:01Z",
+          completedEntries: 1,
+          cancelable: false,
+          undoable: true,
+          sequence: 2,
+          updatedAt: "2026-06-10T08:00:01Z"
+        };
+
+        await act(async () => {
+          taskListener?.({
+            taskId: currentTask.taskId,
+            sequence: currentTask.sequence,
+            updatedAt: currentTask.updatedAt,
+            snapshot: currentTask
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => taskInteractions.resolvedPaths.includes(taskPath),
+          "background inline rename completion did not refresh the source directory"
+        );
+      } finally {
+        await act(async () => {
+          taskRoot.unmount();
+          await flushEffects();
+        });
+        taskContainer.remove();
       }
     });
 
@@ -1946,9 +3610,9 @@ export const completion = (async () => {
       const fallbackGateway = createTestGateway(() => undefined, fallbackInteractions, {
         loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
       });
-      fallbackGateway.showNativeContextMenu = async (paths: string[], x: number, y: number) => {
+      fallbackGateway.showNativeContextMenu = async (paths: string[], x: number, y: number, _shortcuts) => {
         fallbackInteractions.nativeContextMenus.push({ paths: [...paths], x, y });
-        return false;
+        return { opened: false };
       };
 
       function FallbackHarness() {
@@ -2002,6 +3666,261 @@ export const completion = (async () => {
           await flushEffects();
         });
         fallbackContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController falls back to the app panel menu when native background menu does not open", async () => {
+      const fallbackInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>
+      };
+      let fallbackController: ReturnType<typeof useWorkspaceController> | undefined;
+      const fallbackGateway = createTestGateway(() => undefined, fallbackInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
+      });
+      fallbackGateway.showNativeBackgroundContextMenu = async (directoryPath: string, x: number, y: number) => {
+        fallbackInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        return { opened: false };
+      };
+
+      function FallbackHarness() {
+        fallbackController = useWorkspaceController(fallbackGateway);
+        return React.createElement("div", null, fallbackController.state.status);
+      }
+
+      const fallbackContainer = document.createElement("div");
+      document.body.appendChild(fallbackContainer);
+      const fallbackRoot = ReactDOM.createRoot(fallbackContainer);
+
+      try {
+        await act(async () => {
+          fallbackRoot.render(React.createElement(FallbackHarness));
+          await flushEffects();
+        });
+        await waitFor(() => fallbackController?.state.status === "ready", "fallback controller did not bootstrap");
+
+        await act(async () => {
+          fallbackController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(() => fallbackController?.state.contextMenu?.mode === "system-fallback", "fallback app menu did not open");
+        assert.deepEqual(fallbackInteractions.nativeBackgroundContextMenus, [
+          {
+            directoryPath: "D:\\Projects\\Atlas",
+            x: 1120,
+            y: 740
+          }
+        ]);
+        assert.deepEqual(fallbackInteractions.nativeContextMenus, []);
+        assert.deepEqual(fallbackController?.state.contextMenu, {
+          x: 760,
+          y: 540,
+          panelId: "panel-1",
+          tabId: "panel-1-tab-1",
+          mode: "system-fallback",
+          scope: "panel"
+        });
+      } finally {
+        await act(async () => {
+          fallbackRoot.unmount();
+          await flushEffects();
+        });
+        fallbackContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController enables native background paste from the Windows file clipboard", async () => {
+      const nativePasteInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>,
+        systemClipboardReads: 0
+      };
+      let nativePasteController: ReturnType<typeof useWorkspaceController> | undefined;
+      let capturedOptions: NativeBackgroundContextMenuOptions | undefined;
+      const nativePasteGateway = createTestGateway(
+        () => undefined,
+        nativePasteInteractions,
+        {
+          loadBootstrap: () => createMockWorkspaceBootstrap("tauri"),
+          readSystemFileClipboard: async () => ({
+            mode: "copy",
+            paths: ["D:\\Projects\\Atlas\\README.md"]
+          })
+        }
+      );
+      nativePasteGateway.showNativeBackgroundContextMenu = async (directoryPath, x, y, options) => {
+        nativePasteInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        capturedOptions = options;
+        return { opened: true };
+      };
+
+      function NativePasteHarness() {
+        nativePasteController = useWorkspaceController(nativePasteGateway);
+        return React.createElement("div", null, nativePasteController.state.status);
+      }
+
+      const nativePasteContainer = document.createElement("div");
+      document.body.appendChild(nativePasteContainer);
+      const nativePasteRoot = ReactDOM.createRoot(nativePasteContainer);
+
+      try {
+        await act(async () => {
+          nativePasteRoot.render(React.createElement(NativePasteHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativePasteController?.state.status === "ready", "native paste controller did not bootstrap");
+
+        await act(async () => {
+          nativePasteController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativePasteInteractions.nativeBackgroundContextMenus.length === 1,
+          "native background menu did not open"
+        );
+        assert.equal(nativePasteInteractions.systemClipboardReads, 1);
+        assert.equal(capturedOptions?.canPaste, true);
+        assert.deepEqual(nativePasteController?.state.clipboard, {
+          mode: "copy",
+          paths: ["D:\\Projects\\Atlas\\README.md"]
+        });
+      } finally {
+        await act(async () => {
+          nativePasteRoot.unmount();
+          await flushEffects();
+        });
+        nativePasteContainer.remove();
+      }
+    });
+
+    await assertTest("useWorkspaceController applies custom actions returned from the native background menu", async () => {
+      const nativeActionInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>,
+        nativeBackgroundContextMenus: [] as Array<{ directoryPath: string; x: number; y: number }>
+      };
+      let nativeActionController: ReturnType<typeof useWorkspaceController> | undefined;
+      let capturedOptions: unknown;
+      const nativeActionGateway = createTestGateway(() => undefined, nativeActionInteractions, {
+        loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
+      });
+      nativeActionGateway.showNativeBackgroundContextMenu = async (directoryPath, x, y, options) => {
+        nativeActionInteractions.nativeBackgroundContextMenus.push({ directoryPath, x, y });
+        capturedOptions = options;
+        return {
+          opened: true,
+          action: {
+            type: "setViewMode",
+            viewMode: "tiles"
+          }
+        };
+      };
+
+      function NativeActionHarness() {
+        nativeActionController = useWorkspaceController(nativeActionGateway);
+        return React.createElement("div", null, nativeActionController.state.status);
+      }
+
+      const nativeActionContainer = document.createElement("div");
+      document.body.appendChild(nativeActionContainer);
+      const nativeActionRoot = ReactDOM.createRoot(nativeActionContainer);
+
+      try {
+        await act(async () => {
+          nativeActionRoot.render(React.createElement(NativeActionHarness));
+          await flushEffects();
+        });
+        await waitFor(() => nativeActionController?.state.status === "ready", "native action controller did not bootstrap");
+
+        await act(async () => {
+          nativeActionController?.actions.openNativeContextMenu({
+            panelId: "panel-1",
+            tabId: "panel-1-tab-1",
+            target: "background",
+            directoryPath: "D:\\Projects\\Atlas",
+            paths: [],
+            clientX: 760,
+            clientY: 540,
+            screenX: 1120,
+            screenY: 740
+          });
+          await flushEffects();
+        });
+
+        await waitFor(
+          () => nativeActionController?.state.panels["panel-1"].tabs[0].viewMode === "tiles",
+          "native background action did not update the tab view mode"
+        );
+        assert.deepEqual(nativeActionInteractions.nativeBackgroundContextMenus, [
+          {
+            directoryPath: "D:\\Projects\\Atlas",
+            x: 1120,
+            y: 740
+          }
+        ]);
+        assert.deepEqual(capturedOptions, {
+          viewMode: "details",
+          sort: {
+            columnId: "name",
+            direction: "asc"
+          },
+          canPaste: false
+        });
+        assert.equal(nativeActionController?.state.contextMenu, undefined);
+      } finally {
+        await act(async () => {
+          nativeActionRoot.unmount();
+          await flushEffects();
+        });
+        nativeActionContainer.remove();
       }
     });
 
@@ -2275,6 +4194,102 @@ export const completion = (async () => {
       }
     });
 
+    await assertTest("useWorkspaceController routes list keyboard shortcuts only to the active panel", async () => {
+      const keyboardInteractions = {
+        resolvedPaths: [] as string[],
+        copyCalls: [] as Array<{ paths: string[]; destination: string }>,
+        moveCalls: [] as Array<{ paths: string[]; destination: string }>,
+        deleteCalls: [] as Array<{ paths: string[] }>,
+        renameCalls: [] as Array<{ source: string; newName: string }>,
+        createDirectoryCalls: [] as Array<{ parent: string; name: string }>,
+        createFileCalls: [] as Array<{ parent: string; name: string }>,
+        treeLoadPaths: [] as string[],
+        savedDetailsRowHeights: [] as number[],
+        nativeContextMenus: [] as Array<{ paths: string[]; x: number; y: number }>
+      };
+      const keyboardBootstrap = createMockWorkspaceBootstrap("tauri");
+      keyboardBootstrap.layoutMode = "dual";
+      keyboardBootstrap.activePanelId = "panel-1";
+      const panel1Tab = keyboardBootstrap.panels["panel-1"].tabs[0];
+      const panel2Tab = keyboardBootstrap.panels["panel-2"].tabs[0];
+      panel1Tab.snapshot = {
+        ...resolveMockDirectory("D:\\Projects\\Atlas"),
+        location: panel1Tab.snapshot.location
+      };
+      panel2Tab.snapshot = {
+        ...resolveMockDirectory("D:\\Projects\\Atlas"),
+        location: panel2Tab.snapshot.location
+      };
+      panel1Tab.selectedEntryIds = [];
+      panel2Tab.selectedEntryIds = [];
+      let keyboardController: ReturnType<typeof useWorkspaceController> | undefined;
+      const keyboardGateway = createTestGateway(() => undefined, keyboardInteractions, {
+        loadBootstrap: () => keyboardBootstrap
+      });
+      function KeyboardHarness() {
+        keyboardController = useWorkspaceController(keyboardGateway);
+        return React.createElement("div", null, keyboardController.state.status);
+      }
+      const keyboardContainer = document.createElement("div");
+      document.body.appendChild(keyboardContainer);
+      const keyboardRoot = ReactDOM.createRoot(keyboardContainer);
+
+      const getActiveIds = (panelId: "panel-1" | "panel-2") =>
+        getActiveTab(keyboardController!.state.panels[panelId]).selectedEntryIds;
+
+      try {
+        await act(async () => {
+          keyboardRoot.render(React.createElement(KeyboardHarness));
+          await flushEffects();
+        });
+        await waitFor(() => keyboardController?.state.status === "ready", "keyboard controller did not bootstrap");
+
+        // Ctrl+A on panel-1 (active) selects only panel-1 entries, panel-2 stays empty.
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-1").length > 0, "Ctrl+A did not select entries in active panel");
+        assert.deepEqual(getActiveIds("panel-2"), [], "Ctrl+A leaked into the inactive panel");
+
+        // Reset and move focus to panel-2; Ctrl+A now selects panel-2 only.
+        await act(async () => {
+          keyboardController?.actions.focusPanel("panel-2");
+          await flushEffects();
+        });
+        assert.equal(keyboardController!.state.activePanelId, "panel-2");
+        const panel2ActiveTabBefore = getActiveTab(keyboardController!.state.panels["panel-2"]);
+        assert.equal(panel2ActiveTabBefore.snapshot.entries.length > 0, true, "panel-2 active tab has no entries");
+        // Note: focusPanel deliberately clears the previously-active panel's active-tab selection
+        // (see focusPanel in workspaceReducer), so panel-1 selection is already empty here.
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-2").length > 0, "Ctrl+A did not select entries after focus switch");
+        assert.deepEqual(getActiveIds("panel-1"), [], "Ctrl+A leaked back into the previously active panel");
+
+        // ArrowDown on panel-2 moves selection to the second entry (single-select).
+        await act(async () => {
+          keyboardController?.actions.clearSelection("panel-2", keyboardBootstrap.panels["panel-2"].activeTabId);
+          await flushEffects();
+        });
+        assert.equal(keyboardController!.state.activePanelId, "panel-2");
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+          await flushEffects();
+        });
+        await waitFor(() => getActiveIds("panel-2").length === 1, "ArrowDown did not move selection");
+        assert.deepEqual(getActiveIds("panel-1"), [], "ArrowDown leaked into inactive panel");
+      } finally {
+        await act(async () => {
+          keyboardRoot.unmount();
+          await flushEffects();
+        });
+        keyboardContainer.remove();
+      }
+    });
+
     await assertTest("useWorkspaceController persists details row height changes through the workspace gateway", async () => {
       interactions.savedDetailsRowHeights.length = 0;
 
@@ -2285,6 +4300,19 @@ export const completion = (async () => {
 
       assert.deepEqual(interactions.savedDetailsRowHeights, [50]);
       assert.equal(latestController?.state.settings.model.detailsRowHeight, 50);
+    });
+
+    await assertTest("useWorkspaceController persists default context menu changes through the workspace gateway", async () => {
+      interactions.savedSettingsModels.length = 0;
+
+      await act(async () => {
+        latestController?.actions.setContextMenuDefault("custom");
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.savedSettingsModels.length === 1, "context menu default was not persisted");
+      assert.equal(interactions.savedSettingsModels[0].contextMenu.defaultMenu, "custom");
+      assert.equal(latestController?.state.settings.model.contextMenu.defaultMenu, "custom");
     });
   } finally {
     await act(async () => {

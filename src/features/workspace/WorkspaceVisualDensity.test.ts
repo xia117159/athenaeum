@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { readWorkspaceCss } from "./workspaceCssTestUtils";
 
 function assertTest(name: string, fn: () => void) {
   try {
@@ -12,13 +13,17 @@ function assertTest(name: string, fn: () => void) {
   }
 }
 
-const css = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/workspace.css"), "utf8");
+const css = readWorkspaceCss();
+const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+const workspaceMenuSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceMenuBar.tsx"), "utf8");
 const workspaceViewSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceView.tsx"), "utf8");
+const navigationTabSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/NavigationTabView.tsx"), "utf8");
+const detailsListBaseSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/DetailsListBase.tsx"), "utf8");
 const panelChromeSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspacePanelChrome.tsx"), "utf8");
 const treeBranchSource = fs.readFileSync(path.join(process.cwd(), "src/features/workspace/WorkspaceTreeBranch.tsx"), "utf8");
 
 function getCssBlock(selector: string) {
-  const blocks = Array.from(css.matchAll(/([^{}]+)\{([^}]*)\}/gm));
+  const blocks = Array.from(cssWithoutComments.matchAll(/([^{}]+)\{([^}]*)\}/gm));
   const matches = blocks.filter(([, selectorList]) =>
     selectorList
       .split(",")
@@ -46,6 +51,7 @@ assertTest("workspace chrome uses a flat high-density split-pane layout", () => 
 });
 
 assertTest("workspace tabs and breadcrumbs match the compact Windows target chrome", () => {
+  assertDeclaration(getCssBlock(".tab-strip"), "position", "relative");
   assertDeclaration(getCssBlock(".panel-chrome"), "gap", "0");
   assertDeclaration(getCssBlock(".tab-strip__tab"), "height", "24px");
   assertDeclaration(getCssBlock(".tab-strip__tab.is-active"), "background", "#ffffff");
@@ -68,6 +74,49 @@ assertTest("workspace tabs and breadcrumbs match the compact Windows target chro
   assertNoDeclaration(getCssBlock(".tab-strip__tab"), "max-width");
 });
 
+assertTest("tab strip add button stays square at any panel width", () => {
+  // The "+" button is sized by its icon and padding. It must never be
+  // width-stretched (e.g. width: 100%), otherwise it fills the right side of the
+  // tab row when the panel is narrow instead of staying a compact square.
+  assertNoDeclaration(getCssBlock(".tab-strip__add"), "width");
+});
+
+assertTest("focused panel active tab uses the configurable focus accent", () => {
+  // The active-tab underline of the currently focused panel must follow the
+  // user-configured 焦点强调色 (--panel-focus-accent), not the fixed theme accent.
+  assertDeclaration(
+    getCssBlock(".panel-surface.is-focused .tab-strip__tab.is-active"),
+    "box-shadow",
+    "inset 0 -2px 0 var\\(--panel-focus-accent, var\\(--accent\\)\\)"
+  );
+  assertDeclaration(
+    getCssBlock(".panel-surface.is-focused .tab-strip__tab.is-active"),
+    "background",
+    "var\\(--active-tab-background, #ffffff\\)"
+  );
+  assert.equal(workspaceViewSource.includes("activeTabBackground={state.settings.model.theme.activeTabBackground}"), true);
+  assert.equal(workspaceViewSource.includes("\"--active-tab-background\": activeTabBackground"), true);
+});
+
+assertTest("drop target highlights use configurable theme variables", () => {
+  const fillMix = "color-mix\\(in srgb, var\\(--drop-highlight-fill, #0f6cbd\\) 12%, transparent\\)";
+  const borderMix = "color-mix\\(in srgb, var\\(--drop-highlight-border, #0f6cbd\\) 55%, transparent\\)";
+
+  assert.equal(workspaceViewSource.includes("dropHighlightFill={state.settings.model.theme.dropHighlightFill}"), true);
+  assert.equal(workspaceViewSource.includes("dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}"), true);
+  assert.equal(workspaceViewSource.includes("\"--drop-highlight-fill\": dropHighlightFill"), true);
+  assert.equal(workspaceViewSource.includes("\"--drop-highlight-border\": dropHighlightBorder"), true);
+
+  assertDeclaration(getCssBlock(".file-listing__scroll.is-drop-target"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-listing:has(> .file-listing__scroll.is-drop-target)::after"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-listing:has(> .file-listing__scroll.is-drop-target)::after"), "box-shadow", `inset 0 0 0 2px ${borderMix}`);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "border-color", borderMix);
+  assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "box-shadow", `inset 0 0 0 1px ${borderMix}`);
+  assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "background", fillMix);
+  assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "border-color", borderMix);
+});
+
 assertTest("workspace view no longer renders a bottom status bar", () => {
   assert.equal(workspaceViewSource.includes("workspace-statusbar"), false);
 });
@@ -81,9 +130,24 @@ assertTest("workspace top chrome separates command and address rows without the 
   assertDeclaration(getCssBlock(".workspace-commandbar"), "grid-template-columns", "minmax\\(0, 1fr\\) auto");
   assertDeclaration(getCssBlock(".workspace-addressbar"), "grid-template-columns", "minmax\\(0, 1fr\\)");
   assertDeclaration(getCssBlock(".workspace-toolbar__actions"), "justify-content", "flex-start");
-  assertDeclaration(getCssBlock(".workspace-toolbar__history"), "justify-content", "flex-end");
+  assert.equal(workspaceViewSource.includes("workspace-toolbar__history"), false);
+  assert.equal(workspaceViewSource.includes("OperationSummaryButton"), false);
+  assertDeclaration(getCssBlock(".information-panel__summary"), "grid-template-columns", "minmax\\(128px, 260px\\) minmax\\(76px, 0\\.7fr\\) minmax\\(64px, 0\\.6fr\\) minmax\\(96px, 0\\.9fr\\) minmax\\(118px, 1fr\\) 26px 26px");
+  assertDeclaration(getCssBlock(".information-panel.is-expanded"), "min-height", "222px");
+  assertDeclaration(getCssBlock(".information-panel__content-shell"), "grid-template-rows", "27px minmax\\(165px, 1fr\\)");
+  assertDeclaration(getCssBlock(".information-panel__content"), "min-height", "165px");
+  assert.equal(workspaceViewSource.includes("secondMinSizePx={222}"), true);
   assertDeclaration(getCssBlock(".address-bar"), "width", "100%");
   assert.equal(css.includes(".workspace-error"), false);
+});
+
+assertTest("workspace view menu reuses shared view and sort submenus", () => {
+  assert.equal(workspaceMenuSource.includes("WorkspaceViewMenuItems"), true);
+  assert.equal(workspaceMenuSource.includes("WorkspaceSortMenuItems"), true);
+  assert.equal(workspaceMenuSource.includes('label: "视图"'), true);
+  assert.equal(workspaceMenuSource.includes('label: "排序方式"'), true);
+  assertDeclaration(getCssBlock(".menu-dropdown__submenu"), "position", "relative");
+  assertDeclaration(getCssBlock(".menu-dropdown__submenu-items"), "position", "absolute");
 });
 
 assertTest("workspace view does not render inline notification labels below the address bar", () => {
@@ -103,17 +167,54 @@ assertTest("directory tree and details list use desktop file-manager density", (
   assertDeclaration(getCssBlock(".panel-listing"), "display", "grid");
   assertDeclaration(getCssBlock(".panel-listing"), "grid-template-rows", "minmax\\(0, 1fr\\)");
   assertDeclaration(getCssBlock(".panel-listing"), "height", "100%");
-  assertDeclaration(getCssBlock(".file-listing__scroll"), "height", "100%");
-  assertDeclaration(getCssBlock(".file-listing__header"), "min-height", "24px");
+  assertDeclaration(getCssBlock(".file-listing__scroll"), "flex", "1"); // 使用 flex 布局占据剩余空间
+  assertDeclaration(getCssBlock(".file-listing"), "--details-header-height", "24px");
+  assertDeclaration(getCssBlock(".file-listing__header"), "gap", "4px");
+  assertDeclaration(getCssBlock(".file-listing__header"), "padding", "0");
+  assertDeclaration(getCssBlock(".file-listing__header"), "min-height", "var\\(--details-header-height\\)");
   assertDeclaration(getCssBlock(".file-listing__body"), "box-sizing", "border-box");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "gap", "0");
+  assertDeclaration(getCssBlock(".file-listing__body--details"), "min-height", "calc\\(100% - var\\(--details-header-height\\)\\)");
   assertDeclaration(getCssBlock(".file-listing__body--details"), "padding", "0");
+  assertDeclaration(getCssBlock(".file-row__grid"), "gap", "4px");
+  assertDeclaration(getCssBlock(".file-row__grid"), "padding", "0");
+  assertDeclaration(getCssBlock(".file-cell"), "padding", "2px 2px");
   assertDeclaration(getCssBlock(".file-row"), "user-select", "none");
   assertDeclaration(getCssBlock(".file-card"), "user-select", "none");
   assertDeclaration(getCssBlock(".file-list-item"), "user-select", "none");
   assertDeclaration(getCssBlock(".file-content-item"), "user-select", "none");
   assertDeclaration(getCssBlock(".inline-edit-input"), "user-select", "text");
   assertDeclaration(getCssBlock(".file-row__grid"), "border-radius", "0");
+});
+
+assertTest("navigation page uses the details-list density and fill contract", () => {
+  assertDeclaration(getCssBlock(".navigation-tab"), "--details-row-height", "24px");
+  assertDeclaration(getCssBlock(".navigation-tab"), "--details-header-height", "24px");
+  assertDeclaration(getCssBlock(".navigation-tab"), "grid-template-rows", "auto minmax\\(0, 1fr\\)");
+  assertDeclaration(getCssBlock(".navigation-tab__content"), "height", "100%");
+  assertDeclaration(getCssBlock(".navigation-tab__editor-slot"), "min-height", "0");
+  assertDeclaration(getCssBlock(".navigation-table"), "height", "100%");
+  assertDeclaration(getCssBlock(".navigation-table"), "overflow", "auto");
+  assertDeclaration(getCssBlock(".navigation-table"), "position", "relative");
+  assertDeclaration(getCssBlock(".navigation-table__column-drop-indicator"), "height", "var\\(--details-header-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__body"), "min-height", "calc\\(100% - var\\(--details-header-height\\)\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "grid-template-columns", "220px 96px 180px 112px 80px 132px");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "gap", "4px");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "min-height", "var\\(--details-row-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "padding", "0");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "appearance", "none");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "box-sizing", "border-box");
+  assertDeclaration(getCssBlock(".navigation-table__row--header"), "min-height", "var\\(--details-header-height\\)");
+  assertDeclaration(getCssBlock(".navigation-table__cell"), "padding", "2px 2px");
+  assertDeclaration(getCssBlock(".navigation-header-cell"), "padding", "2px 2px");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "width", "max-content");
+  assertDeclaration(getCssBlock(".navigation-table__row"), "min-width", "100%");
+  assertNoDeclaration(getCssBlock(".navigation-table__item.is-selected"), "box-shadow");
+  assert.equal(navigationTabSource.includes("navigation-header-resizer"), true);
+  assert.equal(navigationTabSource.includes("navigation-tab__editor-slot"), true);
+  assert.equal(navigationTabSource.includes("DetailsListBase"), true);
+  assert.equal(detailsListBaseSource.includes("gridTemplateColumns: gridMetrics.gridTemplateColumns"), true);
+  assert.equal(navigationTabSource.includes('data-entry-drop-kind="navigation"'), true);
 });
 
 assertTest("tab chrome does not render legacy text glyph controls", () => {

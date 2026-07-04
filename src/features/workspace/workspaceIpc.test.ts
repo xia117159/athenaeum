@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  getWindowsDragDropEnvironment,
   hasTauriRuntime,
   invokeRequired,
   invokeWithBrowserFallback,
+  readSystemFileClipboard,
+  performSystemFileOperation,
+  setSystemFileClipboard,
+  startSystemFileDrag,
+  showNativeBackgroundContextMenu,
   showNativeContextMenu
 } from "./workspaceIpc";
 
@@ -46,6 +52,8 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
   const requiredCommands = [
     "initialize_workspace",
     "list_directory",
+    "set_workspace_watch_roots",
+    "get_item_properties",
     "get_tree_children",
     "resolve_system_icon",
     "copy_entries",
@@ -75,6 +83,10 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "save_shortcuts",
     "save_details_row_height",
     "save_settings_model",
+    "get_entry_comment",
+    "save_entry_comment",
+    "remove_entry_comment",
+    "mark_entry_metadata_deleted",
     "save_ui_layout",
     "save_ui_theme",
     "save_navigation_item",
@@ -83,6 +95,11 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "mark_navigation_item_opened",
     "resolve_navigation_targets",
     "open_path_with_system_default",
+    "set_system_file_clipboard",
+    "read_system_file_clipboard",
+    "get_windows_drag_drop_environment",
+    "start_system_file_drag",
+    "perform_system_file_operation",
     "list_remote_profiles",
     "save_remote_profile",
     "delete_remote_profile",
@@ -98,13 +115,38 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "copy_remote_entries",
     "move_remote_entries",
     "transfer_remote_entries",
-    "show_native_context_menu"
+    "show_native_background_context_menu",
+    "show_native_context_menu",
+    "get_git_status"
   ];
 
   assert.equal(capability.permissions.includes("default"), true);
   for (const command of requiredCommands) {
     assert.equal(appPermission.includes(`"${command}"`), true, `${command} should be allowed by default permission`);
   }
+  assert.equal(
+    appPermission.includes("register_system_file_drop_target"),
+    false,
+    "file drops must use Tauri/wry's dragDropEnabled target instead of overriding it"
+  );
+});
+
+assertTest("Tauri main window keeps native file drag-and-drop enabled", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src-tauri/tauri.conf.json"), "utf8")) as {
+    app?: {
+      windows?: Array<{
+        dragDropEnabled?: boolean;
+      }>;
+    };
+  };
+  assert.equal(config.app?.windows?.[0]?.dragDropEnabled, true);
+});
+
+assertTest("Windows app manifest keeps the main process at the caller integrity level", () => {
+  const manifest = fs.readFileSync(path.join(process.cwd(), "src-tauri/windows-app-manifest.xml"), "utf8");
+
+  assert.equal(manifest.includes('requestedExecutionLevel level="asInvoker"'), true);
+  assert.equal(manifest.includes('uiAccess="false"'), true);
 });
 
 export const workspaceIpcTests = (async () => {
@@ -181,50 +223,216 @@ export const workspaceIpcTests = (async () => {
 
   await assertAsyncTest("showNativeContextMenu reports whether the native menu opened", async () => {
     let invokedArgs: Record<string, unknown> | null = null;
+    const shortcuts = { copyName: "Alt+Shift+N", copyFullPath: "Alt+Shift+P" };
 
-    assert.equal(await showNativeContextMenu(["D:\\Projects"], 10.4, 20.6, async <T>() => undefined as T, undefined), false);
+    assert.deepEqual(await showNativeContextMenu(["D:\\Projects"], 10.4, 20.6, shortcuts, async <T>() => undefined as T, undefined), { opened: false });
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10.4,
         20.6,
+        shortcuts,
         async <T>(_command: string, args: Record<string, unknown>) => {
           invokedArgs = args;
           return true as T;
         },
         runtimeWindow
       ),
-      true
+      { opened: true }
     );
     assert.deepEqual(invokedArgs, {
       paths: ["D:\\Projects"],
       x: 10,
-      y: 21
+      y: 21,
+      shortcuts
     });
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10,
         20,
+        shortcuts,
         async <T>() => false as T,
         runtimeWindow
       ),
-      false
+      { opened: false }
     );
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10,
         20,
+        shortcuts,
         async <T>() => {
           throw new Error("not supported");
         },
         runtimeWindow
       ),
-      false
+      { opened: false }
+    );
+  });
+
+  await assertAsyncTest("showNativeBackgroundContextMenu invokes the background native menu command", async () => {
+    let invokedArgs: Record<string, unknown> | null = null;
+    const options = {
+      viewMode: "details" as const,
+      sort: {
+        columnId: "name" as const,
+        direction: "asc" as const
+      },
+      canPaste: true
+    };
+
+    assert.deepEqual(
+      await showNativeBackgroundContextMenu("D:\\Projects", 10.4, 20.6, options, async <T>() => undefined as T, undefined),
+      { opened: false }
+    );
+
+    assert.deepEqual(
+      await showNativeBackgroundContextMenu(
+        "D:\\Projects",
+        10.4,
+        20.6,
+        options,
+        async <T>(_command: string, args: Record<string, unknown>) => {
+          invokedArgs = args;
+          return {
+            opened: true,
+            action: {
+              type: "setSort",
+              columnId: "size"
+            }
+          } as T;
+        },
+        runtimeWindow
+      ),
+      {
+        opened: true,
+        action: {
+          type: "setSort",
+          columnId: "size"
+        }
+      }
+    );
+    assert.deepEqual(invokedArgs, {
+      directoryPath: "D:\\Projects",
+      x: 10,
+      y: 21,
+      options
+    });
+  });
+
+  await assertAsyncTest("system file clipboard commands are thin IPC wrappers", async () => {
+    let setArgs: Record<string, unknown> | null = null;
+    let readCalled = false;
+
+    await setSystemFileClipboard(
+      ["D:\\Projects\\Atlas\\README.md"],
+      "cut",
+      async <T>(_command: string, args: Record<string, unknown>) => {
+        setArgs = args;
+        return undefined as T;
+      },
+      runtimeWindow
+    );
+
+    const clipboard = await readSystemFileClipboard(
+      async <T>(_command: string, _args: Record<string, unknown>) => {
+        readCalled = true;
+        return { mode: "copy", paths: ["D:\\source.txt"] } as T;
+      },
+      runtimeWindow
+    );
+
+    assert.deepEqual(setArgs, {
+      paths: ["D:\\Projects\\Atlas\\README.md"],
+      mode: "cut"
+    });
+    assert.deepEqual(clipboard, {
+      mode: "copy",
+      paths: ["D:\\source.txt"]
+    });
+    assert.equal(readCalled, true);
+  });
+
+  await assertAsyncTest("startSystemFileDrag is a thin IPC wrapper", async () => {
+    let invokedCommand: string | null = null;
+    let invokedArgs: Record<string, unknown> | null = null;
+
+    const result = await startSystemFileDrag(
+      ["D:\\Projects\\Atlas\\README.md"],
+      async <T>(command: string, args: Record<string, unknown>) => {
+        invokedCommand = command;
+        invokedArgs = args;
+        return "copy" as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(result, "copy");
+    assert.equal(invokedCommand, "start_system_file_drag");
+    assert.deepEqual(invokedArgs, {
+      paths: ["D:\\Projects\\Atlas\\README.md"]
+    });
+    assert.equal(await startSystemFileDrag(["D:\\Projects\\Atlas\\README.md"], async <T>() => "copy" as T, undefined), null);
+  });
+
+  await assertAsyncTest("getWindowsDragDropEnvironment reports elevated drag-drop diagnostics", async () => {
+    let invokedCommand: string | null = null;
+
+    const environment = await getWindowsDragDropEnvironment(
+      async <T>(command: string, _args: Record<string, unknown>) => {
+        invokedCommand = command;
+        return {
+          isElevated: true,
+          integrityLevel: "high",
+          explorerToAppDragBlocked: true,
+          message: "Explorer file drops are blocked while elevated."
+        } as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(invokedCommand, "get_windows_drag_drop_environment");
+    assert.deepEqual(environment, {
+      isElevated: true,
+      integrityLevel: "high",
+      explorerToAppDragBlocked: true,
+      message: "Explorer file drops are blocked while elevated."
+    });
+    assert.equal(await getWindowsDragDropEnvironment(async <T>() => null as T, undefined), null);
+  });
+
+  await assertAsyncTest("performSystemFileOperation invokes the native shell operation command", async () => {
+    let invokedCommand: string | null = null;
+    let invokedArgs: Record<string, unknown> | null = null;
+
+    await performSystemFileOperation(
+      ["D:\\Projects\\Atlas\\README.md"],
+      "D:\\Archive",
+      "copy",
+      async <T>(command: string, args: Record<string, unknown>) => {
+        invokedCommand = command;
+        invokedArgs = args;
+        return undefined as T;
+      },
+      runtimeWindow
+    );
+
+    assert.equal(invokedCommand, "perform_system_file_operation");
+    assert.deepEqual(invokedArgs, {
+      request: {
+        sources: ["D:\\Projects\\Atlas\\README.md"],
+        destination: "D:\\Archive",
+        operation: "copy"
+      }
+    });
+    assert.equal(
+      await performSystemFileOperation(["D:\\Projects\\Atlas\\README.md"], "D:\\Archive", "move", async <T>() => undefined as T, undefined),
+      undefined
     );
   });
 })();

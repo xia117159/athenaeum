@@ -1,17 +1,11 @@
 import { AlertTriangle, CheckCircle2, Clock3, History, Loader2, Play, RotateCcw, Square, X } from "lucide-react";
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import type {
-  ConflictResolutionKind,
-  OperationConflictDialogState,
   OperationHistoryRecord,
   OperationPathRef,
   OperationTaskSnapshot,
   OperationWorkspaceState
 } from "./types";
-
-type ConflictDialogUpdate = Partial<
-  Pick<OperationConflictDialogState, "selectedResolution" | "renameValue" | "applyToAll" | "resolving">
->;
 
 type OperationTaskCenterProps = {
   operations: OperationWorkspaceState;
@@ -21,22 +15,13 @@ type OperationTaskCenterProps = {
   onUndoRecord: (recordId: string) => void;
 };
 
-type OperationConflictDialogProps = {
-  dialog?: OperationConflictDialogState;
-  onUpdate: (payload: ConflictDialogUpdate) => void;
-  onResolve: () => void;
-  onCancelTask: (taskId: string) => void;
-};
+type OperationHistoryPanelContentProps = Pick<
+  OperationTaskCenterProps,
+  "operations" | "onCancelTask" | "onUndoLatest" | "onUndoRecord"
+>;
 
 const RUNNING_STATUSES = new Set<OperationTaskSnapshot["status"]>(["queued", "scanning", "running", "cancelling"]);
 const TERMINAL_STATUSES = new Set<OperationTaskSnapshot["status"]>(["succeeded", "failed", "partialSucceeded", "cancelled"]);
-const FOCUSABLE_SELECTOR = [
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])"
-].join(",");
 
 function pathRefLabel(pathRef?: OperationPathRef | null) {
   if (!pathRef) {
@@ -48,26 +33,50 @@ function pathRefLabel(pathRef?: OperationPathRef | null) {
   return `${pathRef.protocol}://${pathRef.profileId}${pathRef.remotePath}`;
 }
 
+const OPERATION_TEXT = {
+  title: "\u6587\u4ef6\u64cd\u4f5c",
+  centerLabel: "\u6587\u4ef6\u64cd\u4f5c\u4efb\u52a1\u4e2d\u5fc3",
+  historyLabel: "\u64cd\u4f5c\u5386\u53f2",
+  tasksUnit: "\u4e2a\u4efb\u52a1",
+  historyUnit: "\u6761\u5386\u53f2\u8bb0\u5f55",
+  separator: "\uff0c",
+  undoLatest: "\u64a4\u9500\u6700\u8fd1\u64cd\u4f5c",
+  closeCenter: "\u5173\u95ed\u64cd\u4f5c\u4e2d\u5fc3",
+  runningTitle: "\u8fdb\u884c\u4e2d",
+  runningEmpty: "\u6ca1\u6709\u6b63\u5728\u6267\u884c\u7684\u6587\u4ef6\u64cd\u4f5c\u3002",
+  waitingTitle: "\u7b49\u5f85\u5904\u7406",
+  waitingEmpty: "\u6ca1\u6709\u7b49\u5f85\u5904\u7406\u7684\u51b2\u7a81\u3002",
+  problemsTitle: "\u95ee\u9898",
+  problemsEmpty: "\u6ca1\u6709\u5931\u8d25\u7684\u6587\u4ef6\u64cd\u4f5c\u3002",
+  completedTitle: "\u6700\u8fd1\u5b8c\u6210",
+  completedEmpty: "\u6ca1\u6709\u5df2\u5b8c\u6210\u7684\u6587\u4ef6\u64cd\u4f5c\u3002",
+  historyTitle: "\u64cd\u4f5c\u5386\u53f2",
+  historyEmpty: "\u6682\u65e0\u64cd\u4f5c\u5386\u53f2\u3002",
+  openHistory: "\u6253\u5f00\u64cd\u4f5c\u5386\u53f2"
+};
+
 function taskStatusLabel(task: OperationTaskSnapshot) {
   switch (task.status) {
     case "queued":
-      return "排队中";
+      return "\u6392\u961f\u4e2d";
     case "scanning":
-      return "正在扫描";
+      return "\u6b63\u5728\u626b\u63cf";
     case "running":
-      return task.totalEntries ? `正在运行 ${task.completedEntries}/${task.totalEntries} 项` : "正在运行";
+      return task.totalEntries
+        ? `\u6b63\u5728\u8fd0\u884c ${task.completedEntries}/${task.totalEntries} \u9879`
+        : "\u6b63\u5728\u8fd0\u884c";
     case "waitingConflict":
-      return "等待冲突处理";
+      return "\u7b49\u5f85\u51b2\u7a81\u5904\u7406";
     case "cancelling":
-      return "正在取消";
+      return "\u6b63\u5728\u53d6\u6d88";
     case "cancelled":
-      return "已取消";
+      return "\u5df2\u53d6\u6d88";
     case "succeeded":
-      return "已完成";
+      return "\u5df2\u5b8c\u6210";
     case "partialSucceeded":
-      return "部分完成";
+      return "\u90e8\u5206\u5b8c\u6210";
     case "failed":
-      return "失败";
+      return "\u5931\u8d25";
     default:
       return task.status;
   }
@@ -76,21 +85,21 @@ function taskStatusLabel(task: OperationTaskSnapshot) {
 function historyStatusLabel(record: OperationHistoryRecord) {
   switch (record.status) {
     case "undoable":
-      return "可撤销";
+      return "\u53ef\u64a4\u9500";
     case "undoing":
-      return "正在撤销";
+      return "\u6b63\u5728\u64a4\u9500";
     case "undone":
-      return "已撤销";
+      return "\u5df2\u64a4\u9500";
     case "expired":
-      return "已过期";
+      return "\u5df2\u8fc7\u671f";
     case "blocked":
-      return "已阻止";
+      return "\u5df2\u963b\u6b62";
     case "failed":
-      return "撤销失败";
+      return "\u64a4\u9500\u5931\u8d25";
     case "notUndoable":
-      return "不可撤销";
+      return "\u4e0d\u53ef\u64a4\u9500";
     case "pendingConfirmation":
-      return "需要确认";
+      return "\u9700\u8981\u786e\u8ba4";
     default:
       return record.status;
   }
@@ -143,7 +152,13 @@ function OperationTaskRow({
       </div>
       <div className="operation-row__actions">
         {task.cancelable && !TERMINAL_STATUSES.has(task.status) ? (
-          <button type="button" className="toolbar-button toolbar-button--icon" title="取消任务" aria-label="取消任务" onClick={() => onCancelTask(task.taskId)}>
+          <button
+            type="button"
+            className="toolbar-button toolbar-button--icon"
+            title="\u53d6\u6d88\u4efb\u52a1"
+            aria-label="\u53d6\u6d88\u4efb\u52a1"
+            onClick={() => onCancelTask(task.taskId)}
+          >
             <Square size={14} aria-hidden="true" />
           </button>
         ) : null}
@@ -169,8 +184,8 @@ function OperationHistoryRow({
       <button
         type="button"
         className="toolbar-button toolbar-button--icon"
-        title="撤销操作"
-        aria-label="撤销操作"
+        title="\u64a4\u9500\u64cd\u4f5c"
+        aria-label="\u64a4\u9500\u64cd\u4f5c"
         disabled={record.status !== "undoable"}
         onClick={() => onUndoRecord(record.recordId)}
       >
@@ -208,6 +223,55 @@ export function OperationTaskCenter({
     return null;
   }
 
+  return (
+    <aside className="operation-center" aria-label={OPERATION_TEXT.centerLabel}>
+      <header className="operation-center__header">
+        <div>
+          <strong>{OPERATION_TEXT.title}</strong>
+          <span>
+            {operations.tasks.length} {OPERATION_TEXT.tasksUnit}
+            {OPERATION_TEXT.separator}
+            {operations.history.length} {OPERATION_TEXT.historyUnit}
+          </span>
+        </div>
+        <div className="operation-center__actions">
+          <button
+            type="button"
+            className="toolbar-button toolbar-button--icon"
+            title={OPERATION_TEXT.undoLatest}
+            aria-label={OPERATION_TEXT.undoLatest}
+            onClick={onUndoLatest}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="toolbar-button toolbar-button--icon"
+            title={OPERATION_TEXT.closeCenter}
+            aria-label={OPERATION_TEXT.closeCenter}
+            onClick={() => onOpenChange(false)}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+
+      <OperationHistoryPanelContent
+        operations={operations}
+        onCancelTask={onCancelTask}
+        onUndoLatest={onUndoLatest}
+        onUndoRecord={onUndoRecord}
+      />
+    </aside>
+  );
+}
+
+export function OperationHistoryPanelContent({
+  operations,
+  onCancelTask,
+  onUndoLatest,
+  onUndoRecord
+}: OperationHistoryPanelContentProps) {
   const runningTasks = operations.tasks.filter((task) => RUNNING_STATUSES.has(task.status));
   const waitingTasks = operations.tasks.filter((task) => task.status === "waitingConflict");
   const failedTasks = operations.tasks.filter((task) => task.status === "failed" || task.status === "partialSucceeded");
@@ -215,230 +279,56 @@ export function OperationTaskCenter({
   const historyRecords = operations.history.slice(0, 10);
 
   return (
-    <aside className="operation-center" aria-label="文件操作任务中心">
-      <header className="operation-center__header">
+    <div className="operation-history-panel" aria-label={OPERATION_TEXT.historyLabel}>
+      <header className="operation-history-panel__header">
         <div>
-          <strong>文件操作</strong>
-          <span>{operations.tasks.length} 个任务，{operations.history.length} 条历史记录</span>
+          <strong>{OPERATION_TEXT.title}</strong>
+          <span>
+            {operations.tasks.length} {OPERATION_TEXT.tasksUnit}
+            {OPERATION_TEXT.separator}
+            {operations.history.length} {OPERATION_TEXT.historyUnit}
+          </span>
         </div>
-        <div className="operation-center__actions">
-          <button type="button" className="toolbar-button toolbar-button--icon" title="撤销最近操作" aria-label="撤销最近操作" onClick={onUndoLatest}>
+        <div className="operation-history-panel__actions">
+          <button
+            type="button"
+            className="toolbar-button toolbar-button--icon"
+            title={OPERATION_TEXT.undoLatest}
+            aria-label={OPERATION_TEXT.undoLatest}
+            onClick={onUndoLatest}
+          >
             <RotateCcw size={14} aria-hidden="true" />
-          </button>
-          <button type="button" className="toolbar-button toolbar-button--icon" title="关闭操作中心" aria-label="关闭操作中心" onClick={() => onOpenChange(false)}>
-            <X size={14} aria-hidden="true" />
           </button>
         </div>
       </header>
 
       <div className="operation-center__grid">
-        <OperationSection title="进行中" emptyText="没有正在执行的文件操作。">
+        <OperationSection title={OPERATION_TEXT.runningTitle} emptyText={OPERATION_TEXT.runningEmpty}>
           {runningTasks.map((task) => (
             <OperationTaskRow key={task.taskId} task={task} onCancelTask={onCancelTask} />
           ))}
         </OperationSection>
-        <OperationSection title="等待处理" emptyText="没有等待处理的冲突。">
+        <OperationSection title={OPERATION_TEXT.waitingTitle} emptyText={OPERATION_TEXT.waitingEmpty}>
           {waitingTasks.map((task) => (
             <OperationTaskRow key={task.taskId} task={task} onCancelTask={onCancelTask} />
           ))}
         </OperationSection>
-        <OperationSection title="问题" emptyText="没有失败的文件操作。">
+        <OperationSection title={OPERATION_TEXT.problemsTitle} emptyText={OPERATION_TEXT.problemsEmpty}>
           {failedTasks.map((task) => (
             <OperationTaskRow key={task.taskId} task={task} onCancelTask={onCancelTask} />
           ))}
         </OperationSection>
-        <OperationSection title="最近完成" emptyText="没有已完成的文件操作。">
+        <OperationSection title={OPERATION_TEXT.completedTitle} emptyText={OPERATION_TEXT.completedEmpty}>
           {completedTasks.map((task) => (
             <OperationTaskRow key={task.taskId} task={task} onCancelTask={onCancelTask} />
           ))}
         </OperationSection>
-        <OperationSection title="操作历史" emptyText="暂无操作历史。">
+        <OperationSection title={OPERATION_TEXT.historyTitle} emptyText={OPERATION_TEXT.historyEmpty}>
           {historyRecords.map((record) => (
             <OperationHistoryRow key={record.recordId} record={record} onUndoRecord={onUndoRecord} />
           ))}
         </OperationSection>
       </div>
-    </aside>
-  );
-}
-
-function resolutionLabel(resolution: ConflictResolutionKind) {
-  switch (resolution) {
-    case "replace":
-      return "替换";
-    case "skip":
-      return "跳过";
-    case "keepBoth":
-      return "保留两者";
-    case "rename":
-      return "重命名";
-    case "mergeDirectory":
-      return "合并文件夹";
-    default:
-      return resolution;
-  }
-}
-
-function focusableElements(container: HTMLElement | null) {
-  if (!container) {
-    return [];
-  }
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (element) => !element.hasAttribute("disabled") && element.tabIndex !== -1
-  );
-}
-
-export function OperationConflictDialog({
-  dialog,
-  onUpdate,
-  onResolve,
-  onCancelTask
-}: OperationConflictDialogProps) {
-  const dialogRef = useRef<HTMLElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!dialog) {
-      return;
-    }
-
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    window.setTimeout(() => {
-      const container = dialogRef.current;
-      const initialFocus =
-        container?.querySelector<HTMLElement>("[data-conflict-initial-focus='true']") ??
-        focusableElements(container)[0];
-      initialFocus?.focus();
-    }, 0);
-
-    return () => {
-      previousFocusRef.current?.focus();
-      previousFocusRef.current = null;
-    };
-  }, [dialog?.request.conflictId]);
-
-  if (!dialog) {
-    return null;
-  }
-
-  const renameRequired = dialog.selectedResolution === "rename";
-  const renameInvalid = renameRequired && !dialog.renameValue.trim();
-  const applyToAllDisabled = renameRequired || dialog.request.allowedResolutions.length <= 1;
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    if (event.key === "Enter" && !event.shiftKey && !dialog.resolving && !renameInvalid) {
-      event.preventDefault();
-      onResolve();
-      return;
-    }
-
-    if (event.key !== "Tab") {
-      return;
-    }
-
-    const focusable = focusableElements(dialogRef.current);
-    if (focusable.length === 0) {
-      return;
-    }
-    const activeIndex = focusable.indexOf(document.activeElement as HTMLElement);
-    const nextIndex = event.shiftKey
-      ? activeIndex <= 0
-        ? focusable.length - 1
-        : activeIndex - 1
-      : activeIndex === focusable.length - 1
-        ? 0
-        : activeIndex + 1;
-    event.preventDefault();
-    focusable[nextIndex]?.focus();
-  };
-
-  return (
-    <div className="operation-conflict-backdrop" role="presentation">
-      <section
-        ref={dialogRef}
-        className="operation-conflict-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="operation-conflict-title"
-        onKeyDown={handleKeyDown}
-      >
-        <header>
-          <AlertTriangle size={16} aria-hidden="true" />
-          <div>
-            <strong id="operation-conflict-title">名称冲突</strong>
-            <span>{dialog.request.message}</span>
-          </div>
-        </header>
-
-        <div className="operation-conflict-dialog__paths">
-          <label>
-            <span>来源</span>
-            <input type="text" readOnly value={pathRefLabel(dialog.request.source)} />
-          </label>
-          <label>
-            <span>目标</span>
-            <input type="text" readOnly value={pathRefLabel(dialog.request.destination)} />
-          </label>
-        </div>
-
-        <div className="operation-conflict-dialog__choices" role="radiogroup" aria-label="冲突处理方式">
-          {dialog.request.allowedResolutions.map((resolution) => (
-            <label key={resolution} className="operation-conflict-dialog__choice">
-              <input
-                type="radio"
-                name="operation-conflict-resolution"
-                checked={dialog.selectedResolution === resolution}
-                data-conflict-initial-focus={dialog.selectedResolution === resolution && !renameRequired ? "true" : undefined}
-                onChange={() =>
-                  onUpdate({
-                    selectedResolution: resolution,
-                    applyToAll: resolution === "rename" ? false : dialog.applyToAll
-                  })
-                }
-              />
-              <span>{resolutionLabel(resolution)}</span>
-            </label>
-          ))}
-        </div>
-
-        {renameRequired ? (
-          <label className="operation-conflict-dialog__rename">
-            <span>新名称</span>
-            <input
-              type="text"
-              value={dialog.renameValue}
-              aria-invalid={renameInvalid}
-              data-conflict-initial-focus="true"
-              onChange={(event) => onUpdate({ renameValue: event.currentTarget.value })}
-            />
-          </label>
-        ) : null}
-
-        <label className="operation-conflict-dialog__apply-all">
-          <input
-            type="checkbox"
-            checked={!applyToAllDisabled && dialog.applyToAll}
-            disabled={applyToAllDisabled}
-            onChange={(event) => onUpdate({ applyToAll: event.currentTarget.checked })}
-          />
-          <span>对本次任务中剩余冲突应用相同决定</span>
-        </label>
-
-        <footer>
-          <button type="button" className="toolbar-button" disabled={dialog.resolving} onClick={() => onCancelTask(dialog.request.taskId)}>
-            取消任务
-          </button>
-          <button type="button" className="toolbar-button" disabled={dialog.resolving || renameInvalid} onClick={onResolve}>
-            {dialog.resolving ? "正在处理..." : "处理"}
-          </button>
-        </footer>
-      </section>
     </div>
   );
 }
@@ -453,18 +343,15 @@ export function OperationSummaryButton({
   const runningCount = operations.tasks.filter((task) => RUNNING_STATUSES.has(task.status)).length;
   const waitingCount = operations.tasks.filter((task) => task.status === "waitingConflict").length;
   const failedCount = operations.tasks.filter((task) => task.status === "failed" || task.status === "partialSucceeded").length;
-  const latestActive = operations.tasks.find((task) => RUNNING_STATUSES.has(task.status) || task.status === "waitingConflict");
-
   return (
     <button
       type="button"
       className={`toolbar-button operation-summary-button${failedCount > 0 ? " has-errors" : ""}${waitingCount > 0 ? " has-waiting" : ""}`}
-      title="打开文件操作中心"
-      aria-label="打开文件操作中心"
+      title={OPERATION_TEXT.openHistory}
+      aria-label={OPERATION_TEXT.openHistory}
       onClick={onOpen}
     >
       {runningCount > 0 ? <Play size={14} aria-hidden="true" /> : waitingCount > 0 ? <AlertTriangle size={14} aria-hidden="true" /> : <History size={14} aria-hidden="true" />}
-      <span>{latestActive ? taskStatusLabel(latestActive) : "操作历史"}</span>
       {runningCount + waitingCount + failedCount > 0 ? <strong>{runningCount + waitingCount + failedCount}</strong> : null}
     </button>
   );

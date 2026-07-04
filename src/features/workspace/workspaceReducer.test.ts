@@ -8,7 +8,6 @@ import {
   workspaceReducer
 } from "./workspaceReducer";
 import type {
-  OperationConflictRequest,
   OperationHistoryRecord,
   OperationTaskSnapshot,
   SearchResult,
@@ -127,21 +126,6 @@ function createOperationHistoryRecord(
   };
 }
 
-function createOperationConflict(): OperationConflictRequest {
-  return {
-    conflictId: "conflict-1",
-    taskId: "task-1",
-    createdAt: "2026-06-10T08:00:02Z",
-    source: { kind: "local", path: "D:\\Source\\report.txt" },
-    destination: { kind: "local", path: "D:\\Target\\report.txt" },
-    existingKind: "file",
-    incomingKind: "file",
-    suggestedName: "report (1).txt",
-    allowedResolutions: ["skip", "keepBoth", "rename"],
-    message: "Target exists"
-  };
-}
-
 function withPanelTabs(state: WorkspaceState, panelId: "panel-2", tabs: TabState[], activeTabId: string): WorkspaceState {
   return {
     ...state,
@@ -180,6 +164,79 @@ assertTest("workspaceReducer cycles focus across visible panels and wraps in qua
     assert.equal(focus4.activePanelId, "panel-4");
     assert.equal(focus1.activePanelId, "panel-1");
   });
+
+assertTest("workspaceReducer initializes Windows file visibility and sync scrolling switches", () => {
+  const state = createState();
+
+  assert.deepEqual(state.fileVisibility, {
+    showHidden: false,
+    showSystem: false,
+    hideProtectedOperatingSystemFiles: true
+  });
+  assert.equal(state.syncScroll, false);
+});
+
+assertTest("workspaceReducer updates file visibility switches independently", () => {
+  const state = createState();
+
+  const showHidden = workspaceReducer(state, {
+    type: "fileVisibilitySet",
+    payload: { showHidden: true }
+  });
+  const showSystem = workspaceReducer(showHidden, {
+    type: "fileVisibilitySet",
+    payload: { showSystem: true }
+  });
+  const showProtected = workspaceReducer(showSystem, {
+    type: "fileVisibilitySet",
+    payload: { hideProtectedOperatingSystemFiles: false }
+  });
+
+  assert.deepEqual(showProtected.fileVisibility, {
+    showHidden: true,
+    showSystem: true,
+    hideProtectedOperatingSystemFiles: false
+  });
+});
+
+assertTest("workspaceReducer opens the search panel on the requested search tab", () => {
+  const state = createState();
+
+  const nameSearch = workspaceReducer(state, {
+    type: "searchPanelRequested",
+    payload: "name"
+  });
+  const contentSearch = workspaceReducer(nameSearch, {
+    type: "searchPanelRequested",
+    payload: "content"
+  });
+
+  assert.equal(nameSearch.informationPanel.expanded, true);
+  assert.equal(nameSearch.informationPanel.activeTab, "search");
+  assert.equal(nameSearch.search.activeTab, "name");
+  assert.equal(contentSearch.search.activeTab, "content");
+});
+
+assertTest("workspaceReducer toggles synchronized scrolling", () => {
+  const state = createState();
+
+  const enabled = workspaceReducer(state, {
+    type: "syncScrollSet",
+    payload: true
+  });
+  const unchanged = workspaceReducer(enabled, {
+    type: "syncScrollSet",
+    payload: true
+  });
+  const disabled = workspaceReducer(unchanged, {
+    type: "syncScrollSet",
+    payload: false
+  });
+
+  assert.equal(enabled.syncScroll, true);
+  assert.equal(unchanged, enabled);
+  assert.equal(disabled.syncScroll, false);
+});
 
 assertTest("workspaceReducer projects operation task snapshots and ignores stale task events", () => {
   const state = createState();
@@ -230,34 +287,6 @@ assertTest("workspaceReducer projects operation history by backend sequence", ()
   assert.equal(updated.operations.historySequence, 5);
 });
 
-assertTest("workspaceReducer opens and updates the operation conflict dialog from backend requests", () => {
-  const state = createState();
-  const requested = workspaceReducer(state, {
-    type: "operationConflictRequested",
-    payload: createOperationConflict()
-  } as WorkspaceAction);
-  const changed = workspaceReducer(requested, {
-    type: "operationConflictDialogChanged",
-    payload: { selectedResolution: "rename", renameValue: "report-final.txt", applyToAll: true }
-  } as WorkspaceAction);
-  const ignoredClose = workspaceReducer(changed, {
-    type: "operationConflictDialogClosed",
-    payload: { conflictId: "other-conflict" }
-  } as WorkspaceAction);
-  const closed = workspaceReducer(ignoredClose, {
-    type: "operationConflictDialogClosed",
-    payload: { conflictId: "conflict-1" }
-  } as WorkspaceAction);
-
-  assert.equal(requested.operations.tasksOpen, true);
-  assert.equal(requested.operations.conflictDialog?.selectedResolution, "keepBoth");
-  assert.equal(changed.operations.conflictDialog?.selectedResolution, "rename");
-  assert.equal(changed.operations.conflictDialog?.renameValue, "report-final.txt");
-  assert.equal(changed.operations.conflictDialog?.applyToAll, true);
-  assert.ok(ignoredClose.operations.conflictDialog);
-  assert.equal(closed.operations.conflictDialog, undefined);
-});
-
 assertTest("workspaceReducer clears the previously focused panel selection when focus changes", () => {
   const state = createState();
   const panel1Tab = getActiveTab(state.panels["panel-1"]);
@@ -292,6 +321,122 @@ assertTest("workspaceReducer clears the previously focused panel selection when 
   assert.deepEqual(getActiveTab(focused.panels["panel-1"]).selectedEntryIds, []);
   assert.deepEqual(getActiveTab(focused.panels["panel-2"]).selectedEntryIds, [panel2Tab.snapshot.entries[0].id]);
   assert.deepEqual(getActiveTab(focusedNext.panels["panel-2"]).selectedEntryIds, []);
+});
+
+assertTest("workspaceReducer selects all entries with allEntriesSelected action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const allEntryIds = activeTab.snapshot.entries.map((entry) => entry.id);
+
+  const selected = workspaceReducer(state, {
+    type: "allEntriesSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, allEntryIds);
+  assert.ok(getActiveTab(selected.panels["panel-1"]).selectedEntryIds.length > 0);
+});
+
+assertTest("workspaceReducer clears all selection with entrySelectionCleared action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionChanged",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryId: activeTab.snapshot.entries[0].id,
+      multi: false
+    }
+  } as WorkspaceAction);
+
+  const cleared = workspaceReducer(selected, {
+    type: "entrySelectionCleared",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(cleared.panels["panel-1"]).selectedEntryIds, []);
+});
+
+assertTest("workspaceReducer selects range of entries with entryRangeSelected action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const fromEntry = entries[0];
+  const toEntry = entries[2];
+
+  const selected = workspaceReducer(state, {
+    type: "entryRangeSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      fromEntryId: fromEntry.id,
+      toEntryId: toEntry.id
+    }
+  } as WorkspaceAction);
+
+  const selectedIds = getActiveTab(selected.panels["panel-1"]).selectedEntryIds;
+  assert.deepEqual(selectedIds, [entries[0].id, entries[1].id, entries[2].id]);
+});
+
+assertTest("workspaceReducer selects ranges by the caller-provided visible entry order", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const visibleOrder = [entries[2].id, entries[0].id, "missing-entry", entries[1].id];
+  const selected = workspaceReducer(state, {
+    type: "entryRangeSelected",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      fromEntryId: entries[2].id,
+      toEntryId: entries[1].id,
+      orderedEntryIds: visibleOrder
+    }
+  } as WorkspaceAction);
+
+  const selectedIds = getActiveTab(selected.panels["panel-1"]).selectedEntryIds;
+  assert.deepEqual(selectedIds, [entries[2].id, entries[0].id, entries[1].id]);
+});
+
+assertTest("workspaceReducer sets specific entry ids with entrySelectionSet action", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+
+  if (entries.length < 3) {
+    return;
+  }
+
+  const targetIds = [entries[0].id, entries[2].id];
+
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryIds: targetIds
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, targetIds);
 });
 
 assertTest("workspaceReducer moves focus to the first visible panel when current one gets hidden", () => {
@@ -484,7 +629,7 @@ assertTest("workspaceReducer closes other tabs while preserving locked tabs on r
   assert.deepEqual(closeAllOthers.panels["panel-1"].tabs.map((tab) => tab.id), [activeTab.id]);
 });
 
-assertTest("workspaceReducer renames tab titles and preserves the override across navigation", () => {
+assertTest("workspaceReducer renames tab titles only until the tab navigates to another folder", () => {
   const state = createState();
   const panel = state.panels["panel-1"];
   const tabId = panel.tabs[0].id;
@@ -498,8 +643,10 @@ assertTest("workspaceReducer renames tab titles and preserves the override acros
     payload: { panelId: "panel-1", tabId, snapshot, pushHistory: true }
   });
 
-  assert.equal(navigated.panels["panel-1"].tabs[0].title, "Work Root");
-  assert.equal(navigated.panels["panel-1"].tabs[0].titleOverride, "Work Root");
+  assert.equal(renamed.panels["panel-1"].tabs[0].title, "Work Root");
+  assert.equal(renamed.panels["panel-1"].tabs[0].titleOverride, "Work Root");
+  assert.equal(navigated.panels["panel-1"].tabs[0].title, "Downloads");
+  assert.equal(navigated.panels["panel-1"].tabs[0].titleOverride, undefined);
 });
 
 assertTest("workspaceReducer moves tabs within and across panels without moving the last source tab", () => {
@@ -527,6 +674,32 @@ assertTest("workspaceReducer moves tabs within and across panels without moving 
     payload: { sourcePanelId: "panel-1", targetPanelId: "panel-2", tabId: second.id, targetIndex: 0 }
   });
   assert.equal(blocked, moved);
+});
+
+assertTest("workspaceReducer reorders the navigation tab within its current panel", () => {
+  const state = createState();
+  const first = state.panels["panel-1"].tabs[0];
+  const second = state.panels["panel-1"].tabs[1];
+  const navigationTab = createNavigationTab("navigation-tab");
+  const withNavigation = {
+    ...state,
+    panels: {
+      ...state.panels,
+      "panel-1": {
+        ...state.panels["panel-1"],
+        tabs: [first, second, navigationTab],
+        activeTabId: navigationTab.id
+      }
+    }
+  };
+
+  const reordered = workspaceReducer(withNavigation, {
+    type: "tabMoved",
+    payload: { sourcePanelId: "panel-1", targetPanelId: "panel-1", tabId: navigationTab.id, targetIndex: 1 }
+  });
+
+  assert.deepEqual(reordered.panels["panel-1"].tabs.map((tab) => tab.id), [first.id, navigationTab.id, second.id]);
+  assert.equal(reordered.panels["panel-1"].activeTabId, navigationTab.id);
 });
 
 assertTest("workspaceReducer ignores activation requests for missing tab ids", () => {
@@ -678,6 +851,53 @@ assertTest("workspaceReducer can commit a background refresh without stealing ac
   } as WorkspaceAction);
 
   assert.equal(refreshed.activePanelId, "panel-1");
+});
+
+assertTest("workspaceReducer preserves and remaps selection during a same-path refresh", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const sourceEntry = activeTab.snapshot.entries.find((entry) => entry.name === "sprint-plan.md");
+  assert.ok(sourceEntry);
+
+  const renamedPath = "D:\\Projects\\Atlas\\sprint-plan-final.md";
+  const renamedId = "D:\\Projects\\Atlas:sprint-plan-final.md";
+  const selected = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      entryIds: [sourceEntry!.id]
+    }
+  } as WorkspaceAction);
+  const refreshed = workspaceReducer(selected, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      snapshot: {
+        ...activeTab.snapshot,
+        entries: activeTab.snapshot.entries.map((entry) =>
+          entry.id === sourceEntry!.id
+            ? {
+                ...entry,
+                id: renamedId,
+                name: "sprint-plan-final.md",
+                path: renamedPath
+              }
+            : entry
+        )
+      },
+      pushHistory: false,
+      selectionReplacements: [
+        {
+          fromPath: sourceEntry!.path,
+          toPath: renamedPath
+        }
+      ]
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(refreshed.panels["panel-1"]).selectedEntryIds, [renamedId]);
 });
 
 assertTest("workspaceReducer keeps history index when refreshing a repeated history path", () => {
@@ -916,6 +1136,43 @@ assertTest("workspaceReducer toggles tab sort direction when the same column hea
     assert.equal(getActiveTab(secondSort.panels["panel-1"]).sort.direction, "desc");
   });
 
+assertTest("workspaceReducer stores explicit tab sort selections from context menus", () => {
+    const state = createState();
+    const activeTab = getActiveTab(state.panels["panel-1"]);
+
+    const sortedBySize = workspaceReducer(state, {
+      type: "tabSortSet",
+      payload: {
+        panelId: "panel-1",
+        tabId: activeTab.id,
+        sort: {
+          columnId: "size"
+        }
+      }
+    });
+
+    assert.deepEqual(getActiveTab(sortedBySize.panels["panel-1"]).sort, {
+      columnId: "size",
+      direction: "asc"
+    });
+
+    const descending = workspaceReducer(sortedBySize, {
+      type: "tabSortSet",
+      payload: {
+        panelId: "panel-1",
+        tabId: activeTab.id,
+        sort: {
+          direction: "desc"
+        }
+      }
+    });
+
+    assert.deepEqual(getActiveTab(descending.panels["panel-1"]).sort, {
+      columnId: "size",
+      direction: "desc"
+    });
+  });
+
 assertTest("workspaceReducer stores view mode per tab", () => {
     const state = createState();
     const activeTab = getActiveTab(state.panels["panel-1"]);
@@ -981,9 +1238,21 @@ assertTest("workspaceReducer stores inline edits per tab and clears them on snap
 });
 
 assertTest("createWorkspaceState initializes the docked information panel search defaults", () => {
-  const state = createState();
+  const bootstrap = {
+    ...createMockWorkspaceBootstrap(),
+    informationPanel: {
+      expanded: true,
+      activeTab: "history" as const,
+      properties: {
+        status: "idle" as const
+      }
+    }
+  };
+  const state = createWorkspaceState(bootstrap);
 
-  assert.equal(state.search.open, false);
+  assert.equal(state.informationPanel.expanded, true);
+  assert.equal(state.informationPanel.activeTab, "history");
+  assert.equal(state.informationPanel.properties.status, "idle");
   assert.equal(state.search.loading, false);
   assert.equal(state.search.filterText, "");
   assert.deepEqual(state.search.query, {
@@ -1033,7 +1302,8 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
     }
   } as WorkspaceAction);
 
-  assert.equal(progressed.search.open, true);
+  assert.equal(progressed.informationPanel.expanded, true);
+  assert.equal(progressed.informationPanel.activeTab, "search");
   assert.equal(progressed.search.loading, true);
   assert.equal(progressed.search.filterText, "atlas");
   assert.deepEqual(progressed.search.results, []);
@@ -1044,6 +1314,168 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
     cancelled: false,
     statusText: "已扫描 120 项，匹配 6 项"
   });
+});
+
+assertTest("workspaceReducer routes search and history entry points through informationPanel", () => {
+  const state = createState();
+  const searchOpened = workspaceReducer(state, {
+    type: "searchToggled",
+    payload: true
+  } as WorkspaceAction);
+  const collapsed = workspaceReducer(searchOpened, {
+    type: "informationPanelExpandedSet",
+    payload: false
+  } as WorkspaceAction);
+  const filtered = workspaceReducer(collapsed, {
+    type: "searchFilterChanged",
+    payload: "report"
+  } as WorkspaceAction);
+  const historyOpened = workspaceReducer(filtered, {
+    type: "informationPanelHistoryRequested"
+  } as WorkspaceAction);
+
+  assert.equal(searchOpened.informationPanel.expanded, true);
+  assert.equal(searchOpened.informationPanel.activeTab, "search");
+  assert.equal(collapsed.informationPanel.expanded, false);
+  assert.equal(filtered.informationPanel.expanded, false);
+  assert.equal(filtered.informationPanel.activeTab, "search");
+  assert.equal(historyOpened.informationPanel.expanded, true);
+  assert.equal(historyOpened.informationPanel.activeTab, "history");
+});
+
+assertTest("workspaceReducer ignores stale properties responses by request id and target key", () => {
+  const state = createState();
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-current",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md"
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(started, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-old",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md",
+      summary: {
+        selectionKey: "stale",
+        count: 2,
+        knownSizeBytes: 4096,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+  const current = workspaceReducer(stale, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-current",
+      targetKey: "local:D:\\Projects\\Atlas\\sprint-plan.md",
+      summary: {
+        selectionKey: "current",
+        count: 2,
+        knownSizeBytes: 8192,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(started.informationPanel.properties.status, "loading");
+  assert.equal(stale.informationPanel.properties.status, "loading");
+  assert.equal(current.informationPanel.properties.status, "ready");
+  assert.equal(current.informationPanel.properties.summary?.selectionKey, "current");
+});
+
+assertTest("workspaceReducer invalidates pending properties when the active selection target changes", () => {
+  const state = createState();
+  const panel = state.panels[state.activePanelId];
+  const activeTab = getActiveTab(panel);
+  const selectedEntry = activeTab.snapshot.entries.find((entry) => entry.kind === "file") ?? activeTab.snapshot.entries[0];
+  assert.ok(selectedEntry);
+
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`
+    }
+  } as WorkspaceAction);
+  const selectionChanged = workspaceReducer(started, {
+    type: "entrySelectionChanged",
+    payload: {
+      panelId: state.activePanelId,
+      tabId: activeTab.id,
+      entryId: selectedEntry.id,
+      multi: false
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(selectionChanged, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`,
+      summary: {
+        selectionKey: "stale-folder",
+        count: 1,
+        knownSizeBytes: 1024,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(started.informationPanel.properties.status, "loading");
+  assert.equal(selectionChanged.informationPanel.properties.status, "idle");
+  assert.equal(selectionChanged.informationPanel.properties.targetKey, undefined);
+  assert.equal(stale.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.summary, undefined);
+});
+
+assertTest("workspaceReducer invalidates pending properties when the active tab snapshot changes", () => {
+  const state = createState();
+  const panel = state.panels[state.activePanelId];
+  const activeTab = getActiveTab(panel);
+  const nextSnapshot = resolveMockDirectory("D:\\Projects\\Atlas\\docs");
+
+  const started = workspaceReducer(state, {
+    type: "propertiesRequestStarted",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`
+    }
+  } as WorkspaceAction);
+  const navigated = workspaceReducer(started, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: state.activePanelId,
+      tabId: activeTab.id,
+      snapshot: nextSnapshot,
+      pushHistory: true
+    }
+  } as WorkspaceAction);
+  const stale = workspaceReducer(navigated, {
+    type: "propertiesRequestSucceeded",
+    payload: {
+      requestId: "request-folder",
+      targetKey: `single:${activeTab.snapshot.location.path}`,
+      summary: {
+        selectionKey: "stale-folder",
+        count: 1,
+        knownSizeBytes: 1024,
+        unknownSizeCount: 0,
+        directoryCount: 0,
+        fieldStates: []
+      }
+    }
+  } as WorkspaceAction);
+
+  assert.equal(navigated.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.status, "idle");
+  assert.equal(stale.informationPanel.properties.summary, undefined);
 });
 
 assertTest("workspaceReducer stores content search history with newest unique items capped at twenty", () => {
@@ -1412,12 +1844,38 @@ assertTest("workspaceReducer cancels inline edit on the target tab only", () => 
 assertTest("workspaceReducer stores a clamped details row height in settings", () => {
   const state = createState();
 
-  const nextState = workspaceReducer(state, {
+  const maxState = workspaceReducer(state, {
     type: "detailsRowHeightSet",
     payload: { value: 84 }
   } as unknown as WorkspaceAction);
+  const minState = workspaceReducer(state, {
+    type: "detailsRowHeightSet",
+    payload: { value: 4 }
+  } as unknown as WorkspaceAction);
 
-  assert.equal(nextState.settings.model.detailsRowHeight, 72);
+  assert.equal(maxState.settings.model.detailsRowHeight, 72);
+  assert.equal(minState.settings.model.detailsRowHeight, 12);
+});
+
+assertTest("workspaceReducer normalizes legacy settings sections through one state boundary", () => {
+  const state = createState();
+
+  const themeSection = workspaceReducer(state, {
+    type: "settingsSectionSet",
+    payload: "theme"
+  } as unknown as WorkspaceAction);
+  const rulesSection = workspaceReducer(themeSection, {
+    type: "settingsModelApplied",
+    payload: { model: themeSection.settings.model, section: "rules" }
+  } as unknown as WorkspaceAction);
+  const unknownSection = workspaceReducer(rulesSection, {
+    type: "settingsSectionSet",
+    payload: "unknown"
+  } as unknown as WorkspaceAction);
+
+  assert.equal(themeSection.settings.section, "appearance");
+  assert.equal(rulesSection.settings.section, "file-list");
+  assert.equal(unknownSection.settings.section, "shortcuts");
 });
 
 assertTest("workspaceReducer stores a valid panel focus accent in theme settings", () => {
@@ -1425,15 +1883,57 @@ assertTest("workspaceReducer stores a valid panel focus accent in theme settings
 
   const updated = workspaceReducer(state, {
     type: "themePanelFocusAccentSet",
-    payload: { color: "#c02f7a" }
+    payload: { color: "#c02f7a80" }
   } as unknown as WorkspaceAction);
   const rejected = workspaceReducer(updated, {
     type: "themePanelFocusAccentSet",
     payload: { color: "not-a-color" }
   } as unknown as WorkspaceAction);
 
-  assert.equal(updated.settings.model.theme.panelFocusAccent, "#c02f7a");
-  assert.equal(rejected.settings.model.theme.panelFocusAccent, "#c02f7a");
+  assert.equal(updated.settings.model.theme.panelFocusAccent, "#c02f7a80");
+  assert.equal(rejected.settings.model.theme.panelFocusAccent, "#c02f7a80");
+});
+
+assertTest("workspaceReducer stores a valid active tab background in theme settings", () => {
+  const state = createState();
+
+  const updated = workspaceReducer(state, {
+    type: "themeActiveTabBackgroundSet",
+    payload: { color: "#FFFFFF80" }
+  } as unknown as WorkspaceAction);
+  const rejected = workspaceReducer(updated, {
+    type: "themeActiveTabBackgroundSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+
+  assert.equal(updated.settings.model.theme.activeTabBackground, "#ffffff80");
+  assert.equal(rejected.settings.model.theme.activeTabBackground, "#ffffff80");
+});
+
+assertTest("workspaceReducer stores valid drag highlight colors in theme settings", () => {
+  const state = createState();
+
+  const fillUpdated = workspaceReducer(state, {
+    type: "themeDropHighlightFillSet",
+    payload: { color: "#ABCDEF80" }
+  } as unknown as WorkspaceAction);
+  const fillRejected = workspaceReducer(fillUpdated, {
+    type: "themeDropHighlightFillSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+  const borderUpdated = workspaceReducer(fillRejected, {
+    type: "themeDropHighlightBorderSet",
+    payload: { color: "#336699CC" }
+  } as unknown as WorkspaceAction);
+  const borderRejected = workspaceReducer(borderUpdated, {
+    type: "themeDropHighlightBorderSet",
+    payload: { color: "not-a-color" }
+  } as unknown as WorkspaceAction);
+
+  assert.equal(fillUpdated.settings.model.theme.dropHighlightFill, "#abcdef80");
+  assert.equal(fillRejected.settings.model.theme.dropHighlightFill, "#abcdef80");
+  assert.equal(borderUpdated.settings.model.theme.dropHighlightBorder, "#336699cc");
+  assert.equal(borderRejected.settings.model.theme.dropHighlightBorder, "#336699cc");
 });
 
 assertTest("workspaceReducer stores tab minimum width with a 1px floor and no upper cap", () => {
@@ -1466,12 +1966,39 @@ assertTest("workspaceReducer stores resized detail column widths on the target t
 
   const nameColumn = nextState.panels["panel-1"].tabs[0].columns.find((column) => column.id === "name");
   assert.ok(nameColumn);
-  assert.equal(nameColumn!.width, "48px");
+  assert.equal(nameColumn!.width, "40px");
   assert.equal(nextState.panels["panel-2"].tabs[0].columns.find((column) => column.id === "name")?.width, originalOtherTabWidth);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "name")?.width, originalSettingsWidth);
 });
 
-assertTest("workspaceReducer preserves local-only columns and tag filters when backend settings sync", () => {
+assertTest("workspaceReducer stores the directory tree visibility flag", () => {
+  const state = createState();
+
+  const hidden = workspaceReducer(state, {
+    type: "treeVisibilitySet",
+    payload: false
+  } as WorkspaceAction);
+  const shown = workspaceReducer(hidden, {
+    type: "treeVisibilitySet",
+    payload: true
+  } as WorkspaceAction);
+
+  assert.equal(hidden.treeVisible, false);
+  assert.equal(shown.treeVisible, true);
+});
+
+assertTest("workspaceReducer stores the default context menu setting", () => {
+  const state = createState();
+
+  const nextState = workspaceReducer(state, {
+    type: "contextMenuDefaultSet",
+    payload: { value: "custom" }
+  } as WorkspaceAction);
+
+  assert.equal(nextState.settings.model.contextMenu.defaultMenu, "custom");
+});
+
+assertTest("workspaceReducer replaces synced columns but preserves local-only tag filters when backend settings sync", () => {
   const state = workspaceReducer(
     workspaceReducer(createState(), {
       type: "columnVisibilityToggled",
@@ -1514,7 +2041,7 @@ assertTest("workspaceReducer preserves local-only columns and tag filters when b
   assert.equal(nextState.bookmarks[0].label, "Synced");
   assert.equal(nextState.settings.model.detailsRowHeight, 44);
   assert.equal(nextState.settings.model.theme.tabMinWidth, 132);
-  assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, true);
+  assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, false);
   assert.equal(nextState.settings.model.tagRules.find((rule) => rule.id === "tag-latest")?.quickFilter, "本地筛选");
 });
 
@@ -1744,3 +2271,479 @@ assertTest("workspaceReducer does not duplicate paths already in expandedNodePat
   assert.equal(uniquePaths.size, updatedTab.expandedNodePaths.length);
   assert.ok(updatedTab.expandedNodePaths.length >= initialCount);
 });
+
+assertTest("workspaceReducer entryFocusMoved delta moves selection down one step", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 3) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[1].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [entries[2].id]);
+});
+
+assertTest("workspaceReducer entryFocusMoved delta clamps at last entry", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[entries.length - 1].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [entries[entries.length - 1].id]);
+});
+
+assertTest("workspaceReducer entryFocusMoved delta from no selection lands on first when going down", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 1) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const moved = workspaceReducer(state, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [entries[0].id]);
+});
+
+assertTest("workspaceReducer entryFocusMoved absolute first/last", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 3) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[1].id] }
+  } as WorkspaceAction);
+
+  const toFirst = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "absolute", position: "first" }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(toFirst.panels["panel-1"]).selectedEntryIds, [entries[0].id]);
+
+  const toLast = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "absolute", position: "last" }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(toLast.panels["panel-1"]).selectedEntryIds, [entries[entries.length - 1].id]);
+});
+
+assertTest("workspaceReducer entryFocusMoved page moves by pageSize", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 4) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const paged = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "page", direction: "down", pageSize: 2 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(paged.panels["panel-1"]).selectedEntryIds, [entries[2].id]);
+});
+
+assertTest("workspaceReducer entryRangeExtended delta selects the range from focus to target", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 4) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[1].id] }
+  } as WorkspaceAction);
+
+  const extended = workspaceReducer(seeded, {
+    type: "entryRangeExtended",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(extended.panels["panel-1"]).selectedEntryIds, [entries[1].id, entries[2].id]);
+});
+
+assertTest("workspaceReducer entryRangeExtended absolute last selects to bottom", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 4) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[1].id] }
+  } as WorkspaceAction);
+
+  const extended = workspaceReducer(seeded, {
+    type: "entryRangeExtended",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "absolute", position: "last" }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(
+    getActiveTab(extended.panels["panel-1"]).selectedEntryIds,
+    entries.slice(1).map((entry) => entry.id)
+  );
+});
+
+assertTest("workspaceReducer tabSnapshotCommitted selects first entry when path changes", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const nextSnapshot = resolveMockDirectory("D:\\Projects\\Atlas");
+
+  if (nextSnapshot.entries.length === 0) {
+    return;
+  }
+  if (nextSnapshot.location.path === activeTab.snapshot.location.path) {
+    return;
+  }
+
+  const navigated = workspaceReducer(state, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      snapshot: nextSnapshot,
+      pushHistory: true
+    }
+  });
+
+  assert.deepEqual(getActiveTab(navigated.panels["panel-1"]).selectedEntryIds, [nextSnapshot.entries[0].id]);
+});
+
+assertTest("workspaceReducer entryRangeExtended keeps the anchor fixed across repeated Shift+Up (expands toward the anchor end)", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 4) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  // Seed single selection at index 2 (will become the anchor on first Shift).
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[2].id] }
+  } as WorkspaceAction);
+
+  // Shift+Up once: anchor=index2, cursor=index1 → range [1..2].
+  const up1 = workspaceReducer(seeded, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: -1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(up1.panels["panel-1"]).selectedEntryIds, [entries[1].id, entries[2].id]);
+
+  // Shift+Up again: anchor stays at index2, cursor=index0 → range [0..2].
+  const up2 = workspaceReducer(up1, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: -1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(up2.panels["panel-1"]).selectedEntryIds, [
+    entries[0].id,
+    entries[1].id,
+    entries[2].id
+  ]);
+});
+
+assertTest("workspaceReducer entryRangeExtended supports reverse retreat past the anchor (Shift+Down collapses the range toward the anchor)", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 5) {
+    // Atlas dir provides 4 entries; use them with a 0-based anchor at index2 and cursor at 0.
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  // Build a range: anchor=index2, cursor=index0 → range [0..2].
+  let working = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[2].id] }
+  } as WorkspaceAction);
+  working = workspaceReducer(working, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "absolute", position: "first" } }
+  } as WorkspaceAction);
+  working = workspaceReducer(working, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "absolute", position: "first" } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(working.panels["panel-1"]).selectedEntryIds, [
+    entries[0].id,
+    entries[1].id,
+    entries[2].id
+  ]);
+
+  // Shift+Down once: anchor index2 fixed, cursor 0→1 → range [1..2].
+  const down1 = workspaceReducer(working, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: 1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(down1.panels["panel-1"]).selectedEntryIds, [entries[1].id, entries[2].id]);
+
+  // Shift+Down again: cursor 1→2 → range [2..2] (collapsed to the anchor single item).
+  const down2 = workspaceReducer(down1, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: 1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(down2.panels["panel-1"]).selectedEntryIds, [entries[2].id]);
+});
+
+assertTest("workspaceReducer entryFocusMoved collapses a multi-range and jumps one past the near edge (Shift+End then plain Up lands on the upper-outside item)", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 4) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  // Seed at index1, Shift+End → range [1..3] (B C D), anchor index1.
+  let working = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[1].id] }
+  } as WorkspaceAction);
+  working = workspaceReducer(working, {
+    type: "entryRangeExtended",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "absolute", position: "last" } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(working.panels["panel-1"]).selectedEntryIds, [
+    entries[1].id,
+    entries[2].id,
+    entries[3].id
+  ]);
+
+  // Plain Up: collapses to the upper outside item = index0, anchor reset to 0.
+  const up = workspaceReducer(working, {
+    type: "entryFocusMoved",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: -1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(up.panels["panel-1"]).selectedEntryIds, [entries[0].id]);
+  assert.equal(getActiveTab(up.panels["panel-1"]).selectionAnchorId, entries[0].id);
+});
+
+assertTest("workspaceReducer entryFocusMoved plain Up at the top edge stays at index0", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) {
+    return;
+  }
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const up = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: { panelId: "panel-1", tabId: activeTab.id, orderedEntryIds, move: { kind: "delta", delta: -1 } }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(up.panels["panel-1"]).selectedEntryIds, [entries[0].id]);
+  assert.equal(getActiveTab(up.panels["panel-1"]).selectionAnchorId, entries[0].id);
+});
+
+assertTest("workspaceReducer entering a new directory resets the anchor to the first entry", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const nextSnapshot = resolveMockDirectory("D:\\Projects\\Atlas");
+  if (nextSnapshot.entries.length === 0 || nextSnapshot.location.path === activeTab.snapshot.location.path) {
+    return;
+  }
+
+  const navigated = workspaceReducer(state, {
+    type: "tabSnapshotCommitted",
+    payload: { panelId: "panel-1", tabId: activeTab.id, snapshot: nextSnapshot, pushHistory: true }
+  });
+  assert.deepEqual(getActiveTab(navigated.panels["panel-1"]).selectedEntryIds, [nextSnapshot.entries[0].id]);
+  // 锚点应在进入新目录后归位到首项 id。
+  assert.equal(getActiveTab(navigated.panels["panel-1"]).selectionAnchorId, nextSnapshot.entries[0].id);
+});
+
+assertTest("workspaceReducer select-next-column (delta +1) advances by one item", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[1]]);
+});
+
+assertTest("workspaceReducer select-previous-column (delta -1) retreats by one item with clamp", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 3) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[2].id] }
+  } as WorkspaceAction);
+
+  const movedLeft = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: -1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(movedLeft.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[1]]);
+});
+
+assertTest("workspaceReducer select-previous-column (delta -1) from first entry clamps to first", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: -1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[0]]);
+});
+
+assertTest("workspaceReducer tabSnapshotCommitted with previousPath anchors to matching entry", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const currentPath = activeTab.snapshot.location.path;
+  const parentPath = activeTab.snapshot.entries.find((e) => e.kind === "folder")?.path;
+  if (!parentPath) return;
+
+  const parentSnapshot = resolveMockDirectory(parentPath);
+  if (parentSnapshot.entries.length === 0) return;
+
+  const previousPath = currentPath;
+  const navigated = workspaceReducer(state, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      snapshot: parentSnapshot,
+      pushHistory: false,
+      previousPath
+    }
+  });
+
+  const navigatedTab = getActiveTab(navigated.panels["panel-1"]);
+  const matchingEntry = parentSnapshot.entries.find(
+    (entry) => entry.path === previousPath || entry.path === previousPath.replace(/\\/g, "\\")
+  );
+  if (matchingEntry) {
+    assert.deepEqual(navigatedTab.selectedEntryIds, [matchingEntry.id]);
+    assert.equal(navigatedTab.selectionAnchorId, matchingEntry.id);
+  } else {
+    // Fallback: first entry.
+    assert.deepEqual(navigatedTab.selectedEntryIds, [parentSnapshot.entries[0].id]);
+  }
+});
+

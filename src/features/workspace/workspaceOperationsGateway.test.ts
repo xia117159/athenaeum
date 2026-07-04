@@ -9,6 +9,7 @@ import {
   listenWorkspaceOperationHistory,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
+  renameWorkspaceEntry,
   resolveWorkspaceOperationConflict,
   runWorkspaceOperationCommands,
   undoLatestWorkspaceOperation,
@@ -40,7 +41,7 @@ const sftpProfile = {
 } satisfies BackendRemoteProfile;
 
 export const workspaceOperationsGatewayTests = (async () => {
-  await assertAsyncTest("moveWorkspaceEntries invokes start_file_operation with canonical path refs", async () => {
+  await assertAsyncTest("moveWorkspaceEntries routes local-to-remote moves through remote transfer commands", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
@@ -60,25 +61,173 @@ export const workspaceOperationsGatewayTests = (async () => {
 
     assert.deepEqual(invocations, [
       {
-        command: "start_file_operation",
+        command: "upload_remote_files",
         args: {
-          intent: {
-            requestId: "move-request",
-            source: "dragDrop",
-            panelId: "panel-1",
-            tabId: "tab-1",
-            kind: "move",
-            sources: [{ kind: "local", path: "D:\\Projects\\Atlas\\README.md" }],
-            destination: {
-              kind: "remote",
-              profileId: "remote-test",
-              protocol: "sftp",
-              remotePath: "/home/cheng/inbox"
-            },
-            conflictPolicy: {
-              defaultResolution: "ask",
-              allowApplyToAll: true
-            }
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["D:\\Projects\\Atlas\\README.md"],
+            destination: "/home/cheng/inbox"
+          }
+        }
+      },
+      {
+        command: "delete_entries",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\Atlas\\README.md"]
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("copyWorkspaceEntries routes remote-to-local copies through remote download commands", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { affectedPaths: [] } as T;
+    };
+
+    await copyWorkspaceEntries(
+      ["sftp://cheng@127.0.0.1:6666/home/cheng/report.txt"],
+      "D:\\Downloads",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "copy-request", source: "dragDrop", panelId: "panel-1", tabId: "tab-1" }
+    );
+
+    assert.deepEqual(invocations, [
+      {
+        command: "download_remote_entries",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["/home/cheng/report.txt"],
+            destination: "D:\\Downloads"
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("copyWorkspaceEntries rejects mixed local and remote sources before task mode", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { affectedPaths: [] } as T;
+    };
+
+    await assert.rejects(
+      () =>
+        copyWorkspaceEntries(
+          ["D:\\Projects\\Atlas\\README.md", "sftp://cheng@127.0.0.1:6666/home/cheng/report.txt"],
+          "D:\\Downloads",
+          {
+            invoke,
+            runtimeHost,
+            listRemoteProfiles: async () => [sftpProfile]
+          }
+        ),
+      /Mixed local and remote sources/
+    );
+
+    assert.deepEqual(invocations, []);
+  });
+
+  await assertAsyncTest("remote create, rename, and delete operations bypass task mode", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { affectedPaths: [] } as T;
+    };
+
+    await createWorkspaceDirectory(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox",
+      "new-folder",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "create-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+    await createWorkspaceFile(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox",
+      "notes.txt",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "create-file-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+    await renameWorkspaceEntry(
+      "sftp://cheng@127.0.0.1:6666/home/cheng/inbox/old-name",
+      "new-name",
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "rename-request", source: "inlineEdit", panelId: "panel-1", tabId: "tab-1" }
+    );
+    await deleteWorkspaceEntries(
+      ["sftp://cheng@127.0.0.1:6666/home/cheng/inbox/new-name"],
+      {
+        invoke,
+        runtimeHost,
+        listRemoteProfiles: async () => [sftpProfile]
+      },
+      { requestId: "delete-request", source: "toolbar", panelId: "panel-1", tabId: "tab-1" }
+    );
+
+    assert.deepEqual(invocations, [
+      {
+        command: "create_remote_directory",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            parent: "/home/cheng/inbox",
+            name: "new-folder"
+          }
+        }
+      },
+      {
+        command: "create_remote_file",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            parent: "/home/cheng/inbox",
+            name: "notes.txt"
+          }
+        }
+      },
+      {
+        command: "rename_remote_entry",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            source: "/home/cheng/inbox/old-name",
+            newName: "new-name"
+          }
+        }
+      },
+      {
+        command: "delete_remote_entries",
+        args: {
+          request: {
+            profileId: "remote-test",
+            password: null,
+            sources: ["/home/cheng/inbox/new-name"],
+            destination: null
           }
         }
       }
@@ -127,18 +276,55 @@ export const workspaceOperationsGatewayTests = (async () => {
     assert.deepEqual(invokedCommands, []);
   });
 
-  await assertAsyncTest("copy/delete/create operations invoke task intents", async () => {
+  await assertAsyncTest("local copy and move operations use the Windows shell file operation command", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       invocations.push({ command, args });
-      return { taskId: `task-${invocations.length}` } as T;
+      return undefined as T;
     };
 
     await copyWorkspaceEntries(["D:\\Projects\\README.md"], "D:\\Archive", {
       invoke,
       runtimeHost,
       listRemoteProfiles: async () => []
-    }, { requestId: "copy-request" });
+    });
+    await moveWorkspaceEntries(["D:\\Projects\\Draft.txt"], "D:\\Archive", {
+      invoke,
+      runtimeHost,
+      listRemoteProfiles: async () => []
+    });
+
+    assert.deepEqual(invocations, [
+      {
+        command: "perform_system_file_operation",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\README.md"],
+            destination: "D:\\Archive",
+            operation: "copy"
+          }
+        }
+      },
+      {
+        command: "perform_system_file_operation",
+        args: {
+          request: {
+            sources: ["D:\\Projects\\Draft.txt"],
+            destination: "D:\\Archive",
+            operation: "move"
+          }
+        }
+      }
+    ]);
+  });
+
+  await assertAsyncTest("delete and create operations invoke task intents", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return { taskId: `task-${invocations.length}` } as T;
+    };
+
     await deleteWorkspaceEntries(["D:\\Projects\\old.txt"], {
       invoke,
       runtimeHost,
@@ -158,17 +344,14 @@ export const workspaceOperationsGatewayTests = (async () => {
     assert.deepEqual(invocations.map((item) => item.command), [
       "start_file_operation",
       "start_file_operation",
-      "start_file_operation",
       "start_file_operation"
     ]);
     assert.deepEqual(invocations.map((item) => (item.args.intent as { kind: string; requestId: string }).kind), [
-      "copy",
       "delete",
       "createDirectory",
       "createFile"
     ]);
     assert.deepEqual(invocations.map((item) => (item.args.intent as { requestId: string }).requestId), [
-      "copy-request",
       "delete-request",
       "mkdir-request",
       "file-request"

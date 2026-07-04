@@ -67,12 +67,13 @@ function createRuntimeId(prefix: string, runtime: WorkspaceSettingsRuntime) {
 export async function saveWorkspaceLayout(
   layoutMode: PanelLayoutMode,
   layoutRatios: LayoutRatios,
+  treeVisible = true,
   runtime: WorkspaceSettingsRuntime = {}
 ) {
   await invokeWithBrowserFallback<BackendSettingsSnapshot>(
     "save_ui_layout",
     {
-      layout: toBackendLayout(layoutMode, layoutRatios)
+      layout: toBackendLayout(layoutMode, layoutRatios, treeVisible)
     },
     async () => createBrowserSettingsSnapshot(),
     runtime.invoke,
@@ -146,9 +147,54 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
       createBrowserSettingsSnapshot({
         shortcuts: model.shortcuts.map(toBackendShortcut),
         colorRules: model.colorRules.map(toBackendColorRule),
+        columns: model.columns,
+        navigationColumns: model.navigationColumns,
         detailsRowHeight: normalizeDetailsRowHeight(model.detailsRowHeight),
+        tooltipHoverDelayMs: model.tooltipHoverDelayMs,
+        metadataRetentionHours: model.metadataRetentionHours,
+        contextMenu: model.contextMenu,
         theme: toBackendTheme(model.theme)
       }),
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
+export async function getWorkspaceEntryComment(path: string, runtime: WorkspaceSettingsRuntime = {}) {
+  return invokeWithBrowserFallback<string | null>(
+    "get_entry_comment",
+    { path },
+    async () => null,
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
+export async function saveWorkspaceEntryComment(path: string, comment: string, runtime: WorkspaceSettingsRuntime = {}) {
+  return invokeWithBrowserFallback<string | null>(
+    "save_entry_comment",
+    { path, comment },
+    async () => comment,
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
+export async function removeWorkspaceEntryComment(path: string, runtime: WorkspaceSettingsRuntime = {}) {
+  await invokeWithBrowserFallback<void>(
+    "remove_entry_comment",
+    { path },
+    async () => undefined,
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
+export async function markWorkspaceEntryMetadataDeleted(paths: string[], runtime: WorkspaceSettingsRuntime = {}) {
+  await invokeWithBrowserFallback<void>(
+    "mark_entry_metadata_deleted",
+    { paths },
+    async () => undefined,
     runtime.invoke,
     runtime.runtimeHost
   );
@@ -168,6 +214,18 @@ export async function listenWorkspaceSettingsChanged(
   return listenFn<BackendSettingsSnapshot>("settings_changed", (event) =>
     handler(mapSettingsSnapshotToWorkspaceSettings(event.payload))
   );
+}
+
+export async function listenWorkspaceEntryMetadataChanged(
+  handler: (paths: string[]) => void,
+  runtime: WorkspaceSettingsRuntime = {}
+) {
+  const runtimeHost = runtime.runtimeHost ?? (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  if (!runtimeHost && !runtime.listen) {
+    return () => undefined;
+  }
+  const listenFn = runtime.listen ?? listen;
+  return listenFn<string[]>("entry_metadata_changed", (event) => handler(event.payload));
 }
 
 export async function saveWorkspaceBookmark(path: string, label: string, runtime: WorkspaceSettingsRuntime = {}) {
