@@ -1,14 +1,15 @@
 import "./workspace.about.css";
 
 const appIconUrl = "/128x128.png";
+const REPO_URL = "https://github.com/xia117159/athenaeum";
 
 export const ABOUT_APP_INFO = {
   name: "Athenaeum",
   version: "0.0.1",
   description: "Windows 文件管理器桌面应用",
   copyright: "Copyright (c) 2026 Cheng",
-  license: "未在本地安装包中提供许可证文件。",
-  repository: "项目仓库未配置"
+  license: "Apache License 2.0",
+  repository: REPO_URL
 };
 
 export function AboutWindowView() {
@@ -37,10 +38,13 @@ export function AboutWindowView() {
 
         <section className="about-window__section" aria-label="开源信息">
           <h2>开源信息</h2>
-          <p>{ABOUT_APP_INFO.license}</p>
+          <div className="about-window__row">
+            <span>许可证</span>
+            <strong>{ABOUT_APP_INFO.license}</strong>
+          </div>
           <div className="about-window__row">
             <span>项目</span>
-            <code>{ABOUT_APP_INFO.repository}</code>
+            <a className="about-window__link" href={REPO_URL} target="_blank" rel="noopener noreferrer">{ABOUT_APP_INFO.repository}</a>
           </div>
           <div className="about-window__stack">
             <span>Tauri v2</span>

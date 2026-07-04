@@ -71,7 +71,11 @@ export const completion = (async () => {
       assert.equal(container.textContent?.includes(`版本 ${ABOUT_APP_INFO.version}`), true);
       assert.equal(container.textContent?.includes(ABOUT_APP_INFO.description), true);
       assert.equal(container.textContent?.includes("开源信息"), true);
+      assert.equal(container.textContent?.includes(ABOUT_APP_INFO.license), true);
       assert.equal(container.textContent?.includes(ABOUT_APP_INFO.repository), true);
+      const repoLink = container.querySelector<HTMLAnchorElement>(".about-window__link");
+      assert.ok(repoLink);
+      assert.equal(repoLink.href, ABOUT_APP_INFO.repository);
       assert.equal(container.textContent?.includes("Tauri v2"), true);
       assert.equal(container.textContent?.includes("Rust"), true);
       assert.equal(container.textContent?.includes("React"), true);

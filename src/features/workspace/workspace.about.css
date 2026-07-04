@@ -97,6 +97,18 @@
   font-weight: 400;
 }
 
+.about-window__link {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #0067c0;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.about-window__link:hover {
+  text-decoration: underline;
+}
+
 .about-window__stack {
   display: flex;
   flex-wrap: wrap;
