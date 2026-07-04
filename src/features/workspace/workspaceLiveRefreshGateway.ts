@@ -18,7 +18,8 @@ export async function setWorkspaceWatchRoots(
     {
       request: {
         directoryPaths: request.directoryPaths,
-        navigationParentPaths: request.navigationParentPaths
+        navigationParentPaths: request.navigationParentPaths,
+        gitSentinelPaths: request.gitSentinelPaths ?? []
       }
     },
     () => undefined,

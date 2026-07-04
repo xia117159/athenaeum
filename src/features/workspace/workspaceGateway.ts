@@ -447,7 +447,8 @@ return { statuses: {}, isGitRepo: false };
       // 防护：只在 roots 真正变化时才调用后端
       const key = JSON.stringify({
         dir: request.directoryPaths.sort(),
-        nav: request.navigationParentPaths.sort()
+        nav: request.navigationParentPaths.sort(),
+        git: (request.gitSentinelPaths ?? []).sort()
       });
       if (currentWatchRootsKey === key) {
         return;

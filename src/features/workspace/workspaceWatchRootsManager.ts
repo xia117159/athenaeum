@@ -18,7 +18,8 @@ import type { WorkspaceState, WorkspaceWatchRootsRequest } from "./types";
 export class WatchRootsManager {
   private currentRoots: WorkspaceWatchRootsRequest = {
     directoryPaths: [],
-    navigationParentPaths: []
+    navigationParentPaths: [],
+    gitSentinelPaths: []
   };
   private updateCount = 0;
   private lastUpdateTime = 0;
@@ -116,7 +117,8 @@ export class WatchRootsManager {
     try {
       await this.gateway.setWatchRoots({
         directoryPaths: [],
-        navigationParentPaths: []
+        navigationParentPaths: [],
+        gitSentinelPaths: []
       });
       this.log("Watch roots cleared on dispose");
     } catch (error) {
@@ -131,7 +133,8 @@ export class WatchRootsManager {
   private normalizeRoots(roots: WorkspaceWatchRootsRequest): WorkspaceWatchRootsRequest {
     return {
       directoryPaths: this.dedupeAndSort(roots.directoryPaths),
-      navigationParentPaths: this.dedupeAndSort(roots.navigationParentPaths)
+      navigationParentPaths: this.dedupeAndSort(roots.navigationParentPaths),
+      gitSentinelPaths: this.dedupeAndSort(roots.gitSentinelPaths ?? [])
     };
   }
 
@@ -143,7 +146,8 @@ export class WatchRootsManager {
   private areRootsEqual(left: WorkspaceWatchRootsRequest, right: WorkspaceWatchRootsRequest): boolean {
     return (
       this.areArraysEqual(left.directoryPaths, right.directoryPaths) &&
-      this.areArraysEqual(left.navigationParentPaths, right.navigationParentPaths)
+      this.areArraysEqual(left.navigationParentPaths, right.navigationParentPaths) &&
+      this.areArraysEqual(left.gitSentinelPaths ?? [], right.gitSentinelPaths ?? [])
     );
   }
 

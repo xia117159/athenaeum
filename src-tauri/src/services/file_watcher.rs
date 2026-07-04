@@ -48,6 +48,7 @@ struct EntrySignature {
 struct WatchState {
     directory_roots: BTreeSet<String>,
     navigation_parent_roots: BTreeSet<String>,
+    git_sentinel_roots: BTreeSet<String>,
     #[cfg(any(not(windows), test))]
     signatures: HashMap<String, Option<DirectorySignature>>,
 }
@@ -73,18 +74,21 @@ impl FileWatchService {
     pub fn update_roots(&self, app: AppHandle, request: WorkspaceWatchRootsRequest) {
         let directory_roots = normalize_roots(request.directory_paths);
         let navigation_parent_roots = normalize_roots(request.navigation_parent_paths);
+        let git_sentinel_roots = resolve_git_sentinel_roots(request.git_sentinel_paths);
 
         #[cfg(windows)]
         let has_roots = {
             let mut state = self.state.lock().expect("file watch state lock poisoned");
             state.directory_roots = directory_roots;
             state.navigation_parent_roots = navigation_parent_roots;
-            !active_roots(&state).is_empty()
+            state.git_sentinel_roots = git_sentinel_roots;
+            !active_roots(&state).is_empty() || !state.git_sentinel_roots.is_empty()
         };
 
         #[cfg(not(windows))]
         let roots_to_prime = {
             let mut state = self.state.lock().expect("file watch state lock poisoned");
+            state.git_sentinel_roots = git_sentinel_roots;
             replace_roots(&mut state, directory_roots, navigation_parent_roots)
         };
         #[cfg(not(windows))]
@@ -93,7 +97,7 @@ impl FileWatchService {
         let has_roots = {
             let mut state = self.state.lock().expect("file watch state lock poisoned");
             insert_primed_signatures(&mut state, primed_signatures);
-            !active_roots(&state).is_empty()
+            !active_roots(&state).is_empty() || !state.git_sentinel_roots.is_empty()
         };
 
         if has_roots {
@@ -114,33 +118,45 @@ impl FileWatchService {
 
 #[cfg(windows)]
 fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<AtomicU64>) {
-    let mut watches = Vec::<NativeDirectoryWatch>::new();
-    let mut watched_roots = BTreeSet::<String>::new();
+    let mut regular_watches = Vec::<NativeDirectoryWatch>::new();
+    let mut git_watches = Vec::<NativeDirectoryWatch>::new();
+    let mut watched_regular_roots = BTreeSet::<String>::new();
+    let mut watched_git_roots = BTreeSet::<String>::new();
 
     loop {
-        let active_roots = {
+        let (active_regular, active_git) = {
             let guard = state.lock().expect("file watch state lock poisoned");
-            active_roots(&guard).into_iter().collect::<BTreeSet<_>>()
+            (
+                active_roots(&guard).into_iter().collect::<BTreeSet<_>>(),
+                guard.git_sentinel_roots.clone(),
+            )
         };
 
-        if active_roots != watched_roots {
-            watches = create_native_directory_watches(&active_roots);
-            watched_roots = active_roots;
+        if active_regular != watched_regular_roots {
+            regular_watches = create_native_directory_watches(&active_regular);
+            watched_regular_roots = active_regular;
+        }
+        if active_git != watched_git_roots {
+            git_watches = create_native_git_sentinel_watches(&active_git);
+            watched_git_roots = active_git;
         }
 
-        if watches.is_empty() {
+        if regular_watches.is_empty() && git_watches.is_empty() {
             thread::sleep(NATIVE_WATCH_RELOAD_INTERVAL);
             continue;
         }
 
-        let changed_roots = wait_for_native_directory_changes(&mut watches);
-        if changed_roots.is_empty() {
+        let regular_len = regular_watches.len();
+        let mut combined: Vec<&mut NativeDirectoryWatch> = regular_watches.iter_mut().chain(git_watches.iter_mut()).collect();
+        let (regular_changed, git_changed) = wait_for_classified_changes(&mut combined, regular_len);
+
+        if regular_changed.is_empty() && git_changed.is_empty() {
             continue;
         }
 
         let event = {
             let guard = state.lock().expect("file watch state lock poisoned");
-            event_for_changed_roots(&guard, changed_roots, &sequence)
+            event_for_changed_roots(&guard, regular_changed, git_changed, &sequence)
         };
         if let Some(event) = event {
             emit_workspace_fs_changed(&app, event);
@@ -206,6 +222,13 @@ fn normalize_windows_display_path(path: &str) -> String {
         return rest.to_string();
     }
     normalized
+}
+
+fn resolve_git_sentinel_roots(paths: Vec<String>) -> BTreeSet<String> {
+    normalize_roots(paths)
+        .into_iter()
+        .filter(|root| Path::new(root).join(".git").is_dir())
+        .collect()
 }
 
 #[cfg(any(not(windows), test))]
@@ -313,39 +336,43 @@ fn poll_changed_roots(
         return None;
     }
 
-    event_for_changed_roots(&guard, changed_roots, sequence)
+    event_for_changed_roots(&guard, changed_roots, BTreeSet::new(), sequence)
 }
 
 fn event_for_changed_roots(
     state: &WatchState,
-    changed_roots: BTreeSet<String>,
+    regular_changed_roots: BTreeSet<String>,
+    git_changed_roots: BTreeSet<String>,
     sequence: &Arc<AtomicU64>,
 ) -> Option<WorkspaceFsChangedEvent> {
-    let changed_roots = changed_roots
+    let regular_changed = regular_changed_roots
         .into_iter()
         .filter(|root| root_has_kind(state, root, WatchKind::Directory) || root_has_kind(state, root, WatchKind::Navigation))
         .collect::<BTreeSet<_>>();
-    if changed_roots.is_empty() {
+
+    if regular_changed.is_empty() && git_changed_roots.is_empty() {
         return None;
     }
 
-    let directory_roots = changed_roots
+    let directory_roots = regular_changed
         .iter()
         .filter(|root| root_has_kind(state, root, WatchKind::Directory))
         .cloned()
         .collect::<Vec<_>>();
-    let navigation_parent_roots = changed_roots
+    let navigation_parent_roots = regular_changed
         .iter()
         .filter(|root| root_has_kind(state, root, WatchKind::Navigation))
         .cloned()
         .collect::<Vec<_>>();
-    let roots = changed_roots.into_iter().collect::<Vec<_>>();
+    let git_roots = git_changed_roots.into_iter().collect::<Vec<_>>();
+    let roots = regular_changed.into_iter().collect::<Vec<_>>();
     let next_sequence = sequence.fetch_add(1, Ordering::SeqCst) + 1;
 
     Some(WorkspaceFsChangedEvent {
         roots,
         directory_roots,
         navigation_parent_roots,
+        git_changed_roots: git_roots,
         sequence: next_sequence,
     })
 }
@@ -429,7 +456,7 @@ fn create_native_directory_watch(root: &str) -> Option<NativeDirectoryWatch> {
     })
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn wait_for_native_directory_changes(watches: &mut [NativeDirectoryWatch]) -> BTreeSet<String> {
     use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::Storage::FileSystem::FindNextChangeNotification;
@@ -454,6 +481,74 @@ fn wait_for_native_directory_changes(watches: &mut [NativeDirectoryWatch]) -> BT
         }
     }
     changed_roots
+}
+
+#[cfg(windows)]
+fn create_native_git_sentinel_watches(roots: &BTreeSet<String>) -> Vec<NativeDirectoryWatch> {
+    roots
+        .iter()
+        .filter_map(|root| create_native_git_sentinel_watch(root))
+        .collect()
+}
+
+#[cfg(windows)]
+fn create_native_git_sentinel_watch(repo_root: &str) -> Option<NativeDirectoryWatch> {
+    use windows::Win32::Storage::FileSystem::{
+        FindFirstChangeNotificationW, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE,
+    };
+    use windows_core::HSTRING;
+
+    let git_dir = format!("{repo_root}\\.git");
+    let filter = FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+    let path = HSTRING::from(&git_dir);
+    let handle = unsafe { FindFirstChangeNotificationW(&path, true, filter) }.ok()?;
+    Some(NativeDirectoryWatch {
+        root: repo_root.to_string(),
+        handle,
+    })
+}
+
+#[cfg(windows)]
+fn wait_for_classified_changes(
+    watches: &mut [&mut NativeDirectoryWatch],
+    regular_count: usize,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::Storage::FileSystem::FindNextChangeNotification;
+    use windows::Win32::System::Threading::WaitForMultipleObjects;
+
+    let mut regular_changed = BTreeSet::new();
+    let mut git_changed = BTreeSet::new();
+
+    for chunk_start in (0..watches.len()).step_by(64) {
+        let chunk_end = (chunk_start + 64).min(watches.len());
+        let handles: Vec<_> = watches[chunk_start..chunk_end]
+            .iter()
+            .map(|w| w.handle)
+            .collect();
+        let result = unsafe { WaitForMultipleObjects(&handles, false, NATIVE_WATCH_CHUNK_WAIT_MS) };
+        if result == WAIT_TIMEOUT || result == WAIT_FAILED {
+            continue;
+        }
+
+        let local_index = result.0.saturating_sub(WAIT_OBJECT_0.0) as usize;
+        if local_index >= handles.len() {
+            continue;
+        }
+
+        let global_index = chunk_start + local_index;
+        let root = watches[global_index].root.clone();
+        if global_index < regular_count {
+            regular_changed.insert(root);
+        } else {
+            git_changed.insert(root);
+        }
+        unsafe {
+            let _ = FindNextChangeNotification(watches[global_index].handle);
+        }
+    }
+
+    (regular_changed, git_changed)
 }
 
 #[cfg(test)]
@@ -551,6 +646,7 @@ mod tests {
         let state = Arc::new(Mutex::new(WatchState {
             directory_roots: BTreeSet::from([temp.to_string_lossy().into_owned()]),
             navigation_parent_roots: BTreeSet::new(),
+            git_sentinel_roots: BTreeSet::new(),
             signatures: HashMap::new(),
         }));
         let sequence = Arc::new(AtomicU64::new(0));

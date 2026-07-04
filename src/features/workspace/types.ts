@@ -506,12 +506,14 @@ export interface NativeSelectionContextMenuResult {
 export interface WorkspaceWatchRootsRequest {
   directoryPaths: string[];
   navigationParentPaths: string[];
+  gitSentinelPaths?: string[];
 }
 
 export interface WorkspaceFsChangedEvent {
   roots: string[];
   directoryRoots: string[];
   navigationParentRoots: string[];
+  gitChangedRoots?: string[];
   sequence: number;
 }
 

@@ -38,7 +38,8 @@ export const workspaceLiveRefreshGatewayTests = (async () => {
     assert.deepEqual(invokedArgs, {
       request: {
         directoryPaths: ["D:\\Projects\\Atlas"],
-        navigationParentPaths: ["C:\\Users\\Admin\\Documents"]
+        navigationParentPaths: ["C:\\Users\\Admin\\Documents"],
+        gitSentinelPaths: []
       }
     });
   });

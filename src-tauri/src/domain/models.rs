@@ -101,6 +101,8 @@ pub struct WorkspaceWatchRootsRequest {
     pub directory_paths: Vec<String>,
     #[serde(default)]
     pub navigation_parent_paths: Vec<String>,
+    #[serde(default)]
+    pub git_sentinel_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,6 +111,7 @@ pub struct WorkspaceFsChangedEvent {
     pub roots: Vec<String>,
     pub directory_roots: Vec<String>,
     pub navigation_parent_roots: Vec<String>,
+    pub git_changed_roots: Vec<String>,
     pub sequence: u64,
 }
 
@@ -1261,6 +1264,7 @@ mod tests {
             roots: vec!["D:\\Projects\\Atlas".into()],
             directory_roots: vec!["D:\\Projects\\Atlas".into()],
             navigation_parent_roots: vec!["C:\\Users\\Admin\\Documents".into()],
+            git_changed_roots: vec![],
             sequence: 7,
         };
 

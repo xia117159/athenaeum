@@ -38,7 +38,7 @@ export const workspaceWatchRootsManagerTests = (async () => {
     await manager.update({ directoryPaths: ["C:\\test"], navigationParentPaths: [] }); // 重复
 
     assert.equal(calls.length, 1, "Should only call gateway once for duplicate roots");
-    assert.deepEqual(calls[0], { directoryPaths: ["C:\\test"], navigationParentPaths: [] });
+    assert.deepEqual(calls[0], { directoryPaths: ["C:\\test"], navigationParentPaths: [], gitSentinelPaths: [] });
 
     await manager.dispose();
   });
@@ -96,7 +96,7 @@ export const workspaceWatchRootsManagerTests = (async () => {
 
     // dispose 应该清空 roots
     assert.equal(calls.length, 2);
-    assert.deepEqual(calls[1], { directoryPaths: [], navigationParentPaths: [] });
+    assert.deepEqual(calls[1], { directoryPaths: [], navigationParentPaths: [], gitSentinelPaths: [] });
   });
 
   await assertAsyncTest("WatchRootsManager ignores updates after dispose", async () => {

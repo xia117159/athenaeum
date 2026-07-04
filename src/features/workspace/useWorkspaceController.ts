@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef } from "react";
-import { createMockWorkspaceBootstrap, normalizeLocationPath } from "./mockData";
+import { createMockWorkspaceBootstrap, getParentLocationPath, normalizeLocationPath } from "./mockData";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
 import { openCommentWindow } from "./commentWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
@@ -86,6 +86,7 @@ import type {
   WorkspaceState
 } from "./types";
 import { THIS_PC_PATH } from "./types";
+import type { GitFileStatus } from "./types";
 
 export { planNotificationDismissals } from "./workspaceControllerUtils";
 
@@ -118,6 +119,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const liveRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLiveDirectoryRootsRef = useRef<Set<string>>(new Set());
   const pendingLiveNavigationRefreshRef = useRef(false);
+  const pendingLiveNavigationGitRootsRef = useRef<Set<string>>(new Set());
+  const pendingLiveGitChangedRootsRef = useRef<Set<string>>(new Set());
   // Tracks in-flight git status IPC calls by normalized path to prevent
   // redundant concurrent requests during rapid live-refresh cycles.
   const pendingGitStatusRef = useRef<Set<string>>(new Set());
@@ -127,6 +130,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pendingGitStatusTabsRef = useRef<
     Map<string, Array<{ panelId: PanelId; tabId: string; shouldApply?: () => boolean }>>
   >(new Map());
+  // Navigation directories waiting for a pending git status result, keyed by
+  // normalized path. Shares the IPC dedup with tab consumers so that one
+  // in-flight call serves both tabs and navigation for the same directory.
+  const pendingGitStatusNavigationDirsRef = useRef<Map<string, Set<string>>>(new Map());
 
   // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
   const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
@@ -145,80 +152,103 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   /**
+   * Broadcasts a completed git status result to all waiting consumers (tabs
+   * and navigation directories) registered under the same normalized path key.
+   * One IPC call serves every consumer that shares the same directory.
+   */
+  const broadcastGitStatusResult = (gitPathKey: string, result: { isGitRepo: boolean; statuses: Record<string, GitFileStatus> }) => {
+    pendingGitStatusRef.current.delete(gitPathKey);
+
+    const tabs = pendingGitStatusTabsRef.current.get(gitPathKey) ?? [];
+    pendingGitStatusTabsRef.current.delete(gitPathKey);
+    for (const { panelId: pId, tabId: tId, shouldApply: apply } of tabs) {
+      if (apply ? apply() : true) {
+        dispatch({
+          type: "tabGitStatusUpdated",
+          payload: { panelId: pId, tabId: tId, gitStatus: result.isGitRepo ? result.statuses : undefined }
+        });
+      }
+    }
+
+    const navDirs = pendingGitStatusNavigationDirsRef.current.get(gitPathKey) ?? new Set<string>();
+    pendingGitStatusNavigationDirsRef.current.delete(gitPathKey);
+    for (const dir of navDirs) {
+      dispatch({
+        type: "navigation/git-status-loaded",
+        payload: { directory: dir, statuses: result.isGitRepo ? result.statuses : {} }
+      });
+    }
+  };
+
+  const broadcastGitStatusError = (gitPathKey: string) => {
+    pendingGitStatusRef.current.delete(gitPathKey);
+    pendingGitStatusTabsRef.current.delete(gitPathKey);
+
+    const navDirs = pendingGitStatusNavigationDirsRef.current.get(gitPathKey) ?? new Set<string>();
+    pendingGitStatusNavigationDirsRef.current.delete(gitPathKey);
+    for (const dir of navDirs) {
+      dispatch({ type: "navigation/git-status-loaded", payload: { directory: dir, statuses: {} } });
+    }
+  };
+
+  /**
    * Fetches git status for a tab and dispatches tabGitStatusUpdated.
    *
    * When multiple tabs share the same directory path, only one IPC call is
    * made, but the result is broadcast to every waiting tab. The optional
    * shouldApply callback allows callers to bail out if the result is stale
    * (e.g. navigation superseded). When omitted, the result is always applied.
+   *
+   * Navigation directories registered under the same path key also receive
+   * the result, so a single IPC call can serve both tabs and navigation.
    */
   const fetchGitStatusForTab = useEffectEvent(
     (panelId: PanelId, tabId: string, path: string, shouldApply?: () => boolean) => {
       if (isRemotePath(path)) return;
       const gitPathKey = normalizeLocationPath(path).toLowerCase();
 
-      // Register this tab as waiting for the result of this path.
       const waiting = pendingGitStatusTabsRef.current.get(gitPathKey) ?? [];
       waiting.push({ panelId, tabId, shouldApply });
       pendingGitStatusTabsRef.current.set(gitPathKey, waiting);
 
-      // If an IPC call for this path is already in-flight, don't make another.
       if (pendingGitStatusRef.current.has(gitPathKey)) return;
       pendingGitStatusRef.current.add(gitPathKey);
 
       void workspaceGateway
         .getGitStatus(path)
-        .then((result) => {
-          pendingGitStatusRef.current.delete(gitPathKey);
-          const tabsToDispatch = pendingGitStatusTabsRef.current.get(gitPathKey) ?? [];
-          pendingGitStatusTabsRef.current.delete(gitPathKey);
-
-          for (const { panelId: pId, tabId: tId, shouldApply: apply } of tabsToDispatch) {
-            if (apply ? apply() : true) {
-              if (result.isGitRepo) {
-                dispatch({ type: "tabGitStatusUpdated", payload: { panelId: pId, tabId: tId, gitStatus: result.statuses } });
-              } else {
-                dispatch({ type: "tabGitStatusUpdated", payload: { panelId: pId, tabId: tId, gitStatus: undefined } });
-              }
-            }
-          }
-        })
+        .then((result) => broadcastGitStatusResult(gitPathKey, result))
         .catch((error) => {
-          pendingGitStatusRef.current.delete(gitPathKey);
-          pendingGitStatusTabsRef.current.delete(gitPathKey);
+          broadcastGitStatusError(gitPathKey);
           devWarn("[useWorkspaceController] git status fetch failed", error);
         });
     }
   );
 
   /**
-   * Fetches git status for a navigation parent directory and dispatches navigation/git-status-loaded.
+   * Fetches git status for a navigation parent directory and dispatches
+   * navigation/git-status-loaded. Piggybacks on any in-flight IPC call
+   * for the same path so that tab and navigation consumers share a
+   * single backend request.
    */
   const fetchGitStatusForNavigationDir = useEffectEvent((directory: string) => {
     if (isRemotePath(directory)) return;
     const gitPathKey = normalizeLocationPath(directory).toLowerCase();
 
-    // If already loading or loaded, skip
-    if (pendingGitStatusRef.current.has(gitPathKey) || state.navigation.gitStatusLoadingDirs.includes(directory)) {
-      return;
-    }
+    const waitingDirs = pendingGitStatusNavigationDirsRef.current.get(gitPathKey) ?? new Set<string>();
+    if (waitingDirs.has(directory)) return;
+    waitingDirs.add(directory);
+    pendingGitStatusNavigationDirsRef.current.set(gitPathKey, waitingDirs);
+
+    if (pendingGitStatusRef.current.has(gitPathKey)) return;
+    pendingGitStatusRef.current.add(gitPathKey);
 
     dispatch({ type: "navigation/git-status-loading", payload: { directory } });
-    pendingGitStatusRef.current.add(gitPathKey);
 
     void workspaceGateway
       .getGitStatus(directory)
-      .then((result) => {
-        pendingGitStatusRef.current.delete(gitPathKey);
-        if (result.isGitRepo) {
-          dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: result.statuses } });
-        } else {
-          dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: {} } });
-        }
-      })
+      .then((result) => broadcastGitStatusResult(gitPathKey, result))
       .catch((error) => {
-        pendingGitStatusRef.current.delete(gitPathKey);
-        dispatch({ type: "navigation/git-status-loaded", payload: { directory, statuses: {} } });
+        broadcastGitStatusError(gitPathKey);
         devWarn("[useWorkspaceController] navigation git status fetch failed", error);
       });
   });
@@ -955,8 +985,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const flushLiveRefresh = useEffectEvent(() => {
     const directoryRoots = Array.from(pendingLiveDirectoryRootsRef.current);
     const refreshNavigation = pendingLiveNavigationRefreshRef.current;
+    const navigationGitRoots = Array.from(pendingLiveNavigationGitRootsRef.current);
+    const gitChangedRoots = Array.from(pendingLiveGitChangedRootsRef.current);
     pendingLiveDirectoryRootsRef.current.clear();
     pendingLiveNavigationRefreshRef.current = false;
+    pendingLiveNavigationGitRootsRef.current.clear();
+    pendingLiveGitChangedRootsRef.current.clear();
     liveRefreshTimeoutRef.current = null;
 
     if (directoryRoots.length > 0) {
@@ -964,6 +998,35 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     if (refreshNavigation && hasVisibleNavigationTab(state)) {
       void refreshNavigationTargets();
+      for (const dir of navigationGitRoots) {
+        fetchGitStatusForNavigationDir(dir);
+      }
+    }
+
+    if (gitChangedRoots.length > 0) {
+      const parentDirs = new Set<string>();
+      for (const repoRoot of gitChangedRoots) {
+        const parentPath = getParentLocationPath(repoRoot);
+        if (parentPath) {
+          parentDirs.add(normalizeLocationPath(parentPath));
+        }
+      }
+      if (hasVisibleNavigationTab(state)) {
+        for (const dir of parentDirs) {
+          fetchGitStatusForNavigationDir(dir);
+        }
+      }
+      for (const panelId of getVisiblePanelIds(state.layoutMode)) {
+        const tab = getActiveTab(state.panels[panelId]);
+        if (!isDirectoryTab(tab) || tab.snapshot.location.kind !== "local") continue;
+        const tabPath = normalizeLocationPath(tab.snapshot.location.path).toLowerCase();
+        for (const repoRoot of gitChangedRoots) {
+          if (tabPath === repoRoot.toLowerCase() || tabPath.startsWith(repoRoot.toLowerCase() + "\\")) {
+            fetchGitStatusForTab(panelId as PanelId, tab.id, tab.snapshot.location.path);
+            break;
+          }
+        }
+      }
     }
   });
 
@@ -973,6 +1036,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     if (event.navigationParentRoots.length > 0) {
       pendingLiveNavigationRefreshRef.current = true;
+      for (const root of event.navigationParentRoots) {
+        pendingLiveNavigationGitRootsRef.current.add(root);
+      }
+    }
+    for (const root of event.gitChangedRoots ?? []) {
+      pendingLiveGitChangedRootsRef.current.add(root);
     }
     if (liveRefreshTimeoutRef.current) {
       clearTimeout(liveRefreshTimeoutRef.current);
@@ -1061,6 +1130,41 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       // WatchRootsManager.dispose() 会负责清理
     };
   }, [handleWorkspaceFsChanged, pushNotification, workspaceGateway]);
+
+  const lastFocusGitRefreshRef = useRef(0);
+  const refreshGitStatusOnFocus = useEffectEvent(() => {
+    const now = Date.now();
+    if (now - lastFocusGitRefreshRef.current < 2000) return;
+    if (state.status !== "ready") return;
+    lastFocusGitRefreshRef.current = now;
+
+    if (hasVisibleNavigationTab(state)) {
+      const parentDirs = new Set<string>();
+      for (const item of state.navigation.items) {
+        if (!isLocalWatchPath(item.path)) continue;
+        const parentPath = getParentLocationPath(item.path);
+        if (parentPath) {
+          parentDirs.add(normalizeLocationPath(parentPath));
+        }
+      }
+      for (const dir of parentDirs) {
+        fetchGitStatusForNavigationDir(dir);
+      }
+    }
+
+    for (const panelId of getVisiblePanelIds(state.layoutMode)) {
+      const tab = getActiveTab(state.panels[panelId]);
+      if (isDirectoryTab(tab) && tab.snapshot.location.kind === "local" && isLocalWatchPath(tab.snapshot.location.path)) {
+        fetchGitStatusForTab(panelId as PanelId, tab.id, tab.snapshot.location.path);
+      }
+    }
+  });
+
+  useEffect(() => {
+    const handler = () => refreshGitStatusOnFocus();
+    window.addEventListener("focus", handler);
+    return () => window.removeEventListener("focus", handler);
+  }, [refreshGitStatusOnFocus]);
 
   const scheduleDelayedRefreshPanelsForPaths = useEffectEvent((paths: string[]) => {
     const uniquePaths = Array.from(new Set(paths.map((path) => normalizeLocationPath(path))));

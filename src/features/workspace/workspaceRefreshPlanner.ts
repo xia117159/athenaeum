@@ -42,11 +42,13 @@ export function getVisibleWatchRoots(state: WorkspaceState) {
   }
 
   const navigationParentPaths = new Set<string>();
+  const gitSentinelPaths = new Set<string>();
   if (navigationVisible) {
     for (const item of state.navigation.items) {
       if (!isLocalWatchPath(item.path)) {
         continue;
       }
+      gitSentinelPaths.add(normalizeLocationPath(item.path));
       const parentPath = getParentLocationPath(item.path);
       if (parentPath) {
         navigationParentPaths.add(normalizeLocationPath(parentPath));
@@ -54,9 +56,14 @@ export function getVisibleWatchRoots(state: WorkspaceState) {
     }
   }
 
+  for (const path of directoryPaths) {
+    gitSentinelPaths.add(path);
+  }
+
   return {
     directoryPaths: Array.from(directoryPaths).sort((left, right) => left.localeCompare(right)),
-    navigationParentPaths: Array.from(navigationParentPaths).sort((left, right) => left.localeCompare(right))
+    navigationParentPaths: Array.from(navigationParentPaths).sort((left, right) => left.localeCompare(right)),
+    gitSentinelPaths: Array.from(gitSentinelPaths).sort((left, right) => left.localeCompare(right))
   };
 }
 
