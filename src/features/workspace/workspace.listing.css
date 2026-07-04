@@ -589,9 +589,12 @@ body.is-column-pointer-dragging * {
 }
 
 .file-listing--list,
-.file-listing--tiles,
 .file-listing--content {
   --file-icon-size: 16px;
+}
+
+.file-listing--tiles {
+  --file-icon-size: 48px;
 }
 
 .file-card,
@@ -643,27 +646,54 @@ body.is-column-pointer-dragging * {
   min-height: calc(1.35em * 2);
 }
 
-.file-card__meta {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .file-list-item {
   padding: 8px 10px;
 }
 
 .file-card--tile {
-  gap: 10px;
-  padding: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
 }
 
-.file-card__leading {
-  min-width: 0;
-}
-
-.file-card__meta {
+.file-card__tile-icon {
+  flex-shrink: 0;
   display: grid;
-  gap: 4px;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+}
+
+.file-card__tile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.file-card__tile-name {
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-card__tile-type,
+.file-card__tile-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-card--tile .drive-usage-bar {
+  min-width: 140px;
+  max-width: 200px;
 }
 
 .file-content-item {

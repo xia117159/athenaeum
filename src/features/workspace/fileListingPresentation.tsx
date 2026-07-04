@@ -206,8 +206,9 @@ export function getInlineIconSpec(viewMode: TabViewMode): InlineIconSpec {
       return { displaySize: 16, imageList: "small" };
     case "details":
       return { displaySize: 16, imageList: "sys-small" };
-    case "list":
     case "tiles":
+      return { displaySize: 48, imageList: "extra-large" };
+    case "list":
     case "content":
     default:
       return { displaySize: 16, imageList: "sys-small" };

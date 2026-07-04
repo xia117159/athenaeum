@@ -111,8 +111,31 @@ export function WorkspaceContextMenuPopover({
     navigator.clipboard?.writeText(text).catch(() => {});
   };
 
+  const adjustSubmenuPosition = (wrapper: HTMLElement) => {
+    const items = wrapper.querySelector(".context-menu__submenu-items") as HTMLElement | null;
+    if (!items) return;
+    items.style.removeProperty("left");
+    items.style.removeProperty("right");
+    items.style.removeProperty("top");
+    const rect = items.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (rect.right > vw - MENU_VIEWPORT_PADDING) {
+      items.style.left = "auto";
+      items.style.right = "calc(100% - 1px)";
+    }
+    if (rect.bottom > vh - MENU_VIEWPORT_PADDING) {
+      items.style.top = `${-3 - (rect.bottom - vh + MENU_VIEWPORT_PADDING)}px`;
+    }
+  };
+
   const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
-    <div className={`context-menu__submenu${disabled ? " is-disabled" : ""}`} role="none">
+    <div
+      className={`context-menu__submenu${disabled ? " is-disabled" : ""}`}
+      role="none"
+      onMouseEnter={(e) => adjustSubmenuPosition(e.currentTarget)}
+      onFocusCapture={(e) => adjustSubmenuPosition(e.currentTarget)}
+    >
       <button
         type="button"
         className="context-menu__item context-menu__item--submenu-trigger"

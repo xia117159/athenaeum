@@ -1090,12 +1090,15 @@ export function FileListingShell({
       );
     });
 
-  const renderTileCards = () =>
-    sortedEntries.map((entry) => {
+  const renderTileCards = () => {
+    const tileIcon = inlineIconSpec;
+    return sortedEntries.map((entry) => {
       const isSelected = selectedEntryIds.includes(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const di = entry.driveInfo;
+      const drivePct = di?.totalBytes != null ? Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100)) : null;
       return (
         <div
           key={entry.id}
@@ -1111,16 +1114,32 @@ export function FileListingShell({
           {...entryClipboardAttrs(entry)}
           {...buildEntryHandlers(entry)}
         >
-          <div className="file-card__leading">{renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}</div>
-          <div className="file-card__meta">
-            <span>类型: {getEntryTypeLabel(entry)}</span>
-            <span>大小: {entry.sizeLabel}</span>
-            <span>修改: {entry.modifiedLabel}</span>
+          <div className="file-card__tile-icon">
+            <FileSystemIcon kind={entry.kind} path={entry.path} extension={entry.extension}
+              size={tileIcon.displaySize} imageList={tileIcon.imageList} hidden={entry.isHidden}
+              gitStatus={lookupGitStatus(gitStatus, entry.path)} />
           </div>
-          {entry.driveInfo && renderDriveInfo(entry.driveInfo)}
+          <div className="file-card__tile-info">
+            <span className="file-card__tile-name" title={entry.name}>{renderEntryNameContent(entry)}</span>
+            {drivePct != null && di ? (
+              <>
+                <div className="drive-usage-bar"><div className={`drive-usage-bar__fill${drivePct >= 90 ? " drive-usage-bar__fill--critical" : ""}`} style={{ width: `${drivePct}%` }} /></div>
+                <span className="file-card__tile-detail">可用空间: {formatDriveSize(di.availableBytes)}</span>
+                <span className="file-card__tile-detail">总大小: {formatDriveSize(di.totalBytes)}</span>
+              </>
+            ) : entry.kind === "folder" ? (
+              <span className="file-card__tile-type">{getEntryTypeLabel(entry)}</span>
+            ) : (
+              <>
+                <span className="file-card__tile-detail">{entry.sizeLabel}</span>
+                <span className="file-card__tile-detail">{entry.modifiedLabel}</span>
+              </>
+            )}
+          </div>
         </div>
       );
     });
+  };
 
   const renderContentRows = () =>
     sortedEntries.map((entry) => {
