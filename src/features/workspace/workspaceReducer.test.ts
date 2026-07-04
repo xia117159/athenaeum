@@ -2640,3 +2640,110 @@ assertTest("workspaceReducer entering a new directory resets the anchor to the f
   assert.equal(getActiveTab(navigated.panels["panel-1"]).selectionAnchorId, nextSnapshot.entries[0].id);
 });
 
+assertTest("workspaceReducer select-next-column (delta +1) advances by one item", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: 1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[1]]);
+});
+
+assertTest("workspaceReducer select-previous-column (delta -1) retreats by one item with clamp", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 3) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[2].id] }
+  } as WorkspaceAction);
+
+  const movedLeft = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: -1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(movedLeft.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[1]]);
+});
+
+assertTest("workspaceReducer select-previous-column (delta -1) from first entry clamps to first", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const entries = activeTab.snapshot.entries;
+  if (entries.length < 2) return;
+  const orderedEntryIds = entries.map((entry) => entry.id);
+
+  const seeded = workspaceReducer(state, {
+    type: "entrySelectionSet",
+    payload: { panelId: "panel-1", tabId: activeTab.id, entryIds: [entries[0].id] }
+  } as WorkspaceAction);
+
+  const moved = workspaceReducer(seeded, {
+    type: "entryFocusMoved",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      orderedEntryIds,
+      move: { kind: "delta", delta: -1 }
+    }
+  } as WorkspaceAction);
+  assert.deepEqual(getActiveTab(moved.panels["panel-1"]).selectedEntryIds, [orderedEntryIds[0]]);
+});
+
+assertTest("workspaceReducer tabSnapshotCommitted with previousPath anchors to matching entry", () => {
+  const state = createState();
+  const activeTab = getActiveTab(state.panels["panel-1"]);
+  const currentPath = activeTab.snapshot.location.path;
+  const parentPath = activeTab.snapshot.entries.find((e) => e.kind === "folder")?.path;
+  if (!parentPath) return;
+
+  const parentSnapshot = resolveMockDirectory(parentPath);
+  if (parentSnapshot.entries.length === 0) return;
+
+  const previousPath = currentPath;
+  const navigated = workspaceReducer(state, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1",
+      tabId: activeTab.id,
+      snapshot: parentSnapshot,
+      pushHistory: false,
+      previousPath
+    }
+  });
+
+  const navigatedTab = getActiveTab(navigated.panels["panel-1"]);
+  const matchingEntry = parentSnapshot.entries.find(
+    (entry) => entry.path === previousPath || entry.path === previousPath.replace(/\\/g, "\\")
+  );
+  if (matchingEntry) {
+    assert.deepEqual(navigatedTab.selectedEntryIds, [matchingEntry.id]);
+    assert.equal(navigatedTab.selectionAnchorId, matchingEntry.id);
+  } else {
+    // Fallback: first entry.
+    assert.deepEqual(navigatedTab.selectedEntryIds, [parentSnapshot.entries[0].id]);
+  }
+});
+

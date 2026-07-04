@@ -128,6 +128,14 @@ export interface DriveInfo {
   label: string;
 }
 
+export interface DriveRoot {
+  path: string;
+  label: string;
+  driveType: string;
+  totalBytes: number | null;
+  availableBytes: number | null;
+}
+
 export interface Bookmark {
   id: string;
   name: string;

@@ -699,3 +699,34 @@ body.is-column-pointer-dragging * {
   font-size: 12px;
   white-space: nowrap;
 }
+
+.drive-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.drive-usage-bar {
+  height: 14px;
+  background: var(--border-subtle, #e0e0e0);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 120px;
+}
+
+.drive-usage-bar__fill {
+  height: 100%;
+  background: #0078d4;
+  transition: width 0.2s;
+}
+
+.drive-usage-bar__fill--critical {
+  background: #d13438;
+}
+
+.drive-info__text {
+  white-space: nowrap;
+}

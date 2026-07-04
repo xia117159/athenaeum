@@ -68,6 +68,7 @@ function createActions(overrides: Record<string, unknown> = {}) {
     createFolder() {},
     createFile() {},
     openNewTab() {},
+    navigateToPath() {},
     refreshPanel() {},
     copySelection() {},
     cutSelection() {},
@@ -155,6 +156,8 @@ export const completion = (async () => {
             viewMode: "details" as TabViewMode,
             tab: directoryTab as never,
             actions: createActions() as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );
@@ -177,6 +180,8 @@ export const completion = (async () => {
             viewMode: "details" as TabViewMode,
             tab: directoryTab as never,
             actions: createActions() as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );
@@ -225,6 +230,8 @@ export const completion = (async () => {
                 sortCalls.push(args);
               }
             }) as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );
@@ -295,6 +302,8 @@ export const completion = (async () => {
               pasteEntryComment: (...args: unknown[]) => calls.push(["paste", ...args]),
               removeEntryComment: (...args: unknown[]) => calls.push(["remove", ...args])
             }) as never,
+            layoutMode: "single" as never,
+            panelIds: ["panel-1"] as never,
             onClose: () => undefined
           })
         );

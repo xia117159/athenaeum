@@ -52,6 +52,7 @@ import type {
   SortState,
   TabViewMode
 } from "./types";
+import { formatDriveSize } from "./workspaceDirectoryGateway";
 
 type DropOperation = "copy" | "move";
 
@@ -298,6 +299,7 @@ export function FileListingShell({
   viewMode,
   inlineEdit,
   clipboard,
+  keyboardNavToken,
   onSort,
   onSelect,
   onSelectMultiple,
@@ -324,7 +326,8 @@ export function FileListingShell({
   onInlineEditChange,
   onInlineEditCommit,
   onInlineEditCancel,
-  gitStatus
+  gitStatus,
+  selectionCursorId
 }: {
   panelId: PanelId;
   tabId: string;
@@ -336,6 +339,7 @@ export function FileListingShell({
   viewMode: TabViewMode;
   inlineEdit?: InlineEditState;
   clipboard?: ClipboardState;
+  keyboardNavToken?: symbol;
   onSort: (columnId: ColumnId) => void;
   onSelect: (entry: EntryViewModel, multi: boolean) => void;
   onSelectMultiple?: (entryIds: string[]) => void;
@@ -363,6 +367,7 @@ export function FileListingShell({
   onInlineEditCommit: (value?: string) => void;
   onInlineEditCancel: () => void;
   gitStatus?: Record<string, GitFileStatus>;
+  selectionCursorId?: string | null;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
   const inlineCreateEntry: ListingEntry | undefined =
@@ -387,6 +392,40 @@ export function FileListingShell({
   const sortedEntries: ListingEntry[] = inlineCreateEntry
     ? [inlineCreateEntry, ...sortEntries(entries, sort, currentPath)]
     : sortEntries(entries, sort, currentPath);
+
+  const prevKeyboardNavTokenRef = useRef<symbol | undefined>(undefined);
+
+  // 键盘令牌变化时滚动到焦点项
+  // 直接从 selectedEntryIds 计算焦点，避免 focusEntryId state 的异步更新时序问题
+  useEffect(() => {
+    if (!keyboardNavToken || keyboardNavToken === prevKeyboardNavTokenRef.current) {
+      return;
+    }
+    prevKeyboardNavTokenRef.current = keyboardNavToken;
+    const focusId = selectionCursorId ?? selectedEntryIds[selectedEntryIds.length - 1] ?? null;
+    if (!focusId) {
+      return;
+    }
+    const element = document.getElementById(`entry-${focusId}`) as HTMLElement | null;
+    const scrollContainer = scrollContainerRef.current;
+    if (!element || !scrollContainer) {
+      return;
+    }
+    // 手动计算滚动位置以考虑 sticky header 的遮挡
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const stickyHeader = scrollContainer.querySelector(".file-listing__header") as HTMLElement | null;
+    const headerHeight = stickyHeader ? stickyHeader.getBoundingClientRect().height : 0;
+    const marginTop = headerHeight + 2;
+    const marginBottom = 2;
+    const elementTop = elementRect.top - containerRect.top;
+    const elementBottom = elementRect.bottom - containerRect.top;
+    if (elementTop < marginTop) {
+      scrollContainer.scrollTop -= marginTop - elementTop;
+    } else if (elementBottom > containerRect.height - marginBottom) {
+      scrollContainer.scrollTop += elementBottom - (containerRect.height - marginBottom);
+    }
+  }, [keyboardNavToken, selectedEntryIds]);
   const selectedPaths = entries.filter((entry) => selectedEntryIds.includes(entry.id)).map((entry) => entry.path);
   const cutPathSet = new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -935,6 +974,17 @@ export function FileListingShell({
     };
   };
 
+  const renderDriveInfo = (di: NonNullable<EntryViewModel["driveInfo"]>) => {
+    if (di.totalBytes == null) return null;
+    const pct = Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100));
+    return (
+      <div className="drive-info">
+        <div className="drive-usage-bar"><div className={`drive-usage-bar__fill${pct >= 90 ? " drive-usage-bar__fill--critical" : ""}`} style={{ width: `${pct}%` }} /></div>
+        <span className="drive-info__text">可用: {formatDriveSize(di.availableBytes)} / 总计: {formatDriveSize(di.totalBytes)}</span>
+      </div>
+    );
+  };
+
   const renderEmptyState = () => <div className="file-listing__empty">当前目录为空</div>;
 
   const renderDetailsRows = () =>
@@ -945,9 +995,10 @@ export function FileListingShell({
       const isCut = isCutEntry(entry);
       return (
         <div
-          key={entry.id}
+          key={`entry-${entry.id}`}
           className={`file-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          id={`entry-${entry.id}`}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -969,6 +1020,7 @@ export function FileListingShell({
               </div>
             ))}
           </div>
+          {entry.driveInfo && renderDriveInfo(entry.driveInfo)}
         </div>
       );
     });
@@ -982,6 +1034,7 @@ export function FileListingShell({
       return (
         <div
           key={entry.id}
+          id={`entry-${entry.id}`}
           className={`file-card file-card--icon${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
@@ -1020,6 +1073,7 @@ export function FileListingShell({
       return (
         <div
           key={entry.id}
+          id={`entry-${entry.id}`}
           className={`file-list-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
@@ -1045,6 +1099,7 @@ export function FileListingShell({
       return (
         <div
           key={entry.id}
+          id={`entry-${entry.id}`}
           className={`file-card file-card--tile${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}
@@ -1062,6 +1117,7 @@ export function FileListingShell({
             <span>大小: {entry.sizeLabel}</span>
             <span>修改: {entry.modifiedLabel}</span>
           </div>
+          {entry.driveInfo && renderDriveInfo(entry.driveInfo)}
         </div>
       );
     });
@@ -1075,6 +1131,7 @@ export function FileListingShell({
       return (
         <div
           key={entry.id}
+          id={`entry-${entry.id}`}
           className={`file-content-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
           style={{ "--row-accent": entry.accentColor } as CSSProperties}
           data-panel-id={panelId}

@@ -117,6 +117,20 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     description: "复制当前选中项。"
   },
   {
+    id: "copy-name",
+    action: "复制名称",
+    scope: "listing",
+    binding: "Alt+Shift+N",
+    description: "复制当前选中项的名称到系统剪贴板。"
+  },
+  {
+    id: "copy-path",
+    action: "复制路径",
+    scope: "listing",
+    binding: "Alt+Shift+P",
+    description: "复制当前选中项的完整路径到系统剪贴板。"
+  },
+  {
     id: "paste",
     action: "粘贴",
     scope: "listing",
@@ -243,6 +257,20 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     description: "在列表中向下翻页单选。"
   },
   {
+    id: "select-previous-column",
+    action: "上一列",
+    scope: "listing",
+    binding: "Left",
+    description: "在图标/平铺/内容视图中单选左一列。"
+  },
+  {
+    id: "select-next-column",
+    action: "下一列",
+    scope: "listing",
+    binding: "Right",
+    description: "在图标/平铺/内容视图中单选右一列。"
+  },
+  {
     id: "extend-previous",
     action: "扩展到上一项",
     scope: "listing",
@@ -290,13 +318,6 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "listing",
     binding: "Enter",
     description: "打开当前选中的文件夹或文件。"
-  },
-  {
-    id: "navigate-parent",
-    action: "返回上一级",
-    scope: "listing",
-    binding: "Backspace",
-    description: "返回当前目录的上一级。"
   }
 ];
 
@@ -702,7 +723,8 @@ function cloneDirectorySnapshot(snapshot: DirectorySnapshot): DirectorySnapshot 
       isHidden: entry.isHidden,
       isSystem: entry.isSystem,
       isProtectedOperatingSystem: entry.isProtectedOperatingSystem,
-      tags: [...entry.tags]
+      tags: [...entry.tags],
+      driveInfo: entry.driveInfo ? { ...entry.driveInfo } : undefined
     }))
   };
 }
@@ -804,12 +826,10 @@ function buildColorRuleMatcher(rule: BackendColorRule) {
 
 function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
   const byId = new Map(shortcuts.map((shortcut) => [shortcut.id, shortcut]));
-  const merged = DEFAULT_SHORTCUTS.map((shortcut) => ({
+  return DEFAULT_SHORTCUTS.map((shortcut) => ({
     ...shortcut,
     ...(byId.get(shortcut.id) ?? {})
   }));
-  const knownIds = new Set(merged.map((shortcut) => shortcut.id));
-  return [...merged, ...shortcuts.filter((shortcut) => !knownIds.has(shortcut.id))];
 }
 
 export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsModel {

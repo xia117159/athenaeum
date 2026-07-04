@@ -417,6 +417,8 @@ export function WorkspaceView() {
           tab={state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)}
           clipboard={state.clipboard}
           actions={actions}
+          layoutMode={state.layoutMode}
+          panelIds={getVisiblePanelIds(state.layoutMode)}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
@@ -608,6 +610,7 @@ function PanelLayout({
       fileVisibility={state.fileVisibility}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
+      keyboardNavToken={state.keyboardNavToken}
       actions={actions}
       onSyncScroll={handleSyncScroll}
     />
@@ -726,6 +729,7 @@ function PanelSurface({
   fileVisibility,
   syncScrollEnabled,
   navigation,
+  keyboardNavToken,
   actions,
   onSyncScroll
 }: {
@@ -748,6 +752,7 @@ function PanelSurface({
   fileVisibility: WorkspaceState["fileVisibility"];
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
+  keyboardNavToken?: symbol;
   actions: WorkspaceActions;
   onSyncScroll: (sourcePanelId: PanelId, deltaX: number, deltaY: number) => void;
 }) {
@@ -858,6 +863,8 @@ function PanelSurface({
             inlineEdit={activeTab.inlineEdit}
             clipboard={clipboard}
             gitStatus={activeTab.gitStatus}
+            keyboardNavToken={keyboardNavToken}
+            selectionCursorId={activeTab.selectionCursorId}
             onSort={(columnId) => actions.sortEntries(panel.id, activeTab.id, columnId)}
             onResizeColumn={(columnId, width) => actions.setColumnWidth(panel.id, activeTab.id, columnId, width)}
             onSetColumnVisibility={(columnId: ColumnId, visible: boolean) =>

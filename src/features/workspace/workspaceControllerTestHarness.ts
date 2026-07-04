@@ -120,6 +120,12 @@ export function createTestGateway(
       }
       return resolveMockDirectory(path);
     },
+    async listDriveRoots() {
+      return [
+        { path: "C:\\", label: "本地磁盘 (C:)", driveType: "local", totalBytes: 500_000_000_000, availableBytes: 120_000_000_000 },
+        { path: "D:\\", label: "数据 (D:)", driveType: "local", totalBytes: 1_000_000_000_000, availableBytes: 600_000_000_000 }
+      ];
+    },
     async loadTreeChildren(path) {
       interactions.treeLoadPaths.push(path);
       return overrides.loadTreeChildren ? overrides.loadTreeChildren(path) : [];
@@ -314,9 +320,9 @@ return { statuses: {}, isGitRepo: false };
       interactions.systemDragStarts?.push([...paths]);
       return null;
     },
-    async showNativeContextMenu(paths: string[], x: number, y: number) {
+    async showNativeContextMenu(paths: string[], x: number, y: number, _shortcuts) {
       interactions.nativeContextMenus.push({ paths: [...paths], x, y });
-      return true;
+      return { opened: true };
     },
     async showNativeBackgroundContextMenu(directoryPath: string, x: number, y: number) {
       interactions.nativeBackgroundContextMenus?.push({ directoryPath, x, y });

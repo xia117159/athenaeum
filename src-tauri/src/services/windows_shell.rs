@@ -16,6 +16,8 @@ mod imp {
         NativeBackgroundContextMenuAction, NativeBackgroundContextMenuOptions,
         NativeBackgroundContextMenuResult, NativeBackgroundContextMenuSortColumn,
         NativeBackgroundContextMenuSortDirection, NativeBackgroundContextMenuViewMode,
+        NativeSelectionContextMenuAction, NativeSelectionContextMenuResult,
+        NativeSelectionContextMenuShortcuts,
         NavigationTargetInfo, NavigationTargetKind, NavigationTargetStatus, SystemFileClipboard,
         SystemFileClipboardMode, SystemFileOperationKind, SystemFileOperationRequest,
         WindowsDragDropEnvironment,
@@ -103,6 +105,14 @@ mod imp {
     const BACKGROUND_CMD_SORT_DESC: u32 = 41;
     const BACKGROUND_CMD_PASTE: u32 = 50;
     const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 6;
+
+    const SELECTION_SHELL_CMD_FIRST: u32 = 1000;
+    const SELECTION_CMD_COPY_NAME: u32 = 1;
+    const SELECTION_CMD_COPY_FULL_PATH: u32 = 2;
+    const SELECTION_CMD_COPY_PARENT_PATH: u32 = 3;
+    const SELECTION_CMD_COPY_NAME_NO_EXT: u32 = 4;
+    const SELECTION_CMD_COPY_EXTENSION: u32 = 5;
+    const SELECTION_CUSTOM_TOP_ITEM_COUNT: u32 = 2;
     const ELEVATED_DRAG_DROP_MESSAGE: &str =
         "Explorer file drops are blocked while this process is running elevated.";
 
@@ -1139,11 +1149,59 @@ mod imp {
         (fallback_x, fallback_y)
     }
 
-    fn show_context_menu(context_menu: &IContextMenu, hwnd: HWND, x: i32, y: i32) -> Result<bool> {
+    fn menu_label_with_accelerator(label: &str, accelerator: &str) -> String {
+        if accelerator.is_empty() {
+            label.to_string()
+        } else {
+            format!("{label}\t{accelerator}")
+        }
+    }
+
+    fn append_selection_clipboard_submenu(
+        menu: HMENU,
+        shortcuts: &NativeSelectionContextMenuShortcuts,
+    ) -> Result<()> {
+        create_attached_submenu(menu, "到剪切板", |submenu| {
+            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_NAME, &menu_label_with_accelerator("复制文件名", &shortcuts.copy_name))?;
+            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_FULL_PATH, &menu_label_with_accelerator("复制完整路径", &shortcuts.copy_full_path))?;
+            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_PARENT_PATH, "复制所在文件夹路径")?;
+            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_NAME_NO_EXT, "复制文件名（不含扩展名）")?;
+            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_EXTENSION, "复制扩展名")
+        })
+    }
+
+    fn custom_selection_action_for_command(
+        command_id: u32,
+    ) -> Option<NativeSelectionContextMenuAction> {
+        match command_id {
+            SELECTION_CMD_COPY_NAME => Some(NativeSelectionContextMenuAction::CopyName),
+            SELECTION_CMD_COPY_FULL_PATH => Some(NativeSelectionContextMenuAction::CopyFullPath),
+            SELECTION_CMD_COPY_PARENT_PATH => Some(NativeSelectionContextMenuAction::CopyParentPath),
+            SELECTION_CMD_COPY_NAME_NO_EXT => Some(NativeSelectionContextMenuAction::CopyNameWithoutExtension),
+            SELECTION_CMD_COPY_EXTENSION => Some(NativeSelectionContextMenuAction::CopyExtension),
+            _ => None,
+        }
+    }
+
+    fn show_context_menu(
+        context_menu: &IContextMenu,
+        hwnd: HWND,
+        x: i32,
+        y: i32,
+        shortcuts: &NativeSelectionContextMenuShortcuts,
+    ) -> Result<NativeSelectionContextMenuResult> {
         let popup = PopupMenu::create()?;
+        append_selection_clipboard_submenu(popup.handle(), shortcuts)?;
+        append_menu_separator(popup.handle())?;
         unsafe {
             context_menu
-                .QueryContextMenu(popup.handle(), 0, CMD_FIRST, CMD_LAST, CMF_NORMAL)
+                .QueryContextMenu(
+                    popup.handle(),
+                    SELECTION_CUSTOM_TOP_ITEM_COUNT,
+                    SELECTION_SHELL_CMD_FIRST,
+                    CMD_LAST,
+                    CMF_NORMAL,
+                )
                 .ok()
                 .context("failed to populate shell context menu")?;
         }
@@ -1176,11 +1234,24 @@ mod imp {
         }
 
         if command_id == 0 {
-            return Ok(did_native_menu_open(command_id, menu_last_error));
+            return Ok(NativeSelectionContextMenuResult {
+                opened: did_native_menu_open(command_id, menu_last_error),
+                action: None,
+            });
         }
 
-        let _ = invoke_command(context_menu, hwnd, command_id, CMD_FIRST);
-        Ok(true)
+        if let Some(action) = custom_selection_action_for_command(command_id) {
+            return Ok(NativeSelectionContextMenuResult {
+                opened: true,
+                action: Some(action),
+            });
+        }
+
+        let _ = invoke_command(context_menu, hwnd, command_id, SELECTION_SHELL_CMD_FIRST);
+        Ok(NativeSelectionContextMenuResult {
+            opened: true,
+            action: None,
+        })
     }
 
     fn menu_text(value: &str) -> Vec<u16> {
@@ -1533,8 +1604,9 @@ mod imp {
         paths: Vec<String>,
         x: i32,
         y: i32,
+        shortcuts: NativeSelectionContextMenuShortcuts,
         hwnd_raw: isize,
-    ) -> Result<bool> {
+    ) -> Result<NativeSelectionContextMenuResult> {
         let _com = ComGuard::init()?;
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
         let validated_paths = validate_paths(paths)?;
@@ -1546,7 +1618,7 @@ mod imp {
                 .context("failed to bind shell selection to context menu")?
         };
 
-        show_context_menu(&context_menu, hwnd, x, y)
+        show_context_menu(&context_menu, hwnd, x, y, &shortcuts)
     }
 
     fn start_system_file_drag_inner(
@@ -1631,8 +1703,9 @@ mod imp {
         paths: Vec<String>,
         x: i32,
         y: i32,
+        shortcuts: NativeSelectionContextMenuShortcuts,
         window: &Window<R>,
-    ) -> Result<bool> {
+    ) -> Result<NativeSelectionContextMenuResult> {
         let hwnd = window
             .hwnd()
             .context("failed to resolve Tauri window handle")?;
@@ -1641,7 +1714,7 @@ mod imp {
 
         window
             .run_on_main_thread(move || {
-                let _ = sender.send(show_native_context_menu_inner(paths, x, y, hwnd_raw));
+                let _ = sender.send(show_native_context_menu_inner(paths, x, y, shortcuts, hwnd_raw));
             })
             .context("failed to schedule native context menu on the Tauri main thread")?;
 
@@ -2184,8 +2257,9 @@ pub async fn show_native_context_menu<R: tauri::Runtime>(
     _paths: Vec<String>,
     _x: i32,
     _y: i32,
+    _shortcuts: crate::domain::models::NativeSelectionContextMenuShortcuts,
     _window: &tauri::Window<R>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<crate::domain::models::NativeSelectionContextMenuResult> {
     anyhow::bail!("native context menu is only supported on Windows")
 }
 

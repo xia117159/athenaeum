@@ -75,6 +75,7 @@ export type WorkspaceAction =
   | { type: "tabLockedToggled"; payload: { panelId: PanelId; tabId: string } }
   | { type: "tabTitleRenamed"; payload: { panelId: PanelId; tabId: string; title: string } }
   | { type: "otherTabsClosed"; payload: { panelId: PanelId; tabId: string; includeLocked: boolean } }
+  | { type: "workspaceKeyboardNavTokenSet"; payload: { payload?: symbol } }
   | {
       type: "tabSnapshotCommitted";
       payload: {
@@ -86,6 +87,7 @@ export type WorkspaceAction =
         historyIndex?: number;
         history?: string[];
         selectionReplacements?: SelectionPathReplacement[];
+        previousPath?: string;
       };
     }
   | { type: "tabGitStatusUpdated"; payload: { panelId: PanelId; tabId: string; gitStatus: Record<string, GitFileStatus> | undefined } }
@@ -1621,6 +1623,15 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               tab.expandedNodePaths
             );
 
+            const anchorEntry = pathChanged
+              ? (action.payload.previousPath
+                  ? action.payload.snapshot.entries.find((entry) =>
+                      normalizeLocationPath(entry.path) === normalizeLocationPath(action.payload.previousPath!))
+                  : undefined)
+              : undefined;
+            const fallbackEntry = action.payload.snapshot.entries[0];
+            const selectedEntry = anchorEntry ?? fallbackEntry;
+
             return {
               ...tab,
               title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
@@ -1631,9 +1642,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               history: nextHistory,
               historyIndex: nextHistoryIndex,
               selectedEntryIds: pathChanged
-                ? (action.payload.snapshot.entries[0] ? [action.payload.snapshot.entries[0].id] : [])
+                ? (selectedEntry ? [selectedEntry.id] : [])
                 : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
-              selectionAnchorId: pathChanged ? (action.payload.snapshot.entries[0]?.id ?? null) : tab.selectionAnchorId ?? null,
+              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : tab.selectionAnchorId ?? null,
               selectionCursorId: pathChanged ? null : tab.selectionCursorId ?? null,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
@@ -1899,6 +1910,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : extendRangeSelection(tab, action.payload.orderedEntryIds, action.payload.move)
           )
       ));
+
+    case "workspaceKeyboardNavTokenSet":
+      return { ...state, keyboardNavToken: action.payload.payload ?? Symbol() };
 
     case "tabSortChanged":
       return updatePanel(state, action.payload.panelId, (panel) =>

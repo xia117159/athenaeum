@@ -6,6 +6,8 @@ import type {
 } from "../../app/types";
 
 export type DataSource = "mock" | "tauri";
+
+export const THIS_PC_PATH = "此电脑";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
 export type SettingsSection =
@@ -105,6 +107,12 @@ export interface EntryViewModel {
   comment?: string;
   description: string;
   contentText?: string;
+  driveInfo?: {
+    driveType: string;
+    totalBytes: number | null;
+    availableBytes: number | null;
+    enterable: boolean;
+  };
 }
 
 export interface DirectorySnapshot {
@@ -478,6 +486,23 @@ export interface NativeBackgroundContextMenuResult {
   action?: NativeBackgroundContextMenuAction;
 }
 
+export type NativeSelectionContextMenuAction =
+  | { type: "copyName" }
+  | { type: "copyFullPath" }
+  | { type: "copyParentPath" }
+  | { type: "copyNameWithoutExtension" }
+  | { type: "copyExtension" };
+
+export interface NativeSelectionContextMenuShortcuts {
+  copyName: string;
+  copyFullPath: string;
+}
+
+export interface NativeSelectionContextMenuResult {
+  opened: boolean;
+  action?: NativeSelectionContextMenuAction;
+}
+
 export interface WorkspaceWatchRootsRequest {
   directoryPaths: string[];
   navigationParentPaths: string[];
@@ -643,4 +668,5 @@ export interface WorkspaceState {
   notifications: NotificationItem[];
   contextMenu?: ContextMenuState;
   operations: OperationWorkspaceState;
+  keyboardNavToken?: symbol;
 }

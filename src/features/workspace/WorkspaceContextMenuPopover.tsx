@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
-import type { ClipboardState, ContextMenuState, TabState, TabViewMode } from "./types";
+import type { ClipboardState, ContextMenuState, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -14,6 +14,8 @@ export function WorkspaceContextMenuPopover({
   tab,
   clipboard,
   actions,
+  layoutMode,
+  panelIds,
   onClose
 }: {
   contextMenu: ContextMenuState;
@@ -21,6 +23,8 @@ export function WorkspaceContextMenuPopover({
   tab?: TabState;
   clipboard?: ClipboardState;
   actions: WorkspaceActions;
+  layoutMode: PanelLayoutMode;
+  panelIds: PanelId[];
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -94,6 +98,19 @@ export function WorkspaceContextMenuPopover({
       ? tab.snapshot.entries.find((entry) => entry.path === contextMenu.entryPath)
       : undefined;
 
+  const selectedEntries =
+    tab?.kind === "directory" && tab.snapshot.entries
+      ? tab.snapshot.entries.filter((entry) => (tab.selectedEntryIds ?? []).includes(entry.id))
+      : [];
+  const selectedFolders = selectedEntries.filter((entry) => entry.kind === "folder");
+  const hasSelectedFolders = selectedFolders.length > 0;
+  const adjacentPanelId = panelIds.length > 1
+    ? panelIds[(panelIds.indexOf(contextMenu.panelId) + 1) % panelIds.length]
+    : undefined;
+  const writeClipboard = (text: string) => {
+    navigator.clipboard?.writeText(text).catch(() => {});
+  };
+
   const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
     <div className={`context-menu__submenu${disabled ? " is-disabled" : ""}`} role="none">
       <button
@@ -144,6 +161,41 @@ export function WorkspaceContextMenuPopover({
       />,
       !isDirectoryTab
     );
+
+  const renderClipboardSubmenu = () => {
+    if (!isDirectoryTab || selectedEntries.length === 0) return null;
+    const namesWithoutExt = selectedEntries.map((e) => {
+      const dot = e.name.lastIndexOf(".");
+      return dot > 0 ? e.name.slice(0, dot) : e.name;
+    });
+    const extensions = selectedEntries.map((e) => e.extension.replace(/^\./, "")).filter(Boolean);
+    return renderSubmenu("到剪切板", (
+      <>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.name).join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制文件名</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.path).join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制完整路径</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard([...new Set(selectedEntries.map((e) => e.parentPath))].join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制所在文件夹路径</span>
+        </button>
+        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(namesWithoutExt.join("\n")))}>
+          <span className="context-menu__check" />
+          <span>复制文件名（不含扩展名）</span>
+        </button>
+        {extensions.length > 0 && (
+          <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(extensions.join("\n")))}>
+            <span className="context-menu__check" />
+            <span>复制扩展名</span>
+          </button>
+        )}
+      </>
+    ));
+  };
 
   const renderTabMenu = () => (
     <>
@@ -231,11 +283,27 @@ export function WorkspaceContextMenuPopover({
       </button>
       {contextMenu.scope === "selection" ? (
         <>
+          {hasSelectedFolders && (
+            <>
+              <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.openNewTab(contextMenu.panelId, f.path)))}>
+                <span className="context-menu__check" />
+                <span>在新标签页打开</span>
+              </button>
+              {layoutMode !== "single" && adjacentPanelId && (
+                <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.navigateToPath(adjacentPanelId, f.path)))}>
+                  <span className="context-menu__check" />
+                  <span>在相邻窗格打开</span>
+                </button>
+              )}
+              <div className="context-menu__separator" />
+            </>
+          )}
           <div className="context-menu__separator" />
           <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addSelectedEntriesToNavigation(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>添加到导航页</span>
           </button>
+          {renderClipboardSubmenu()}
           <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copySelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>复制</span>

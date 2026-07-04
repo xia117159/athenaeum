@@ -292,6 +292,16 @@ pub struct DriveInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct DriveRoot {
+    pub path: String,
+    pub label: String,
+    pub drive_type: String,
+    pub total_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Bookmark {
     pub id: String,
     pub name: String,
@@ -563,6 +573,33 @@ pub struct NativeBackgroundContextMenuResult {
     pub opened: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<NativeBackgroundContextMenuAction>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum NativeSelectionContextMenuAction {
+    CopyName,
+    CopyFullPath,
+    CopyParentPath,
+    CopyNameWithoutExtension,
+    CopyExtension,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSelectionContextMenuShortcuts {
+    #[serde(default)]
+    pub copy_name: String,
+    #[serde(default)]
+    pub copy_full_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSelectionContextMenuResult {
+    pub opened: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<NativeSelectionContextMenuAction>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

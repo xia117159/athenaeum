@@ -4,13 +4,14 @@ use tauri::{AppHandle, State, Window};
 
 use crate::{
     domain::models::{
-        GitDirectoryStatus, ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
+        DriveRoot, GitDirectoryStatus, ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget,
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
+        NativeSelectionContextMenuResult, NativeSelectionContextMenuShortcuts,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
         SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WindowsDragDropEnvironment,
         WorkspaceBootstrap, WorkspaceWatchRootsRequest,
     },
-    services::{fs_service, git_status_service, icon_service, remote_service, windows_shell, AppState},
+    services::{drive_service, fs_service, git_status_service, icon_service, remote_service, windows_shell, AppState},
 };
 
 #[tauri::command]
@@ -57,6 +58,11 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
     bootstrap.settings.remote_profiles = super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
 
     Ok(bootstrap)
+}
+
+#[tauri::command]
+pub fn list_drive_roots() -> Result<Vec<DriveRoot>, String> {
+    Ok(drive_service::list_drive_roots())
 }
 
 #[tauri::command]
@@ -177,9 +183,10 @@ pub async fn show_native_context_menu(
     paths: Vec<String>,
     x: i32,
     y: i32,
+    shortcuts: NativeSelectionContextMenuShortcuts,
     window: Window,
-) -> Result<bool, String> {
-    windows_shell::show_native_context_menu(paths, x, y, &window)
+) -> Result<NativeSelectionContextMenuResult, String> {
+    windows_shell::show_native_context_menu(paths, x, y, shortcuts, &window)
         .await
         .map_err(|error| error.to_string())
 }

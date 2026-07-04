@@ -13,6 +13,7 @@ import type {
   TabState,
   WorkspaceBootstrap
 } from "./types";
+import { THIS_PC_PATH } from "./types";
 import {
   cloneColumns,
   DEFAULT_COLUMNS,
@@ -686,6 +687,10 @@ export function normalizeLocationPath(input: string): string {
 
 export function getParentLocationPath(path: string): string | null {
   const normalized = normalizeLocationPath(path);
+
+  if (normalized === THIS_PC_PATH) {
+    return null;
+  }
 
   if (normalized.startsWith("sftp://") || normalized.startsWith("ftp://")) {
     const remoteRoot = getRemoteRootPath(normalized);

@@ -3,7 +3,7 @@ import { createMockWorkspaceBootstrap, normalizeLocationPath } from "./mockData"
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
 import { openCommentWindow } from "./commentWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
-import { eventToShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
+import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
@@ -85,6 +85,7 @@ import type {
   WorkspaceFsChangedEvent,
   WorkspaceState
 } from "./types";
+import { THIS_PC_PATH } from "./types";
 
 export { planNotificationDismissals } from "./workspaceControllerUtils";
 
@@ -666,8 +667,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     const activeSnapshot = activeTab.snapshot;
     const currentPath = activeSnapshot.location.path;
-    const parentPath =
-      activeSnapshot.breadcrumbs[activeSnapshot.breadcrumbs.length - 2]?.path ?? getParentPathForRefresh(currentPath);
+    if (currentPath === THIS_PC_PATH) {
+      return;
+    }
+    const isDriveRoot = /^[A-Za-z]:\\$/.test(normalizeLocationPath(currentPath));
+    const parentPath = isDriveRoot
+      ? THIS_PC_PATH
+      : (activeSnapshot.breadcrumbs[activeSnapshot.breadcrumbs.length - 2]?.path ?? getParentPathForRefresh(currentPath));
     if (!parentPath) {
       return;
     }
@@ -677,7 +683,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void commitNavigation(panelId, parentPath, false, {
       tabId: activeTab.id,
       history: [...historyBeforeCurrent, parentPath, currentPath, ...historyAfterCurrent],
-      historyIndex: historyBeforeCurrent.length
+      historyIndex: historyBeforeCurrent.length,
+      previousPath: currentPath
     });
   });
 
@@ -711,6 +718,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         historyIndex?: number;
         history?: string[];
         selectionReplacements?: SelectionPathReplacement[];
+        previousPath?: string;
       } = {}
     ) => {
       const panel = state.panels[panelId];
@@ -746,7 +754,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             activatePanel: options.activatePanel,
             historyIndex: options.historyIndex,
             history: options.history,
-            selectionReplacements: options.selectionReplacements
+            selectionReplacements: options.selectionReplacements,
+            previousPath: options.previousPath
           }
         });
 
@@ -784,7 +793,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
                   activatePanel: options.activatePanel,
                   historyIndex: options.historyIndex,
                   history: options.history,
-                  selectionReplacements: options.selectionReplacements
+                  selectionReplacements: options.selectionReplacements,
+                  previousPath: options.previousPath
                 }
               });
               return;
@@ -814,7 +824,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
                   activatePanel: options.activatePanel,
                   historyIndex: options.historyIndex,
                   history: options.history,
-                  selectionReplacements: options.selectionReplacements
+                  selectionReplacements: options.selectionReplacements,
+                  previousPath: options.previousPath
                 }
               });
               return;
@@ -1678,7 +1689,43 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         pushNotification("warning", getErrorMessage(error, "无法写入系统文件剪贴板。"));
       });
     }
-    pushNotification("success", `${mode === "copy" ? "已复制" : "已剪切"} ${selectedPaths.length} 项到剪贴板。`);
+    pushNotification("success", `${mode === "copy" ? "已复制" : "已剪切"} ${selectedPaths.length}项到剪贴板。`);
+  });
+
+  const copyEntryName = useEffectEvent((panelId: PanelId) => {
+    if (!getActiveDirectoryTab(state, panelId)) {
+      pushNotification("warning", "当前标签页不支持选择项文件操作。");
+      return;
+    }
+    const selection = getSelectedEntries(state, panelId);
+    if (selection.length === 0) {
+      pushNotification("warning", "请先选择至少一个项目。");
+      return;
+    }
+
+    const selectedNames = selection.map((entry) => entry.name).join("\n");
+    void navigator.clipboard?.writeText(selectedNames).catch(() => {
+      pushNotification("warning", "无法写入系统剪贴板。");
+    });
+    pushNotification("success", `已复制 ${selection.length} 个名称到剪贴板。`);
+  });
+
+  const copyEntryPath = useEffectEvent((panelId: PanelId) => {
+    if (!getActiveDirectoryTab(state, panelId)) {
+      pushNotification("warning", "当前标签页不支持选择项文件操作。");
+      return;
+    }
+    const selection = getSelectedEntries(state, panelId);
+    if (selection.length === 0) {
+      pushNotification("warning", "请先选择至少一个项目。");
+      return;
+    }
+
+    const selectedPaths = selection.map((entry) => entry.path).join("\n");
+    void navigator.clipboard?.writeText(selectedPaths).catch(() => {
+      pushNotification("warning", "无法写入系统剪贴板。");
+    });
+    pushNotification("success", `已复制 ${selection.length} 个路径到剪贴板。`);
   });
 
   const startSystemFileDrag = useEffectEvent((paths: string[]) => {
@@ -2070,8 +2117,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         void clientY;
         return false;
       }
-      const opened = await workspaceGateway.showNativeContextMenu(paths, screenX, screenY);
-      if (!opened) {
+      const result = await workspaceGateway.showNativeContextMenu(paths, screenX, screenY, {
+        copyName: getShortcutBinding(state.settings.model.shortcuts, "copy-name"),
+        copyFullPath: getShortcutBinding(state.settings.model.shortcuts, "copy-path")
+      });
+      if (!result.opened) {
         pushNotification("warning", "Windows 文件操作菜单不可用于这些导航目标。");
         void clientX;
         void clientY;
@@ -2537,16 +2587,59 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    let opened = false;
+    let result: import("./types").NativeSelectionContextMenuResult = { opened: false };
     try {
-      opened = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY);
+      result = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY, {
+        copyName: getShortcutBinding(state.settings.model.shortcuts, "copy-name"),
+        copyFullPath: getShortcutBinding(state.settings.model.shortcuts, "copy-path")
+      });
     } catch {
-      opened = false;
+      result = { opened: false };
     }
-    if (!opened) {
+    if (!result.opened) {
       openFallbackMenu();
       return;
     }
+
+    if (result.action) {
+      const entries = getSelectedEntries(state, request.panelId);
+      let clipboardText = "";
+      switch (result.action.type) {
+        case "copyName":
+          clipboardText = entries.map((e) => e.name).join("\n");
+          break;
+        case "copyFullPath":
+          clipboardText = entries.map((e) => e.path).join("\n");
+          break;
+        case "copyParentPath":
+          clipboardText = Array.from(new Set(entries.map((e) => getParentPathForRefresh(e.path)).filter(Boolean))).join("\n");
+          break;
+        case "copyNameWithoutExtension":
+          clipboardText = entries
+            .map((e) => {
+              const dotIndex = e.name.lastIndexOf(".");
+              return dotIndex > 0 ? e.name.slice(0, dotIndex) : e.name;
+            })
+            .join("\n");
+          break;
+        case "copyExtension":
+          clipboardText = entries
+            .map((e) => {
+              const dotIndex = e.name.lastIndexOf(".");
+              return dotIndex > 0 ? e.name.slice(dotIndex) : "";
+            })
+            .filter(Boolean)
+            .join("\n");
+          break;
+      }
+      if (clipboardText) {
+        void navigator.clipboard?.writeText(clipboardText).catch(() => {
+          pushNotification("warning", "无法写入系统剪贴板。");
+        });
+      }
+      return;
+    }
+
     const parentPaths = Array.from(
       new Set(
         request.paths
@@ -2615,6 +2708,18 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       if (shortcutMatches(shortcuts, "copy", eventBinding) && !editable) {
         event.preventDefault();
         copySelection(state.activePanelId, "copy");
+        return;
+      }
+
+      if (shortcutMatches(shortcuts, "copy-name", eventBinding) && !editable) {
+        event.preventDefault();
+        copyEntryName(state.activePanelId);
+        return;
+      }
+
+      if (shortcutMatches(shortcuts, "copy-path", eventBinding) && !editable) {
+        event.preventDefault();
+        copyEntryPath(state.activePanelId);
         return;
       }
 
@@ -2692,14 +2797,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         "select-next",
         "select-previous-page",
         "select-next-page",
+        "select-previous-column",
+        "select-next-column",
         "extend-previous",
         "extend-next",
         "extend-first",
         "extend-last",
         "select-all",
         "clear-selection",
-        "open-entry",
-        "navigate-parent"
+        "open-entry"
       ] as const;
       const matchedListShortcut = listShortcutIds.find(
         (id) => !editable && shortcutMatches(shortcuts, id, eventBinding)
@@ -2743,6 +2849,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           const targetId = selectedIds[selectedIds.length - 1] ?? orderedEntryIds[0];
           const targetEntry = activeTab.snapshot.entries.find((entry) => entry.id === targetId);
           if (targetEntry) {
+            if (targetEntry.driveInfo && !targetEntry.driveInfo.enterable) {
+              return;
+            }
             if (targetEntry.kind === "folder") {
               void commitNavigation(activePanel.id, targetEntry.path);
             } else {
@@ -2753,21 +2862,23 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           }
           return;
         }
-        if (matchedListShortcut === "navigate-parent") {
-          navigateUpKeepingForwardHistory(state.activePanelId);
-          return;
-        }
-        const dispatchFocusMove = (move: EntryFocusMove) =>
-          dispatch({
-            type: "entryFocusMoved",
-            payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move }
-          });
-        const dispatchRangeExtend = (move: EntryFocusMove) =>
-          dispatch({
-            type: "entryRangeExtended",
-            payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move }
-          });
-        const LIST_PAGE_SIZE = 10; // TODO: 改为按视口可见行数动态计算。
+        const dispatchFocusMove = (move: EntryFocusMove) => {
+          dispatch({ type: "entryFocusMoved", payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move } });
+          dispatch({ type: "workspaceKeyboardNavTokenSet", payload: { payload: Symbol() } });
+        };
+        const dispatchRangeExtend = (move: EntryFocusMove) => {
+          dispatch({ type: "entryRangeExtended", payload: { panelId: activePanel.id, tabId: activeTab.id, orderedEntryIds, move } });
+          dispatch({ type: "workspaceKeyboardNavTokenSet", payload: { payload: Symbol() } });
+        };
+          const LIST_PAGE_SIZE = 10; // TODO: 改为按视口可见行数动态计算。
+          const multiColumnViewModes: TabViewMode[] = ["extra-large-icons", "large-icons", "medium-icons", "small-icons", "list", "tiles"];
+          const isMultiColumnView = multiColumnViewModes.includes(activeTab.viewMode);
+          const getGridColumnCount = (): number => {
+            const body = document.querySelector(`[data-panel-id="${activePanel.id}"] .file-listing__body`);
+            if (!body) return 1;
+            const tracks = getComputedStyle(body).gridTemplateColumns.split(" ").filter(Boolean);
+            return Math.max(tracks.length, 1);
+          };
         switch (matchedListShortcut) {
           case "select-first":
             dispatchFocusMove({ kind: "absolute", position: "first" });
@@ -2776,10 +2887,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             dispatchFocusMove({ kind: "absolute", position: "last" });
             break;
           case "select-previous":
-            dispatchFocusMove({ kind: "delta", delta: -1 });
+            dispatchFocusMove({ kind: "delta", delta: isMultiColumnView ? -getGridColumnCount() : -1 });
             break;
           case "select-next":
-            dispatchFocusMove({ kind: "delta", delta: 1 });
+            dispatchFocusMove({ kind: "delta", delta: isMultiColumnView ? getGridColumnCount() : 1 });
             break;
           case "select-previous-page":
             dispatchFocusMove({ kind: "page", direction: "up", pageSize: LIST_PAGE_SIZE });
@@ -2787,11 +2898,21 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           case "select-next-page":
             dispatchFocusMove({ kind: "page", direction: "down", pageSize: LIST_PAGE_SIZE });
             break;
+          case "select-previous-column":
+            if (isMultiColumnView) {
+              dispatchFocusMove({ kind: "delta", delta: -1 });
+            }
+            break;
+          case "select-next-column":
+            if (isMultiColumnView) {
+              dispatchFocusMove({ kind: "delta", delta: 1 });
+            }
+            break;
           case "extend-previous":
-            dispatchRangeExtend({ kind: "delta", delta: -1 });
+            dispatchRangeExtend({ kind: "delta", delta: isMultiColumnView ? -getGridColumnCount() : -1 });
             break;
           case "extend-next":
-            dispatchRangeExtend({ kind: "delta", delta: 1 });
+            dispatchRangeExtend({ kind: "delta", delta: isMultiColumnView ? getGridColumnCount() : 1 });
             break;
           case "extend-first":
             dispatchRangeExtend({ kind: "absolute", position: "first" });
@@ -3050,9 +3171,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       cancelOperation: (taskId: string) => void cancelOperation(taskId),
       undoLatestOperation: () => void undoLatestOperation(),
       undoOperation: (recordId: string) => void undoOperation(recordId),
-      copySelection: (panelId: PanelId) => copySelection(panelId, "copy"),
-      cutSelection: (panelId: PanelId) => copySelection(panelId, "cut"),
-      startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
+copySelection: (panelId: PanelId) => copySelection(panelId, "copy"),
+cutSelection: (panelId: PanelId) => copySelection(panelId, "cut"),
+copyEntryName: (panelId: PanelId) => copyEntryName(panelId),
+copyEntryPath: (panelId: PanelId) => copyEntryPath(panelId),
+startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       pasteIntoPanel: (panelId: PanelId) => void pasteIntoPanel(panelId),
       editEntryComment: (panelId: PanelId, tabId: string, path: string) => void editEntryComment(panelId, tabId, path),
       copyEntryComment: (path: string, fallbackComment?: string) => void copyEntryComment(path, fallbackComment),

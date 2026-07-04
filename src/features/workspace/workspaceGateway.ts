@@ -7,6 +7,7 @@ import {
 } from "./remoteUri";
 import {
   listRemoteProfilesRequired,
+  listWorkspaceDriveRoots,
   loadWorkspaceTreeChildren,
   resolveWorkspaceDirectory
 } from "./workspaceDirectoryGateway";
@@ -107,6 +108,8 @@ import type {
   NavigationItemUpsertRequest,
   NativeBackgroundContextMenuOptions,
   NativeBackgroundContextMenuResult,
+  NativeSelectionContextMenuResult,
+  NativeSelectionContextMenuShortcuts,
   NavigationTargetInfo,
   PanelLayoutMode,
   RemoteConnectionProfile,
@@ -123,6 +126,7 @@ import type {
 export interface WorkspaceGateway {
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
+  listDriveRoots(): Promise<import("../../app/types").DriveRoot[]>;
   loadTreeChildren(path: string): Promise<DirectoryNode[]>;
   search(
     query: WorkspaceState["search"]["query"],
@@ -201,7 +205,7 @@ export interface WorkspaceGateway {
   setSystemFileClipboard(paths: string[], mode: SystemFileClipboard["mode"]): Promise<void>;
   readSystemFileClipboard(): Promise<SystemFileClipboard | null>;
   startSystemFileDrag(paths: string[]): Promise<SystemFileClipboard["mode"] | null>;
-  showNativeContextMenu(paths: string[], x: number, y: number): Promise<boolean>;
+  showNativeContextMenu(paths: string[], x: number, y: number, shortcuts: NativeSelectionContextMenuShortcuts): Promise<NativeSelectionContextMenuResult>;
   showNativeBackgroundContextMenu(
     directoryPath: string,
     x: number,
@@ -258,6 +262,10 @@ export function createWorkspaceGateway(): WorkspaceGateway {
     async resolveDirectory(path: string) {
       const profiles = await listRemoteProfilesRequired();
       return resolveWorkspaceDirectory(path, profiles);
+    },
+
+    async listDriveRoots() {
+      return listWorkspaceDriveRoots();
     },
 
     async loadTreeChildren(path: string) {
@@ -499,8 +507,8 @@ return { statuses: {}, isGitRepo: false };
       return startNativeSystemFileDrag(paths);
     },
 
-    async showNativeContextMenu(paths, x, y) {
-      return openNativeContextMenu(paths, x, y);
+    async showNativeContextMenu(paths, x, y, shortcuts) {
+      return openNativeContextMenu(paths, x, y, shortcuts);
     },
 
     async showNativeBackgroundContextMenu(directoryPath, x, y, options) {

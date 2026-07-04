@@ -3610,9 +3610,9 @@ export const completion = (async () => {
       const fallbackGateway = createTestGateway(() => undefined, fallbackInteractions, {
         loadBootstrap: () => createMockWorkspaceBootstrap("tauri")
       });
-      fallbackGateway.showNativeContextMenu = async (paths: string[], x: number, y: number) => {
+      fallbackGateway.showNativeContextMenu = async (paths: string[], x: number, y: number, _shortcuts) => {
         fallbackInteractions.nativeContextMenus.push({ paths: [...paths], x, y });
-        return false;
+        return { opened: false };
       };
 
       function FallbackHarness() {

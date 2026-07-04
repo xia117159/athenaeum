@@ -58,6 +58,8 @@ assertTest("getShortcutBinding returns user bindings and falls back to drag move
   assert.equal(getShortcutBinding([], "undo"), "Ctrl+Z");
   assert.equal(getShortcutBinding([], "navigate-up"), "Alt+Up");
   assert.equal(getShortcutBinding([], "navigate-forward"), "Alt+Right");
+  assert.equal(getShortcutBinding([], "copy-name"), "Alt+Shift+N");
+  assert.equal(getShortcutBinding([], "copy-path"), "Alt+Shift+P");
 });
 
 assertTest("shortcutMatches does not treat empty user bindings as active shortcuts", () => {
@@ -174,6 +176,14 @@ assertTest("eventToShortcutCaptureCandidate creates live capture labels from key
       isComposing: true
     } as KeyboardEvent),
     ""
+  );
+});
+
+assertTest("navigate-parent is removed from default shortcut bindings", () => {
+  assert.equal(getShortcutBinding([], "navigate-parent"), "");
+  assert.equal(
+    shortcutMatches(new Map(), "navigate-parent", normalizeShortcutBinding("Backspace")),
+    false
   );
 });
 

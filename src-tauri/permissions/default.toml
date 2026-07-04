@@ -69,7 +69,8 @@ permissions = [
   "allow-transfer-remote-entries",
   "allow-show-native-background-context-menu",
   "allow-show-native-context-menu",
-  "allow-get-git-status"
+  "allow-get-git-status",
+  "allow-list-drive-roots"
 ]
 
 [[permission]]
@@ -416,3 +417,8 @@ commands.allow = ["show_native_background_context_menu"]
 identifier = "allow-get-git-status"
 description = "Allows reading Git status for local directories to display overlay badges."
 commands.allow = ["get_git_status"]
+
+[[permission]]
+identifier = "allow-list-drive-roots"
+description = "Allows enumerating local drive roots for the 此电脑 virtual directory."
+commands.allow = ["list_drive_roots"]

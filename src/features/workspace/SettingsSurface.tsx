@@ -107,7 +107,7 @@ function getLocalizedShortcutAction(shortcut: ShortcutBinding) {
     "focus-next-panel": "切换到下一个面板", "open-search": "打开搜索面板", "new-tab": "新建标签页", "close-tab": "关闭标签页",
     copy: "复制", cut: "剪切", paste: "粘贴", undo: "撤销", "create-folder": "新建文件夹", delete: "删除", rename: "重命名",
     refresh: "刷新", "navigate-up": "上一级", "navigate-forward": "前进", "drag-move": "拖放时移动", "context-menu-toggle": "右键菜单切换",
-    "select-previous": "上一项", "select-next": "下一项", "select-first": "第一项", "select-last": "最后一项", "select-previous-page": "上一页", "select-next-page": "下一页", "extend-previous": "扩展到上一项", "extend-next": "扩展到下一项", "extend-first": "扩展到第一项", "extend-last": "扩展到最后一项", "select-all": "全选", "clear-selection": "清除选择", "open-entry": "打开", "navigate-parent": "返回上一级"
+    "select-previous": "上一项", "select-next": "下一项", "select-first": "第一项", "select-last": "最后一项", "select-previous-page": "上一页", "select-next-page": "下一页", "select-previous-column": "上一列", "select-next-column": "下一列", "extend-previous": "扩展到上一项", "extend-next": "扩展到下一项", "extend-first": "扩展到第一项", "extend-last": "扩展到最后一项", "select-all": "全选", "clear-selection": "清除选择", "open-entry": "打开", "copy-name": "复制文件名", "copy-path": "复制完整路径"
   };
   return dictionary[shortcut.id] ?? dictionary[shortcut.action] ?? shortcut.action;
 }

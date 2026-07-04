@@ -2,6 +2,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   NativeBackgroundContextMenuOptions,
   NativeBackgroundContextMenuResult,
+  NativeSelectionContextMenuResult,
+  NativeSelectionContextMenuShortcuts,
   SystemFileClipboard,
   WindowsDragDropEnvironment
 } from "./types";
@@ -75,23 +77,26 @@ export async function showNativeContextMenu(
   paths: string[],
   x: number,
   y: number,
+  shortcuts: NativeSelectionContextMenuShortcuts,
   invokeFn: WorkspaceInvoke = invoke,
   runtimeHost: RuntimeHost = getRuntimeHost()
-) {
+): Promise<NativeSelectionContextMenuResult> {
+  const fallbackResult: NativeSelectionContextMenuResult = { opened: false };
   if (!hasTauriRuntime(runtimeHost)) {
-    return false;
+    return fallbackResult;
   }
 
   try {
-    const opened = await invokeFn<boolean>("show_native_context_menu", {
+    const result = await invokeFn<NativeSelectionContextMenuResult | boolean>("show_native_context_menu", {
       paths,
       x: Math.round(x),
-      y: Math.round(y)
+      y: Math.round(y),
+      shortcuts
     });
-    return opened;
+    return typeof result === "boolean" ? { opened: result } : result;
   } catch (error) {
     console.warn("Falling back from show_native_context_menu", error);
-    return false;
+    return fallbackResult;
   }
 }
 

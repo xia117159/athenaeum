@@ -1,4 +1,5 @@
 pub mod fs_service;
+pub mod drive_service;
 pub mod file_watcher;
 pub mod git_status_service;
 pub mod icon_service;

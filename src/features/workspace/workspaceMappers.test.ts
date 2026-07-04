@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { normalizeLocationPath } from "./mockData";
+import { getParentLocationPath, normalizeLocationPath } from "./mockData";
 import {
   DEFAULT_COLUMNS,
+  DEFAULT_SHORTCUTS,
   NAVIGATION_COLUMNS,
   DEFAULT_THEME,
   createTabFromSnapshot,
@@ -259,6 +260,10 @@ assertTest("normalizeLocationPath strips Windows verbatim prefixes before furthe
   assert.equal(normalizeLocationPath("\\\\?\\E:\\Workspace\\Logs"), "E:\\Workspace\\Logs");
 });
 
+assertTest("getParentLocationPath returns null for This PC virtual path", () => {
+  assert.equal(getParentLocationPath("此电脑"), null);
+});
+
 assertTest("mapDirectoryListingToSnapshot keeps usable local paths when backend returns canonical Windows paths", () => {
   const snapshot = mapDirectoryListingToSnapshot({
     location: {
@@ -385,7 +390,7 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
   assert.equal(bootstrap.hotlist[0].label, "Builds");
   assert.equal(bootstrap.navigationItems[0].displayName, "Spec");
   assert.equal(bootstrap.navigationItems[0].targetKind, "file");
-  assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "shortcut-1")?.binding, "Ctrl+C");
+  assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "shortcut-1"), undefined);
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "open-search")?.binding, "Ctrl+F");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "drag-move")?.binding, "Shift");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "context-menu-toggle")?.binding, "Shift");
@@ -543,6 +548,51 @@ assertTest("createTabFromSnapshot clones mutable tab fields from overrides", () 
   assert.notEqual(tab.selectedEntryIds, overrides.selectedEntryIds);
   assert.notEqual(tab.expandedNodePaths, overrides.expandedNodePaths);
   assert.notEqual(tab.sort, overrides.sort);
+});
+
+assertTest("DEFAULT_SHORTCUTS does not contain navigate-parent", () => {
+  assert.equal(DEFAULT_SHORTCUTS.some((s) => s.id === "navigate-parent"), false);
+});
+
+assertTest("mergeShortcutDefaults does not carry forward navigate-parent from stored shortcuts", () => {
+  const model = normalizeSettingsModel({
+    shortcuts: [
+      { id: "navigate-parent", action: "返回上一级", scope: "listing", binding: "Backspace", description: "" },
+      { id: "navigate-up", action: "上一级", scope: "panel", binding: "Alt+Up", description: "" }
+    ],
+    colorRules: [],
+    tagRules: [],
+    columns: [],
+    navigationColumns: [],
+    detailsRowHeight: 24,
+    tooltipHoverDelayMs: 350,
+    metadataRetentionHours: null,
+    contextMenu: { defaultMenu: "native" },
+    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", tabMinWidth: 96 }
+  });
+  assert.equal(model.shortcuts.some((s) => s.id === "navigate-parent"), false);
+});
+
+assertTest("mergeShortcutDefaults does not carry forward shortcuts not in the default table", () => {
+  const model = mapSettingsModel({
+    bookmarks: [],
+    hotlist: [],
+    navigationItems: [],
+    tagDefinitions: [],
+    entryTags: [],
+    colorRules: [],
+    shortcuts: [{ id: "shortcut-1", action: "Copy", accelerator: "Ctrl+C", scope: "workspace" }],
+    columns: [],
+    navigationColumns: [],
+    detailsRowHeight: 24,
+    tooltipHoverDelayMs: 350,
+    metadataRetentionHours: null,
+    contextMenu: { defaultMenu: "native" },
+    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", tabMinWidth: 96 },
+    layout: { layoutMode: "single", panelProportions: [1], sidebarWidth: 280, showTree: true, showSearch: false },
+    remoteProfiles: []
+  });
+  assert.equal(model.shortcuts.some((s) => s.id === "shortcut-1"), false);
 });
 
 assertTest("mapFavoriteCollections converts settings snapshot collections into bookmark chips", () => {

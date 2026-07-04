@@ -28,7 +28,7 @@ use commands::{
     },
     workspace::{
         get_git_status, get_item_properties, get_tree_children, get_windows_drag_drop_environment,
-        initialize_workspace, list_directory, open_path_with_system_default,
+        initialize_workspace, list_directory, list_drive_roots, open_path_with_system_default,
         perform_system_file_operation, read_system_file_clipboard, resolve_navigation_targets,
         resolve_system_icon, set_system_file_clipboard, show_native_background_context_menu,
         set_workspace_watch_roots, show_native_context_menu, start_system_file_drag,
@@ -63,6 +63,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize_workspace,
             list_directory,
+            list_drive_roots,
             set_workspace_watch_roots,
             get_item_properties,
             get_tree_children,

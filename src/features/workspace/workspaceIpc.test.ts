@@ -223,50 +223,55 @@ export const workspaceIpcTests = (async () => {
 
   await assertAsyncTest("showNativeContextMenu reports whether the native menu opened", async () => {
     let invokedArgs: Record<string, unknown> | null = null;
+    const shortcuts = { copyName: "Alt+Shift+N", copyFullPath: "Alt+Shift+P" };
 
-    assert.equal(await showNativeContextMenu(["D:\\Projects"], 10.4, 20.6, async <T>() => undefined as T, undefined), false);
+    assert.deepEqual(await showNativeContextMenu(["D:\\Projects"], 10.4, 20.6, shortcuts, async <T>() => undefined as T, undefined), { opened: false });
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10.4,
         20.6,
+        shortcuts,
         async <T>(_command: string, args: Record<string, unknown>) => {
           invokedArgs = args;
           return true as T;
         },
         runtimeWindow
       ),
-      true
+      { opened: true }
     );
     assert.deepEqual(invokedArgs, {
       paths: ["D:\\Projects"],
       x: 10,
-      y: 21
+      y: 21,
+      shortcuts
     });
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10,
         20,
+        shortcuts,
         async <T>() => false as T,
         runtimeWindow
       ),
-      false
+      { opened: false }
     );
 
-    assert.equal(
+    assert.deepEqual(
       await showNativeContextMenu(
         ["D:\\Projects"],
         10,
         20,
+        shortcuts,
         async <T>() => {
           throw new Error("not supported");
         },
         runtimeWindow
       ),
-      false
+      { opened: false }
     );
   });
 

@@ -35,6 +35,8 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["select-next", "Down"],
   ["select-previous-page", "PageUp"],
   ["select-next-page", "PageDown"],
+  ["select-previous-column", "Left"],
+  ["select-next-column", "Right"],
   ["extend-previous", "Shift+Up"],
   ["extend-next", "Shift+Down"],
   ["extend-first", "Shift+Home"],
@@ -42,7 +44,8 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["select-all", "Ctrl+A"],
   ["clear-selection", "Escape"],
   ["open-entry", "Enter"],
-  ["navigate-parent", "Backspace"]
+  ["copy-name", "Alt+Shift+N"],
+  ["copy-path", "Alt+Shift+P"]
 ]);
 
 export const DEFAULT_SHORTCUT_BINDINGS = new Map(
