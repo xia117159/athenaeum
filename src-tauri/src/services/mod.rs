@@ -4,11 +4,13 @@ pub mod file_watcher;
 pub mod git_status_service;
 pub mod icon_service;
 pub mod metadata_store;
+mod native_menu_contract;
 pub mod migration;
 pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
 pub mod settings_store;
+pub mod webview_recovery;
 pub mod windows_shell;
 
 use std::{

@@ -3,8 +3,8 @@ use std::{collections::{HashMap, HashSet}, fs, path::PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::domain::models::{
-    ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign, ShortcutBinding, UiLayout,
-    UiTheme,
+    ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign, FileVisibilitySettings,
+    ShortcutBinding, UiLayout, UiTheme,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -22,6 +22,8 @@ pub struct SettingsStore {
     #[serde(default = "default_metadata_retention_hours")]
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
+    pub file_visibility: FileVisibilitySettings,
+    #[serde(default)]
     pub context_menu: ContextMenuSettings,
     #[serde(default)]
     pub theme: UiTheme,
@@ -38,6 +40,7 @@ impl Default for SettingsStore {
             details_row_height: default_details_row_height(),
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
+            file_visibility: FileVisibilitySettings::default(),
             context_menu: ContextMenuSettings::default(),
             theme: UiTheme::default(),
             file_path: None,
@@ -121,6 +124,10 @@ impl SettingsStore {
 
     pub fn set_metadata_retention_hours(&mut self, value: Option<u64>) {
         self.metadata_retention_hours = normalize_metadata_retention_hours(value);
+    }
+
+    pub fn set_file_visibility(&mut self, value: FileVisibilitySettings) {
+        self.file_visibility = value;
     }
 
     pub fn set_context_menu(&mut self, context_menu: ContextMenuSettings) {
@@ -420,7 +427,7 @@ mod tests {
     use super::{validate_shortcuts, SettingsStore};
     use crate::domain::models::{
         ContextMenuDefaultMenu, ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign,
-        PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme,
+        FileVisibilitySettings, PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme,
     };
 
     struct TestDir {
@@ -518,6 +525,59 @@ mod tests {
         let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
         assert_eq!(reloaded.tooltip_hover_delay_ms, 5000);
         assert_eq!(reloaded.metadata_retention_hours, None);
+    }
+
+    #[test]
+    fn persist_round_trip_preserves_global_file_visibility() {
+        let temp = TestDir::new("file-visibility");
+        let file_path = temp.path.join("layout.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_file_visibility(FileVisibilitySettings {
+            show_hidden: true,
+            show_system: true,
+            hide_protected_operating_system_files: false,
+        });
+        store.persist().expect("persist settings");
+
+        let reloaded = SettingsStore::load_from(file_path.clone()).expect("reload settings");
+        reloaded.persist().expect("persist reloaded settings");
+        let round_trip = SettingsStore::load_from(file_path).expect("reload persisted settings");
+
+        assert!(round_trip.file_visibility.show_hidden);
+        assert!(round_trip.file_visibility.show_system);
+        assert!(
+            !round_trip
+                .file_visibility
+                .hide_protected_operating_system_files
+        );
+    }
+
+    #[test]
+    fn legacy_settings_default_to_hidden_and_system_files_not_shown() {
+        let temp = TestDir::new("legacy-file-visibility");
+        let file_path = temp.path.join("layout.toml");
+        let mut serialized = serde_json::to_value(SettingsStore::load_default())
+            .expect("serialize default settings");
+        serialized
+            .as_object_mut()
+            .expect("settings object")
+            .remove("fileVisibility");
+        fs::write(
+            &file_path,
+            serde_json::to_vec_pretty(&serialized).expect("serialize legacy settings"),
+        )
+        .expect("seed legacy settings");
+
+        let reloaded = SettingsStore::load_from(file_path).expect("reload legacy settings");
+
+        assert!(!reloaded.file_visibility.show_hidden);
+        assert!(!reloaded.file_visibility.show_system);
+        assert!(
+            reloaded
+                .file_visibility
+                .hide_protected_operating_system_files
+        );
     }
 
     #[test]

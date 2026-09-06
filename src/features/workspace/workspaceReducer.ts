@@ -53,7 +53,6 @@ import {
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
 import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
-import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -345,7 +344,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
-    fileVisibility: { ...DEFAULT_FILE_VISIBILITY },
+    fileVisibility: { ...bootstrap.settingsModel.fileVisibility },
     syncScroll: false,
     panels: normalizedPanels,
     activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
@@ -1313,7 +1312,19 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "fileVisibilitySet":
       {
         const fileVisibility = { ...state.fileVisibility, ...action.payload };
-        return hasSameJsonShape(fileVisibility, state.fileVisibility) ? state : { ...state, fileVisibility };
+        return hasSameJsonShape(fileVisibility, state.fileVisibility)
+          ? state
+          : {
+              ...state,
+              fileVisibility,
+              settings: {
+                ...state.settings,
+                model: {
+                  ...state.settings.model,
+                  fileVisibility
+                }
+              }
+            };
       }
 
     case "syncScrollSet":
@@ -2624,6 +2635,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
         return {
           ...state,
+          fileVisibility: model.fileVisibility,
           settings: {
             section: normalizeSettingsSection(action.payload.section ?? state.settings.section),
             model
@@ -2650,6 +2662,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
         return {
           ...state,
+          fileVisibility: model.fileVisibility,
           bookmarks: action.payload.bookmarks,
           hotlist: action.payload.hotlist,
           remoteProfiles: action.payload.remoteProfiles,

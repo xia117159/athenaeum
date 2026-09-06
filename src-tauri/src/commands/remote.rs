@@ -30,6 +30,7 @@ fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
         settings.details_row_height,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
+        settings.file_visibility,
         settings.context_menu,
         settings.theme,
     );

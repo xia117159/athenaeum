@@ -176,6 +176,20 @@ assertTest("workspaceReducer initializes Windows file visibility and sync scroll
   assert.equal(state.syncScroll, false);
 });
 
+assertTest("workspaceReducer initializes global file visibility from persisted settings", () => {
+  const bootstrap = createMockWorkspaceBootstrap();
+  const persistedVisibility = {
+    showHidden: true,
+    showSystem: true,
+    hideProtectedOperatingSystemFiles: false
+  };
+  bootstrap.settingsModel.fileVisibility = persistedVisibility;
+
+  const state = createWorkspaceState(bootstrap);
+
+  assert.deepEqual(state.fileVisibility, persistedVisibility);
+});
+
 assertTest("workspaceReducer updates file visibility switches independently", () => {
   const state = createState();
 
@@ -197,6 +211,7 @@ assertTest("workspaceReducer updates file visibility switches independently", ()
     showSystem: true,
     hideProtectedOperatingSystemFiles: false
   });
+  assert.deepEqual(showProtected.settings.model.fileVisibility, showProtected.fileVisibility);
 });
 
 assertTest("workspaceReducer opens the search panel on the requested search tab", () => {
@@ -2030,6 +2045,11 @@ assertTest("workspaceReducer replaces synced columns but preserves local-only ta
       settingsModel: {
         ...backendDefaults,
         detailsRowHeight: 44,
+        fileVisibility: {
+          showHidden: true,
+          showSystem: false,
+          hideProtectedOperatingSystemFiles: true
+        },
         theme: {
           ...backendDefaults.theme,
           tabMinWidth: 132
@@ -2040,6 +2060,7 @@ assertTest("workspaceReducer replaces synced columns but preserves local-only ta
 
   assert.equal(nextState.bookmarks[0].label, "Synced");
   assert.equal(nextState.settings.model.detailsRowHeight, 44);
+  assert.equal(nextState.fileVisibility.showHidden, true);
   assert.equal(nextState.settings.model.theme.tabMinWidth, 132);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, false);
   assert.equal(nextState.settings.model.tagRules.find((rule) => rule.id === "tag-latest")?.quickFilter, "本地筛选");

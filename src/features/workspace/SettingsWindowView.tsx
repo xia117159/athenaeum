@@ -23,6 +23,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     detailsRowHeight: model.detailsRowHeight,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
+    fileVisibility: { ...model.fileVisibility },
     contextMenu: { ...model.contextMenu },
     theme: { ...model.theme }
   };

@@ -292,6 +292,7 @@ export interface SettingsModel {
   detailsRowHeight: number;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
+  fileVisibility: FileVisibilityState;
   contextMenu: ContextMenuSettings;
   theme: ThemeSettings;
 }

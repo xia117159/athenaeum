@@ -117,7 +117,12 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
       showTree: true,
       showSearch: false
     },
-    remoteProfiles: []
+    remoteProfiles: [],
+    fileVisibility: {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    }
   });
 
   assert.equal(model.theme.panelFocusAccent, "#c02f7a80");
@@ -132,6 +137,11 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
   assert.equal(model.navigationColumns.find((column) => column.id === "path")?.width, "300px");
   assert.equal(model.tooltipHoverDelayMs, 350);
   assert.equal(model.metadataRetentionHours, null);
+  assert.deepEqual(model.fileVisibility, {
+    showHidden: true,
+    showSystem: false,
+    hideProtectedOperatingSystemFiles: false
+  });
 });
 
 assertTest("normalizeSettingsModel normalizes configurable drag highlight colors", () => {
@@ -144,6 +154,11 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
     detailsRowHeight: 24,
     tooltipHoverDelayMs: 9999,
     metadataRetentionHours: -1,
+    fileVisibility: {
+      showHidden: false,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: true
+    },
     contextMenu: {
       defaultMenu: "native"
     },
@@ -567,6 +582,11 @@ assertTest("mergeShortcutDefaults does not carry forward navigate-parent from st
     detailsRowHeight: 24,
     tooltipHoverDelayMs: 350,
     metadataRetentionHours: null,
+    fileVisibility: {
+      showHidden: false,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: true
+    },
     contextMenu: { defaultMenu: "native" },
     theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", tabMinWidth: 96 }
   });

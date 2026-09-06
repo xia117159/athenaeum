@@ -58,6 +58,17 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let state = app.state::<Arc<AppState>>().inner().clone();
             state.initialize_paths(&app_handle)?;
+
+            #[cfg(windows)]
+            {
+                let main_label = services::webview_recovery::MAIN_WEBVIEW_LABEL;
+                if services::webview_recovery::should_install_for_label(main_label) {
+                    if let Some(main_webview) = app.get_webview_window(main_label) {
+                        services::webview_recovery::install(&main_webview)?;
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

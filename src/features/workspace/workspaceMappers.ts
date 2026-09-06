@@ -22,6 +22,7 @@ import type {
   ColumnDefinition,
   DirectoryNode,
   DirectorySnapshot,
+  FileVisibilityState,
   InformationPanelState,
   LayoutRatios,
   NavigationItem,
@@ -33,6 +34,7 @@ import type {
   TabState,
   WorkspaceBootstrap
 } from "./types";
+import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
 
 export { cloneColumns, DEFAULT_COLUMNS, DEFAULT_METADATA_RETENTION_HOURS, DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "./workspaceFileListDefaults";
 export { cloneNavigationColumns, NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
@@ -868,6 +870,7 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
+    fileVisibility: normalizeFileVisibility(settings.fileVisibility),
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settings.contextMenu?.defaultMenu)
     },
@@ -901,6 +904,7 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),
+    fileVisibility: normalizeFileVisibility(settingsModel.fileVisibility),
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settingsModel.contextMenu?.defaultMenu)
     },
@@ -911,6 +915,17 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
       dropHighlightBorder: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightBorder),
       tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)
     }
+  };
+}
+
+export function normalizeFileVisibility(
+  visibility?: Partial<FileVisibilityState> | null
+): FileVisibilityState {
+  return {
+    showHidden: visibility?.showHidden === true,
+    showSystem: visibility?.showSystem === true,
+    hideProtectedOperatingSystemFiles:
+      visibility?.hideProtectedOperatingSystemFiles ?? DEFAULT_FILE_VISIBILITY.hideProtectedOperatingSystemFiles
   };
 }
 

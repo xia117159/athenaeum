@@ -265,15 +265,6 @@ fn is_allowed_extension(path: &Path, extensions: &[String], mode: &ExtensionFilt
 }
 
 fn is_hidden(path: &Path) -> bool {
-    if path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|name| name.starts_with('.'))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -286,7 +277,10 @@ fn is_hidden(path: &Path) -> bool {
 
     #[cfg(not(windows))]
     {
-        false
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .map(|name| name.starts_with('.'))
+            .unwrap_or(false)
     }
 }
 
@@ -524,7 +518,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::run_search;
+    use super::{is_hidden, run_search};
     use crate::domain::models::{ExtensionFilterMode, SearchContentMode, SearchQuery};
 
     fn unique_temp_path(label: &str) -> std::path::PathBuf {
@@ -533,6 +527,18 @@ mod tests {
             .expect("time went backwards")
             .as_nanos();
         std::env::temp_dir().join(format!("athenaeum-search-{label}-{unique}"))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_dot_prefixed_path_is_not_hidden_without_hidden_attribute() {
+        let root = unique_temp_path("dot-path");
+        let dot_directory = root.join(".temp");
+        fs::create_dir_all(&dot_directory).expect("create dot directory");
+
+        assert!(!is_hidden(&dot_directory));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

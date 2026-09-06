@@ -27,6 +27,7 @@ import {
 } from "./workspaceMappers";
 import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
+import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
 
 export function toBackendLayout(
   layoutMode: PanelLayoutMode,
@@ -85,6 +86,7 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
     detailsRowHeight: model.detailsRowHeight,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
+    fileVisibility: model.fileVisibility,
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(model.contextMenu?.defaultMenu)
     },
@@ -148,6 +150,7 @@ export function createBrowserSettingsSnapshot(
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
+    fileVisibility: DEFAULT_FILE_VISIBILITY,
     contextMenu: DEFAULT_CONTEXT_MENU_SETTINGS,
     theme: toBackendTheme(DEFAULT_THEME),
     layout: toBackendLayout("dual", DEFAULT_LAYOUT_RATIOS),

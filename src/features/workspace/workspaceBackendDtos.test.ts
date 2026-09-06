@@ -144,6 +144,11 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     detailsRowHeight: 46,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
+    fileVisibility: {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    },
     contextMenu: {
       defaultMenu: "custom"
     },
@@ -174,6 +179,11 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     detailsRowHeight: 46,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
+    fileVisibility: {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    },
     contextMenu: {
       defaultMenu: "custom"
     },
@@ -231,6 +241,11 @@ assertTest("createBrowserSettingsSnapshot provides a complete settings fallback 
   assert.equal(snapshot.bookmarks.length, 1);
   assert.equal(snapshot.hotlist.length, 0);
   assert.equal(snapshot.detailsRowHeight, 24);
+  assert.deepEqual(snapshot.fileVisibility, {
+    showHidden: false,
+    showSystem: false,
+    hideProtectedOperatingSystemFiles: true
+  });
   assert.deepEqual(snapshot.navigationColumns, NAVIGATION_COLUMNS);
   assert.equal(snapshot.layout.layoutMode, "dual");
   assert.equal(snapshot.theme!.panelFocusAccent, "#0f6cbd");

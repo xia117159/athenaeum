@@ -4314,6 +4314,19 @@ export const completion = (async () => {
       assert.equal(interactions.savedSettingsModels[0].contextMenu.defaultMenu, "custom");
       assert.equal(latestController?.state.settings.model.contextMenu.defaultMenu, "custom");
     });
+
+    await assertTest("useWorkspaceController persists global file visibility changes through the workspace gateway", async () => {
+      interactions.savedSettingsModels.length = 0;
+
+      await act(async () => {
+        latestController?.actions.setFileVisibility({ showHidden: true });
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.savedSettingsModels.length === 1, "file visibility was not persisted");
+      assert.equal(interactions.savedSettingsModels[0].fileVisibility.showHidden, true);
+      assert.equal(latestController?.state.fileVisibility.showHidden, true);
+    });
   } finally {
     await act(async () => {
       root.unmount();

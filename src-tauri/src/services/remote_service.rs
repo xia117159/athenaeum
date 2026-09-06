@@ -344,9 +344,7 @@ fn ftp_profile_root_properties(
         created_at: None,
         modified_at: None,
         accessed_at: None,
-        is_hidden: remote_file_name(&remote_path)
-            .map(|value| value.starts_with('.'))
-            .unwrap_or(false),
+        is_hidden: false,
         is_read_only: false,
         is_symlink: false,
         directory_size_state: remote_directory_size_state(true),
@@ -2285,14 +2283,14 @@ mod tests {
     fn ftp_profile_root_properties_return_directory_metadata_with_missing_field_states() {
         let mut profile = sample_profile();
         profile.protocol = LocationKind::Ftp;
-        profile.root_path = "/releases".into();
+        profile.root_path = "/.releases".into();
         let request = ItemPropertiesRequest {
             request_id: "properties-root".into(),
             target: ItemPropertiesTarget::Remote {
                 protocol: LocationKind::Ftp,
                 profile_id: profile.id.clone(),
-                remote_path: "/releases".into(),
-                display_path: "ftp://user@example.com/releases".into(),
+                remote_path: "/.releases".into(),
+                display_path: "ftp://user@example.com/.releases".into(),
             },
             include_directory_size: false,
         };
@@ -2300,15 +2298,16 @@ mod tests {
         let properties = ftp_profile_root_properties(
             &request,
             &profile,
-            "/releases",
-            "ftp://user@example.com/releases",
+            "/.releases",
+            "ftp://user@example.com/.releases",
         );
 
         assert_eq!(properties.request_id, "properties-root");
         assert_eq!(properties.kind, EntryKind::Directory);
-        assert_eq!(properties.actual_path, "/releases");
+        assert_eq!(properties.actual_path, "/.releases");
         assert_eq!(properties.parent_path.as_deref(), Some("/"));
-        assert_eq!(properties.name, "releases");
+        assert_eq!(properties.name, ".releases");
+        assert!(!properties.is_hidden);
         assert_eq!(properties.size_bytes, None);
         assert_eq!(properties.modified_at, None);
         assert_eq!(

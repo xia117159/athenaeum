@@ -50,6 +50,7 @@ windows = { version = "0.61.3", features = [
 gix = { version = "0.85.0", features = ["status"] }
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
 windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

@@ -7,9 +7,10 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
-    Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag, HotlistEntry,
-    NavigationItem, NavigationItemUpsertRequest, NavigationTargetStatus, RemoteProfile,
-    SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+    Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag,
+    FileVisibilitySettings, HotlistEntry, NavigationItem, NavigationItemUpsertRequest,
+    NavigationTargetStatus, RemoteProfile, SettingsSnapshot, ShortcutBinding, TagDefinition,
+    UiLayout, UiTheme,
 };
 use crate::services::windows_shell;
 
@@ -96,6 +97,7 @@ impl MetadataStore {
         details_row_height: u16,
         tooltip_hover_delay_ms: u32,
         metadata_retention_hours: Option<u64>,
+        file_visibility: FileVisibilitySettings,
         context_menu: ContextMenuSettings,
         theme: UiTheme,
     ) -> SettingsSnapshot {
@@ -116,6 +118,7 @@ impl MetadataStore {
             details_row_height,
             tooltip_hover_delay_ms,
             metadata_retention_hours,
+            file_visibility,
             context_menu,
             theme,
             layout,
@@ -557,9 +560,9 @@ mod tests {
 
     use super::MetadataStore;
     use crate::domain::models::{
-        Bookmark, ContextMenuSettings, EntryTag, LocationKind, NavigationItemUpsertRequest,
-        NavigationTargetKind, NavigationTargetStatus, RemoteAuthKind, RemoteProfile, TagDefinition,
-        UiLayout, UiTheme,
+        Bookmark, ContextMenuSettings, EntryTag, FileVisibilitySettings, LocationKind,
+        NavigationItemUpsertRequest, NavigationTargetKind, NavigationTargetStatus, RemoteAuthKind,
+        RemoteProfile, TagDefinition, UiLayout, UiTheme,
     };
 
     struct TestDir {
@@ -622,6 +625,7 @@ mod tests {
             36,
             200,
             Some(720),
+            FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
         );
@@ -655,6 +659,7 @@ mod tests {
             36,
             200,
             Some(720),
+            FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
         );

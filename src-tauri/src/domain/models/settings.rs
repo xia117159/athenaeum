@@ -22,6 +22,24 @@ pub struct DetailColumnDefinition {
     pub align: DetailColumnTextAlign,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileVisibilitySettings {
+    pub show_hidden: bool,
+    pub show_system: bool,
+    pub hide_protected_operating_system_files: bool,
+}
+
+impl Default for FileVisibilitySettings {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            show_system: false,
+            hide_protected_operating_system_files: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
@@ -39,6 +57,8 @@ pub struct SettingsSnapshot {
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
+    pub file_visibility: FileVisibilitySettings,
+    #[serde(default)]
     pub context_menu: ContextMenuSettings,
     pub theme: UiTheme,
     pub layout: UiLayout,
@@ -55,6 +75,8 @@ pub struct SettingsModelUpdate {
     pub details_row_height: u16,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
+    #[serde(default)]
+    pub file_visibility: FileVisibilitySettings,
     #[serde(default)]
     pub context_menu: ContextMenuSettings,
     pub theme: UiTheme,

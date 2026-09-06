@@ -333,6 +333,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       fileListModel:
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
+        !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
     };
@@ -346,6 +347,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.contextMenu, next.contextMenu) ||
     !hasSameJsonShape(current.columns, next.columns) ||
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
+    !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 
@@ -567,6 +569,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }, [
     state.settings.model.columns,
     state.settings.model.navigationColumns,
+    state.settings.model.fileVisibility,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
     state.settings.model.metadataRetentionHours,

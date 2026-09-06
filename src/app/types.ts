@@ -233,6 +233,12 @@ export interface ContextMenuSettings {
   defaultMenu: "native" | "custom";
 }
 
+export interface FileVisibilitySettings {
+  showHidden: boolean;
+  showSystem: boolean;
+  hideProtectedOperatingSystemFiles: boolean;
+}
+
 export interface DetailColumnDefinition {
   id: string;
   label: string;
@@ -340,6 +346,7 @@ export interface SettingsSnapshot {
   detailsRowHeight: number;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
+  fileVisibility?: FileVisibilitySettings;
   contextMenu?: ContextMenuSettings;
   theme?: UiTheme;
   layout: UiLayout;
@@ -354,6 +361,7 @@ export interface SettingsModelUpdate {
   detailsRowHeight: number;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
+  fileVisibility: FileVisibilitySettings;
   contextMenu: ContextMenuSettings;
   theme: UiTheme;
 }

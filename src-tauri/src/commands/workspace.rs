@@ -49,6 +49,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
             settings.details_row_height,
             settings.tooltip_hover_delay_ms,
             settings.metadata_retention_hours,
+            settings.file_visibility,
             settings.context_menu,
             settings.theme,
         ),

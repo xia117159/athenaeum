@@ -1,8 +1,9 @@
 mod navigation;
 
+#[cfg(windows)]
+mod context_menu;
 #[cfg(not(windows))]
 use navigation::NavigationOpenValidationError;
-
 #[cfg(windows)]
 mod imp {
     use std::{
@@ -62,8 +63,8 @@ mod imp {
             },
             UI::{
                 Shell::{
-                    Common::ITEMIDLIST, DragQueryFileW, FileOperation, IContextMenu,
-                    IFileOperation, IFileOperationProgressSink, IShellFolder, IShellItem,
+                    Common::ITEMIDLIST, DragQueryFileW, FileOperation, IContextMenu, IFileOperation,
+                    IFileOperationProgressSink, IShellFolder, IShellItem,
                     IShellLinkW, ShellLink, SHBindToParent, SHCreateItemFromParsingName,
                     SHDoDragDrop, SHParseDisplayName, ShellExecuteW, CFSTR_PREFERREDDROPEFFECT,
                     CMF_NORMAL, CMINVOKECOMMANDINFO, DROPFILES, FOFX_ADDUNDORECORD,
@@ -79,10 +80,8 @@ mod imp {
         },
     };
 
-    use super::navigation::{
-        has_unsupported_url_scheme, is_remote_path, normalize_local_path, path_display_name,
-        NavigationOpenValidationError,
-    };
+    use super::context_menu::attach as attach_context_menu_subclass;
+    use super::navigation::{has_unsupported_url_scheme, is_remote_path, normalize_local_path, path_display_name, NavigationOpenValidationError};
 
     const CMD_FIRST: u32 = 1;
     const CMD_LAST: u32 = 0x7FFF;
@@ -1209,6 +1208,7 @@ mod imp {
         if hwnd.0.is_null() {
             bail!("failed to resolve window handle");
         }
+        let _menu_subclass = attach_context_menu_subclass(hwnd, context_menu)?;
         unsafe {
             let _ = SetForegroundWindow(hwnd);
         }
@@ -1555,6 +1555,7 @@ mod imp {
         if hwnd.0.is_null() {
             bail!("failed to resolve window handle");
         }
+        let _menu_subclass = attach_context_menu_subclass(hwnd, context_menu)?;
         unsafe {
             let _ = SetForegroundWindow(hwnd);
         }

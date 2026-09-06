@@ -239,6 +239,11 @@ export const workspaceSettingsGatewayTests = (async () => {
         }
       }) as T;
     };
+    const fileVisibility = {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    };
     const model: SettingsModel = {
       shortcuts: [
         {
@@ -270,6 +275,7 @@ export const workspaceSettingsGatewayTests = (async () => {
       detailsRowHeight: 44,
       tooltipHoverDelayMs: 125,
       metadataRetentionHours: null,
+      fileVisibility,
       contextMenu: {
         defaultMenu: "custom"
       },
@@ -281,7 +287,6 @@ export const workspaceSettingsGatewayTests = (async () => {
         tabMinWidth: 4096
       }
     };
-
     await saveWorkspaceSettingsModel(model, { invoke, runtimeHost });
 
     assert.deepEqual(invocations, [
@@ -323,6 +328,7 @@ export const workspaceSettingsGatewayTests = (async () => {
             detailsRowHeight: 44,
             tooltipHoverDelayMs: 125,
             metadataRetentionHours: null,
+            fileVisibility,
             contextMenu: {
               defaultMenu: "custom"
             },

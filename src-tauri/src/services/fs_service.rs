@@ -45,16 +45,20 @@ fn has_windows_file_attribute(metadata: Option<&fs::Metadata>, attribute: u32) -
 }
 
 fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.starts_with('.'))
-        .unwrap_or(false)
+    #[cfg(windows)]
     {
-        return true;
+        let _ = path;
+        has_windows_hidden_attribute(metadata)
     }
 
-    has_windows_hidden_attribute(metadata)
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.starts_with('.'))
+            .unwrap_or(false)
+    }
 }
 
 fn has_windows_hidden_attribute(metadata: Option<&fs::Metadata>) -> bool {
@@ -753,7 +757,7 @@ mod tests {
 
         set_windows_file_attributes(&file, FILE_ATTRIBUTE_SYSTEM);
         let metadata = fs::symlink_metadata(&file).expect("read system metadata");
-        assert!(is_hidden(&file, Some(&metadata)));
+        assert!(!is_hidden(&file, Some(&metadata)));
         assert!(is_system(Some(&metadata)));
         assert!(!is_protected_operating_system(Some(&metadata)));
 
@@ -762,6 +766,25 @@ mod tests {
         assert!(is_protected_operating_system(Some(&metadata)));
 
         set_windows_file_attributes(&file, FILE_ATTRIBUTE_NORMAL);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_dot_prefixed_directory_is_visible_without_hidden_attribute() {
+        let root = unique_temp_path("dot-directory");
+        let dot_directory = root.join(".temp");
+        fs::create_dir_all(&dot_directory).expect("create dot directory");
+
+        let listing = list_directory(&root, &[], |_| (Vec::new(), None)).expect("list directory");
+        let entry = listing
+            .entries
+            .iter()
+            .find(|entry| entry.name == ".temp")
+            .expect("dot directory entry");
+
+        assert!(!entry.is_hidden);
+
         let _ = fs::remove_dir_all(root);
     }
 
