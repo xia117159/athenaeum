@@ -195,6 +195,12 @@
           "markdownDescription": "Allows cancelling workspace search."
         },
         {
+          "description": "Allows clearing terminal operation tasks and eligible operation history.",
+          "type": "string",
+          "const": "allow-clear-operation-records",
+          "markdownDescription": "Allows clearing terminal operation tasks and eligible operation history."
+        },
+        {
           "description": "Allows copying local file system entries.",
           "type": "string",
           "const": "allow-copy-entries",

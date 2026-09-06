@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use commands::{
     operations::{
-        cancel_file_operation, copy_entries, create_directory, create_file, delete_entries,
-        list_file_operation_tasks, list_operation_history, move_entries, rename_entry,
-        resolve_file_operation_conflict, start_file_operation, undo_latest_operation,
-        undo_operation,
+        cancel_file_operation, clear_operation_records, copy_entries, create_directory, create_file,
+        delete_entries, list_file_operation_tasks, list_operation_history, move_entries,
+        rename_entry, resolve_file_operation_conflict, start_file_operation,
+        undo_latest_operation, undo_operation,
     },
     remote::{
         copy_remote_entries, create_remote_directory, create_remote_file, delete_remote_entries,
@@ -91,6 +91,7 @@ pub fn run() {
             cancel_file_operation,
             resolve_file_operation_conflict,
             list_operation_history,
+            clear_operation_records,
             undo_latest_operation,
             undo_operation,
             start_search,

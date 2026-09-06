@@ -246,6 +246,8 @@ export function WorkspaceView() {
   const canGoForward = canUseDirectoryCommands && activeTab.historyIndex < activeTab.history.length - 1;
   return (
     <div
+      data-workspace-root
+      tabIndex={-1}
       className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}
       onDragEnter={handleExternalFileDrag}
       onDragOver={handleExternalFileDrag}
@@ -524,9 +526,6 @@ function WorkspaceRightContent({
       onUpdateFilter={(value) => actions.updateSearchFilter(value)}
       onSelectHistory={(index) => actions.selectSearchHistory(index)}
       onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
-      onCancelTask={actions.cancelOperation}
-      onUndoLatest={actions.undoLatestOperation}
-      onUndoRecord={actions.undoOperation}
     />
   );
 

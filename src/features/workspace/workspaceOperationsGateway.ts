@@ -2,6 +2,8 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   OperationConflictRequest,
   OperationConflictResolution,
+  OperationClearOutcome,
+  OperationClearRequest,
   OperationHistoryEventEnvelope,
   OperationHistoryListSnapshot,
   OperationIntent,
@@ -182,6 +184,28 @@ export async function listWorkspaceOperationHistory(runtime: WorkspaceOperationR
   );
 }
 
+export async function clearWorkspaceOperationRecords(
+  request: OperationClearRequest,
+  runtime: WorkspaceOperationRuntime = {}
+) {
+  return invokeRequired<OperationClearOutcome>(
+    "clear_operation_records",
+    { request },
+    async () => ({
+      status: "cleared",
+      eligibleUndoableCount: 0,
+      removedTaskIds: [],
+      removedRecordIds: [],
+      taskClearWatermark: 0,
+      historyClearWatermark: 0,
+      protectedRecordIds: [],
+      cleanupWarnings: []
+    }),
+    runtime.invoke,
+    runtime.runtimeHost
+  );
+}
+
 export async function cancelWorkspaceOperation(taskId: string, runtime: WorkspaceOperationRuntime = {}) {
   return invokeRequired<OperationTaskSnapshot>(
     "cancel_file_operation",
@@ -268,6 +292,13 @@ export function listenWorkspaceOperationHistory(
   runtime: WorkspaceOperationRuntime = {}
 ) {
   return listenWorkspaceOperationEvent("operation_history_changed", handler, runtime);
+}
+
+export function listenWorkspaceOperationRecordsCleared(
+  handler: (payload: OperationClearOutcome) => void,
+  runtime: WorkspaceOperationRuntime = {}
+) {
+  return listenWorkspaceOperationEvent("operation_records_cleared", handler, runtime);
 }
 
 export async function copyWorkspaceEntries(

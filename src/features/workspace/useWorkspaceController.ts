@@ -2,6 +2,7 @@ import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef
 import { createMockWorkspaceBootstrap, getParentLocationPath, normalizeLocationPath } from "./mockData";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
 import { openCommentWindow } from "./commentWindow";
+import { openOperationHistoryWindow } from "./operationHistoryWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
@@ -12,6 +13,7 @@ import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDr
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
 import { sortEntries } from "./fileListingPresentation";
+import { subscribeOperationEvents } from "./operationSubscriptions";
 import { filterEntriesByFileVisibility } from "./workspaceVisibility";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
@@ -1258,11 +1260,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshPanelsForPaths(refreshPaths, pendingSelectionReplacements);
     }
 
-    if (task.status === "failed") {
-      pushNotification("danger", task.message ?? "File operation failed");
-    } else if (task.status === "partialSucceeded") {
-      pushNotification("warning", task.message ?? "File operation completed with errors");
-    }
     await markDeletedMetadataForOperationTask(task);
   });
 
@@ -1333,26 +1330,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const unlistenFns: Array<() => void> = [];
 
     void (async () => {
-      const [unlistenTasks, unlistenHistory] = await Promise.all([
-        workspaceGateway.listenOperationTasks((event) => {
+      const unlistenOperations = await subscribeOperationEvents(workspaceGateway, {
+        task: (event) => {
           if (!disposed) {
             void projectOperationTask(event.snapshot);
           }
-        }),
-        workspaceGateway.listenOperationHistory((event) => {
+        },
+        history: (event) => {
           if (!disposed) {
             dispatch({ type: "operationHistoryEventReceived", payload: event });
           }
-        })
-      ]);
+        },
+        cleared: (event) => {
+          if (!disposed) dispatch({ type: "operationRecordsCleared", payload: event });
+        }
+      });
 
       if (disposed) {
-        disposeQuietly(unlistenTasks);
-        disposeQuietly(unlistenHistory);
+        disposeQuietly(unlistenOperations);
         return;
       }
 
-      unlistenFns.push(unlistenTasks, unlistenHistory);
+      unlistenFns.push(unlistenOperations);
 
       const [taskSnapshot, historySnapshot] = await Promise.all([
         workspaceGateway.listOperationTasks(),
@@ -1377,7 +1376,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         disposeQuietly(unlisten);
       }
     };
-  }, [projectOperationTask, pushNotification, state.source, state.status, workspaceGateway]);
+  }, [state.source, state.status, workspaceGateway]);
 
   useEffect(() => {
     if (state.status !== "ready" || state.source !== "tauri") {
@@ -3216,7 +3215,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "informationPanelExpandedSet", payload: expanded }),
       selectInformationPanelTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) =>
         dispatch({ type: "informationPanelTabChanged", payload: tab }),
-      openOperationHistory: () => dispatch({ type: "informationPanelHistoryRequested" }),
+      openOperationHistory: () => void openOperationHistoryWindow().catch((error) => {
+        pushNotification("danger", getErrorMessage(error, "\u65e0\u6cd5\u6253\u5f00\u64cd\u4f5c\u5386\u53f2\u7a97\u53e3"));
+      }),
       openSearchPanel: (tab?: WorkspaceState["search"]["activeTab"]) =>
         dispatch({ type: "searchPanelRequested", payload: tab }),
       toggleSearch: (open?: boolean) => dispatch({ type: "searchToggled", payload: open }),
@@ -3274,7 +3275,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       setMetadataRetentionHours: (value: number | null) => dispatch({ type: "metadataRetentionHoursSet", payload: { value } }),
       setContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) =>
         dispatch({ type: "contextMenuDefaultSet", payload: { value } }),
-      setOperationTasksOpen: (open: boolean) => dispatch({ type: "operationTasksOpenSet", payload: open }),
       cancelOperation: (taskId: string) => void cancelOperation(taskId),
       undoLatestOperation: () => void undoLatestOperation(),
       undoOperation: (recordId: string) => void undoOperation(recordId),

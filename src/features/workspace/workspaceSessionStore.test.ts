@@ -127,7 +127,7 @@ function createWorkspaceState(): WorkspaceState {
     },
     informationPanel: {
       expanded: true,
-      activeTab: "history",
+      activeTab: "properties",
       properties: {
         status: "idle"
       }
@@ -138,11 +138,15 @@ function createWorkspaceState(): WorkspaceState {
     },
     notifications: [],
     operations: {
-      tasksOpen: false,
       tasks: [],
       taskSequence: 0,
+      taskSnapshotSequence: 0,
       history: [],
-      historySequence: 0
+      historySequence: 0,
+      historySnapshotSequence: 0,
+      historyRecordSequences: {},
+      taskClearTombstones: {},
+      historyClearTombstones: {}
     }
   };
 }
@@ -245,7 +249,7 @@ assertTest("toPersistedSession stores the bottom information panel state", () =>
 
   assert.deepEqual(session.informationPanel, {
     expanded: true,
-    activeTab: "history"
+    activeTab: "properties"
   });
 });
 
@@ -298,6 +302,18 @@ assertTest("readPersistedSession normalizes old sessions without informationPane
     activeTab: "properties"
   });
   assert.equal(restored?.treeVisible, true);
+});
+
+assertTest("readPersistedSession migrates the removed operation-history tab to properties", () => {
+  const legacySession = toPersistedSession(createWorkspaceState());
+  const legacyValue = {
+    ...legacySession,
+    informationPanel: { expanded: true, activeTab: "history" }
+  };
+  const restored = readPersistedSession(
+    createStorage({ [WORKSPACE_SESSION_STORAGE_KEY]: JSON.stringify(legacyValue) })
+  );
+  assert.deepEqual(restored?.informationPanel, { expanded: true, activeTab: "properties" });
 });
 
 assertTest("writePersistedSession ignores storage failures", () => {

@@ -352,14 +352,18 @@ export type {
 };
 
 export interface OperationWorkspaceState {
-  tasksOpen: boolean;
   tasks: OperationTaskSnapshot[];
   taskSequence: number;
+  taskSnapshotSequence: number;
   history: OperationHistoryRecord[];
   historySequence: number;
+  historySnapshotSequence: number;
+  historyRecordSequences: Record<string, number>;
+  taskClearTombstones: Record<string, number>;
+  historyClearTombstones: Record<string, number>;
 }
 
-export type InformationPanelTab = "properties" | "search" | "history";
+export type InformationPanelTab = "properties" | "search";
 
 export type ItemPropertyField =
   | "name"

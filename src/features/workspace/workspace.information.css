@@ -481,51 +481,6 @@
   font-weight: 500;
 }
 
-.operation-history-panel {
-  display: grid;
-  grid-template-rows: 32px minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: #ffffff;
-}
-
-.operation-history-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  padding: 4px 8px;
-  border-bottom: 1px solid #d7dbe2;
-  background: #f8f9fb;
-}
-
-.operation-history-panel__header > div:first-child {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.operation-history-panel__header strong {
-  font-size: 12px;
-}
-
-.operation-history-panel__header span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.operation-history-panel__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .search-results-tab {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

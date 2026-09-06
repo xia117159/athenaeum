@@ -45,6 +45,10 @@ export type PersistedInformationPanel = {
   activeTab: InformationPanelTab;
 };
 
+type StoredInformationPanel = Omit<PersistedInformationPanel, "activeTab"> & {
+  activeTab: InformationPanelTab | "history";
+};
+
 export type PersistedWorkspaceSession = {
   layoutMode: PanelLayoutMode;
   layoutRatios: PersistedLayoutRatios;
@@ -95,7 +99,9 @@ export function readPersistedSession(storage: WorkspaceStorage | null | undefine
     if (!raw) {
       return null;
     }
-    const parsed = JSON.parse(raw) as PersistedWorkspaceSession;
+    const parsed = JSON.parse(raw) as Omit<PersistedWorkspaceSession, "informationPanel"> & {
+      informationPanel?: StoredInformationPanel;
+    };
     return {
       ...parsed,
       treeVisible: parsed.treeVisible !== false,
@@ -135,14 +141,9 @@ export function normalizeLayoutRatios(layoutRatios?: PersistedLayoutRatios | nul
 }
 
 export function normalizePersistedInformationPanel(
-  informationPanel?: Partial<PersistedInformationPanel> | null
+  informationPanel?: Partial<StoredInformationPanel> | null
 ): PersistedInformationPanel {
-  const activeTab =
-    informationPanel?.activeTab === "properties" ||
-    informationPanel?.activeTab === "search" ||
-    informationPanel?.activeTab === "history"
-      ? informationPanel.activeTab
-      : "properties";
+  const activeTab = informationPanel?.activeTab === "search" ? "search" : "properties";
 
   return {
     expanded: informationPanel?.expanded === true,

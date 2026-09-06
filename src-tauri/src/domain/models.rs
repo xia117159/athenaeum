@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub use super::operation_clear::{OperationClearOutcome, OperationClearRequest, OperationClearScope, OperationClearStatus};
+
 mod remote;
 mod settings;
 

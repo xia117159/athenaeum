@@ -569,6 +569,24 @@ export interface OperationHistoryEventEnvelope {
   historySequence: number;
 }
 
+export type OperationClearScope = "problems" | "completed" | "history" | "all";
+
+export interface OperationClearRequest {
+  scope: OperationClearScope;
+  confirmUndoLoss: boolean;
+}
+
+export interface OperationClearOutcome {
+  status: "confirmationRequired" | "cleared";
+  eligibleUndoableCount: number;
+  removedTaskIds: string[];
+  removedRecordIds: string[];
+  taskClearWatermark: number;
+  historyClearWatermark: number;
+  protectedRecordIds: string[];
+  cleanupWarnings: string[];
+}
+
 export interface TabState {
   id: string;
   title: string;

@@ -77,6 +77,8 @@ export function createTestGateway(
     resolveNavigationTargets?: WorkspaceGateway["resolveNavigationTargets"];
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
+    listenOperationRecordsCleared?: WorkspaceGateway["listenOperationRecordsCleared"];
+    clearOperationRecords?: WorkspaceGateway["clearOperationRecords"];
     readSystemFileClipboard?: WorkspaceGateway["readSystemFileClipboard"];
     copyEntries?: WorkspaceGateway["copyEntries"];
     moveEntries?: WorkspaceGateway["moveEntries"];
@@ -207,6 +209,12 @@ return { statuses: {}, isGitRepo: false };
     async listenOperationHistory() {
       return () => undefined;
     },
+    async listenOperationRecordsCleared(handler) {
+      if (overrides.listenOperationRecordsCleared) {
+        return overrides.listenOperationRecordsCleared(handler);
+      }
+      return () => undefined;
+    },
     async listenSettingsChanged() {
       return () => undefined;
     },
@@ -308,6 +316,21 @@ return { statuses: {}, isGitRepo: false };
     },
     async undoOperation(recordId) {
       return { ...createOperationTask(`undo-${recordId}`), kind: "undo" };
+    },
+    async clearOperationRecords(request) {
+      if (overrides.clearOperationRecords) {
+        return overrides.clearOperationRecords(request);
+      }
+      return {
+        status: "cleared",
+        eligibleUndoableCount: 0,
+        removedTaskIds: [],
+        removedRecordIds: [],
+        taskClearWatermark: 0,
+        historyClearWatermark: 0,
+        protectedRecordIds: [],
+        cleanupWarnings: []
+      };
     },
     async setSystemFileClipboard(paths, mode) {
       interactions.systemClipboardWrites?.push({ paths: [...paths], mode });

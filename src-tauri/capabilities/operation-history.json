@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "operation-history",
+  "description": "Least-privilege access for the operation history window",
+  "windows": ["operation-history"],
+  "permissions": [
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "allow-list-file-operation-tasks",
+    "allow-cancel-file-operation",
+    "allow-list-operation-history",
+    "allow-undo-latest-operation",
+    "allow-undo-operation",
+    "allow-clear-operation-records"
+  ]
+}

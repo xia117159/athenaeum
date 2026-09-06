@@ -4,9 +4,10 @@ use tauri::{Emitter, State};
 
 use crate::{
     domain::models::{
-        CreateDirectoryRequest, CreateFileRequest, FileOperationRequest,
-        OperationConflictResolution, OperationHistoryListSnapshot, OperationIntent,
-        OperationResult, OperationTaskListSnapshot, OperationTaskSnapshot, RenameRequest,
+        CreateDirectoryRequest, CreateFileRequest, FileOperationRequest, OperationClearOutcome,
+        OperationClearRequest, OperationClearStatus, OperationConflictResolution,
+        OperationHistoryListSnapshot, OperationIntent, OperationResult, OperationTaskListSnapshot,
+        OperationTaskSnapshot, RenameRequest,
     },
     services::{
         fs_service,
@@ -267,6 +268,30 @@ pub fn list_operation_history(
         .lock()
         .expect("operation store lock poisoned");
     Ok(operations.list_history())
+}
+
+#[tauri::command]
+pub fn clear_operation_records(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    request: OperationClearRequest,
+) -> Result<OperationClearOutcome, String> {
+    let trash_root = app_data_dir(state.inner()).map(|path| path.join("operation-trash"));
+    let outcome = {
+        let mut operations = state
+            .operations
+            .lock()
+            .expect("operation store lock poisoned");
+        operations
+            .clear_records(request, trash_root.as_deref())
+            .map_err(|error| error.to_string())?
+    };
+    if matches!(outcome.status, OperationClearStatus::Cleared)
+        && (!outcome.removed_task_ids.is_empty() || !outcome.removed_record_ids.is_empty())
+    {
+        let _ = app.emit("operation_records_cleared", &outcome);
+    }
+    Ok(outcome)
 }
 
 #[tauri::command]

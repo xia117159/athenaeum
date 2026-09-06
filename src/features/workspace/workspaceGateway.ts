@@ -32,6 +32,7 @@ import {
 import { cancelWorkspaceSearch, runWorkspaceSearch } from "./workspaceSearch";
 import {
   cancelWorkspaceOperation,
+  clearWorkspaceOperationRecords,
   copyWorkspaceEntries,
   createWorkspaceDirectory,
   createWorkspaceFile,
@@ -39,6 +40,7 @@ import {
   listWorkspaceOperationHistory,
   listWorkspaceOperationTasks,
   listenWorkspaceOperationHistory,
+  listenWorkspaceOperationRecordsCleared,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
   renameWorkspaceEntry,
@@ -91,6 +93,8 @@ import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationHistoryEventEnvelope,
   OperationHistoryListSnapshot,
+  OperationClearOutcome,
+  OperationClearRequest,
   OperationIntent,
   OperationTaskEventEnvelope,
   OperationTaskListSnapshot,
@@ -166,6 +170,7 @@ export interface WorkspaceGateway {
   listOperationHistory(): Promise<OperationHistoryListSnapshot>;
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
+  listenOperationRecordsCleared(handler: (event: OperationClearOutcome) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
   listenEntryMetadataChanged(handler: (paths: string[]) => void): Promise<() => void>;
   setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
@@ -202,6 +207,7 @@ export interface WorkspaceGateway {
   cancelOperation(taskId: string): Promise<OperationTaskSnapshot>;
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
+  clearOperationRecords(request: OperationClearRequest): Promise<OperationClearOutcome>;
   setSystemFileClipboard(paths: string[], mode: SystemFileClipboard["mode"]): Promise<void>;
   readSystemFileClipboard(): Promise<SystemFileClipboard | null>;
   startSystemFileDrag(paths: string[]): Promise<SystemFileClipboard["mode"] | null>;
@@ -437,6 +443,10 @@ return { statuses: {}, isGitRepo: false };
       return listenWorkspaceOperationHistory(handler);
     },
 
+    async listenOperationRecordsCleared(handler) {
+      return listenWorkspaceOperationRecordsCleared(handler);
+    },
+
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
     },
@@ -494,6 +504,10 @@ return { statuses: {}, isGitRepo: false };
 
     async undoOperation(recordId, requestId) {
       return undoWorkspaceOperation(recordId, requestId);
+    },
+
+    async clearOperationRecords(request) {
+      return clearWorkspaceOperationRecords(request);
     },
 
     async setSystemFileClipboard(paths, mode) {

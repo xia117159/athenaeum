@@ -1257,7 +1257,7 @@ assertTest("createWorkspaceState initializes the docked information panel search
     ...createMockWorkspaceBootstrap(),
     informationPanel: {
       expanded: true,
-      activeTab: "history" as const,
+      activeTab: "properties" as const,
       properties: {
         status: "idle" as const
       }
@@ -1266,7 +1266,7 @@ assertTest("createWorkspaceState initializes the docked information panel search
   const state = createWorkspaceState(bootstrap);
 
   assert.equal(state.informationPanel.expanded, true);
-  assert.equal(state.informationPanel.activeTab, "history");
+  assert.equal(state.informationPanel.activeTab, "properties");
   assert.equal(state.informationPanel.properties.status, "idle");
   assert.equal(state.search.loading, false);
   assert.equal(state.search.filterText, "");
@@ -1331,7 +1331,7 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
   });
 });
 
-assertTest("workspaceReducer routes search and history entry points through informationPanel", () => {
+assertTest("workspaceReducer routes search entry points through informationPanel", () => {
   const state = createState();
   const searchOpened = workspaceReducer(state, {
     type: "searchToggled",
@@ -1345,17 +1345,11 @@ assertTest("workspaceReducer routes search and history entry points through info
     type: "searchFilterChanged",
     payload: "report"
   } as WorkspaceAction);
-  const historyOpened = workspaceReducer(filtered, {
-    type: "informationPanelHistoryRequested"
-  } as WorkspaceAction);
-
   assert.equal(searchOpened.informationPanel.expanded, true);
   assert.equal(searchOpened.informationPanel.activeTab, "search");
   assert.equal(collapsed.informationPanel.expanded, false);
   assert.equal(filtered.informationPanel.expanded, false);
   assert.equal(filtered.informationPanel.activeTab, "search");
-  assert.equal(historyOpened.informationPanel.expanded, true);
-  assert.equal(historyOpened.informationPanel.activeTab, "history");
 });
 
 assertTest("workspaceReducer ignores stale properties responses by request id and target key", () => {

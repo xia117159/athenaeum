@@ -159,6 +159,11 @@ description = "Allows listing file operation history."
 commands.allow = ["list_operation_history"]
 
 [[permission]]
+identifier = "allow-clear-operation-records"
+description = "Allows clearing terminal operation tasks and eligible operation history."
+commands.allow = ["clear_operation_records"]
+
+[[permission]]
 identifier = "allow-undo-latest-operation"
 description = "Allows undoing the latest undoable file operation."
 commands.allow = ["undo_latest_operation"]

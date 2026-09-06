@@ -53,6 +53,12 @@ import {
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
 import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
+import {
+  createOperationWorkspaceState,
+  reduceOperationWorkspaceState,
+  type OperationStateAction
+} from "./operationState";
+import type { OperationClearOutcome } from "../../app/types";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -132,7 +138,6 @@ export type WorkspaceAction =
   | { type: "inlineEditCanceled"; payload: { panelId: PanelId; tabId: string } }
   | { type: "informationPanelExpandedSet"; payload: boolean }
   | { type: "informationPanelTabChanged"; payload: InformationPanelTab }
-  | { type: "informationPanelHistoryRequested" }
   | { type: "searchPanelRequested"; payload?: SearchTabId }
   | { type: "propertiesRequestStarted"; payload: { requestId: string; targetKey: string } }
   | {
@@ -204,11 +209,11 @@ export type WorkspaceAction =
       };
     }
   | { type: "clipboardSet"; payload?: WorkspaceState["clipboard"] }
-  | { type: "operationTasksOpenSet"; payload: boolean }
   | { type: "operationTasksSnapshotLoaded"; payload: { tasks: OperationTaskSnapshot[]; taskSequence: number } }
   | { type: "operationTaskEventReceived"; payload: OperationTaskSnapshot }
   | { type: "operationHistorySnapshotLoaded"; payload: { records: OperationHistoryRecord[]; historySequence: number } }
   | { type: "operationHistoryEventReceived"; payload: { record: OperationHistoryRecord; historySequence: number } }
+  | { type: "operationRecordsCleared"; payload: OperationClearOutcome }
   | { type: "notificationAdded"; payload: WorkspaceState["notifications"][number] }
   | { type: "notificationDismissed"; payload: { id: string } }
   | { type: "contextMenuSet"; payload?: WorkspaceState["contextMenu"] };
@@ -224,10 +229,15 @@ const DEFAULT_SEARCH_PROGRESS: SearchProgressState = {
 
 const MAX_SEARCH_HISTORY_ITEMS = 20;
 
+function updateOperations(state: WorkspaceState, action: OperationStateAction): WorkspaceState {
+  const operations = reduceOperationWorkspaceState(state.operations, action);
+  return operations === state.operations ? state : { ...state, operations };
+}
+
 function cloneInformationPanelState(panel: WorkspaceBootstrap["informationPanel"]): WorkspaceState["informationPanel"] {
   return {
     expanded: panel.expanded,
-    activeTab: panel.activeTab,
+    activeTab: panel.activeTab === "search" ? "search" : "properties",
     properties: {
       ...panel.properties,
       item: panel.properties.item
@@ -390,13 +400,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       model: normalizeSettingsModel(bootstrap.settingsModel)
     },
     notifications: [],
-    operations: {
-      tasksOpen: false,
-      tasks: [],
-      taskSequence: 0,
-      history: [],
-      historySequence: 0
-    }
+    operations: createOperationWorkspaceState()
   };
 }
 
@@ -447,53 +451,6 @@ function updateTab(panel: PanelState, tabId: string, updater: (tab: TabState) =>
     ...panel,
     tabs
   };
-}
-
-function sortOperationTasks(tasks: OperationTaskSnapshot[]) {
-  return [...tasks].sort((left, right) => {
-    const leftFinished = left.finishedAt ?? "";
-    const rightFinished = right.finishedAt ?? "";
-    const leftTime = leftFinished || left.startedAt || left.createdAt;
-    const rightTime = rightFinished || right.startedAt || right.createdAt;
-    return rightTime.localeCompare(leftTime) || right.sequence - left.sequence;
-  });
-}
-
-function upsertOperationTask(tasks: OperationTaskSnapshot[], incoming: OperationTaskSnapshot) {
-  const current = tasks.find((task) => task.taskId === incoming.taskId);
-  if (current && current.sequence >= incoming.sequence) {
-    return tasks;
-  }
-
-  return sortOperationTasks([...tasks.filter((task) => task.taskId !== incoming.taskId), incoming]);
-}
-
-function sortOperationHistory(records: OperationHistoryRecord[]) {
-  return [...records].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
-function upsertOperationHistoryRecord(records: OperationHistoryRecord[], incoming: OperationHistoryRecord) {
-  return sortOperationHistory([...records.filter((record) => record.recordId !== incoming.recordId), incoming]);
-}
-
-function hasSameOperationTasksSnapshot(current: OperationTaskSnapshot[], incoming: OperationTaskSnapshot[]) {
-  return (
-    current.length === incoming.length &&
-    current.every((task, index) => {
-      const nextTask = incoming[index];
-      return nextTask && task.taskId === nextTask.taskId && task.sequence === nextTask.sequence;
-    })
-  );
-}
-
-function hasSameOperationHistorySnapshot(current: OperationHistoryRecord[], incoming: OperationHistoryRecord[]) {
-  return (
-    current.length === incoming.length &&
-    current.every((record, index) => {
-      const nextRecord = incoming[index];
-      return nextRecord && record.recordId === nextRecord.recordId && record.updatedAt === nextRecord.updatedAt;
-    })
-  );
 }
 
 function hasSameJsonShape(left: unknown, right: unknown) {
@@ -2025,30 +1982,19 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "informationPanelTabChanged":
-      if (state.informationPanel.activeTab === action.payload) {
-        return state;
+      {
+        const nextTab = action.payload === "search" ? "search" : "properties";
+        if (state.informationPanel.activeTab === nextTab) {
+          return state;
+        }
+        return {
+          ...state,
+          informationPanel: {
+            ...state.informationPanel,
+            activeTab: nextTab
+          }
+        };
       }
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          activeTab: action.payload
-        }
-      };
-
-    case "informationPanelHistoryRequested":
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasksOpen: true
-        },
-        informationPanel: {
-          ...state.informationPanel,
-          expanded: true,
-          activeTab: "history"
-        }
-      };
 
     case "searchPanelRequested":
       {
@@ -2686,93 +2632,20 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         clipboard: action.payload
       };
 
-    case "operationTasksOpenSet":
-      return {
-        ...state,
-        informationPanel: action.payload
-          ? {
-              ...state.informationPanel,
-              expanded: true,
-              activeTab: "history"
-            }
-          : state.informationPanel.activeTab === "history"
-            ? {
-                ...state.informationPanel,
-                expanded: false
-              }
-            : state.informationPanel,
-        operations: {
-          ...state.operations,
-          tasksOpen: action.payload
-        }
-      };
-
     case "operationTasksSnapshotLoaded":
-      if (action.payload.taskSequence < state.operations.taskSequence) {
-        return state;
-      }
-      if (
-        action.payload.taskSequence === state.operations.taskSequence &&
-        hasSameOperationTasksSnapshot(state.operations.tasks, action.payload.tasks)
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasks: sortOperationTasks(action.payload.tasks),
-          taskSequence: action.payload.taskSequence
-        }
-      };
+      return updateOperations(state, { type: "tasksSnapshot", payload: action.payload });
 
     case "operationTaskEventReceived":
-      if (action.payload.sequence <= state.operations.taskSequence) {
-        const current = state.operations.tasks.find((task) => task.taskId === action.payload.taskId);
-        if (current && current.sequence >= action.payload.sequence) {
-          return state;
-        }
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasks: upsertOperationTask(state.operations.tasks, action.payload),
-          taskSequence: Math.max(state.operations.taskSequence, action.payload.sequence)
-        }
-      };
+      return updateOperations(state, { type: "taskEvent", payload: action.payload });
 
     case "operationHistorySnapshotLoaded":
-      if (action.payload.historySequence < state.operations.historySequence) {
-        return state;
-      }
-      if (
-        action.payload.historySequence === state.operations.historySequence &&
-        hasSameOperationHistorySnapshot(state.operations.history, action.payload.records)
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          history: sortOperationHistory(action.payload.records),
-          historySequence: action.payload.historySequence
-        }
-      };
+      return updateOperations(state, { type: "historySnapshot", payload: action.payload });
 
     case "operationHistoryEventReceived":
-      if (action.payload.historySequence <= state.operations.historySequence) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          history: upsertOperationHistoryRecord(state.operations.history, action.payload.record),
-          historySequence: action.payload.historySequence
-        }
-      };
+      return updateOperations(state, { type: "historyEvent", payload: action.payload });
+
+    case "operationRecordsCleared":
+      return updateOperations(state, { type: "recordsCleared", payload: action.payload });
 
     case "notificationAdded":
       return {

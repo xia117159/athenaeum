@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import {
   cancelWorkspaceOperation,
+  clearWorkspaceOperationRecords,
   copyWorkspaceEntries,
   createWorkspaceFile,
   createWorkspaceDirectory,
   deleteWorkspaceEntries,
   listenWorkspaceOperationConflicts,
   listenWorkspaceOperationHistory,
+  listenWorkspaceOperationRecordsCleared,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
   renameWorkspaceEntry,
@@ -391,6 +393,34 @@ export const workspaceOperationsGatewayTests = (async () => {
     ]);
   });
 
+  await assertAsyncTest("clearWorkspaceOperationRecords preserves the typed confirmation request", async () => {
+    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+      invocations.push({ command, args });
+      return {
+        status: "confirmationRequired",
+        eligibleUndoableCount: 2,
+        removedTaskIds: [],
+        removedRecordIds: [],
+        taskClearWatermark: 3,
+        historyClearWatermark: 4,
+        protectedRecordIds: [],
+        cleanupWarnings: []
+      } as T;
+    };
+
+    const result = await clearWorkspaceOperationRecords(
+      { scope: "all", confirmUndoLoss: false },
+      { invoke, runtimeHost }
+    );
+
+    assert.equal(result.status, "confirmationRequired");
+    assert.deepEqual(invocations, [{
+      command: "clear_operation_records",
+      args: { request: { scope: "all", confirmUndoLoss: false } }
+    }]);
+  });
+
   await assertAsyncTest("operation event listeners subscribe to stable event names", async () => {
     const listened: string[] = [];
     const listen = async <T>(eventName: string, handler: (event: { payload: T }) => void) => {
@@ -402,11 +432,13 @@ export const workspaceOperationsGatewayTests = (async () => {
     await listenWorkspaceOperationTasks(() => undefined, { runtimeHost, listen });
     await listenWorkspaceOperationConflicts(() => undefined, { runtimeHost, listen });
     await listenWorkspaceOperationHistory(() => undefined, { runtimeHost, listen });
+    await listenWorkspaceOperationRecordsCleared(() => undefined, { runtimeHost, listen });
 
     assert.deepEqual(listened, [
       "operation_task_snapshot",
       "operation_conflict_requested",
-      "operation_history_changed"
+      "operation_history_changed",
+      "operation_records_cleared"
     ]);
   });
 })();
