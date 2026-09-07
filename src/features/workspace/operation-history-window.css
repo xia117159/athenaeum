@@ -170,6 +170,11 @@
 .operation-history-confirmation p { margin: 12px 0 16px; color: #4f4f4f; font-size: 12px; line-height: 1.55; }
 .operation-history-confirmation__actions { display: flex; justify-content: flex-end; gap: 8px; }
 .operation-history-confirmation .is-danger { border-color: #a4262c; background: #c42b1c; color: #ffffff; }
+.operation-history-confirmation .toolbar-button.is-danger:hover:not(:disabled) {
+  border-color: #8c1d18;
+  background: #a4262c;
+  color: #ffffff;
+}
 
 @media (max-width: 760px) {
   .operation-history-window__header { gap: 8px; }
