@@ -86,7 +86,7 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
     navigationItems: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
     shortcuts: [],
     columns: [
       { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
@@ -207,7 +207,8 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
           path: "C:\\Workspace\\notes.txt"
         },
         decoration: {
-          colorHex: "#ff6600",
+          foregroundColorHex: "#ff6600",
+          backgroundColorHex: "#fff4ce",
           tags: ["Pinned", "Docs"]
         },
         comment: "Line one\nLine two"
@@ -221,7 +222,9 @@ assertTest("mapDirectoryListingToSnapshot translates backend entries into rich l
   assert.equal(snapshot.location.label, "Workspace");
   assert.equal(snapshot.breadcrumbs.length, 2);
   assert.equal(snapshot.entries.length, 1);
-  assert.equal(snapshot.entries[0].accentColor, "#ff6600");
+  assert.equal(snapshot.entries[0].accentColor, "#29659f");
+  assert.equal(snapshot.entries[0].foregroundColorHex, "#ff6600");
+  assert.equal(snapshot.entries[0].backgroundColorHex, "#fff4ce");
   assert.deepEqual(snapshot.entries[0].tags, ["Pinned", "Docs"]);
   assert.equal(snapshot.entries[0].sizeLabel, "1 KB");
   assert.equal(snapshot.entries[0].createdLabel, "2026-04-17 17:08");
@@ -254,7 +257,8 @@ assertTest("mapDirectoryListingToSnapshot carries Windows system and protected a
           path: "C:\\pagefile.sys"
         },
         decoration: {
-          colorHex: null,
+          foregroundColorHex: null,
+          backgroundColorHex: null,
           tags: []
         }
       }
@@ -303,7 +307,8 @@ assertTest("mapDirectoryListingToSnapshot keeps usable local paths when backend 
           path: "\\\\?\\E:\\Workspace\\report.txt"
         },
         decoration: {
-          colorHex: "#0f6cbd",
+          foregroundColorHex: "#0f6cbd",
+          backgroundColorHex: null,
           tags: []
         }
       }
@@ -319,6 +324,7 @@ assertTest("mapDirectoryListingToSnapshot keeps usable local paths when backend 
 
 assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote entry points", () => {
   const bootstrap = mapWorkspaceBootstrap({
+    startupDiagnostics: ["Invalid persisted colorRulesRevision was reset to 0"],
     drives: [
       { path: "C:\\", label: "System (C:)" },
       { path: "D:\\", label: "Data (D:)" }
@@ -351,17 +357,22 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
       ],
       tagDefinitions: [{ id: "tag-1", name: "Pinned", colorHex: "#00aa66" }],
       entryTags: [],
-      colorRules: [
-        {
+      colorFilter: {
+        enabled: true,
+        revision: "7",
+        rulesRevision: "3",
+        rules: [{
           id: "rule-1",
           name: "Rust",
+          enabled: true,
           target: "file",
-          mode: "extension",
-          pattern: "rs",
-          colorHex: "#ff6600",
+          expression: "Extension == \".rs\"",
+          caseSensitive: false,
+          foregroundColorHex: "#ff6600",
+          backgroundColorHex: null,
           priority: 1
-        }
-      ],
+        }]
+      },
       shortcuts: [{ id: "shortcut-1", action: "Copy", accelerator: "Ctrl+C", scope: "workspace" }],
       detailsRowHeight: 44,
       contextMenu: {
@@ -396,6 +407,7 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
   });
 
   assert.equal(bootstrap.source, "tauri");
+  assert.deepEqual(bootstrap.startupDiagnostics, ["Invalid persisted colorRulesRevision was reset to 0"]);
   assert.equal(bootstrap.layoutMode, "quad");
   assert.equal(bootstrap.directoryTree.length, 3);
   assert.equal(bootstrap.directoryTree[2].kind, "remote-root");
@@ -409,7 +421,8 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "open-search")?.binding, "Ctrl+F");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "drag-move")?.binding, "Shift");
   assert.equal(bootstrap.settingsModel.shortcuts.find((shortcut) => shortcut.id === "context-menu-toggle")?.binding, "Shift");
-  assert.equal(bootstrap.settingsModel.colorRules[0].color, "#ff6600");
+  assert.equal(bootstrap.settingsModel.colorRules[0].foregroundColorHex, "#ff6600");
+  assert.equal(bootstrap.settingsModel.colorFilterRevision, "7");
   assert.equal(bootstrap.settingsModel.detailsRowHeight, 44);
   assert.equal(bootstrap.settingsModel.contextMenu.defaultMenu, "custom");
   assert.equal(bootstrap.settingsModel.theme.panelFocusAccent, "#c02f7a");
@@ -439,7 +452,7 @@ assertTest("mapWorkspaceBootstrap preserves configured drag move shortcut bindin
       navigationItems: [],
       tagDefinitions: [],
       entryTags: [],
-      colorRules: [],
+      colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
       shortcuts: [{ id: "drag-move", action: "drag-move", accelerator: "Alt", scope: "listing" }],
       detailsRowHeight: 24,
       theme: {
@@ -494,7 +507,8 @@ assertTest("mapWorkspaceBootstrap gives panels independent snapshot and entry re
             path: "C:\\Workspace\\notes.txt"
           },
           decoration: {
-            colorHex: "#2266a8",
+            foregroundColorHex: "#2266a8",
+            backgroundColorHex: null,
             tags: []
           }
         }
@@ -508,7 +522,7 @@ assertTest("mapWorkspaceBootstrap gives panels independent snapshot and entry re
       navigationItems: [],
       tagDefinitions: [],
       entryTags: [],
-      colorRules: [],
+      colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
       shortcuts: [],
       detailsRowHeight: 24,
       theme: {
@@ -600,7 +614,7 @@ assertTest("mergeShortcutDefaults does not carry forward shortcuts not in the de
     navigationItems: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
     shortcuts: [{ id: "shortcut-1", action: "Copy", accelerator: "Ctrl+C", scope: "workspace" }],
     columns: [],
     navigationColumns: [],
@@ -622,7 +636,7 @@ assertTest("mapFavoriteCollections converts settings snapshot collections into b
     navigationItems: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
     shortcuts: [],
     detailsRowHeight: 36,
     theme: {

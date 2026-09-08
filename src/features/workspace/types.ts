@@ -4,6 +4,7 @@ import type {
   OperationPathRef,
   OperationTaskSnapshot
 } from "../../app/types";
+import type { ColorFilterRule, RevisionToken } from "./colorFilterTypes";
 
 export type DataSource = "mock" | "tauri";
 
@@ -103,6 +104,8 @@ export interface EntryViewModel {
   isSystem?: boolean;
   isProtectedOperatingSystem?: boolean;
   accentColor: string;
+  foregroundColorHex?: string | null;
+  backgroundColorHex?: string | null;
   tags: string[];
   comment?: string;
   description: string;
@@ -169,14 +172,6 @@ export interface ShortcutBinding {
   scope: ShortcutScope;
   binding: string;
   description: string;
-}
-
-export interface ColorRule {
-  id: string;
-  label: string;
-  matcher: string;
-  color: string;
-  previewText: string;
 }
 
 export interface TagRule {
@@ -285,7 +280,10 @@ export interface SortState {
 
 export interface SettingsModel {
   shortcuts: ShortcutBinding[];
-  colorRules: ColorRule[];
+  colorRules: ColorFilterRule[];
+  colorFilterEnabled?: boolean;
+  colorFilterRevision?: RevisionToken;
+  colorRulesRevision?: RevisionToken;
   tagRules: TagRule[];
   columns: ColumnDefinition[];
   navigationColumns: NavigationColumnDefinition[];
@@ -639,6 +637,7 @@ export interface LayoutRatios {
 
 export interface WorkspaceBootstrap {
   source: DataSource;
+  startupDiagnostics: string[];
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
   treeVisible: boolean;
@@ -659,6 +658,7 @@ export interface WorkspaceState {
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
   treeVisible: boolean;
+  colorFilterTogglePending: boolean;
   fileVisibility: FileVisibilityState;
   syncScroll: boolean;
   panels: Record<PanelId, PanelState>;

@@ -113,6 +113,16 @@ assertTest("drop target highlights use configurable theme variables", () => {
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "background", fillMix);
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "border-color", borderMix);
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "box-shadow", `inset 0 0 0 1px ${borderMix}`);
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected:hover .file-row__grid"), "background", "#cfe8ff");
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected:hover .file-row__grid"), "box-shadow", "none");
+  assertDeclaration(getCssBlock(".file-card.has-color-filter.is-drop-target:hover"), "background", fillMix);
+  assertDeclaration(getCssBlock(".file-card.has-color-filter.is-drop-target:hover"), "box-shadow", `inset 0 0 0 1px ${borderMix}`);
+  assertDeclaration(getCssBlock(".file-list-item.has-color-filter.is-inline-editing:hover"), "background", "#cfe8ff");
+  assertDeclaration(getCssBlock(".file-list-item.has-color-filter.is-inline-editing:hover"), "box-shadow", "none");
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected .file-row__grid"), "background", "Highlight");
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected:hover .file-row__grid"), "color", "HighlightText");
+  assertDeclaration(getCssBlock(".file-card.has-color-filter.is-inline-editing:hover"), "background", "Highlight");
+  assertDeclaration(getCssBlock(".file-list-item.has-color-filter.is-drop-target:hover"), "outline", "2px solid Highlight");
   assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "background", fillMix);
   assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "border-color", borderMix);
 });
@@ -139,6 +149,7 @@ assertTest("workspace top chrome separates command and address rows without the 
   assert.equal(workspaceViewSource.includes("secondMinSizePx={222}"), true);
   assertDeclaration(getCssBlock(".address-bar"), "width", "100%");
   assert.equal(css.includes(".workspace-error"), false);
+  assert.equal(workspaceViewSource.includes("aria-busy={state.colorFilterTogglePending || undefined}"), true);
 });
 
 assertTest("workspace view menu reuses shared view and sort submenus", () => {

@@ -59,6 +59,8 @@ import {
   type OperationStateAction
 } from "./operationState";
 import type { OperationClearOutcome } from "../../app/types";
+import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
+import { compareRevisionTokens } from "./colorFilterEditorModel";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -68,6 +70,8 @@ export type WorkspaceAction =
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
   | { type: "treeVisibilitySet"; payload: boolean }
+  | { type: "colorFilterTogglePendingSet"; payload: boolean }
+  | { type: "colorFilterSnapshotReceived"; payload: ColorFilterConfigSnapshot }
   | { type: "fileVisibilitySet"; payload: Partial<FileVisibilityState> }
   | { type: "syncScrollSet"; payload: boolean }
   | { type: "panelFocused"; payload: { panelId: PanelId } }
@@ -182,7 +186,6 @@ export type WorkspaceAction =
   | { type: "remoteProfilesUpdated"; payload: RemoteConnectionProfile[] }
   | { type: "settingsSectionSet"; payload: SettingsSection }
   | { type: "shortcutBindingUpdated"; payload: { id: string; binding: string } }
-  | { type: "colorRuleUpdated"; payload: { id: string; color: string } }
   | { type: "tagRuleUpdated"; payload: { id: string; quickFilter: string } }
   | { type: "columnVisibilityToggled"; payload: { id: string } }
   | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
@@ -354,6 +357,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
+    colorFilterTogglePending: false,
     fileVisibility: { ...bootstrap.settingsModel.fileVisibility },
     syncScroll: false,
     panels: normalizedPanels,
@@ -1207,6 +1211,41 @@ function updateSettingsModel<T extends keyof WorkspaceState["settings"]["model"]
   };
 }
 
+function colorFilterSnapshotFromModel(model: SettingsModel): ColorFilterConfigSnapshot {
+  return {
+    enabled: model.colorFilterEnabled ?? true,
+    rules: model.colorRules,
+    revision: model.colorFilterRevision ?? "0",
+    rulesRevision: model.colorRulesRevision ?? "0"
+  };
+}
+
+function withAcceptedColorFilterModel(current: SettingsModel, incoming: SettingsModel) {
+  const currentSnapshot = colorFilterSnapshotFromModel(current);
+  const incomingSnapshot = colorFilterSnapshotFromModel(incoming);
+  const revisionOrder = compareRevisionTokens(incomingSnapshot.revision, currentSnapshot.revision);
+  if (revisionOrder < 0) {
+    return {
+      ...incoming,
+      colorRules: current.colorRules,
+      colorFilterEnabled: currentSnapshot.enabled,
+      colorFilterRevision: currentSnapshot.revision,
+      colorRulesRevision: currentSnapshot.rulesRevision
+    };
+  }
+  if (revisionOrder === 0 && !hasSameJsonShape(incomingSnapshot, currentSnapshot)) {
+    devLog("[workspaceReducer] rejected divergent color-filter snapshot at revision", incomingSnapshot.revision);
+    return {
+      ...incoming,
+      colorRules: current.colorRules,
+      colorFilterEnabled: currentSnapshot.enabled,
+      colorFilterRevision: currentSnapshot.revision,
+      colorRulesRevision: currentSnapshot.rulesRevision
+    };
+  }
+  return incoming;
+}
+
 function updateColumnsForSettingsAndTab(
   state: WorkspaceState,
   panelId: PanelId | undefined,
@@ -1265,6 +1304,38 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             ...state,
             treeVisible: action.payload
           };
+
+    case "colorFilterTogglePendingSet":
+      return state.colorFilterTogglePending === action.payload
+        ? state
+        : { ...state, colorFilterTogglePending: action.payload };
+
+    case "colorFilterSnapshotReceived": {
+      const current = colorFilterSnapshotFromModel(state.settings.model);
+      const revisionOrder = compareRevisionTokens(action.payload.revision, current.revision);
+      if (revisionOrder < 0) {
+        return state;
+      }
+      if (revisionOrder === 0) {
+        if (!hasSameJsonShape(action.payload, current)) {
+          devLog("[workspaceReducer] rejected divergent color-filter snapshot at revision", action.payload.revision);
+        }
+        return state;
+      }
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          model: {
+            ...state.settings.model,
+            colorRules: action.payload.rules.map((rule) => ({ ...rule })),
+            colorFilterEnabled: action.payload.enabled,
+            colorFilterRevision: action.payload.revision,
+            colorRulesRevision: action.payload.rulesRevision
+          }
+        }
+      };
+    }
 
     case "fileVisibilitySet":
       {
@@ -2450,11 +2521,6 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         )
       );
 
-    case "colorRuleUpdated":
-      return updateSettingsModel(state, "colorRules", (colorRules) =>
-        colorRules.map((rule) => (rule.id === action.payload.id ? { ...rule, color: action.payload.color } : rule))
-      );
-
     case "tagRuleUpdated":
       return updateSettingsModel(state, "tagRules", (tagRules) =>
         tagRules.map((rule) =>
@@ -2572,7 +2638,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "settingsModelApplied":
       {
-        const model = normalizeSettingsModel(action.payload.model);
+        const model = withAcceptedColorFilterModel(
+          state.settings.model,
+          normalizeSettingsModel(action.payload.model)
+        );
         if (
           hasSameJsonShape(state.settings.model, model) &&
           (action.payload.section === undefined || action.payload.section === state.settings.section)
@@ -2591,10 +2660,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "settingsSnapshotSynced":
       {
-        const model = normalizeSettingsModel({
+        const model = withAcceptedColorFilterModel(state.settings.model, normalizeSettingsModel({
           ...action.payload.settingsModel,
           tagRules: state.settings.model.tagRules
-        });
+        }));
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));
         if (

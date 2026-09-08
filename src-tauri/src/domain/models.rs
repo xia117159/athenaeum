@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use super::operation_clear::{OperationClearOutcome, OperationClearRequest, OperationClearScope, OperationClearStatus};
+pub use super::color_filter::{ColorFilterConfigSnapshot, ColorRule};
+pub use super::operation_clear::{
+    OperationClearOutcome, OperationClearRequest, OperationClearScope, OperationClearStatus,
+};
 
 mod remote;
 mod settings;
@@ -62,8 +65,19 @@ pub enum EntryKind {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryDecoration {
-    pub color_hex: Option<String>,
+    pub foreground_color_hex: Option<String>,
+    pub background_color_hex: Option<String>,
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct EntryAttributeAvailability {
+    pub hidden: bool,
+    pub system: bool,
+    pub protected_system: bool,
+    pub read_only: bool,
+    pub symlink: bool,
+    pub archive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,6 +99,8 @@ pub struct EntryViewModel {
     pub location: LocationDescriptor,
     pub decoration: EntryDecoration,
     pub comment: Option<String>,
+    #[serde(skip)]
+    pub(crate) attribute_availability: EntryAttributeAvailability,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -397,36 +413,6 @@ pub struct EntryTag {
     pub tag_ids: Vec<String>,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum ColorRuleTarget {
-    Any,
-    File,
-    Directory,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum ColorRuleMode {
-    Extension,
-    NameContains,
-    PathContains,
-    Hidden,
-    ReadOnly,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ColorRule {
-    pub id: String,
-    pub name: String,
-    pub target: ColorRuleTarget,
-    pub mode: ColorRuleMode,
-    pub pattern: Option<String>,
-    pub color_hex: String,
-    pub priority: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -1036,6 +1022,7 @@ pub struct WorkspaceBootstrap {
     pub initial_path: String,
     pub initial_listing: DirectoryListing,
     pub settings: SettingsSnapshot,
+    pub startup_diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

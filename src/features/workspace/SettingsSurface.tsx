@@ -8,6 +8,8 @@ import {
 } from "react";
 import { HexAlphaColorPicker } from "react-colorful";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
+import { ColorRulesPage } from "./ColorRulesPage";
+import type { ColorFilterRule, ColorFilterValidationResult } from "./colorFilterTypes";
 import type { RemoteTestResult } from "../../app/types";
 import type {
   RemoteConnectionProfile,
@@ -29,7 +31,16 @@ export type SettingsSurfaceProps = {
   dirtySections?: ReadonlySet<SettingsSection>;
   onSelectSection: (section: WorkspaceState["settings"]["section"]) => void;
   onUpdateShortcut: (id: string, binding: string) => void;
-  onUpdateColorRule: (id: string, color: string) => void;
+  onUpdateColorRules: (rules: ColorFilterRule[]) => void;
+  onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
+  onOpenColorRulesHelp: () => void;
+  onColorRulesValidityChange?: (valid: boolean) => void;
+  onColorRulesDraftDirtyChange?: (dirty: boolean) => void;
+  colorRulesResetToken?: string | number;
+  colorRulesConflict?: boolean;
+  onReloadColorRules?: () => void;
+  onOverwriteColorRules?: () => void;
+  colorRulesValid?: boolean;
   onUpdatePanelFocusAccent: (color: string) => void;
   onUpdateActiveTabBackground: (color: string) => void;
   onUpdateDropHighlightFill: (color: string) => void;
@@ -169,7 +180,16 @@ export function SettingsSurface({
   dirtySections = new Set(),
   onSelectSection,
   onUpdateShortcut,
-  onUpdateColorRule,
+  onUpdateColorRules,
+  onValidateColorRule,
+  onOpenColorRulesHelp,
+  onColorRulesValidityChange,
+  onColorRulesDraftDirtyChange,
+  colorRulesResetToken = 0,
+  colorRulesConflict = false,
+  onReloadColorRules,
+  onOverwriteColorRules,
+  colorRulesValid = true,
   onUpdatePanelFocusAccent,
   onUpdateActiveTabBackground,
   onUpdateDropHighlightFill,
@@ -207,7 +227,7 @@ export function SettingsSurface({
   };
 
   const renderedErrorMessage = shortcutConflictMessage ?? errorMessage;
-  const confirmDisabled = controlsDisabled || Boolean(shortcutConflictMessage);
+  const confirmDisabled = controlsDisabled || Boolean(shortcutConflictMessage) || !colorRulesValid;
 
   return (
     <section className="settings-window" aria-labelledby="settings-window-title" aria-busy={controlsDisabled ? true : undefined}>
@@ -280,7 +300,19 @@ export function SettingsSurface({
               onUpdateTabMinWidth={onUpdateTabMinWidth}
             />
           ) : settings.section === "color-rules" ? (
-            <ColorRulesPage colorRules={settings.model.colorRules} disabled={controlsDisabled} onUpdateColorRule={onUpdateColorRule} />
+            <ColorRulesPage
+              colorRules={settings.model.colorRules}
+              disabled={controlsDisabled}
+              conflict={colorRulesConflict}
+              onChange={onUpdateColorRules}
+              onHelp={onOpenColorRulesHelp}
+              onReload={onReloadColorRules}
+              onOverwrite={onOverwriteColorRules}
+              onValidationChange={onColorRulesValidityChange}
+              onDraftDirtyChange={onColorRulesDraftDirtyChange}
+              resetToken={colorRulesResetToken}
+              validateRule={onValidateColorRule}
+            />
           ) : settings.section === "tag-rules" ? (
             <TagRulesPage tagRules={settings.model.tagRules} />
           ) : (
@@ -1064,59 +1096,6 @@ function AppearancePage({
             />
             <span>px</span>
           </label>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ColorRulesPage({
-  colorRules,
-  disabled,
-  onUpdateColorRule
-}: {
-  colorRules: SettingsModel["colorRules"];
-  disabled: boolean;
-  onUpdateColorRule: (id: string, color: string) => void;
-}) {
-  return (
-    <div className="settings-page">
-      <section className="settings-group settings-group--table">
-        <header className="settings-group__header">
-          <div>
-            <strong>规则列表</strong>
-            <span>预览扩展名、属性和标签颜色。</span>
-          </div>
-        </header>
-        <div className="settings-table-scroll">
-          <table className="settings-table settings-table--rules">
-            <thead>
-              <tr>
-                <th>规则</th>
-                <th>匹配</th>
-                <th>颜色</th>
-                <th>预览</th>
-              </tr>
-            </thead>
-            <tbody>
-              {colorRules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>{rule.label}</td>
-                  <td>{rule.matcher}</td>
-                  <td>
-                    <input
-                      type="color"
-                      value={rule.color}
-                      data-color-rule-id={rule.id}
-                      onInput={(event) => onUpdateColorRule(rule.id, event.currentTarget.value)}
-                      disabled={disabled}
-                    />
-                  </td>
-                  <td>{rule.previewText}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </section>
     </div>

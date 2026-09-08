@@ -174,12 +174,14 @@ export const completion = (async () => {
     assert.equal(settingsWindowSource.includes("navigationColumns: model.navigationColumns.map"), true);
     assert.equal(settingsWindowSource.includes("!hasSameJsonShape(pm.navigationColumns, dm.navigationColumns)"), true);
 
-    const remoteUpsertsIndex = settingsWindowSource.indexOf("await applyRemoteProfileUpserts()");
-    const settingsModelIndex = settingsWindowSource.indexOf("await actions.applySettingsModel");
-    const remoteDeletionsIndex = settingsWindowSource.indexOf("await applyRemoteProfileDeletions()");
-    assert.equal(remoteUpsertsIndex > -1, true);
-    assert.equal(settingsModelIndex > remoteUpsertsIndex, true);
-    assert.equal(remoteDeletionsIndex > settingsModelIndex, true);
+    assert.equal(settingsWindowSource.includes("runSettingsApplyPlan(steps)"), true);
+    assert.equal(settingsWindowSource.includes('label: "常规设置"'), true);
+    assert.equal(settingsWindowSource.includes('label: "颜色规则"'), true);
+    assert.equal(settingsWindowSource.includes("setColorRulesBaseRevision(committedRulesRevision)"), true);
+    assert.equal(settingsWindowSource.includes("formatSettingsApplyFailure(error)"), true);
+    assert.equal(settingsWindowSource.includes("colorRulesRawDraftDirty"), true);
+    assert.equal(settingsWindowSource.includes("hasColorRuleDraftChanges"), true);
+    assert.equal(settingsWindowSource.includes("onColorRulesDraftDirtyChange={setColorRulesRawDraftDirty}"), true);
   });
 
   await assertTest("Tauri capability allows the settings child window", () => {

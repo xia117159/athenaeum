@@ -5,10 +5,11 @@ mod services;
 use std::sync::Arc;
 
 use commands::{
+    color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
     operations::{
-        cancel_file_operation, clear_operation_records, copy_entries, create_directory, create_file,
-        delete_entries, list_file_operation_tasks, list_operation_history, move_entries,
-        rename_entry, resolve_file_operation_conflict, start_file_operation,
+        cancel_file_operation, clear_operation_records, copy_entries, create_directory,
+        create_file, delete_entries, list_file_operation_tasks, list_operation_history,
+        move_entries, rename_entry, resolve_file_operation_conflict, start_file_operation,
         undo_latest_operation, undo_operation,
     },
     remote::{
@@ -19,19 +20,18 @@ use commands::{
     },
     search::{cancel_search, start_search},
     settings::{
-        delete_bookmark, delete_color_rule, delete_hotlist_entry, delete_navigation_item,
-        delete_tag_definition, get_entry_comment, get_settings_snapshot,
-        mark_entry_metadata_deleted, mark_navigation_item_opened, remove_entry_comment,
-        reorder_navigation_items, save_bookmark, save_color_rule, save_details_row_height,
-        save_entry_comment, save_hotlist_entry, save_navigation_item, save_settings_model,
-        save_shortcuts, save_tag_definition, save_ui_layout, save_ui_theme,
+        delete_bookmark, delete_hotlist_entry, delete_navigation_item, delete_tag_definition,
+        get_entry_comment, get_settings_snapshot, mark_entry_metadata_deleted,
+        mark_navigation_item_opened, remove_entry_comment, reorder_navigation_items, save_bookmark,
+        save_details_row_height, save_entry_comment, save_hotlist_entry, save_navigation_item,
+        save_settings_model, save_shortcuts, save_tag_definition, save_ui_layout, save_ui_theme,
     },
     workspace::{
         get_git_status, get_item_properties, get_tree_children, get_windows_drag_drop_environment,
         initialize_workspace, list_directory, list_drive_roots, open_path_with_system_default,
         perform_system_file_operation, read_system_file_clipboard, resolve_navigation_targets,
-        resolve_system_icon, set_system_file_clipboard, show_native_background_context_menu,
-        set_workspace_watch_roots, show_native_context_menu, start_system_file_drag,
+        resolve_system_icon, set_system_file_clipboard, set_workspace_watch_roots,
+        show_native_background_context_menu, show_native_context_menu, start_system_file_drag,
     },
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
@@ -97,6 +97,9 @@ pub fn run() {
             start_search,
             cancel_search,
             get_settings_snapshot,
+            set_color_filter_enabled,
+            replace_color_rules,
+            validate_color_filter_rule,
             save_bookmark,
             delete_bookmark,
             save_hotlist_entry,
@@ -105,8 +108,6 @@ pub fn run() {
             delete_navigation_item,
             reorder_navigation_items,
             mark_navigation_item_opened,
-            save_color_rule,
-            delete_color_rule,
             save_tag_definition,
             delete_tag_definition,
             save_shortcuts,

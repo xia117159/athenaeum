@@ -49,6 +49,7 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     permissions: string[];
   };
   const appPermission = fs.readFileSync(path.join(process.cwd(), "src-tauri/permissions/default.toml"), "utf8");
+  const defaultPermissionSet = appPermission.slice(0, appPermission.indexOf("[[permission]]"));
   const requiredCommands = [
     "initialize_workspace",
     "list_directory",
@@ -76,8 +77,9 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "delete_bookmark",
     "save_hotlist_entry",
     "delete_hotlist_entry",
-    "save_color_rule",
-    "delete_color_rule",
+    "set_color_filter_enabled",
+    "replace_color_rules",
+    "validate_color_filter_rule",
     "save_tag_definition",
     "delete_tag_definition",
     "save_shortcuts",
@@ -122,13 +124,25 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
 
   assert.equal(capability.permissions.includes("default"), true);
   for (const command of requiredCommands) {
-    assert.equal(appPermission.includes(`"${command}"`), true, `${command} should be allowed by default permission`);
+    const permission = `allow-${command.replaceAll("_", "-")}`;
+    assert.equal(
+      defaultPermissionSet.includes(`"${permission}"`),
+      true,
+      `${command} should be allowed by default permission`
+    );
   }
   assert.equal(
     appPermission.includes("register_system_file_drop_target"),
     false,
     "file drops must use Tauri/wry's dragDropEnabled target instead of overriding it"
   );
+  for (const legacyCommand of ["save_color_rule", "delete_color_rule"]) {
+    assert.equal(
+      defaultPermissionSet.includes(`"allow-${legacyCommand.replaceAll("_", "-")}"`),
+      false,
+      `${legacyCommand} should not remain in the default permission`
+    );
+  }
 });
 
 assertTest("Tauri main window keeps native file drag-and-drop enabled", () => {

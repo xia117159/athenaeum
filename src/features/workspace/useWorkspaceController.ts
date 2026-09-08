@@ -15,6 +15,7 @@ import { disposeQuietly } from "./workspaceIpc";
 import { sortEntries } from "./fileListingPresentation";
 import { subscribeOperationEvents } from "./operationSubscriptions";
 import { filterEntriesByFileVisibility } from "./workspaceVisibility";
+import { useColorFilterController } from "./useColorFilterController";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
 import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
@@ -89,11 +90,8 @@ import type {
 } from "./types";
 import { THIS_PC_PATH } from "./types";
 import type { GitFileStatus } from "./types";
-
 export { planNotificationDismissals } from "./workspaceControllerUtils";
-
 const defaultWorkspaceGateway = createWorkspaceGateway();
-
 export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () => ({
     ...createWorkspaceState(createMockWorkspaceBootstrap("mock")),
@@ -370,12 +368,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   useEffect(() => {
     let disposed = false;
-
     void workspaceGateway
       .loadBootstrap()
       .then((bootstrap) => {
         if (!disposed) {
           dispatch({ type: "bootstrapLoaded", payload: bootstrap });
+          bootstrap.startupDiagnostics.forEach((diagnostic) => pushNotification("warning", diagnostic));
         }
       })
       .catch((error) => {
@@ -524,17 +522,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
     void workspaceGateway.saveShortcuts(state.settings.model.shortcuts);
   }, [state.settings.model.shortcuts, state.source]);
-
-  useEffect(() => {
-    if (state.source !== "tauri") {
-      return;
-    }
-    if (skipNextSettingsPersistenceRef.current.colorRules) {
-      skipNextSettingsPersistenceRef.current.colorRules = false;
-      return;
-    }
-    void workspaceGateway.saveColorRules(state.settings.model.colorRules);
-  }, [state.settings.model.colorRules, state.source]);
 
   useEffect(() => {
     if (state.source !== "tauri") {
@@ -972,6 +959,25 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         })
       )
     );
+  });
+
+  const refreshVisibleColorEntries = useEffectEvent(async () => {
+    const targets = getVisiblePanelIds(state.layoutMode)
+      .map((panelId) => ({ panelId, tab: getActiveTab(state.panels[panelId]) }))
+      .filter(({ tab }) => isDirectoryTab(tab) && tab.snapshot.location.kind !== "virtual");
+    await Promise.all(
+      targets.map(({ panelId, tab }) =>
+        commitNavigation(panelId, tab.snapshot.location.path, false, {
+          tabId: tab.id,
+          activatePanel: false,
+          historyIndex: tab.historyIndex
+        })
+      )
+    );
+  });
+
+  const { toggleColorFilter, replaceColorRules, validateColorRule } = useColorFilterController({
+    state, dispatch, workspaceGateway, refreshVisibleEntries: refreshVisibleColorEntries, pushNotification
   });
 
   const refreshVisiblePanelsForPaths = useEffectEvent(async (paths: string[]) => {
@@ -3232,10 +3238,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       stopSearch: () => void stopSearch(),
       setSettingsSection: (section: SettingsSection) => dispatch({ type: "settingsSectionSet", payload: section }),
       applySettingsModel: (model: SettingsModel, section?: SettingsSection) => applySettingsModel(model, section),
+      toggleColorFilter: (enabled: boolean) => toggleColorFilter(enabled),
+      replaceColorRules: (rules: SettingsModel["colorRules"], baseRulesRevision: string, force = false) => replaceColorRules(rules, baseRulesRevision, force),
+      validateColorRule: (expression: string) => validateColorRule(expression),
       updateShortcutBinding: (id: string, binding: string) =>
         dispatch({ type: "shortcutBindingUpdated", payload: { id, binding } }),
-      updateColorRule: (id: string, color: string) =>
-        dispatch({ type: "colorRuleUpdated", payload: { id, color } }),
       updateTagRule: (id: string, quickFilter: string) =>
         dispatch({ type: "tagRuleUpdated", payload: { id, quickFilter } }),
       updatePanelFocusAccent: (color: string) =>

@@ -175,7 +175,30 @@ return { statuses: {}, isGitRepo: false };
     async saveSession() {},
     async saveLayout() {},
     async saveShortcuts() {},
-    async saveColorRules() {},
+    async getColorFilterSnapshot() {
+      return { enabled: true, rules: [], revision: "0", rulesRevision: "0" };
+    },
+    async setColorFilterEnabled(enabled: boolean) {
+      return {
+        snapshot: { enabled, rules: [], revision: "1", rulesRevision: "0" },
+        warnings: []
+      };
+    },
+    async replaceColorRules(request) {
+      return {
+        status: "applied" as const,
+        snapshot: {
+          enabled: true,
+          rules: request.rules.map((rule, index) => ({ ...rule, priority: index + 1 })),
+          revision: "1",
+          rulesRevision: "1"
+        },
+        warnings: []
+      };
+    },
+    async validateColorRule() {
+      return { valid: true, message: null, span: null };
+    },
     async saveDetailsRowHeight(value: number) {
       interactions.savedDetailsRowHeights.push(value);
     },
@@ -207,6 +230,9 @@ return { statuses: {}, isGitRepo: false };
       return () => undefined;
     },
     async listenOperationHistory() {
+      return () => undefined;
+    },
+    async listenColorFilterChanged() {
       return () => undefined;
     },
     async listenOperationRecordsCleared(handler) {

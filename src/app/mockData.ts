@@ -1,6 +1,6 @@
 import type {
   Bookmark,
-  ColorRule,
+  ColorFilterRule,
   DirectoryListing,
   DriveInfo,
   EntryViewModel,
@@ -28,22 +28,27 @@ const tags: TagDefinition[] = [
   { id: "tag-media", name: "Media", colorHex: "#23715c" }
 ];
 
-const rules: ColorRule[] = [
+const rules: ColorFilterRule[] = [
   {
     id: "rule-rust",
     name: "Rust source",
+    enabled: true,
     target: "file",
-    mode: "extension",
-    pattern: "rs",
-    colorHex: "#ca5a00",
+    expression: "Extension == \".rs\"",
+    caseSensitive: false,
+    foregroundColorHex: "#ca5a00",
+    backgroundColorHex: null,
     priority: 1
   },
   {
     id: "rule-hidden",
     name: "Hidden entries",
+    enabled: true,
     target: "any",
-    mode: "hidden",
-    colorHex: "#7a5e2a",
+    expression: "Attributes HAS Hidden",
+    caseSensitive: false,
+    foregroundColorHex: "#7a5e2a",
+    backgroundColorHex: null,
     priority: 2
   }
 ];
@@ -125,7 +130,7 @@ const listings = new Map<string, DirectoryListing>([
       parent: null,
       canGoUp: false,
       entries: [
-        createEntry("C:\\Users", "Users", "directory", { tags: ["Project"], colorHex: "#2266a8" }),
+        createEntry("C:\\Users", "Users", "directory", { tags: ["Project"], foregroundColorHex: "#2266a8" }),
         createEntry("C:\\Program Files", "Program Files", "directory"),
         createEntry("C:\\Windows", "Windows", "directory"),
         createEntry("C:\\readme.txt", "readme.txt", "file")
@@ -142,7 +147,7 @@ const listings = new Map<string, DirectoryListing>([
         createEntry("C:\\Users\\Administrator\\Desktop", "Desktop", "directory"),
         createEntry("C:\\Users\\Administrator\\Documents", "Documents", "directory"),
         createEntry("C:\\Users\\Administrator\\Downloads", "Downloads", "directory"),
-        createEntry("C:\\Users\\Administrator\\notes.md", "notes.md", "file", { tags: ["Project"], colorHex: "#23715c" }),
+        createEntry("C:\\Users\\Administrator\\notes.md", "notes.md", "file", { tags: ["Project"], foregroundColorHex: "#23715c" }),
         createEntry("C:\\Users\\Administrator\\todo.txt", "todo.txt", "file")
       ]
     }
@@ -156,7 +161,7 @@ const listings = new Map<string, DirectoryListing>([
       entries: [
         createEntry("D:\\Projects\\SimpleFileManager", "SimpleFileManager", "directory", {
           tags: ["Project"],
-          colorHex: "#2266a8"
+          foregroundColorHex: "#2266a8"
         }),
         createEntry("D:\\Projects\\assets", "assets", "directory"),
         createEntry("D:\\Projects\\notes", "notes", "directory"),
@@ -175,7 +180,7 @@ const listings = new Map<string, DirectoryListing>([
         createEntry("D:\\Projects\\SimpleFileManager\\src-tauri", "src-tauri", "directory"),
         createEntry("D:\\Projects\\SimpleFileManager\\Cargo.toml", "Cargo.toml", "file", {
           tags: ["Project"],
-          colorHex: "#ca5a00"
+          foregroundColorHex: "#ca5a00"
         }),
         createEntry("D:\\Projects\\SimpleFileManager\\README.md", "README.md", "file")
       ]
@@ -227,7 +232,12 @@ export function getMockBootstrap(): WorkspaceBootstrap {
       hotlist,
       tagDefinitions: tags,
       entryTags: [],
-      colorRules: rules,
+      colorFilter: {
+        enabled: true,
+        rules,
+        revision: "0",
+        rulesRevision: "0"
+      },
       shortcuts,
       detailsRowHeight: 36,
       layout,

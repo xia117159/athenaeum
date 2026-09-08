@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Bookmark, ColorRule, ContextMenuSettings, EntryTag, HotlistEntry, NavigationItem, RemoteProfile,
-    ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+    Bookmark, ColorFilterConfigSnapshot, ContextMenuSettings, EntryTag, HotlistEntry,
+    NavigationItem, RemoteProfile, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,7 +49,7 @@ pub struct SettingsSnapshot {
     pub navigation_items: Vec<NavigationItem>,
     pub tag_definitions: Vec<TagDefinition>,
     pub entry_tags: Vec<EntryTag>,
-    pub color_rules: Vec<ColorRule>,
+    pub color_filter: ColorFilterConfigSnapshot,
     pub shortcuts: Vec<ShortcutBinding>,
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
@@ -69,7 +69,6 @@ pub struct SettingsSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsModelUpdate {
     pub shortcuts: Vec<ShortcutBinding>,
-    pub color_rules: Vec<ColorRule>,
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
     pub details_row_height: u16,

@@ -9,11 +9,7 @@ import {
   useRef,
   useState
 } from "react";
-import {
-  clearEntryDrag,
-  hasEntryDragPayload,
-  readEntryDragPayload
-} from "./entryDrag";
+import { clearEntryDrag, hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { DetailsListBase } from "./DetailsListBase";
 import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
 import { FileSystemIcon } from "./FileSystemIcon";
@@ -53,6 +49,7 @@ import type {
   TabViewMode
 } from "./types";
 import { formatDriveSize } from "./workspaceDirectoryGateway";
+import { getFileColorRowAttributes } from "./fileColorStyle";
 
 type DropOperation = "copy" | "move";
 
@@ -327,7 +324,8 @@ export function FileListingShell({
   onInlineEditCommit,
   onInlineEditCancel,
   gitStatus,
-  selectionCursorId
+  selectionCursorId,
+  colorFilterEnabled = true
 }: {
   panelId: PanelId;
   tabId: string;
@@ -368,6 +366,7 @@ export function FileListingShell({
   onInlineEditCancel: () => void;
   gitStatus?: Record<string, GitFileStatus>;
   selectionCursorId?: string | null;
+  colorFilterEnabled?: boolean;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
   const inlineCreateEntry: ListingEntry | undefined =
@@ -993,11 +992,12 @@ export function FileListingShell({
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={`entry-${entry.id}`}
-          className={`file-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-row${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           id={`entry-${entry.id}`}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1031,12 +1031,13 @@ export function FileListingShell({
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-card file-card--icon${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-card file-card--icon${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1070,12 +1071,13 @@ export function FileListingShell({
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-list-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-list-item${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1098,13 +1100,14 @@ export function FileListingShell({
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
       const di = entry.driveInfo;
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       const drivePct = di?.totalBytes != null ? Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100)) : null;
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-card file-card--tile${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-card file-card--tile${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1147,12 +1150,13 @@ export function FileListingShell({
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-content-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-content-item${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}

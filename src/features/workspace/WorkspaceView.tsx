@@ -1,5 +1,5 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
@@ -318,6 +318,18 @@ export function WorkspaceView() {
           <button type="button" className="toolbar-button toolbar-button--icon" title="搜索" aria-label="搜索" onClick={() => actions.toggleSearch(true)}>
             <Search size={16} aria-hidden="true" />
           </button>
+          <button
+            type="button"
+            className={`toolbar-button toolbar-button--icon${state.settings.model.colorFilterEnabled !== false ? " is-active" : ""}`}
+            title={state.settings.model.colorFilterEnabled !== false ? "关闭颜色过滤器" : "启用颜色过滤器"}
+            aria-label={state.settings.model.colorFilterEnabled !== false ? "关闭颜色过滤器" : "启用颜色过滤器"}
+            aria-pressed={state.settings.model.colorFilterEnabled !== false}
+            aria-busy={state.colorFilterTogglePending || undefined}
+            disabled={state.colorFilterTogglePending}
+            onClick={() => void actions.toggleColorFilter(state.settings.model.colorFilterEnabled === false)}
+          >
+            <Palette size={16} aria-hidden="true" />
+          </button>
         </div>
 
       </section>
@@ -607,6 +619,7 @@ function PanelLayout({
       dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       fileVisibility={state.fileVisibility}
+      colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
       keyboardNavToken={state.keyboardNavToken}
@@ -726,6 +739,7 @@ function PanelSurface({
   dropHighlightBorder,
   tabMinWidth,
   fileVisibility,
+  colorFilterEnabled,
   syncScrollEnabled,
   navigation,
   keyboardNavToken,
@@ -749,6 +763,7 @@ function PanelSurface({
   dropHighlightBorder: string;
   tabMinWidth: number;
   fileVisibility: WorkspaceState["fileVisibility"];
+  colorFilterEnabled: boolean;
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
   keyboardNavToken?: symbol;
@@ -851,6 +866,7 @@ function PanelSurface({
           />
         ) : (
           <WorkspaceFileListingShell
+            colorFilterEnabled={colorFilterEnabled}
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}

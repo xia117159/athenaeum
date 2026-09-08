@@ -1,5 +1,4 @@
 import type {
-  ColorRule as BackendColorRule,
   DirectoryListing as BackendDirectoryListing,
   EntryViewModel as BackendEntryViewModel,
   RemoteProfile as BackendRemoteProfile,
@@ -35,11 +34,27 @@ import type {
   WorkspaceBootstrap
 } from "./types";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import type { ColorFilterRule } from "./colorFilterTypes";
 
 export { cloneColumns, DEFAULT_COLUMNS, DEFAULT_METADATA_RETENTION_HOURS, DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "./workspaceFileListDefaults";
 export { cloneNavigationColumns, NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 
 const DEFAULT_COLUMN_BY_ID = new Map(DEFAULT_COLUMNS.map((column) => [column.id, column] as const));
+
+function mapColorFilterRule(rule: ColorFilterRule): ColorFilterRule {
+  return {
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    target: rule.target,
+    expression: rule.expression,
+    caseSensitive: rule.caseSensitive,
+    foregroundColorHex: rule.foregroundColorHex,
+    backgroundColorHex: rule.backgroundColorHex,
+    priority: rule.priority,
+    migrationDiagnostic: rule.migrationDiagnostic ?? null
+  };
+}
 
 function normalizeColumnId(value?: string | null): ColumnDefinition["id"] | null {
   return DEFAULT_COLUMNS.some((column) => column.id === value) ? (value as ColumnDefinition["id"]) : null;
@@ -640,22 +655,6 @@ function localizeShortcutDescription(action: string) {
   return dictionary[action] ?? action;
 }
 
-function localizeColorRulePreview(rule: BackendColorRule) {
-  const targetMap: Record<string, string> = {
-    any: "任意项",
-    file: "文件",
-    directory: "文件夹"
-  };
-  const modeMap: Record<string, string> = {
-    extension: "扩展名匹配",
-    nameContains: "名称包含",
-    pathContains: "路径包含",
-    hidden: "隐藏属性",
-    readOnly: "只读属性"
-  };
-  return `${targetMap[rule.target] ?? "任意项"} · ${modeMap[rule.mode] ?? rule.mode}`;
-}
-
 function createRemoteUriFromBackend(
   remotePath: string,
   connectionId: string | null | undefined,
@@ -708,7 +707,9 @@ function mapEntryViewModel(
     isHidden: entry.isHidden,
     isSystem: entry.isSystem ?? false,
     isProtectedOperatingSystem: entry.isProtectedOperatingSystem ?? false,
-    accentColor: entry.decoration.colorHex ?? (entry.kind === "directory" ? "#2f6b57" : "#29659f"),
+    accentColor: entry.kind === "directory" ? "#2f6b57" : "#29659f",
+    foregroundColorHex: entry.decoration.foregroundColorHex ?? null,
+    backgroundColorHex: entry.decoration.backgroundColorHex ?? null,
     tags: entry.decoration.tags ? [...entry.decoration.tags] : [],
     comment: entry.comment ?? "",
     description: describeEntry(entry)
@@ -821,11 +822,6 @@ export function mapRemoteProfiles(profiles: BackendRemoteProfile[]) {
   return profiles.map(mapRemoteProfile);
 }
 
-function buildColorRuleMatcher(rule: BackendColorRule) {
-  const suffix = rule.pattern ? `:${rule.pattern}` : "";
-  return `${rule.mode}${suffix}`;
-}
-
 function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
   const byId = new Map(shortcuts.map((shortcut) => [shortcut.id, shortcut]));
   return DEFAULT_SHORTCUTS.map((shortcut) => ({
@@ -851,13 +847,10 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
         description: localizeShortcutDescription(shortcut.action)
       }))
     ),
-    colorRules: settings.colorRules.map((rule) => ({
-      id: rule.id,
-      label: rule.name,
-      matcher: buildColorRuleMatcher(rule),
-      color: rule.colorHex,
-      previewText: localizeColorRulePreview(rule)
-    })),
+    colorRules: settings.colorFilter.rules.map(mapColorFilterRule),
+    colorFilterEnabled: settings.colorFilter.enabled,
+    colorFilterRevision: settings.colorFilter.revision,
+    colorRulesRevision: settings.colorFilter.rulesRevision,
     tagRules: settings.tagDefinitions.map((definition) => ({
       id: definition.id,
       label: definition.name,
@@ -898,6 +891,9 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
   return {
     shortcuts: mergeShortcutDefaults(settingsModel.shortcuts),
     colorRules: settingsModel.colorRules,
+    colorFilterEnabled: settingsModel.colorFilterEnabled ?? true,
+    colorFilterRevision: settingsModel.colorFilterRevision ?? "0",
+    colorRulesRevision: settingsModel.colorRulesRevision ?? "0",
     tagRules: settingsModel.tagRules,
     columns: normalizeColumns(settingsModel.columns),
     navigationColumns: normalizeNavigationColumns(settingsModel.navigationColumns),
@@ -1049,6 +1045,7 @@ export function mapWorkspaceBootstrap(bootstrap: BackendWorkspaceBootstrap): Wor
 
   return {
     source: "tauri",
+    startupDiagnostics: [...(bootstrap.startupDiagnostics ?? [])],
     layoutMode: bootstrap.settings.layout.layoutMode,
     layoutRatios: mapLayoutRatios(bootstrap.settings.layout),
     treeVisible: bootstrap.settings.layout.showTree !== false,

@@ -1,0 +1,28 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+
+expression = { SOI ~ or_expression ~ EOI }
+quoted_shorthand = { SOI ~ quoted_string ~ EOI }
+or_expression = { and_expression ~ (or_operator ~ and_expression)* }
+and_expression = { unary_expression ~ (and_operator ~ unary_expression)* }
+unary_expression = { not_operator* ~ primary }
+primary = { comparison | "(" ~ or_expression ~ ")" }
+comparison = { identifier ~ operator ~ literal }
+
+operator = { not_has_operator | has_operator | less_equal_operator | greater_equal_operator | not_equal_operator | equal_operator | less_operator | greater_operator }
+or_operator = { ^"OR" }
+and_operator = { ^"AND" }
+not_operator = { ^"NOT" }
+not_has_operator = { ^"NOT" ~ ^"HAS" }
+has_operator = { ^"HAS" }
+less_equal_operator = { "<=" }
+greater_equal_operator = { ">=" }
+not_equal_operator = { "!=" }
+equal_operator = { "==" }
+less_operator = { "<" }
+greater_operator = { ">" }
+
+literal = { quoted_string | quantity | identifier }
+quoted_string = @{ "\"" ~ (escape | !("\"" | "\\") ~ ANY)* ~ "\"" }
+escape = { "\\" ~ ("\\" | "\"" | "*" | "?") }
+quantity = @{ ASCII_DIGIT+ ~ ASCII_ALPHA+ }
+identifier = @{ (ASCII_ALPHANUMERIC | "_" | "-" | ".")+ }

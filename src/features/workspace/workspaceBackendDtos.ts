@@ -1,5 +1,4 @@
 import type {
-  ColorRule as BackendColorRule,
   RemoteProfile as BackendRemoteProfile,
   RemoteProfileUpsertRequest as BackendRemoteProfileUpsertRequest,
   NavigationItemUpsertRequest as BackendNavigationItemUpsertRequest,
@@ -52,21 +51,6 @@ export function toBackendShortcut(shortcut: SettingsModel["shortcuts"][number]):
   };
 }
 
-export function toBackendColorRule(rule: SettingsModel["colorRules"][number], index: number): BackendColorRule {
-  const [modeToken, patternToken] = rule.matcher.split(":", 2);
-  const mode = (modeToken || "nameContains") as BackendColorRule["mode"];
-
-  return {
-    id: rule.id,
-    name: rule.label,
-    target: "any",
-    mode,
-    pattern: patternToken ?? null,
-    colorHex: rule.color,
-    priority: index + 1
-  };
-}
-
 export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
   return {
     panelFocusAccent: normalizeThemeAccentColor(theme.panelFocusAccent),
@@ -80,7 +64,6 @@ export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
 export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSettingsModelUpdate {
   return {
     shortcuts: model.shortcuts.map(toBackendShortcut),
-    colorRules: model.colorRules.map(toBackendColorRule),
     columns: normalizeColumns(model.columns),
     navigationColumns: normalizeNavigationColumns(model.navigationColumns),
     detailsRowHeight: model.detailsRowHeight,
@@ -143,7 +126,12 @@ export function createBrowserSettingsSnapshot(
     navigationItems: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: {
+      enabled: true,
+      rules: [],
+      revision: "0",
+      rulesRevision: "0"
+    },
     shortcuts: [],
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,

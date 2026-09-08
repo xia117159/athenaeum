@@ -1,3 +1,4 @@
+pub mod color_filter;
 pub mod operations;
 pub mod remote;
 pub mod search;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createMockWorkspaceBootstrap, searchMockCatalog } from "./mockData";
+import { createMockWorkspaceBootstrap, resolveMockDirectory, searchMockCatalog } from "./mockData";
 import type { SearchQuery } from "./types";
 
 function assertTest(name: string, fn: () => void) {
@@ -68,4 +68,16 @@ assertTest("createMockWorkspaceBootstrap exposes Shift as the configurable drag 
 
   assert.equal(dragMove?.binding, "Shift");
   assert.equal(dragMove?.scope, "listing");
+});
+
+assertTest("browser mock listings carry the same V2 color rule decorations", () => {
+  const archive = resolveMockDirectory("C:\\Users\\Admin\\Downloads")
+    .entries.find((entry) => entry.name === "assets.zip");
+  const system = resolveMockDirectory("C:\\")
+    .entries.find((entry) => entry.name === "pagefile.sys");
+
+  assert.equal(archive?.foregroundColorHex, "#2266a8");
+  assert.equal(archive?.backgroundColorHex, null);
+  assert.equal(system?.foregroundColorHex, "#8d4a42");
+  assert.equal(system?.backgroundColorHex, null);
 });

@@ -9,7 +9,6 @@ import {
   markWorkspaceNavigationItemOpened,
   removeWorkspaceEntryComment,
   saveWorkspaceBookmark,
-  saveWorkspaceColorRules,
   saveWorkspaceEntryComment,
   saveWorkspaceLayout,
   saveWorkspaceNavigationItem,
@@ -47,7 +46,7 @@ function createSettingsSnapshot(overrides: Partial<BackendSettingsSnapshot> = {}
     navigationItems: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: { enabled: true, rules: [], revision: "0", rulesRevision: "0" },
     shortcuts: [],
     detailsRowHeight: 36,
     theme: {
@@ -129,60 +128,6 @@ export const workspaceSettingsGatewayTests = (async () => {
     ]);
   });
 
-  await assertAsyncTest("saveWorkspaceColorRules saves rules sequentially with backend priorities", async () => {
-    const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
-    const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
-      invocations.push({ command, args });
-      return createSettingsSnapshot() as T;
-    };
-    const colorRules: SettingsModel["colorRules"] = [
-      {
-        id: "rule-rs",
-        label: "Rust",
-        matcher: "extension:rs",
-        color: "#d85f00",
-        previewText: "Rust"
-      },
-      {
-        id: "rule-hidden",
-        label: "Hidden",
-        matcher: "hidden",
-        color: "#777777",
-        previewText: "Hidden"
-      }
-    ];
-
-    await saveWorkspaceColorRules(colorRules, { invoke, runtimeHost });
-
-    assert.deepEqual(
-      invocations.map((item) => item.args),
-      [
-        {
-          rule: {
-            id: "rule-rs",
-            name: "Rust",
-            target: "any",
-            mode: "extension",
-            pattern: "rs",
-            colorHex: "#d85f00",
-            priority: 1
-          }
-        },
-        {
-          rule: {
-            id: "rule-hidden",
-            name: "Hidden",
-            target: "any",
-            mode: "hidden",
-            pattern: null,
-            colorHex: "#777777",
-            priority: 2
-          }
-        }
-      ]
-    );
-  });
-
   await assertAsyncTest("saveWorkspaceTheme invokes the typed theme command", async () => {
     const invocations: Array<{ command: string; args: Record<string, unknown> }> = [];
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
@@ -257,10 +202,14 @@ export const workspaceSettingsGatewayTests = (async () => {
       colorRules: [
         {
           id: "rule-rs",
-          label: "Rust",
-          matcher: "extension:rs",
-          color: "#d85f00",
-          previewText: "Rust"
+          name: "Rust",
+          enabled: true,
+          target: "file",
+          expression: "Extension == \".rs\"",
+          caseSensitive: false,
+          foregroundColorHex: "#d85f00",
+          backgroundColorHex: null,
+          priority: 1
         }
       ],
       tagRules: [],
@@ -295,17 +244,6 @@ export const workspaceSettingsGatewayTests = (async () => {
         args: {
           model: {
             shortcuts: [{ id: "navigate-up", action: "navigate-up", accelerator: "Alt+Up", scope: "panel" }],
-            colorRules: [
-              {
-                id: "rule-rs",
-                name: "Rust",
-                target: "any",
-                mode: "extension",
-                pattern: "rs",
-                colorHex: "#d85f00",
-                priority: 1
-              }
-            ],
             columns: [
               { id: "name", label: "名称", visible: true, width: "240px", align: "left" },
               { id: "type", label: "类型", visible: true, width: "112px", align: "left" },

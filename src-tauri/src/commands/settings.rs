@@ -4,15 +4,15 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     domain::models::{
-        Bookmark, ColorRule, HotlistEntry, NavigationItemUpsertRequest, SettingsModelUpdate,
-        SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+        Bookmark, HotlistEntry, NavigationItemUpsertRequest, SettingsModelUpdate, SettingsSnapshot,
+        ShortcutBinding, TagDefinition, UiLayout, UiTheme,
     },
     services::{settings_store::validate_shortcuts, AppState},
 };
 
 fn persist_state(state: &Arc<AppState>) -> Result<(), String> {
     {
-        let metadata = state.metadata.read().expect("metadata lock poisoned");
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
         metadata.persist().map_err(|error| error.to_string())?;
     }
     {
@@ -196,36 +196,6 @@ pub fn mark_navigation_item_opened(
 }
 
 #[tauri::command]
-pub fn save_color_rule(
-    rule: ColorRule,
-    state: State<'_, Arc<AppState>>,
-    app: AppHandle,
-) -> Result<SettingsSnapshot, String> {
-    state
-        .metadata
-        .write()
-        .expect("metadata lock poisoned")
-        .upsert_color_rule(rule);
-    persist_state(state.inner())?;
-    emit_current_settings_changed(&app, state)
-}
-
-#[tauri::command]
-pub fn delete_color_rule(
-    id: String,
-    state: State<'_, Arc<AppState>>,
-    app: AppHandle,
-) -> Result<SettingsSnapshot, String> {
-    state
-        .metadata
-        .write()
-        .expect("metadata lock poisoned")
-        .delete_color_rule(&id);
-    persist_state(state.inner())?;
-    emit_current_settings_changed(&app, state)
-}
-
-#[tauri::command]
 pub fn save_tag_definition(
     definition: TagDefinition,
     state: State<'_, Arc<AppState>>,
@@ -326,7 +296,6 @@ pub fn save_settings_model(
     {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
         metadata.set_shortcuts(model.shortcuts);
-        metadata.set_color_rules(model.color_rules);
     }
     {
         let mut settings = state.settings.write().expect("settings lock poisoned");

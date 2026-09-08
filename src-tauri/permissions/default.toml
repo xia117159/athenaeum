@@ -27,8 +27,9 @@ permissions = [
   "allow-delete-bookmark",
   "allow-save-hotlist-entry",
   "allow-delete-hotlist-entry",
-  "allow-save-color-rule",
-  "allow-delete-color-rule",
+  "allow-set-color-filter-enabled",
+  "allow-replace-color-rules",
+  "allow-validate-color-filter-rule",
   "allow-save-tag-definition",
   "allow-delete-tag-definition",
   "allow-save-shortcuts",
@@ -209,14 +210,19 @@ description = "Allows deleting directory hotlist entries."
 commands.allow = ["delete_hotlist_entry"]
 
 [[permission]]
-identifier = "allow-save-color-rule"
-description = "Allows saving color rules."
-commands.allow = ["save_color_rule"]
+identifier = "allow-set-color-filter-enabled"
+description = "Allows changing the global color filter state."
+commands.allow = ["set_color_filter_enabled"]
 
 [[permission]]
-identifier = "allow-delete-color-rule"
-description = "Allows deleting color rules."
-commands.allow = ["delete_color_rule"]
+identifier = "allow-replace-color-rules"
+description = "Allows replacing color rules with revision checks."
+commands.allow = ["replace_color_rules"]
+
+[[permission]]
+identifier = "allow-validate-color-filter-rule"
+description = "Allows validating color filter expressions."
+commands.allow = ["validate_color_filter_rule"]
 
 [[permission]]
 identifier = "allow-save-tag-definition"

@@ -57,6 +57,7 @@ function createWorkspaceState(): WorkspaceState {
       search: 0.36
     },
     treeVisible: false,
+    colorFilterTogglePending: false,
     fileVisibility: {
       showHidden: false,
       showSystem: false,

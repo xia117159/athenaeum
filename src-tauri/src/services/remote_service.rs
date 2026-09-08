@@ -1,9 +1,16 @@
 mod adapter_factory;
 mod host_key;
+mod listing;
 mod remote_path;
 pub(super) mod windows_credentials;
 
-use std::{fs, io, net::{TcpStream, ToSocketAddrs}, path::{Path, PathBuf}, process::{Command, Output}, time::Duration};
+use std::{
+    fs, io,
+    net::{TcpStream, ToSocketAddrs},
+    path::Path,
+    process::{Command, Output},
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -11,16 +18,19 @@ use chrono::{TimeZone, Utc};
 use ssh2::{FileStat, Session, Sftp};
 
 use crate::domain::models::{
-    DirectorySizeAvailability, DirectorySizeState, EntryDecoration, EntryKind, EntryViewModel,
-    ItemProperties, ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField,
-    ItemPropertyFieldAvailability, ItemPropertyFieldState, LocationDescriptor, LocationKind,
-    RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo, RemoteProfile,
-    RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest,
+    DirectorySizeAvailability, DirectorySizeState, EntryKind, EntryViewModel, ItemProperties,
+    ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability,
+    ItemPropertyFieldState, LocationKind, RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo,
+    RemoteProfile, RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest,
 };
 
 use self::{
     adapter_factory::{preferred_curl_executable, select_adapter},
-    host_key::{create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key, write_known_host_entry},
+    host_key::{
+        create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key,
+        write_known_host_entry,
+    },
+    listing::{parse_listing_entries, parse_sftp_entries},
     remote_path::{
         available_local_conflict_path, available_sftp_conflict_path, build_url,
         create_remote_transfer_temp_dir, ensure_remote_not_inside_source, join_remote_path,
@@ -34,7 +44,9 @@ use self::{
 #[cfg(test)]
 use self::{
     host_key::{host_key_algorithm, host_key_fingerprint_sha256, known_hosts_host},
-    remote_path::{available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root},
+    remote_path::{
+        available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root,
+    },
 };
 
 pub fn validate_profile(profile: &RemoteProfile) -> Result<()> {
@@ -1722,127 +1734,6 @@ fn authenticate_sftp_session(
     Ok(())
 }
 
-fn parse_listing_entries(
-    profile: &RemoteProfile,
-    path: Option<&str>,
-    stdout: &[u8],
-) -> Vec<EntryViewModel> {
-    let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let trimmed = line.trim();
-            let is_directory = trimmed.ends_with('/');
-            let name = trimmed.trim_end_matches('/').to_string();
-            let remote_path = join_remote_path(&base_path, &name);
-
-            EntryViewModel {
-                path: remote_path.clone(),
-                name,
-                extension: (!is_directory)
-                    .then(|| {
-                        remote_path
-                            .rsplit('.')
-                            .next()
-                            .unwrap_or_default()
-                            .to_string()
-                    })
-                    .filter(|value| !value.is_empty() && value != &remote_path),
-                kind: if is_directory {
-                    EntryKind::Directory
-                } else {
-                    EntryKind::File
-                },
-                size: None,
-                created_at: None,
-                modified_at: None,
-                accessed_at: None,
-                is_hidden: false,
-                is_system: false, is_protected_operating_system: false,
-                is_read_only: false,
-                is_symlink: false,
-                location: LocationDescriptor {
-                    kind: profile.protocol.clone(),
-                    path: remote_path,
-                    connection_id: Some(profile.id.clone()),
-                },
-                decoration: EntryDecoration::default(),
-                comment: None,
-            }
-        })
-        .collect()
-}
-
-fn parse_sftp_entries(
-    profile: &RemoteProfile,
-    base_path: &str,
-    entries: Vec<(PathBuf, ssh2::FileStat)>,
-) -> Vec<EntryViewModel> {
-    let mut mapped = entries
-        .into_iter()
-        .filter_map(|(path, stat)| {
-            let name = path
-                .file_name()
-                .and_then(|value| value.to_str())?
-                .to_string();
-            if name == "." || name == ".." {
-                return None;
-            }
-            let remote_path = join_remote_path(base_path, &name);
-            let is_directory = stat.is_dir();
-            let modified_at = stat
-                .mtime
-                .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single());
-            Some(EntryViewModel {
-                path: remote_path.clone(),
-                name,
-                extension: (!is_directory)
-                    .then(|| {
-                        remote_path
-                            .rsplit('.')
-                            .next()
-                            .unwrap_or_default()
-                            .to_string()
-                    })
-                    .filter(|value| !value.is_empty() && value != &remote_path),
-                kind: if is_directory {
-                    EntryKind::Directory
-                } else {
-                    EntryKind::File
-                },
-                size: (!is_directory).then_some(stat.size).flatten(),
-                created_at: None,
-                modified_at,
-                accessed_at: stat
-                    .atime
-                    .and_then(|seconds| Utc.timestamp_opt(seconds as i64, 0).single()),
-                is_hidden: remote_file_name(&remote_path)
-                    .map(|value| value.starts_with('.'))
-                    .unwrap_or(false),
-                is_system: false,
-                is_protected_operating_system: false,
-                is_read_only: stat.perm.map(|perm| perm & 0o200 == 0).unwrap_or(false),
-                is_symlink: stat.file_type().is_symlink(),
-                location: LocationDescriptor {
-                    kind: profile.protocol.clone(),
-                    path: remote_path,
-                    connection_id: Some(profile.id.clone()),
-                },
-                decoration: EntryDecoration::default(),
-                comment: None,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    mapped.sort_by(|left, right| match (&left.kind, &right.kind) {
-        (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Less,
-        (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Greater,
-        _ => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
-    });
-    mapped
-}
-
 fn upload_file_to_sftp(sftp: &Sftp, local_source: &Path, remote_target: &str) -> Result<()> {
     let mut local_file = fs::File::open(local_source)
         .with_context(|| format!("failed to open local file {}", local_source.display()))?;
@@ -2559,6 +2450,73 @@ mod tests {
         assert_eq!(entries[2].size, Some(12));
         assert!(entries[2].is_read_only);
         assert!(entries[2].modified_at.is_some());
+    }
+
+    #[test]
+    fn only_sftp_dotfiles_are_inferred_hidden_and_dotfiles_have_no_extension() {
+        let mut ftp_profile = sample_profile();
+        ftp_profile.protocol = LocationKind::Ftp;
+        let ftp_entries = parse_listing_entries(
+            &ftp_profile,
+            Some("/base"),
+            b".secret\n.gitignore\nreport.txt\n",
+        );
+        let secret = ftp_entries
+            .iter()
+            .find(|entry| entry.name == ".secret")
+            .unwrap();
+        assert!(!secret.is_hidden);
+        assert!(!secret.attribute_availability.hidden);
+        assert_eq!(secret.extension, None);
+        let gitignore = ftp_entries
+            .iter()
+            .find(|entry| entry.name == ".gitignore")
+            .unwrap();
+        assert_eq!(gitignore.extension, None);
+
+        let sftp_entries = parse_sftp_entries(
+            &sample_profile(),
+            "/base",
+            vec![(
+                PathBuf::from(".gitignore"),
+                FileStat {
+                    size: Some(1),
+                    uid: None,
+                    gid: None,
+                    perm: Some(0o100644),
+                    atime: None,
+                    mtime: None,
+                },
+            )],
+        );
+        assert_eq!(sftp_entries[0].extension, None);
+        assert!(sftp_entries[0].is_hidden);
+        assert!(sftp_entries[0].attribute_availability.hidden);
+    }
+
+    #[test]
+    fn missing_sftp_permissions_remain_unknown_and_internal_to_ipc() {
+        let entries = parse_sftp_entries(
+            &sample_profile(),
+            "/base",
+            vec![(
+                PathBuf::from("unknown.txt"),
+                FileStat {
+                    size: Some(12),
+                    uid: None,
+                    gid: None,
+                    perm: None,
+                    atime: None,
+                    mtime: None,
+                },
+            )],
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].attribute_availability.read_only);
+        assert!(!entries[0].attribute_availability.symlink);
+        let serialized = serde_json::to_value(&entries[0]).expect("entry should serialize");
+        assert!(serialized.get("attributeAvailability").is_none());
     }
 
     #[test]

@@ -58,7 +58,12 @@ export const completion = (async () => {
 
   const gateway = createTestGateway(() => {
     bootstrapCalls += 1;
-  }, interactions);
+  }, interactions, {
+    loadBootstrap: () => ({
+      ...createMockWorkspaceBootstrap("tauri"),
+      startupDiagnostics: ["Invalid persisted colorRulesRevision was reset to 0"]
+    })
+  });
 
   function Harness() {
     latestController = useWorkspaceController(gateway);
@@ -89,6 +94,12 @@ export const completion = (async () => {
 
       assert.equal(bootstrapCalls, 1);
       assert.equal(latestController?.state.layoutMode, "quad");
+      assert.equal(
+        latestController?.state.notifications.some((item) =>
+          item.intent === "warning" && item.message.includes("colorRulesRevision")
+        ),
+        true
+      );
 
       await act(async () => {
         latestController?.actions.setLayoutMode("dual");

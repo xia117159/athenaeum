@@ -365,12 +365,46 @@ body.is-column-pointer-dragging * {
   background: #ffffff;
 }
 
-.file-row:hover .file-row__grid,
-.file-card:hover,
-.file-list-item:hover,
-.file-content-item:hover {
+.file-row:not(.has-color-filter):hover .file-row__grid,
+.file-card:not(.has-color-filter):hover,
+.file-list-item:not(.has-color-filter):hover,
+.file-content-item:not(.has-color-filter):hover {
   background: #eef6ff;
   border-color: transparent;
+}
+
+.file-row.has-color-filter--background .file-row__grid,
+.file-row.has-color-filter--background:hover .file-row__grid,
+.file-card.has-color-filter--background,
+.file-card.has-color-filter--background:hover,
+.file-list-item.has-color-filter--background,
+.file-list-item.has-color-filter--background:hover,
+.file-content-item.has-color-filter--background,
+.file-content-item.has-color-filter--background:hover {
+  background: var(--entry-rule-background);
+}
+
+.file-row.has-color-filter:hover .file-row__grid,
+.file-card.has-color-filter:hover,
+.file-list-item.has-color-filter:hover,
+.file-content-item.has-color-filter:hover {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+
+.file-row.has-color-filter--foreground .file-row__grid,
+.file-card.has-color-filter--foreground,
+.file-list-item.has-color-filter--foreground,
+.file-content-item.has-color-filter--foreground {
+  color: var(--entry-rule-foreground);
+}
+
+.has-color-filter--foreground .file-card__tile-type,
+.has-color-filter--foreground .file-card__tile-detail,
+.has-color-filter--foreground .file-content-item__main p,
+.has-color-filter--foreground .file-content-item__snippet,
+.has-color-filter--foreground .file-content-item__meta {
+  color: inherit;
 }
 
 .file-row.is-selected .file-row__grid,
@@ -378,7 +412,19 @@ body.is-column-pointer-dragging * {
 .file-list-item.is-selected,
 .file-content-item.is-selected {
   background: #cfe8ff;
+  color: #1f1f1f;
   border-color: transparent;
+  box-shadow: none;
+}
+
+.file-row.has-color-filter.is-selected:hover .file-row__grid,
+.file-card.has-color-filter.is-selected:hover,
+.file-list-item.has-color-filter.is-selected:hover,
+.file-content-item.has-color-filter.is-selected:hover {
+  background: #cfe8ff;
+  color: #1f1f1f;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .file-row.is-cut .file-row__grid,
@@ -397,6 +443,21 @@ body.is-column-pointer-dragging * {
 .file-content-item.is-drop-target,
 .file-content-item.is-system-drop-target {
   background: color-mix(in srgb, var(--drop-highlight-fill, #0f6cbd) 12%, transparent);
+  color: #1f1f1f;
+  border-color: color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
+}
+
+.file-row.has-color-filter.is-drop-target:hover .file-row__grid,
+.file-row.has-color-filter.is-system-drop-target:hover .file-row__grid,
+.file-card.has-color-filter.is-drop-target:hover,
+.file-card.has-color-filter.is-system-drop-target:hover,
+.file-list-item.has-color-filter.is-drop-target:hover,
+.file-list-item.has-color-filter.is-system-drop-target:hover,
+.file-content-item.has-color-filter.is-drop-target:hover,
+.file-content-item.has-color-filter.is-system-drop-target:hover {
+  background: color-mix(in srgb, var(--drop-highlight-fill, #0f6cbd) 12%, transparent);
+  color: #1f1f1f;
   border-color: color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
 }
@@ -549,6 +610,85 @@ body.is-column-pointer-dragging * {
 .file-list-item.is-inline-editing,
 .file-content-item.is-inline-editing {
   background: #cfe8ff;
+  color: #1f1f1f;
+  box-shadow: none;
+}
+
+.file-row.has-color-filter.is-inline-editing:hover .file-row__grid,
+.file-card.has-color-filter.is-inline-editing:hover,
+.file-list-item.has-color-filter.is-inline-editing:hover,
+.file-content-item.has-color-filter.is-inline-editing:hover {
+  background: #cfe8ff;
+  color: #1f1f1f;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+@media (forced-colors: active) {
+  .file-row.has-color-filter .file-row__grid,
+  .file-card.has-color-filter,
+  .file-list-item.has-color-filter,
+  .file-content-item.has-color-filter {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Canvas;
+    box-shadow: none;
+    outline: none;
+    forced-color-adjust: auto;
+  }
+
+  .file-row.has-color-filter.is-selected .file-row__grid,
+  .file-row.has-color-filter.is-selected:hover .file-row__grid,
+  .file-card.has-color-filter.is-selected,
+  .file-card.has-color-filter.is-selected:hover,
+  .file-list-item.has-color-filter.is-selected,
+  .file-list-item.has-color-filter.is-selected:hover,
+  .file-content-item.has-color-filter.is-selected,
+  .file-content-item.has-color-filter.is-selected:hover {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .file-row.has-color-filter.is-drop-target .file-row__grid,
+  .file-row.has-color-filter.is-system-drop-target .file-row__grid,
+  .file-row.has-color-filter.is-drop-target:hover .file-row__grid,
+  .file-row.has-color-filter.is-system-drop-target:hover .file-row__grid,
+  .file-card.has-color-filter.is-drop-target,
+  .file-card.has-color-filter.is-system-drop-target,
+  .file-card.has-color-filter.is-drop-target:hover,
+  .file-card.has-color-filter.is-system-drop-target:hover,
+  .file-list-item.has-color-filter.is-drop-target,
+  .file-list-item.has-color-filter.is-system-drop-target,
+  .file-list-item.has-color-filter.is-drop-target:hover,
+  .file-list-item.has-color-filter.is-system-drop-target:hover,
+  .file-content-item.has-color-filter.is-drop-target,
+  .file-content-item.has-color-filter.is-system-drop-target,
+  .file-content-item.has-color-filter.is-drop-target:hover,
+  .file-content-item.has-color-filter.is-system-drop-target:hover {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Highlight;
+    box-shadow: none;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .file-row.has-color-filter.is-inline-editing .file-row__grid,
+  .file-row.has-color-filter.is-inline-editing:hover .file-row__grid,
+  .file-card.has-color-filter.is-inline-editing,
+  .file-card.has-color-filter.is-inline-editing:hover,
+  .file-list-item.has-color-filter.is-inline-editing,
+  .file-list-item.has-color-filter.is-inline-editing:hover,
+  .file-content-item.has-color-filter.is-inline-editing,
+  .file-content-item.has-color-filter.is-inline-editing:hover {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    box-shadow: none;
+    outline: none;
+  }
 }
 
 .file-card__hero .entry-icon {
@@ -568,6 +708,7 @@ body.is-column-pointer-dragging * {
   height: 18px;
   padding: 0 6px;
   border-radius: 4px;
+  color: #38516b;
   background: #eef3f8;
   font-size: 11px;
 }

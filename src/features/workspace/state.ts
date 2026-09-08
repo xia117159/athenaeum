@@ -138,7 +138,7 @@ function patchSettings(state: WorkspaceState, snapshot: SettingsSnapshot): Works
     bookmarks: snapshot.bookmarks,
     hotlist: snapshot.hotlist,
     tagDefinitions: snapshot.tagDefinitions,
-    colorRules: snapshot.colorRules,
+    colorRules: snapshot.colorFilter.rules,
     shortcuts: snapshot.shortcuts,
     remoteProfiles: snapshot.remoteProfiles,
     layout: snapshot.layout

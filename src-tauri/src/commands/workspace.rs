@@ -8,10 +8,13 @@ use crate::{
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
         NativeSelectionContextMenuResult, NativeSelectionContextMenuShortcuts,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
-        SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest, WindowsDragDropEnvironment,
-        WorkspaceBootstrap, WorkspaceWatchRootsRequest,
+        SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest,
+        WindowsDragDropEnvironment, WorkspaceBootstrap, WorkspaceWatchRootsRequest,
     },
-    services::{drive_service, fs_service, git_status_service, icon_service, remote_service, windows_shell, AppState},
+    services::{
+        drive_service, fs_service, git_status_service, icon_service, remote_service, windows_shell,
+        AppState,
+    },
 };
 
 #[tauri::command]
@@ -34,14 +37,23 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         .clone();
     let initial_listing =
         fs_service::list_directory(Path::new(&initial_path), &metadata.color_rules, |path| {
-            (metadata.tags_for_path(path), metadata.comment_for_path(path))
+            (
+                metadata.tags_for_path(path),
+                metadata.comment_for_path(path),
+            )
         })
         .map_err(|error| error.to_string())?;
+    let startup_diagnostics = state
+        .metadata
+        .write()
+        .expect("metadata lock poisoned")
+        .take_color_filter_recovery_diagnostics();
 
     let mut bootstrap = WorkspaceBootstrap {
         drives,
         initial_path,
         initial_listing,
+        startup_diagnostics,
         settings: metadata.to_settings_snapshot(
             settings.layout,
             settings.detail_columns,
@@ -56,7 +68,8 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
     };
 
     // Hydrate remote profile passwords from credential store
-    bootstrap.settings.remote_profiles = super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
+    bootstrap.settings.remote_profiles =
+        super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
 
     Ok(bootstrap)
 }

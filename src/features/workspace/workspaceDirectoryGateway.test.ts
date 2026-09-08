@@ -71,7 +71,8 @@ function createFile(path: string, name: string): BackendEntryViewModel {
       path
     },
     decoration: {
-      colorHex: null,
+      foregroundColorHex: null,
+      backgroundColorHex: null,
       tags: []
     }
   };
@@ -202,7 +203,8 @@ export const workspaceDirectoryGatewayTests = (async () => {
         connectionId: "remote-test"
       },
       decoration: {
-        colorHex: null,
+        foregroundColorHex: null,
+        backgroundColorHex: null,
         tags: []
       }
     };

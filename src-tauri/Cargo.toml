@@ -20,7 +20,11 @@ base64 = "0.22.1"
 chrono = { version = "0.4.43", features = ["serde"] }
 dirs = "6.0.0"
 encoding_rs = "0.8.35"
+jiff = "0.2.31"
 regex = "1.12.3"
+regex-automata = "0.4.14"
+pest = "2.8.3"
+pest_derive = "2.8.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
@@ -66,3 +70,6 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Ole",
   "Win32_System_Threading"
 ] }
+
+[profile.dev.package.regex-automata]
+opt-level = 3

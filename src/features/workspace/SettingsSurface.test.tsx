@@ -82,7 +82,9 @@ function createProps(state: WorkspaceState) {
     dirtySections: new Set<SettingsSection>(),
     onSelectSection: () => undefined,
     onUpdateShortcut: () => undefined,
-    onUpdateColorRule: () => undefined,
+    onUpdateColorRules: () => undefined,
+    onValidateColorRule: async () => ({ valid: true, message: null, span: null }),
+    onOpenColorRulesHelp: () => undefined,
     onUpdatePanelFocusAccent: () => undefined,
     onUpdateActiveTabBackground: () => undefined,
     onUpdateDropHighlightFill: () => undefined,
@@ -421,7 +423,7 @@ export const completion = (async () => {
             onUpdateTooltipHoverDelay: (value: number) => tooltipDelayUpdates.push(value),
             onUpdateMetadataRetentionHours: (value: number | null) => retentionUpdates.push(value),
             onUpdateContextMenuDefault: (value: "native" | "custom") => menuUpdates.push(value),
-            onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
+            onUpdateColorRules: (rules) => colorUpdates.push(rules[0]?.foregroundColorHex ?? "")
           })
         );
         await flushEffects();
@@ -574,15 +576,18 @@ export const completion = (async () => {
         root.render(
           React.createElement(SettingsSurface, {
             ...createProps(createSettingsState("color-rules")),
-            onUpdateColorRule: (_id: string, color: string) => colorUpdates.push(color)
+            onUpdateColorRules: (rules) => colorUpdates.push(rules[0]?.foregroundColorHex ?? "")
           })
         );
         await flushEffects();
       });
-      const colorInput = container.querySelector<HTMLInputElement>("[data-color-rule-id]");
+      const colorInput = container.querySelector<HTMLInputElement>("[aria-label*='文字颜色十六进制值']");
       assert.ok(colorInput);
-      colorInput!.value = "#336699";
-      colorInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      await act(async () => {
+        colorInput!.value = "#336699";
+        colorInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushEffects();
+      });
       assert.deepEqual(colorUpdates, ["#336699"]);
 
       await act(async () => {
@@ -627,6 +632,65 @@ export const completion = (async () => {
       assert.match(container.textContent ?? "", /冲突/u);
       confirmButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       assert.deepEqual(events, []);
+    });
+
+    await assertTest("SettingsSurface conflict reload resets invalid color drafts and re-enables apply", async () => {
+      const events: string[] = [];
+      const state = createSettingsState("color-rules");
+      const baseProps = createProps(state);
+
+      function Harness() {
+        const [conflict, setConflict] = React.useState(true);
+        const [resetToken, setResetToken] = React.useState(0);
+        const [valid, setValid] = React.useState(true);
+        return React.createElement(SettingsSurface, {
+          ...baseProps,
+          colorRulesConflict: conflict,
+          colorRulesResetToken: resetToken,
+          colorRulesValid: valid,
+          onColorRulesValidityChange: setValid,
+          onReloadColorRules: () => {
+            events.push("reload");
+            setConflict(false);
+            setResetToken((current) => current + 1);
+          },
+          onConfirm: () => events.push("confirm")
+        });
+      }
+
+      await act(async () => {
+        root.render(React.createElement(Harness));
+        await flushEffects();
+      });
+      const colorInput = container.querySelector<HTMLInputElement>("[aria-label*='文字颜色十六进制值']")!;
+      const inputSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!;
+      await act(async () => {
+        patchLegacyInputEventTarget(colorInput);
+        inputSetter.call(colorInput, "#bad");
+        colorInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      });
+      const confirmButton = container.querySelector<HTMLButtonElement>("[data-action='confirm-settings']")!;
+      assert.equal(confirmButton.disabled, true);
+
+      const reloadButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "重新加载")!;
+      await act(async () => {
+        reloadButton.click();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      });
+      assert.deepEqual(events, ["reload"]);
+      assert.equal(colorInput.value, state.settings.model.colorRules[0].foregroundColorHex);
+      assert.equal(colorInput.getAttribute("aria-invalid"), "false");
+      assert.equal(confirmButton.disabled, false);
+      await act(async () => {
+        confirmButton.click();
+      });
+      assert.deepEqual(events, ["reload", "confirm"]);
     });
 
     await assertTest("SettingsSurface auto-commits remote profile edits without blocking confirm", async () => {

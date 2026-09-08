@@ -1,11 +1,13 @@
-pub mod fs_service;
+pub mod atomic_file;
+pub mod color_filter;
 pub mod drive_service;
 pub mod file_watcher;
+pub mod fs_service;
 pub mod git_status_service;
 pub mod icon_service;
 pub mod metadata_store;
-mod native_menu_contract;
 pub mod migration;
+mod native_menu_contract;
 pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
@@ -73,8 +75,19 @@ impl AppState {
         let operation_journal_path = data_dir.join("operation-journal.json");
 
         let mut metadata = MetadataStore::load_from(metadata_path.clone())?;
+        for diagnostic in metadata.color_filter_recovery_diagnostics() {
+            eprintln!("warning: {diagnostic}");
+        }
         metadata.attach_path(metadata_path);
-        if migration::migrate_legacy_credentials(&mut metadata)? {
+        let credentials_migrated = migration::migrate_legacy_credentials(&mut metadata)?;
+        if metadata.color_rules_migration_dirty() {
+            if let Err(error) = commit_color_rule_startup_migration(&mut metadata) {
+                if credentials_migrated {
+                    return Err(error.context("failed to persist metadata migrations"));
+                }
+                eprintln!("warning: color rule migration could not be persisted and will be retried: {error:#}");
+            }
+        } else if credentials_migrated {
             metadata.persist()?;
         }
         *self.metadata.write().expect("metadata lock poisoned") = metadata;
@@ -105,4 +118,19 @@ impl AppState {
             flag.store(cancelled, Ordering::SeqCst);
         }
     }
+}
+
+pub(crate) fn commit_color_rule_startup_migration(metadata: &mut MetadataStore) -> Result<bool> {
+    if !metadata.color_rules_migration_dirty() {
+        return Ok(false);
+    }
+    let mut staged = metadata.clone();
+    if let Err(error) = staged.persist() {
+        metadata.push_color_filter_recovery_diagnostic(format!(
+            "Color rule migration could not be persisted and will be retried: {error:#}"
+        ));
+        return Err(error);
+    }
+    *metadata = staged;
+    Ok(true)
 }

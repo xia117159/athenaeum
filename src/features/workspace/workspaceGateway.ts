@@ -54,7 +54,6 @@ import {
   deleteWorkspaceNavigationItem,
   markWorkspaceNavigationItemOpened,
   saveWorkspaceBookmark,
-  saveWorkspaceColorRules,
   saveWorkspaceDetailsRowHeight,
   saveWorkspaceHotlist,
   saveWorkspaceNavigationItem,
@@ -86,6 +85,20 @@ import {
 import {
   mapWorkspaceBootstrap
 } from "./workspaceMappers";
+import {
+  getColorFilterSnapshot,
+  listenColorFilterChanged,
+  replaceColorFilterRules,
+  setColorFilterEnabled,
+  validateColorFilterRule
+} from "./colorFilterGateway";
+import type {
+  ColorFilterConfigSnapshot,
+  ColorFilterMutationResult,
+  ColorFilterValidationResult,
+  ReplaceColorRulesRequest,
+  ReplaceColorRulesResult
+} from "./colorFilterTypes";
 import {
   getWorkspaceItemProperties
 } from "./workspacePropertiesGateway";
@@ -143,7 +156,10 @@ export interface WorkspaceGateway {
   saveSession(state: WorkspaceState): Promise<void>;
   saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios, treeVisible: boolean): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
-  saveColorRules(colorRules: SettingsModel["colorRules"]): Promise<void>;
+  getColorFilterSnapshot(): Promise<ColorFilterConfigSnapshot>;
+  setColorFilterEnabled(enabled: boolean): Promise<ColorFilterMutationResult>;
+  replaceColorRules(request: ReplaceColorRulesRequest): Promise<ReplaceColorRulesResult>;
+  validateColorRule(expression: string): Promise<ColorFilterValidationResult>;
   saveDetailsRowHeight(value: number): Promise<void>;
   saveTheme(theme: SettingsModel["theme"]): Promise<void>;
   saveSettingsModel(model: SettingsModel): Promise<void>;
@@ -172,6 +188,7 @@ export interface WorkspaceGateway {
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
   listenOperationRecordsCleared(handler: (event: OperationClearOutcome) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
+  listenColorFilterChanged(handler: (snapshot: ColorFilterConfigSnapshot) => void): Promise<() => void>;
   listenEntryMetadataChanged(handler: (paths: string[]) => void): Promise<() => void>;
   setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
   listenFileSystemChanges(handler: (event: WorkspaceFsChangedEvent) => void): Promise<() => void>;
@@ -335,9 +352,22 @@ return { statuses: {}, isGitRepo: false };
       await saveWorkspaceShortcuts(shortcuts);
     },
 
-    async saveColorRules(colorRules) {
-      await saveWorkspaceColorRules(colorRules);
+    async getColorFilterSnapshot() {
+      return getColorFilterSnapshot();
     },
+
+    async setColorFilterEnabled(enabled) {
+      return setColorFilterEnabled(enabled);
+    },
+
+    async replaceColorRules(request) {
+      return replaceColorFilterRules(request);
+    },
+
+    async validateColorRule(expression) {
+      return validateColorFilterRule(expression);
+    },
+
 
     async saveDetailsRowHeight(value) {
       await saveWorkspaceDetailsRowHeight(value);
@@ -449,6 +479,9 @@ return { statuses: {}, isGitRepo: false };
 
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
+    },
+    async listenColorFilterChanged(handler) {
+      return listenColorFilterChanged(handler);
     },
     async listenEntryMetadataChanged(handler) {
       return listenWorkspaceEntryMetadataChanged(handler);
