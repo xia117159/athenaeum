@@ -42,6 +42,7 @@ function installDomEnvironment() {
   globalThis.Node = dom.window.Node;
   globalThis.KeyboardEvent = dom.window.KeyboardEvent;
   globalThis.MouseEvent = dom.window.MouseEvent;
+  globalThis.Event = dom.window.Event;
   globalThis.PointerEvent = dom.window.PointerEvent ?? (dom.window.MouseEvent as unknown as typeof PointerEvent);
   installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {

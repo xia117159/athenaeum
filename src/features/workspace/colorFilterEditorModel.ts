@@ -3,6 +3,7 @@ import type { ColorFilterRule, ColorFilterRuleInput, RevisionToken } from "./col
 const REVISION_PATTERN = /^(?:0|[1-9][0-9]*)$/;
 export const COLOR_RULE_NAME_MAX_SCALARS = 128;
 export const COLOR_RULE_EXPRESSION_MAX_SCALARS = 1024;
+export const COLOR_RULE_LIMIT = 256;
 
 export function limitUnicodeScalars(value: string, maximum: number) {
   const scalars = Array.from(value);
@@ -164,4 +165,61 @@ export function toColorRuleInputs(rules: ColorFilterRule[]): ColorFilterRuleInpu
     foregroundColorHex: rule.foregroundColorHex,
     backgroundColorHex: rule.backgroundColorHex
   }));
+}
+
+/**
+ * 删除后的确定性选中：删除索引 i 后优先选择现在占据 i 的规则（原下一条）；
+ * i 是末条时选择前一条；列表为空时清除选择。被删除 id 不存在时返回 null，
+ * 由调用方保留其当前选择。
+ */
+export function getColorRuleSelectionAfterDelete(rules: ColorFilterRule[], deletedId: string): string | null {
+  const index = rules.findIndex((rule) => rule.id === deletedId);
+  if (index < 0) {
+    return null;
+  }
+  const survivors = rules.filter((rule) => rule.id !== deletedId);
+  if (survivors.length === 0) {
+    return null;
+  }
+  const nextIndex = Math.min(index, survivors.length - 1);
+  return survivors[nextIndex].id;
+}
+
+/**
+ * 权威重置时的选中收敛：selectedId 仍存在则保留；否则回退到
+ * clamp 后的最近存活索引；列表为空时清除选择。
+ */
+export function resolveColorRuleSelection(
+  rules: ColorFilterRule[],
+  selectedId: string | null,
+  fallbackIndex = 0
+): string | null {
+  if (selectedId && rules.some((rule) => rule.id === selectedId)) {
+    return selectedId;
+  }
+  if (rules.length === 0) {
+    return null;
+  }
+  const index = Math.min(Math.max(Math.trunc(fallbackIndex), 0), rules.length - 1);
+  return rules[index].id;
+}
+
+export type ColorRuleOperationEnablement = {
+  canAdd: boolean;
+  atLimit: boolean;
+  canOperateSelected: boolean;
+};
+
+/** V2 操作面板启用逻辑：新建受可编辑状态与 256 上限约束；其余操作要求存在选中规则。 */
+export function getColorRuleOperationEnablement(options: {
+  ruleCount: number;
+  hasSelection: boolean;
+  editable: boolean;
+}): ColorRuleOperationEnablement {
+  const atLimit = options.ruleCount >= COLOR_RULE_LIMIT;
+  return {
+    canAdd: options.editable && !atLimit,
+    atLimit,
+    canOperateSelected: options.editable && options.hasSelection
+  };
 }

@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   COLOR_RULE_EXPRESSION_MAX_SCALARS,
+  COLOR_RULE_LIMIT,
   COLOR_RULE_NAME_MAX_SCALARS,
   addColorRule,
   compareRevisionTokens,
   duplicateColorRule,
   getColorRuleNameErrors,
+  getColorRuleOperationEnablement,
+  getColorRuleSelectionAfterDelete,
   hasColorRuleDraftChanges,
   limitUnicodeScalars,
   moveColorRule,
+  resolveColorRuleSelection,
   toColorRuleInputs,
   updateColorRule
 } from "./colorFilterEditorModel";
@@ -155,4 +159,85 @@ test("editor limits count Unicode scalar values", () => {
     Array.from(limitUnicodeScalars(expression, COLOR_RULE_EXPRESSION_MAX_SCALARS)).length,
     COLOR_RULE_EXPRESSION_MAX_SCALARS
   );
+});
+
+function orderedRules(count: number): ColorFilterRule[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...baseRule,
+    id: `rule-${index + 1}`,
+    name: `Rule ${index + 1}`,
+    priority: index + 1
+  }));
+}
+
+test("delete selection picks the rule that now occupies the deleted index", () => {
+  // 删除中间条目：优先选择删除位置现在的下一条规则
+  assert.equal(getColorRuleSelectionAfterDelete(orderedRules(3), "rule-2"), "rule-3");
+  // 删除首条：选择现在的首条（原第二条）
+  assert.equal(getColorRuleSelectionAfterDelete(orderedRules(3), "rule-1"), "rule-2");
+  // 删除末条：选择前一条
+  assert.equal(getColorRuleSelectionAfterDelete(orderedRules(3), "rule-3"), "rule-2");
+  // 删除唯一条目：清除选择
+  assert.equal(getColorRuleSelectionAfterDelete([baseRule], "rule-1"), null);
+  // 未找到被删除的条目：交还调用方当前选择（null 兜底）
+  assert.equal(getColorRuleSelectionAfterDelete(orderedRules(3), "missing"), null);
+});
+
+test("authoritative reset reselects the nearest surviving index and clears on empty", () => {
+  const rules = orderedRules(3);
+  assert.equal(resolveColorRuleSelection(rules, "rule-2", 1), "rule-2");
+  assert.equal(resolveColorRuleSelection(rules, "removed", 3), "rule-3");
+  assert.equal(resolveColorRuleSelection(rules, "removed", 99), "rule-3");
+  assert.equal(resolveColorRuleSelection(rules, "removed", 0), "rule-1");
+  assert.equal(resolveColorRuleSelection([], "rule-1", 0), null);
+  assert.equal(resolveColorRuleSelection(rules, null, 1), "rule-2");
+});
+
+test("operation enablement gates adding on the editable state and the 256-rule limit", () => {
+  assert.equal(COLOR_RULE_LIMIT, 256);
+  assert.deepEqual(getColorRuleOperationEnablement({ ruleCount: 0, hasSelection: false, editable: true }), {
+    canAdd: true,
+    atLimit: false,
+    canOperateSelected: false
+  });
+  assert.deepEqual(getColorRuleOperationEnablement({ ruleCount: 255, hasSelection: true, editable: true }), {
+    canAdd: true,
+    atLimit: false,
+    canOperateSelected: true
+  });
+  assert.deepEqual(getColorRuleOperationEnablement({ ruleCount: 256, hasSelection: true, editable: true }), {
+    canAdd: false,
+    atLimit: true,
+    canOperateSelected: true
+  });
+  assert.deepEqual(getColorRuleOperationEnablement({ ruleCount: 3, hasSelection: true, editable: false }), {
+    canAdd: false,
+    atLimit: false,
+    canOperateSelected: false
+  });
+});
+
+test("caseSensitive toggles persist through replacement inputs", () => {
+  let rules = updateColorRule([baseRule], "rule-1", { caseSensitive: true });
+  assert.equal(rules[0].caseSensitive, true);
+  assert.equal(toColorRuleInputs(rules)[0].caseSensitive, true);
+
+  rules = updateColorRule(rules, "rule-1", { caseSensitive: false });
+  assert.equal(toColorRuleInputs(rules)[0].caseSensitive, false);
+});
+
+test("canonical unique hidden names never block the editor apply state", () => {
+  // 迁移规范化后的快照：名称唯一、非空、有界 —— 编辑器不得出现隐藏名称死锁
+  const canonical = orderedRules(2).map((rule) => ({
+    ...rule,
+    name: `${rule.name}`
+  }));
+  assert.deepEqual(getColorRuleNameErrors(canonical), {});
+  const inputs = toColorRuleInputs(canonical);
+  assert.deepEqual(
+    inputs.map((rule) => rule.name),
+    ["Rule 1", "Rule 2"]
+  );
+  // 幂等：重复归一化检查不产生漂移
+  assert.deepEqual(getColorRuleNameErrors(inputs.map((rule) => ({ ...rule, priority: 0 }))), {});
 });

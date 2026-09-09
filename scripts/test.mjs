@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
@@ -90,11 +91,39 @@ if (tests.length === 0) {
   process.exit(0);
 }
 
+// 每个测试文件在独立子进程中运行：隔离 React act 作用域与全局 DOM 状态，
+// 单个文件的崩溃不会污染或终止整个套件。带单文件超时，防止挂起阻塞 CI。
+const childRunner = path.join(rootDir, "scripts", "test-child.mjs");
+const PER_FILE_TIMEOUT_MS = 10 * 60 * 1000;
+const failed = [];
 for (const testFile of tests) {
   console.log(`Running ${path.relative(rootDir, testFile)}`);
-  const module = await import(pathToFileURL(testFile).href);
-  const pending = Object.values(module).filter((value) => value && typeof value.then === "function");
-  if (pending.length > 0) {
-    await Promise.all(pending);
+  const result = spawnSync(process.execPath, [childRunner, testFile], {
+    stdio: "inherit",
+    env: process.env,
+    timeout: PER_FILE_TIMEOUT_MS
+  });
+  if (result.error) {
+    console.error(`FAILED ${path.relative(rootDir, testFile)} (spawn error: ${result.error.message})`);
+    failed.push(testFile);
+    continue;
+  }
+  if (result.signal === "SIGTERM") {
+    console.error(`FAILED ${path.relative(rootDir, testFile)} (timed out after ${PER_FILE_TIMEOUT_MS} ms)`);
+    failed.push(testFile);
+    continue;
+  }
+  if (result.status !== 0) {
+    console.error(`FAILED ${path.relative(rootDir, testFile)} (exit=${result.status ?? "signal"})`);
+    failed.push(testFile);
   }
 }
+
+if (failed.length > 0) {
+  console.error(`${failed.length}/${tests.length} test file(s) failed:`);
+  for (const testFile of failed) {
+    console.error(`  - ${path.relative(rootDir, testFile)}`);
+  }
+  process.exit(1);
+}
+console.log(`${tests.length} test file(s) passed`);

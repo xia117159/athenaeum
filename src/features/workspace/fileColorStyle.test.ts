@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { getFileColorPresentation, getFileColorRowAttributes } from "./fileColorStyle";
+import { getFileColorLabelAttributes, getFileColorPresentation, getFileColorRowAttributes } from "./fileColorStyle";
 
 function test(name: string, run: () => void) {
   try {
@@ -13,32 +13,44 @@ function test(name: string, run: () => void) {
   }
 }
 
-test("file color presentation resolves both channels when enabled", () => {
+test("file color presentation keeps rule foreground on the entry and rule background on the name label", () => {
   assert.deepEqual(
     getFileColorPresentation(
       { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
       true
     ),
     {
-      className: "has-color-filter has-color-filter--foreground has-color-filter--background",
-      style: {
-        "--entry-rule-foreground": "#ffffff",
-        "--entry-rule-background": "#a4262c"
-      }
+      className: "has-color-filter has-color-filter--foreground",
+      style: { "--entry-rule-foreground": "#ffffff" },
+      labelClassName: "entry-name__label--rule-background",
+      labelStyle: { "--entry-rule-background": "#a4262c" }
     }
   );
   assert.deepEqual(
     getFileColorPresentation({ foregroundColorHex: "#005a9e", backgroundColorHex: null }, true),
     {
       className: "has-color-filter has-color-filter--foreground",
-      style: { "--entry-rule-foreground": "#005a9e" }
+      style: { "--entry-rule-foreground": "#005a9e" },
+      labelClassName: "",
+      labelStyle: undefined
     }
   );
   assert.deepEqual(
     getFileColorPresentation({ foregroundColorHex: null, backgroundColorHex: "#fff4ce" }, true),
     {
-      className: "has-color-filter has-color-filter--background",
-      style: { "--entry-rule-background": "#fff4ce" }
+      className: "has-color-filter",
+      style: undefined,
+      labelClassName: "entry-name__label--rule-background",
+      labelStyle: { "--entry-rule-background": "#fff4ce" }
+    }
+  );
+  assert.deepEqual(
+    getFileColorPresentation({ foregroundColorHex: null, backgroundColorHex: null }, true),
+    {
+      className: "",
+      style: undefined,
+      labelClassName: "",
+      labelStyle: undefined
     }
   );
 });
@@ -49,11 +61,11 @@ test("file color presentation keeps decorations dormant while globally disabled"
       { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
       false
     ),
-    { className: "", style: undefined }
+    { className: "", style: undefined, labelClassName: "", labelStyle: undefined }
   );
 });
 
-test("file color row attributes preserve the icon accent and expose an optional class suffix", () => {
+test("file color row attributes carry the icon accent and foreground but never the row background variable", () => {
   assert.deepEqual(
     getFileColorRowAttributes(
       {
@@ -64,11 +76,10 @@ test("file color row attributes preserve the icon accent and expose an optional 
       true
     ),
     {
-      classNameSuffix: " has-color-filter has-color-filter--foreground has-color-filter--background",
+      classNameSuffix: " has-color-filter has-color-filter--foreground",
       style: {
         "--row-accent": "#29659f",
-        "--entry-rule-foreground": "#ffffff",
-        "--entry-rule-background": "#a4262c"
+        "--entry-rule-foreground": "#ffffff"
       }
     }
   );
@@ -88,16 +99,86 @@ test("file color row attributes preserve the icon accent and expose an optional 
   );
 });
 
-test("configured list colors keep one resolved pair on hover and standard operational states", () => {
+test("file color label attributes expose only the name-label background", () => {
+  assert.deepEqual(
+    getFileColorLabelAttributes(
+      { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
+      true
+    ),
+    {
+      className: "entry-name__label--rule-background",
+      style: { "--entry-rule-background": "#a4262c" }
+    }
+  );
+  assert.deepEqual(
+    getFileColorLabelAttributes({ foregroundColorHex: "#005a9e", backgroundColorHex: null }, true),
+    { className: "", style: undefined }
+  );
+  assert.deepEqual(
+    getFileColorLabelAttributes(
+      { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
+      false
+    ),
+    { className: "", style: undefined }
+  );
+});
+
+test("configured list colors paint the name-label background and keep foreground on entry text", () => {
   const css = fs.readFileSync(
     path.join(process.cwd(), "src/features/workspace/workspace.listing.css"),
     "utf8"
   );
-  assert.match(css, /\.file-row\.has-color-filter--background \.file-row__grid,[\s\S]*background:\s*var\(--entry-rule-background\)/);
-  assert.match(css, /\.file-row:not\(\.has-color-filter\):hover \.file-row__grid/);
-  assert.match(css, /\.file-row\.has-color-filter:hover \.file-row__grid,[\s\S]*box-shadow:\s*inset 0 0 0 1px/);
+  // 背景只涂在名称标签，宽度即名称内容宽度，且多行卡片标题按行克隆背景。
+  assert.match(css, /\.entry-name__label--rule-background\s*\{[^}]*background:\s*var\(--entry-rule-background\)/);
+  assert.match(css, /\.entry-name__label--rule-background\s*\{[^}]*box-decoration-break:\s*clone/);
+  // 行/卡片/网格表面不再消费规则背景变量。
+  assert.doesNotMatch(css, /\.file-row\.has-color-filter--background[^{]*\{/);
+  assert.doesNotMatch(css, /\.file-card\.has-color-filter--background[^{]*\{/);
+  assert.doesNotMatch(css, /\.file-list-item\.has-color-filter--background[^{]*\{/);
+  assert.doesNotMatch(css, /\.file-content-item\.has-color-filter--background[^{]*\{/);
+  // 选中态只作用于周围表面，配置前景在选中后仍然保留。
+  assert.match(css, /\.file-row\.is-selected \.file-row__grid,[\s\S]*?background:\s*#cfe8ff/);
+  assert.match(css, /\.has-color-filter--foreground\.is-selected[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.has-color-filter--foreground\.is-selected:hover[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  // details 视图：选中/拖放/内联编辑的文本覆盖作用于 .file-row__grid（含 :hover 组合，0,5,0），
+  // 网格级前景回写必须位于所有这些覆盖之后，才能按级联源顺序取胜。
+  const selectedGridOverride = css.indexOf(".file-row.is-selected .file-row__grid");
+  const selectedHoverOverride = css.indexOf(".file-row.has-color-filter.is-selected:hover .file-row__grid");
+  const dropHoverOverride = css.indexOf(".file-row.has-color-filter.is-drop-target:hover .file-row__grid");
+  const inlineHoverOverride = css.indexOf(".file-row.has-color-filter.is-inline-editing:hover .file-row__grid");
+  const gridForegroundRestore = css.indexOf(
+    ".file-row.has-color-filter--foreground.is-selected .file-row__grid"
+  );
+  assert.ok(gridForegroundRestore > selectedGridOverride, "grid-level foreground restore must follow the selection text override");
+  assert.ok(gridForegroundRestore > selectedHoverOverride, "grid-level foreground restore must follow the selection:hover override");
+  assert.ok(gridForegroundRestore > dropHoverOverride, "grid-level foreground restore must follow the drop-target:hover override");
+  assert.ok(gridForegroundRestore > inlineHoverOverride, "grid-level foreground restore must follow the inline-editing:hover override");
+  assert.ok(css.indexOf("@media (forced-colors: active)") > gridForegroundRestore, "forced-colors overrides stay after the restore block");
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-selected \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-selected:hover \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-drop-target \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-drop-target:hover \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-system-drop-target:hover \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.match(css, /\.file-row\.has-color-filter--foreground\.is-inline-editing:hover \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  // 元数据文本继续继承规则前景。
+  assert.match(css, /\.has-color-filter--foreground \.file-card__tile-type/);
+  assert.match(css, /\.has-color-filter--foreground \.file-content-item__meta/);
   assert.doesNotMatch(css, /var\(--entry-rule-background,\s*#ffffff\)/);
   assert.match(css, /\.file-row\.is-selected \.file-row__grid,[\s\S]*box-shadow:\s*none/);
+  // forced-colors：名称标签背景回退到系统色。
   assert.match(css, /@media \(forced-colors: active\)[\s\S]*background:\s*Canvas;[\s\S]*color:\s*CanvasText/);
+  assert.match(css, /@media \(forced-colors: active\)[\s\S]*\.entry-name__label--rule-background\s*\{[^}]*background:\s*Canvas/);
   assert.match(css, /\.tag-stack span\s*\{[\s\S]*?color:\s*#38516b;[\s\S]*?background:\s*#eef3f8;/);
+});
+
+test("file listing resolves selection membership through a Set without row-level color-rule evaluation", () => {
+  const listingSource = fs.readFileSync(
+    path.join(process.cwd(), "src/features/workspace/FileListing.tsx"),
+    "utf8"
+  );
+  assert.match(listingSource, /new Set\(selectedEntryIds\)/);
+  assert.doesNotMatch(listingSource, /selectedEntryIds\.includes\(/);
+  // 选择路径不得重新执行颜色规则求值：列表只消费已解析的条目颜色字段。
+  assert.doesNotMatch(listingSource, /matchColorFilter|evaluateColorRules|colorRuleMatcher/);
+  assert.doesNotMatch(listingSource, /entrySelectionChanged/);
 });

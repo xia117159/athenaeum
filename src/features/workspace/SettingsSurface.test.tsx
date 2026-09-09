@@ -581,11 +581,23 @@ export const completion = (async () => {
         );
         await flushEffects();
       });
+      const colorRow = container.querySelector<HTMLLIElement>(".color-rules-list-row[data-rule-id]");
+      assert.ok(colorRow);
       const colorInput = container.querySelector<HTMLInputElement>("[aria-label*='文字颜色十六进制值']");
       assert.ok(colorInput);
+      // V2 颜色控件在未选中规则时禁用；先选中首条规则再编辑。
+      assert.equal(colorInput.disabled, true);
       await act(async () => {
-        colorInput!.value = "#336699";
-        colorInput!.dispatchEvent(new Event("input", { bubbles: true }));
+        colorRow!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
+      const enabledColorInput = container.querySelector<HTMLInputElement>("[aria-label*='文字颜色十六进制值']");
+      assert.ok(enabledColorInput);
+      assert.equal(enabledColorInput.disabled, false);
+      await act(async () => {
+        patchLegacyInputEventTarget(enabledColorInput);
+        enabledColorInput!.value = "#336699";
+        enabledColorInput!.dispatchEvent(new Event("input", { bubbles: true }));
         await flushEffects();
       });
       assert.deepEqual(colorUpdates, ["#336699"]);
@@ -662,7 +674,13 @@ export const completion = (async () => {
         root.render(React.createElement(Harness));
         await flushEffects();
       });
+      const colorRow = container.querySelector<HTMLLIElement>(".color-rules-list-row[data-rule-id]")!;
+      await act(async () => {
+        colorRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        await flushEffects();
+      });
       const colorInput = container.querySelector<HTMLInputElement>("[aria-label*='文字颜色十六进制值']")!;
+      assert.equal(colorInput.disabled, false);
       const inputSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!;
       await act(async () => {
         patchLegacyInputEventTarget(colorInput);

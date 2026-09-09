@@ -31,9 +31,7 @@
   font-size: 12px;
 }
 
-.color-rules-commandbar__actions,
-.color-rule-inline-options,
-.color-rules-table__actions {
+.color-rules-commandbar__actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -60,53 +58,156 @@
   font-size: 12px;
 }
 
-.color-rules-table-wrap {
+/* V2 两栏布局：左侧可滚动规则列表，右侧固定宽度操作面板。 */
+.color-rules-content {
+  display: grid;
   flex: 1;
+  grid-template-columns: minmax(0, 1.2fr) minmax(240px, 320px);
+  min-height: 0;
+}
+
+.color-rules-list-wrap {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  border-right: 1px solid #d6d6d6;
 }
 
-.color-rules-table {
-  width: 100%;
-  min-width: 1140px;
-  border-collapse: collapse;
-  table-layout: fixed;
+.color-rules-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
   font-size: 12px;
 }
 
-.color-rules-table th,
-.color-rules-table td {
-  padding: 6px;
-  border-right: 1px solid #e4e4e4;
-  border-bottom: 1px solid #dedede;
-  text-align: left;
-  vertical-align: top;
+.color-rules-list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: default;
+  white-space: nowrap;
 }
 
-.color-rules-table th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #f3f3f3;
-  color: #3b3b3b;
-  font-weight: 600;
+.color-rules-list-row + .color-rules-list-row {
+  margin-top: 2px;
 }
 
-.color-rules-table th:nth-child(3) { width: 220px; }
-.color-rules-table th:nth-child(4) { width: 300px; }
-.color-rules-table th:nth-child(5),
-.color-rules-table th:nth-child(6) { width: 170px; }
+.color-rules-list-row:hover {
+  background: #f2f7fd;
+}
 
-.color-rules-table__enabled { width: 46px; text-align: center !important; }
-.color-rules-table__order { width: 52px; text-align: center !important; }
-.color-rules-table__actions { width: 132px; flex-wrap: wrap; }
-.color-rules-table tr.is-disabled { opacity: 0.66; }
+.color-rules-list-row.is-selected {
+  border-color: #9cc3e0;
+  background: #e5f1fb;
+}
 
-.color-rule-name,
-.color-rule-expression,
-.color-rule-color-control input,
-.color-rule-inline-options select {
+.color-rules-list-row.is-disabled {
+  opacity: 0.66;
+}
+
+.color-rules-list-row__enabled {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+/*
+ * 表达式文字标签：背景只覆盖文字本身（intrinsic 宽度），不得铺满整行。
+ * 单行溢出策略固定为省略号，行高稳定，避免布局跳动。
+ */
+.color-rule-expression-label {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  box-decoration-break: clone;
+}
+
+.color-rule-expression-label:empty {
+  display: none;
+}
+
+/*
+ * 表达式编辑输入框：无论规则配置了什么颜色，编辑态一律白底黑字。
+ */
+.color-rules-expression-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 2px 5px;
+  border: 1px solid #0078d4;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #000000;
+  font: inherit;
+}
+
+.color-rules-expression-input:focus {
+  outline: 1px solid #0078d4;
+  outline-offset: -1px;
+}
+
+.color-rule-diagnostic {
+  display: block;
+  flex-basis: 100%;
+  color: #c42b1c;
+  line-height: 1.35;
+}
+
+.color-rules-empty {
+  padding: 24px 12px;
+  color: #666666;
+  text-align: center;
+}
+
+/* 右侧操作面板。 */
+.color-rules-operations {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.color-rules-operations__status {
+  margin: 0;
+  min-height: 16px;
+  color: #5f5f5f;
+  line-height: 1.4;
+}
+
+.color-rules-operations__commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.color-rules-operations__colors {
+  display: grid;
+  gap: 6px;
+}
+
+.color-rules-field {
+  display: grid;
+  gap: 4px;
+}
+
+.color-rules-field > span {
+  color: #5f5f5f;
+}
+
+.color-rules-field select {
   height: 26px;
   box-sizing: border-box;
   border: 1px solid #a6a6a6;
@@ -116,35 +217,14 @@
   font: inherit;
 }
 
-.color-rule-name,
-.color-rule-expression { width: 100%; padding: 3px 6px; }
-.color-rule-name.is-invalid,
-.color-rule-expression.is-invalid { border-color: #c42b1c; }
-
-.color-rule-inline-options { margin-top: 5px; justify-content: space-between; }
-.color-rule-inline-options select { min-width: 104px; }
-.color-rule-inline-options label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-
-.color-rule-diagnostic,
-.color-rule-color-diagnostic,
-.color-rule-contrast {
-  display: block;
-  margin-top: 3px;
-  color: #c42b1c;
-  line-height: 1.35;
+.color-rules-field--check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.color-rule-contrast { color: #765b00; }
-
-.color-rule-preview {
-  display: block;
-  min-height: 22px;
-  margin-top: 5px;
-  padding: 3px 6px;
-  border: 1px solid #d0d0d0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.color-rules-field--check span {
+  color: #1f1f1f;
 }
 
 .color-rule-color-control {
@@ -158,7 +238,18 @@
   grid-column: 1 / -1;
 }
 
-.color-rule-color-control input { min-width: 0; width: 100%; padding: 3px 5px; }
+.color-rule-color-control input {
+  min-width: 0;
+  width: 100%;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 3px 5px;
+  border: 1px solid #a6a6a6;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font: inherit;
+}
 
 .color-rule-swatch,
 .color-rule-icon-button {
@@ -201,9 +292,36 @@
 .color-rule-picker .react-colorful__saturation { border-radius: 2px 2px 0 0; }
 .color-rule-picker .react-colorful__hue { height: 14px; border-radius: 0 0 2px 2px; }
 
-.color-rules-empty { height: 120px; color: #666666; text-align: center !important; vertical-align: middle !important; }
+.color-rule-contrast {
+  color: #765b00;
+  line-height: 1.35;
+}
 
 @media (forced-colors: active) {
-  .color-rule-preview,
+  .color-rule-expression-label,
   .color-rule-swatch > span { forced-color-adjust: auto; }
+
+  .color-rules-list-row.is-selected {
+    border-color: Highlight;
+    background: SelectedItem;
+    color: SelectedItemText;
+  }
+
+  .color-rules-expression-input {
+    background: Window;
+    color: WindowText;
+    forced-color-adjust: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .color-rules-content {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 40%) minmax(0, 1fr);
+  }
+
+  .color-rules-list-wrap {
+    border-right: 0;
+    border-bottom: 1px solid #d6d6d6;
+  }
 }

@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
@@ -49,7 +50,7 @@ import type {
   TabViewMode
 } from "./types";
 import { formatDriveSize } from "./workspaceDirectoryGateway";
-import { getFileColorRowAttributes } from "./fileColorStyle";
+import { getFileColorRowAttributes, getFileColorLabelAttributes } from "./fileColorStyle";
 
 type DropOperation = "copy" | "move";
 
@@ -425,7 +426,9 @@ export function FileListingShell({
       scrollContainer.scrollTop += elementBottom - (containerRect.height - marginBottom);
     }
   }, [keyboardNavToken, selectedEntryIds]);
-  const selectedPaths = entries.filter((entry) => selectedEntryIds.includes(entry.id)).map((entry) => entry.path);
+  // 选择命中用 Set：点击选择的重绘路径避免 O(n) 数组扫描（V2 选择延迟修复）。
+  const selectedIdSet = useMemo(() => new Set(selectedEntryIds), [selectedEntryIds]);
+  const selectedPaths = entries.filter((entry) => selectedIdSet.has(entry.id)).map((entry) => entry.path);
   const cutPathSet = new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dropOperation, setDropOperation] = useState<DropOperation>("move");
@@ -513,14 +516,14 @@ export function FileListingShell({
   };
 
   const getDragPaths = (entry: EntryViewModel) => {
-    if (selectedEntryIds.includes(entry.id) && selectedPaths.length > 0) {
+    if (selectedIdSet.has(entry.id) && selectedPaths.length > 0) {
       return Array.from(new Set(selectedPaths));
     }
     return [entry.path];
   };
 
   const getContextMenuPaths = (entry: EntryViewModel) => {
-    if (selectedEntryIds.includes(entry.id) && selectedPaths.length > 0) {
+    if (selectedIdSet.has(entry.id) && selectedPaths.length > 0) {
       return Array.from(new Set(selectedPaths));
     }
     return [entry.path];
@@ -593,8 +596,19 @@ export function FileListingShell({
     />
   );
 
-  const renderEntryNameContent = (entry: ListingEntry) =>
-    isInlineEditingEntry(entry) ? renderInlineEditInput() : <span>{entry.name}</span>;
+  // 名称标签：规则背景只涂在这个元素后面（宽度=名称内容渲染宽度），
+  // 选中/拖放背景只作用于周围行/卡片表面，标签配色保持在表面之上。
+  const renderEntryNameContent = (entry: ListingEntry) => {
+    if (isInlineEditingEntry(entry)) {
+      return renderInlineEditInput();
+    }
+    const label = getFileColorLabelAttributes(entry, colorFilterEnabled);
+    return (
+      <span className={label.className || undefined} style={label.style}>
+        {entry.name}
+      </span>
+    );
+  };
 
   const {
     entryTooltip,
@@ -635,7 +649,7 @@ export function FileListingShell({
     event.preventDefault();
     event.stopPropagation();
     hideEntryTooltip();
-    if (!selectedEntryIds.includes(entry.id)) {
+    if (!selectedIdSet.has(entry.id)) {
       onSelect(entry, false);
     }
     onOpenContextMenu({
@@ -660,8 +674,8 @@ export function FileListingShell({
     hideEntryTooltip();
 
     cleanupEntryPointerDragRef.current?.();
-    const previewEntries = selectedEntryIds.includes(entry.id)
-      ? sortedEntries.filter((candidate) => !candidate.inlineCreate && selectedEntryIds.includes(candidate.id))
+    const previewEntries = selectedIdSet.has(entry.id)
+      ? sortedEntries.filter((candidate) => !candidate.inlineCreate && selectedIdSet.has(candidate.id))
       : [entry];
     const previewEntry = previewEntries.find((candidate) => candidate.id === entry.id) ?? previewEntries[0] ?? entry;
     const pointerDrag: ActiveEntryPointerDrag = {
@@ -873,7 +887,7 @@ export function FileListingShell({
         event.preventDefault();
         event.stopPropagation();
         const requestedMenu = getRequestedContextMenu(event);
-        if (!selectedEntryIds.includes(entry.id)) {
+        if (!selectedIdSet.has(entry.id)) {
           onSelect(entry, false);
         }
         if (requestedMenu === "custom") {
@@ -988,7 +1002,7 @@ export function FileListingShell({
 
   const renderDetailsRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
@@ -1027,7 +1041,7 @@ export function FileListingShell({
 
   const renderIconCards = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
@@ -1067,7 +1081,7 @@ export function FileListingShell({
 
   const renderListRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
@@ -1095,7 +1109,7 @@ export function FileListingShell({
   const renderTileCards = () => {
     const tileIcon = inlineIconSpec;
     return sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
@@ -1146,7 +1160,7 @@ export function FileListingShell({
 
   const renderContentRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);

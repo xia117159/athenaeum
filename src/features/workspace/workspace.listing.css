@@ -373,16 +373,8 @@ body.is-column-pointer-dragging * {
   border-color: transparent;
 }
 
-.file-row.has-color-filter--background .file-row__grid,
-.file-row.has-color-filter--background:hover .file-row__grid,
-.file-card.has-color-filter--background,
-.file-card.has-color-filter--background:hover,
-.file-list-item.has-color-filter--background,
-.file-list-item.has-color-filter--background:hover,
-.file-content-item.has-color-filter--background,
-.file-content-item.has-color-filter--background:hover {
-  background: var(--entry-rule-background);
-}
+/* 规则背景不再涂在行/卡片/网格表面（2026 V2：背景只跟名称标签）；
+   行表面保留 hover/选中/拖放的普通背景语义。 */
 
 .file-row.has-color-filter:hover .file-row__grid,
 .file-card.has-color-filter:hover,
@@ -399,12 +391,22 @@ body.is-column-pointer-dragging * {
   color: var(--entry-rule-foreground);
 }
 
+/* 有名称背景的条目：配置前景优先于选中/拖放表面的文本覆盖，
+   名称标签背景保持在选中表面之上。 */
 .has-color-filter--foreground .file-card__tile-type,
 .has-color-filter--foreground .file-card__tile-detail,
 .has-color-filter--foreground .file-content-item__main p,
 .has-color-filter--foreground .file-content-item__snippet,
 .has-color-filter--foreground .file-content-item__meta {
   color: inherit;
+}
+
+.has-color-filter--foreground.is-selected,
+.has-color-filter--foreground.is-selected:hover,
+.has-color-filter--foreground.is-drop-target,
+.has-color-filter--foreground.is-system-drop-target,
+.has-color-filter--foreground.is-inline-editing {
+  color: var(--entry-rule-foreground);
 }
 
 .file-row.is-selected .file-row__grid,
@@ -572,6 +574,19 @@ body.is-column-pointer-dragging * {
   white-space: nowrap;
 }
 
+/* 颜色规则的名称标签背景：只涂在名称文本后面，宽度即内容宽度。
+   多行卡片标题按行克隆背景；不扩展到网格列宽。 */
+.entry-name__label--rule-background {
+  background: var(--entry-rule-background);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: inherit;
+}
+
+.entry-name__label--rule-background:hover {
+  background: var(--entry-rule-background);
+}
+
 .inline-edit-input {
   width: min(240px, 100%);
   min-width: 64px;
@@ -624,7 +639,25 @@ body.is-column-pointer-dragging * {
   box-shadow: none;
 }
 
+/* details 视图中选中/拖放/内联编辑的文本覆盖作用于 .file-row__grid（含 :hover 组合），
+   必须在所有这些覆盖之后、以更高特异性把规则前景写回网格，
+   保证配置前景在选中/拖放（含悬停）下仍生效；置于 forced-colors 块之前。 */
+.file-row.has-color-filter--foreground.is-selected .file-row__grid,
+.file-row.has-color-filter--foreground.is-selected:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-drop-target .file-row__grid,
+.file-row.has-color-filter--foreground.is-drop-target:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-system-drop-target .file-row__grid,
+.file-row.has-color-filter--foreground.is-system-drop-target:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-inline-editing .file-row__grid,
+.file-row.has-color-filter--foreground.is-inline-editing:hover .file-row__grid {
+  color: var(--entry-rule-foreground);
+}
+
 @media (forced-colors: active) {
+  .entry-name__label--rule-background {
+    background: Canvas;
+  }
+
   .file-row.has-color-filter .file-row__grid,
   .file-card.has-color-filter,
   .file-list-item.has-color-filter,
