@@ -224,6 +224,24 @@ export const completion = (async () => {
     assert.match(colorRulesCss, /\.color-rules-expression-input\s*\{[^}]*color:\s*#000000;/);
     console.log("ok - expression editing input keeps the white-background black-text contract");
 
+    // 10b. 右栏固定 240px，命令按钮分组竖排：96px 定宽靠左，内容居中。
+    assert.match(colorRulesCss, /\.color-rules-content\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.2fr\)\s*240px/);
+    const commandsBlock = colorRulesCss.match(/\.color-rules-operations__commands\s*\{[^}]*\}/)![0];
+    assert.match(commandsBlock, /flex-direction:\s*column/);
+    assert.doesNotMatch(commandsBlock, /flex-wrap:\s*wrap/);
+    assert.match(colorRulesCss, /\.color-rules-operations__commands--secondary\s*\{[^}]*margin-top:\s*\d+px/);
+    const commandButtonBlock = colorRulesCss.match(/\.color-rules-operations__commands > \.toolbar-button\s*\{[^}]*\}/)![0];
+    assert.match(commandButtonBlock, /width:\s*96px/);
+    assert.doesNotMatch(commandButtonBlock, /width:\s*100%/);
+    assert.doesNotMatch(commandButtonBlock, /justify-content:\s*flex-start/);
+    // 颜色行：触发钮 30px 定宽，十六进制输入占满剩余空间。
+    const colorControlBlock = colorRulesCss.match(/\.color-rule-color-control\s*\{[^}]*\}/)![0];
+    assert.match(colorControlBlock, /grid-template-columns:\s*30px minmax\(0,\s*1fr\) 26px/);
+    const swatchBlock = colorRulesCss.match(/\.color-rule-swatch\s*\{[^}]*\}/)![0];
+    assert.match(swatchBlock, /width:\s*30px/);
+    assert.doesNotMatch(swatchBlock, /width:\s*100%/);
+    console.log("ok - right operations pane is a fixed 240px column with 96px centered-content command buttons");
+
     // 9b. 键盘提交后焦点回到表达式行。
     await act(async () => {
       keyDown(secondEditInput, "Escape");
@@ -594,13 +612,18 @@ export const completion = (async () => {
     await act(async () => {
       click(swatchForReset);
     });
-    assert.ok(container.querySelector(".color-rule-picker"), "color picker popover opens");
+    const pickerForReset = document.querySelector(".color-rule-picker");
+    assert.ok(pickerForReset, "color picker popover opens");
+    // 弹层渲染在 body 顶层（Portal），不在右栏滚动容器内，避免撑出滚动条。
+    assert.equal(pickerForReset!.parentElement, document.body, "picker popover is portaled to document.body");
+    assert.ok(pickerForReset!.classList.contains("color-rule-picker--anchored"), "picker popover uses fixed anchor positioning");
+    assert.ok(!(swatchForReset.closest(".color-rules-operations") as HTMLElement | null)?.contains(pickerForReset!), "picker popover must not live inside the scrolling operations pane");
     await act(async () => {
       setResetToken((current) => current + 1);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.equal(queryEditInput(), null, "edit mode closes on authoritative reset");
-    assert.equal(container.querySelector(".color-rule-picker"), null, "color popover closes on authoritative reset");
+    assert.equal(document.querySelector(".color-rule-picker"), null, "color popover closes on authoritative reset");
     // 重置后遗留草稿不得经 blur 提交覆盖重载快照（该规则当前表达式为前面场景设置的 recovered）。
     assert.equal(latestRules[0].expression, "recovered");
     assert.notEqual(latestRules[0].expression, differingDraft);
@@ -610,22 +633,38 @@ export const completion = (async () => {
     await act(async () => {
       click(swatchForReset);
     });
-    assert.ok(container.querySelector(".color-rule-picker"), "popover reopens after reset");
+    assert.ok(document.querySelector(".color-rule-picker"), "popover reopens after reset");
     await act(async () => {
       document.body.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.equal(container.querySelector(".color-rule-picker"), null, "outside mousedown closes the popover");
+    assert.equal(document.querySelector(".color-rule-picker"), null, "outside mousedown closes the popover");
     await act(async () => {
       click(swatchForReset);
     });
-    assert.ok(container.querySelector(".color-rule-picker"), "popover reopens for escape test");
+    assert.ok(document.querySelector(".color-rule-picker"), "popover reopens for escape test");
     await act(async () => {
       document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.equal(container.querySelector(".color-rule-picker"), null, "Escape closes the popover");
+    assert.equal(document.querySelector(".color-rule-picker"), null, "Escape closes the popover");
     console.log("ok - the color picker popover closes on outside mousedown and Escape");
+
+    // 弹层互斥：打开背景颜色弹层会关闭文字颜色弹层。
+    const foregroundSwatch = container.querySelector<HTMLButtonElement>(".color-rule-swatch[aria-label^='文字颜色']")!;
+    const backgroundSwatch = container.querySelector<HTMLButtonElement>(".color-rule-swatch[aria-label^='背景颜色']")!;
+    await act(async () => {
+      click(foregroundSwatch);
+    });
+    assert.ok(document.querySelector(".color-rule-picker"), "foreground popover opens");
+    await act(async () => {
+      click(backgroundSwatch);
+    });
+    const openPickerLabels = Array.from(container.querySelectorAll(".color-rule-color-control.is-open [aria-haspopup='dialog']"))
+      .map((button) => button.getAttribute("aria-label") ?? "");
+    assert.equal(openPickerLabels.length, 1, "only one color popover is open");
+    assert.match(openPickerLabels[0], /^背景颜色/);
+    console.log("ok - opening the background color popover closes the foreground one");
 
     // F2 进入表达式编辑（与 Enter 等价的快捷入口）。
     await act(async () => {

@@ -72,6 +72,8 @@ export function ColorRulesPage({
   const [validationRetryToken, setValidationRetryToken] = useState(0);
   const [invalidColorInputs, setInvalidColorInputs] = useState<Set<string>>(() => new Set());
   const [dirtyColorInputs, setDirtyColorInputs] = useState<Set<string>>(() => new Set());
+  // 同页颜色弹层互斥展开：记录唯一展开的控件 key（null 表示全部关闭）。
+  const [openColorControlKey, setOpenColorControlKey] = useState<string | null>(null);
   const validationRun = useRef(0);
   const untouchedNewRules = useRef(new Map<string, ColorFilterRule>());
   const editingRef = useRef<ExpressionEditingState>(null);
@@ -95,7 +97,7 @@ export function ColorRulesPage({
     }
   }, [selectedRule, selectedIndex]);
 
-  // 权威重置：清除未提交的颜色草稿，并关闭表达式编辑态（规格：重置收尾关闭编辑），
+  // 权威重置：清除未提交的颜色草稿，并关闭表达式编辑态与颜色弹层（规格：重置收尾关闭编辑），
   // 防止失效草稿在重载快照上通过 blur 提交。
   useEffect(() => {
     setInvalidColorInputs((current) => (current.size === 0 ? current : new Set()));
@@ -104,6 +106,7 @@ export function ColorRulesPage({
       editingRef.current = null;
       setEditing(null);
     }
+    setOpenColorControlKey(null);
   }, [resetToken]);
 
   useEffect(() => {
@@ -223,6 +226,7 @@ export function ColorRulesPage({
     const rule = colorRules.find((candidate) => candidate.id === id);
     if (!rule) return;
     setSelectedId(id);
+    setOpenColorControlKey(null);
     setEditing({ id, draft: rule.expression });
   };
 
@@ -451,7 +455,7 @@ export function ColorRulesPage({
             </button>
             <button
               type="button"
-              className="toolbar-button color-rule-icon-button--danger"
+              className="toolbar-button toolbar-button--danger"
               data-action="delete-color-rule"
               disabled={!enablement.canOperateSelected}
               onClick={deleteSelectedRule}
@@ -459,6 +463,8 @@ export function ColorRulesPage({
               <Trash2 size={15} aria-hidden="true" />
               删除
             </button>
+          </div>
+          <div className="color-rules-operations__commands color-rules-operations__commands--secondary">
             <button
               type="button"
               className="toolbar-button"
@@ -488,6 +494,8 @@ export function ColorRulesPage({
               label="文字颜色"
               value={selectedRule?.foregroundColorHex ?? null}
               disabled={!selectedRule || disabled}
+              open={openColorControlKey === `${selectedRule?.id ?? "none"}-foreground`}
+              onOpenChange={(next) => setOpenColorControlKey(next ? `${selectedRule?.id ?? "none"}-foreground` : null)}
               onChange={(value) => selectedRule && update(selectedRule.id, { foregroundColorHex: value })}
               onValidityChange={updateColorValidity}
               onDraftDirtyChange={updateColorDraftDirty}
@@ -499,6 +507,8 @@ export function ColorRulesPage({
               label="背景颜色"
               value={selectedRule?.backgroundColorHex ?? null}
               disabled={!selectedRule || disabled}
+              open={openColorControlKey === `${selectedRule?.id ?? "none"}-background`}
+              onOpenChange={(next) => setOpenColorControlKey(next ? `${selectedRule?.id ?? "none"}-background` : null)}
               onChange={(value) => selectedRule && update(selectedRule.id, { backgroundColorHex: value })}
               onValidityChange={updateColorValidity}
               onDraftDirtyChange={updateColorDraftDirty}

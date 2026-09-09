@@ -58,11 +58,11 @@
   font-size: 12px;
 }
 
-/* V2 两栏布局：左侧可滚动规则列表，右侧固定宽度操作面板。 */
+/* V2 两栏布局：左侧可滚动规则列表，右侧固定 240px 操作面板（命令分组竖排）。 */
 .color-rules-content {
   display: grid;
   flex: 1;
-  grid-template-columns: minmax(0, 1.2fr) minmax(240px, 320px);
+  grid-template-columns: minmax(0, 1.2fr) 240px;
   min-height: 0;
 }
 
@@ -187,10 +187,22 @@
   line-height: 1.4;
 }
 
+/* 命令按钮分组竖排：96px 定宽靠面板左侧排列，图标+文字在按钮内居中；
+   主操作组（新建/编辑/删除）与排序组（上移/下移）之间用较大间距分隔。 */
 .color-rules-operations__commands {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
+}
+
+.color-rules-operations__commands > .toolbar-button {
+  justify-content: center;
+  width: 96px;
+}
+
+.color-rules-operations__commands--secondary {
+  margin-top: 10px;
 }
 
 .color-rules-operations__colors {
@@ -227,11 +239,17 @@
   color: #1f1f1f;
 }
 
+/*
+ * 颜色行：棋盘格触发钮（色块双层结构：外框棋盘格 + 内层纯色矩形，
+ * 与外观页 swatch-frame/swatch 一致）+ 十六进制输入 + 清除按钮。
+ * 触发钮 30px 定宽，十六进制输入占满剩余空间。
+ */
 .color-rule-color-control {
   position: relative;
   display: grid;
-  grid-template-columns: 26px minmax(74px, 1fr) 26px;
+  grid-template-columns: 30px minmax(0, 1fr) 26px;
   gap: 4px;
+  align-items: stretch;
 }
 
 .color-rule-color-diagnostic {
@@ -251,7 +269,6 @@
   font: inherit;
 }
 
-.color-rule-swatch,
 .color-rule-icon-button {
   display: inline-grid;
   place-items: center;
@@ -264,33 +281,86 @@
   color: #343434;
 }
 
-.color-rule-swatch > span {
-  width: 16px;
-  height: 16px;
-  border: 1px solid #777777;
-  background-image: linear-gradient(45deg, #dedede 25%, transparent 25%), linear-gradient(-45deg, #dedede 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #dedede 75%), linear-gradient(-45deg, transparent 75%, #dedede 75%);
+.color-rule-swatch {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  min-width: 0;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #b9b9b9;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #343434;
+}
+
+.color-rule-swatch.is-open,
+.color-rule-color-control.is-open .color-rule-swatch {
+  border-color: #0078d4;
+}
+
+/* 双层色块：外层棋盘格框表示透明/未设置，内层纯色矩形完全盖住棋盘格；
+   未设置时内层透明透出棋盘格（与外观页 swatch-frame/swatch 双层结构一致）。 */
+.color-rule-swatch__frame {
+  width: 24px;
+  height: 20px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid #9f9f9f;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #d8d8d8 25%, transparent 25%),
+    linear-gradient(-45deg, #d8d8d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d8d8d8 75%),
+    linear-gradient(-45deg, transparent 75%, #d8d8d8 75%);
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
   background-size: 8px 8px;
+}
+
+.color-rule-swatch__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .color-rule-icon-button:hover:not(:disabled),
 .color-rule-swatch:hover:not(:disabled) { background: #e9e9e9; }
-.color-rule-icon-button--danger { color: #c42b1c; }
+.toolbar-button--danger { color: #c42b1c; }
 
+/*
+ * 弹出选色器：与“颜色和风格——外观”页 ThemeColorControl 弹层同构
+ * （230px 面板、圆角、阴影、react-colorful 滑块/指针尺寸）。
+ * 弹层经 Portal 渲染到 body，固定定位坐标由组件内联样式给出（--anchored）。
+ */
 .color-rule-picker {
-  position: absolute;
-  top: 30px;
-  left: 0;
-  z-index: 20;
-  width: 172px;
+  display: grid;
+  width: 230px;
   padding: 8px;
-  border: 1px solid #888888;
+  gap: 8px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
   background: #ffffff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 
-.color-rule-picker .react-colorful { width: 100%; height: 150px; }
-.color-rule-picker .react-colorful__saturation { border-radius: 2px 2px 0 0; }
-.color-rule-picker .react-colorful__hue { height: 14px; border-radius: 0 0 2px 2px; }
+.color-rule-picker .react-colorful { width: 100%; height: 142px; }
+.color-rule-picker .react-colorful__saturation { border-bottom-width: 8px; border-radius: 0; }
+.color-rule-picker .react-colorful__hue { height: 16px; }
+.color-rule-picker .react-colorful__last-control { border-radius: 0; }
+.color-rule-picker .react-colorful__pointer { width: 18px; height: 18px; }
+
+.color-rule-picker--anchored {
+  z-index: 80;
+}
+
+.color-rule-picker__value {
+  min-width: 0;
+  overflow: hidden;
+  color: #5f5f5f;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .color-rule-contrast {
   color: #765b00;

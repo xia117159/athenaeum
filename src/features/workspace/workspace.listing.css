@@ -574,10 +574,15 @@ body.is-column-pointer-dragging * {
   white-space: nowrap;
 }
 
-/* 颜色规则的名称标签背景：只涂在名称文本后面，宽度即内容宽度。
+/* 颜色规则的名称标签背景：只涂在名称文本后面，左扩 1 个空格、右扩 3 个空格
+   （padding 扩展背景，负 margin 等量回缩保持文字与相邻条目对齐）。
+   底部额外 1px：内联盒的背景从字冠顶到基线底，字体上行间隙让文字看起来偏下，
+   底部补 1px 使文字在背景区域内垂直居中。
    多行卡片标题按行克隆背景；不扩展到网格列宽。 */
 .entry-name__label--rule-background {
   background: var(--entry-rule-background);
+  padding: 0 0.75em 1px 0.25em;
+  margin: 0 -0.75em -1px -0.25em;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   color: inherit;

@@ -171,6 +171,20 @@ test("configured list colors paint the name-label background and keep foreground
   assert.match(css, /\.tag-stack span\s*\{[\s\S]*?color:\s*#38516b;[\s\S]*?background:\s*#eef3f8;/);
 });
 
+test("rule name-label background extends one space on the left and three on the right without moving the text", () => {
+  const css = fs.readFileSync(
+    path.join(process.cwd(), "src/features/workspace/workspace.listing.css"),
+    "utf8"
+  );
+  // 背景块左扩 1 个空格、右扩 3 个空格：padding 扩展背景，负 margin 等量回缩保持文字对齐。
+  // 四值简写显式区分左右（双值简写会错误地让左右相等）。
+  // 底部额外 +1px/-1px：字体 ascent 到字冠的间隙比基线到底部大 ~1px（12px 字号），
+  // 补齐后文字在背景区域内垂直居中。
+  const labelBlock = css.match(/\.entry-name__label--rule-background\s*\{[^}]*\}/)![0];
+  assert.match(labelBlock, /padding:\s*0\s+0\.75em\s+1px\s+0\.25em/);
+  assert.match(labelBlock, /margin:\s*0\s+-0\.75em\s+-1px\s+-0\.25em/);
+});
+
 test("file listing resolves selection membership through a Set without row-level color-rule evaluation", () => {
   const listingSource = fs.readFileSync(
     path.join(process.cwd(), "src/features/workspace/FileListing.tsx"),
