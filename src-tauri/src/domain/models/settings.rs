@@ -54,6 +54,8 @@ pub struct SettingsSnapshot {
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
     pub details_row_height: u16,
+    #[serde(default)]
+    pub folder_expansion_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
@@ -72,6 +74,8 @@ pub struct SettingsModelUpdate {
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
     pub details_row_height: u16,
+    #[serde(default)]
+    pub folder_expansion_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]

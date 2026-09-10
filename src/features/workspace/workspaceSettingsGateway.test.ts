@@ -264,6 +264,7 @@ export const workspaceSettingsGatewayTests = (async () => {
                   : column
             ),
             detailsRowHeight: 44,
+            folderExpansionEnabled: false,
             tooltipHoverDelayMs: 125,
             metadataRetentionHours: null,
             fileVisibility,

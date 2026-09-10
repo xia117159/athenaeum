@@ -522,6 +522,71 @@ body.is-column-pointer-dragging * {
   gap: 6px;
 }
 
+.file-name-tree {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.file-name-tree > .entry-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.file-name-tree__toggle,
+.file-name-tree__spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: min(18px, var(--details-row-height));
+}
+
+.file-name-tree__toggle,
+.file-name-tree__retry {
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.file-name-tree__toggle:hover,
+.file-name-tree__retry:hover {
+  background: #dcecf9;
+}
+
+.file-name-tree__toggle:focus-visible,
+.file-name-tree__retry:focus-visible {
+  outline: 1px solid #0f6cbd;
+  outline-offset: -1px;
+}
+
+.file-name-tree__status {
+  margin-inline-start: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #555;
+  font-size: 11px;
+}
+
+.file-name-tree__status.is-error {
+  color: #a4262c;
+}
+
+.file-name-tree__retry {
+  flex: 0 0 auto;
+  margin-inline-start: 4px;
+  padding-inline: 3px;
+  color: #005a9e;
+  font-size: 11px;
+}
+
 .entry-icon {
   flex: 0 0 auto;
   width: auto;

@@ -124,6 +124,15 @@ export interface DirectorySnapshot {
   entries: EntryViewModel[];
 }
 
+export interface FolderExpansionBranch {
+  path: string;
+  entries: EntryViewModel[];
+  status: "idle" | "loading" | "ready" | "error";
+  requestId?: number;
+  errorMessage?: string;
+  selectionReplacements?: SelectionPathReplacement[];
+}
+
 export interface SelectionPathReplacement {
   fromPath: string;
   toPath: string;
@@ -288,6 +297,7 @@ export interface SettingsModel {
   columns: ColumnDefinition[];
   navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
+  folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilityState;
@@ -604,6 +614,8 @@ export interface TabState {
    */
   selectionCursorId?: string | null;
   expandedNodePaths: string[];
+  /** Transient details-list branches; independent of the navigation tree and session. */
+  folderExpansion?: Record<string, FolderExpansionBranch>;
   viewMode: TabViewMode;
   sort: SortState;
   columns: ColumnDefinition[];

@@ -12,9 +12,10 @@ import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
-import { sortEntries } from "./fileListingPresentation";
+import { getFolderListingRows, getTabEntries } from "./folderExpansion";
+import { useFolderExpansionController } from "./useFolderExpansionController";
+import { getTopLevelPaths } from "./workspacePathRelations";
 import { subscribeOperationEvents } from "./operationSubscriptions";
-import { filterEntriesByFileVisibility } from "./workspaceVisibility";
 import { useColorFilterController } from "./useColorFilterController";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
@@ -97,6 +98,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     ...createWorkspaceState(createMockWorkspaceBootstrap("mock")),
     status: "loading" as const
   }));
+  useFolderExpansionController({ state, dispatch, workspaceGateway });
   const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
@@ -334,6 +336,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+        current.folderExpansionEnabled !== next.folderExpansionEnabled ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
     };
@@ -348,13 +351,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.columns, next.columns) ||
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
     !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+    current.folderExpansionEnabled !== next.folderExpansionEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
   const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab)
-    ? propertiesWorkspaceTab.selectedEntryIds.join("|")
+    ? getSelectedEntries(state, state.activePanelId).map((entry) => entry.id).join("|")
     : "";
   const propertiesEffectKey = [
     state.status,
@@ -431,7 +435,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    const selectedEntries = activeTab.snapshot.entries.filter((entry) => activeTab.selectedEntryIds.includes(entry.id));
+    const selectedEntries = getSelectedEntries(state, state.activePanelId);
     if (selectedEntries.length > 1) {
       dispatch({
         type: "propertiesSummaryReady",
@@ -559,6 +563,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     state.settings.model.columns,
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
+    state.settings.model.folderExpansionEnabled,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
     state.settings.model.metadataRetentionHours,
@@ -792,6 +797,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         const latestRequestId = navigationRequestsRef.current.get(requestKey);
         const tabStillCurrent =
           latestRequestId === requestId && state.panels[panelId].tabs.some((tab) => tab.id === tabId);
+        if (tabStillCurrent && targetTab && pathsEqual(targetTab.snapshot.location.path, path)) {
+          dispatch({ type: "folderExpansionRefreshFailed", payload: { panelId, tabId, rootSnapshot: targetTab.snapshot, errorMessage: message } });
+        }
 
         // Profile-not-found retry: fuzzy match + renormalize path
         if (tabStillCurrent && isRemotePath(path) && isProfileNotFound) {
@@ -1089,35 +1097,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void watchRootsManagerRef.current.update(roots);
   });
 
-  // 只在关键状态变化时触发更新
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.status]);
-
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.layoutMode, state.activePanelId]);
-
+  // Expansion/visibility changes can change watch roots without changing the tab id.
+  // The manager deduplicates identical roots before any backend call.
   useEffect(() => {
     if (state.status === "ready") {
       updateWatchRoots();
     }
   }, [
-    state.panels["panel-1"]?.activeTabId,
-    state.panels["panel-2"]?.activeTabId,
-    state.panels["panel-3"]?.activeTabId,
-    state.panels["panel-4"]?.activeTabId
+    state.status, state.panels, state.layoutMode, state.activePanelId,
+    state.navigation.items, state.fileVisibility, state.search.filterText,
+    state.settings.model.folderExpansionEnabled
   ]);
-
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.navigation.items]);
 
   useEffect(() => {
     let disposed = false;
@@ -1578,7 +1568,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const dropEntries = useEffectEvent(async (paths: string[], destination: string, operation: "copy" | "move") => {
-    const normalizedPaths = Array.from(new Set(paths.map((path) => normalizeLocationPath(path)).filter(Boolean)));
+    const normalizedPaths = getTopLevelPaths(paths);
     const normalizedDestination = normalizeLocationPath(destination);
 
     if (normalizedPaths.length === 0) {
@@ -1794,7 +1784,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    const selectedPaths = selection.map((entry) => entry.path);
+    const selectedPaths = getTopLevelPaths(selection.map((entry) => entry.path));
     dispatch({ type: "clipboardSet", payload: { mode, paths: selectedPaths } });
     if (isLocalFileClipboard(selectedPaths)) {
       void workspaceGateway.setSystemFileClipboard(selectedPaths, mode).catch((error) => {
@@ -1841,7 +1831,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const startSystemFileDrag = useEffectEvent((paths: string[]) => {
-    const localPaths = paths.filter((path) => !isRemotePath(path));
+    const localPaths = getTopLevelPaths(paths.filter((path) => !isRemotePath(path)));
     if (localPaths.length === 0) {
       return;
     }
@@ -1886,8 +1876,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     const destination = activeTab.snapshot.location.path;
-    const operablePaths =
-      clipboard.mode === "cut" ? clipboard.paths.filter((path) => !hasSameParentPath(path, destination)) : clipboard.paths;
+    const sourcePaths = getTopLevelPaths(clipboard.paths);
+    const operablePaths = clipboard.mode === "cut" ? sourcePaths.filter((path) => !hasSameParentPath(path, destination)) : sourcePaths;
     if (operablePaths.some((path) => isSameOrDescendantPath(path, destination))) {
       pushNotification("warning", "Cannot paste an item into itself or one of its child folders.");
       return;
@@ -1937,7 +1927,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const tab = findTab(state, panelId, tabId);
     const entry =
       isDirectoryTab(tab)
-        ? tab.snapshot.entries.find((item) => pathsEqual(item.path, path)) ?? findEntryByPath(state, path)
+        ? getTabEntries(tab).find((item) => pathsEqual(item.path, path)) ?? findEntryByPath(state, path)
         : findEntryByPath(state, path);
 
     try {
@@ -2312,7 +2302,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     try {
       const task = await workspaceGateway.deleteEntries(
-        selection.map((entry) => entry.path),
+        getTopLevelPaths(selection.map((entry) => entry.path)),
         {
           source: "toolbar",
           panelId,
@@ -2929,24 +2919,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (isNavigationTab(activeTab)) {
           return;
         }
-        // 复算激活标签页显示顺序：可见性过滤 + 搜索过滤（与主区域焦点面板显示一致）+ 排序，
-        // 确保键盘移动与列表视觉顺序一致（不要直接用 snapshot.entries 原始顺序）。
-        const orderedEntryIds = sortEntries(
-          filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility).filter(
-            (entry) => {
-              const filterText = state.search.filterText.trim().toLowerCase();
-              if (!filterText) {
-                return true;
-              }
-              return [entry.name, entry.path, entry.extension, entry.description, entry.tags.join(" ")]
-                .join(" ")
-                .toLowerCase()
-                .includes(filterText);
-            }
-          ),
-          activeTab.sort,
-          activeTab.snapshot.location.path
-        ).map((entry) => entry.id);
+        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+          state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+        const orderedEntryIds = visibleEntries.map((entry) => entry.id);
 
         if (matchedListShortcut === "select-all") {
           dispatch({ type: "allEntriesSelected", payload: { panelId: activePanel.id, tabId: activeTab.id } });
@@ -2959,7 +2934,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (matchedListShortcut === "open-entry") {
           const selectedIds = activeTab.selectedEntryIds;
           const targetId = selectedIds[selectedIds.length - 1] ?? orderedEntryIds[0];
-          const targetEntry = activeTab.snapshot.entries.find((entry) => entry.id === targetId);
+          const targetEntry = visibleEntries.find((entry) => entry.id === targetId);
           if (targetEntry) {
             if (targetEntry.driveInfo && !targetEntry.driveInfo.enterable) {
               return;
@@ -3127,6 +3102,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       navigateHistory: (panelId: PanelId, delta: -1 | 1) => navigateHistoryByDelta(panelId, delta),
       navigateUp: (panelId: PanelId) => navigateUpKeepingForwardHistory(panelId),
       toggleTreeNode: (panelId: PanelId, tabId: string, path: string, expand: boolean) => void loadTreeChildren(panelId, tabId, path, expand),
+      toggleFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
+        dispatch({ type: "folderExpansionToggled", payload: { panelId, tabId, path } }),
+      retryFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
+        dispatch({ type: "folderExpansionRetryRequested", payload: { panelId, tabId, path } }),
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),

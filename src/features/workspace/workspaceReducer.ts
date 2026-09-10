@@ -61,10 +61,14 @@ import {
 import type { OperationClearOutcome } from "../../app/types";
 import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
 import { compareRevisionTokens } from "./colorFilterEditorModel";
+import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
+import { pathsEqual } from "./workspacePathRelations";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | FolderExpansionAction
   | { type: "bootstrapLoaded"; payload: WorkspaceBootstrap }
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
@@ -795,47 +799,6 @@ function createSearchHistoryState(
   };
 }
 
-function getEntryPathKey(path: string) {
-  const normalized = normalizeLocationPath(path);
-  return normalized.startsWith("ftp://") || normalized.startsWith("sftp://") ? normalized : normalized.toLowerCase();
-}
-
-function preserveSelectedEntryIds(
-  tab: TabState,
-  snapshot: DirectorySnapshot,
-  replacements: SelectionPathReplacement[] = []
-) {
-  if (tab.selectedEntryIds.length === 0) {
-    return [];
-  }
-
-  const nextEntryIds = new Set(snapshot.entries.map((entry) => entry.id));
-  const nextEntryIdByPath = new Map(snapshot.entries.map((entry) => [getEntryPathKey(entry.path), entry.id]));
-  const previousEntryById = new Map(tab.snapshot.entries.map((entry) => [entry.id, entry]));
-  const replacementByPath = new Map(
-    replacements.map((replacement) => [getEntryPathKey(replacement.fromPath), replacement.toPath] as const)
-  );
-  const preservedIds: string[] = [];
-
-  for (const selectedId of tab.selectedEntryIds) {
-    let nextId: string | undefined;
-    if (nextEntryIds.has(selectedId)) {
-      nextId = selectedId;
-    } else {
-      const previousEntry = previousEntryById.get(selectedId);
-      const previousPath = previousEntry?.path ?? selectedId;
-      const replacementPath = replacementByPath.get(getEntryPathKey(previousPath));
-      nextId = nextEntryIdByPath.get(getEntryPathKey(replacementPath ?? previousPath));
-    }
-
-    if (nextId && !preservedIds.includes(nextId)) {
-      preservedIds.push(nextId);
-    }
-  }
-
-  return preservedIds;
-}
-
 function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
   const normalizedPath = normalizeLocationPath(path);
   if (expanded) {
@@ -1157,7 +1120,7 @@ function getCurrentPropertiesTargetKey(state: WorkspaceState): string | undefine
   if (!isDirectoryTab(tab)) {
     return undefined;
   }
-  const selectedEntries = tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
+  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility, state.search.filterText, state.settings.model.folderExpansionEnabled === true);
   if (selectedEntries.length > 1) {
     return `multi:${selectedEntries.map((entry) => entry.id).join("|")}`;
   }
@@ -1533,7 +1496,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
         const targetPanel = state.panels[action.payload.targetPanelId];
         const movedTabId = getUniqueTabIdForPanel(sourceTab.id, targetPanel);
-        const movedTab = movedTabId === sourceTab.id ? sourceTab : { ...sourceTab, id: movedTabId };
+        const movedTab = refreshFolderExpansion({ ...sourceTab, id: movedTabId }, sourceTab.snapshot);
         const nextSourceTabs = sourcePanel.tabs.filter((_, index) => index !== sourceIndex);
         const nextSourceActiveTabId =
           sourcePanel.activeTabId === sourceTab.id
@@ -1670,9 +1633,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : undefined;
             const fallbackEntry = action.payload.snapshot.entries[0];
             const selectedEntry = anchorEntry ?? fallbackEntry;
+            const refreshedTab = refreshFolderExpansion(tab, action.payload.snapshot, action.payload.selectionReplacements);
 
             return {
-              ...tab,
+              ...refreshedTab,
               title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
               titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
@@ -1682,9 +1646,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               historyIndex: nextHistoryIndex,
               selectedEntryIds: pathChanged
                 ? (selectedEntry ? [selectedEntry.id] : [])
-                : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
-              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : tab.selectionAnchorId ?? null,
-              selectionCursorId: pathChanged ? null : tab.selectionCursorId ?? null,
+                : refreshedTab.selectedEntryIds,
+              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : refreshedTab.selectionAnchorId,
+              selectionCursorId: pathChanged ? null : refreshedTab.selectionCursorId,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
               inlineEdit: undefined,
@@ -1786,7 +1750,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           isNavigationTab(tab)
             ? tab
             : {
-              ...tab,
+              ...(pathsEqual(tab.snapshot.location.path, action.payload.path) ? tab : {
+                ...clearFolderExpansion(tab), selectedEntryIds: [], selectionAnchorId: null, selectionCursorId: null
+              }),
               title: tab.title || action.payload.path,
               kind: "directory",
               snapshot: {
@@ -1823,6 +1789,21 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             }
         )
       );
+
+    case "folderExpansionToggled":
+    case "folderExpansionRetryRequested":
+    case "folderExpansionLoadStarted":
+    case "folderExpansionLoadSucceeded":
+    case "folderExpansionLoadFailed":
+    case "folderExpansionRefreshFailed":
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        action.type === "folderExpansionToggled" || action.type === "folderExpansionRetryRequested" ? focusPanel(state, action.payload.panelId) : state,
+        action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => reduceFolderExpansion(
+          tab, action, state.settings.model.folderExpansionEnabled === true, state.fileVisibility,
+          state.activePanelId === action.payload.panelId ? state.search.filterText : ""
+        ))
+      ));
 
     case "entrySelectionChanged":
       return invalidatePropertiesIfTargetChanged(updatePanel(
@@ -1877,7 +1858,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : {
                   ...tab,
                   selectedEntryIds: selectEntryRange(
-                    tab.snapshot.entries,
+                    getTabEntries(tab),
                     action.payload.fromEntryId,
                     action.payload.toEntryId,
                     action.payload.orderedEntryIds
@@ -1899,7 +1880,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id),
+                  selectedEntryIds: (supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)
+                    ? getFolderListingRows(tab, state.fileVisibility, state.activePanelId === action.payload.panelId ? state.search.filterText : "").map(({ entry }) => entry)
+                    : tab.snapshot.entries).map((entry) => entry.id),
                   selectionAnchorId: null,
                   selectionCursorId: null
                 }
@@ -1995,7 +1978,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           isNavigationTab(tab)
             ? tab
             : {
-              ...tab,
+              ...(action.payload.viewMode === "details" ? tab : clearFolderExpansion(tab)),
               viewMode: action.payload.viewMode
             }
         )
@@ -2648,14 +2631,15 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ) {
           return state;
         }
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...state,
           fileVisibility: model.fileVisibility,
+          panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           settings: {
             section: normalizeSettingsSection(action.payload.section ?? state.settings.section),
             model
           }
-        };
+        });
       }
 
     case "settingsSnapshotSynced":
@@ -2675,9 +2659,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ) {
           return state;
         }
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...state,
           fileVisibility: model.fileVisibility,
+          panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           bookmarks: action.payload.bookmarks,
           hotlist: action.payload.hotlist,
           remoteProfiles: action.payload.remoteProfiles,
@@ -2692,7 +2677,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             ...state.settings,
             model
           }
-        };
+        });
       }
 
     case "clipboardSet":

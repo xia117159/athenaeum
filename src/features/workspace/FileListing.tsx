@@ -13,6 +13,8 @@ import {
 import { clearEntryDrag, hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { DetailsListBase } from "./DetailsListBase";
 import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
+import { FolderExpansionNameCell, FOLDER_INDENT_PX, FOLDER_TOGGLE_PX, releaseFolderExpansionControlFocus } from "./FolderExpansionNameCell";
+import type { FolderListingRow } from "./folderExpansion";
 import { FileSystemIcon } from "./FileSystemIcon";
 import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
@@ -30,6 +32,7 @@ import {
   ICON_VIEW_MODES,
   type ListingEntry,
   renderDetailsCell,
+  renderDriveInfo,
   renderNameCell,
   renderTagStack,
   sortEntries
@@ -290,6 +293,9 @@ export function FileListingShell({
   panelId,
   tabId,
   entries,
+  folderRows,
+  onToggleFolderExpansion,
+  onRetryFolderExpansion,
   columns,
   sort,
   currentPath,
@@ -331,6 +337,9 @@ export function FileListingShell({
   panelId: PanelId;
   tabId: string;
   entries: EntryViewModel[];
+  folderRows?: FolderListingRow[];
+  onToggleFolderExpansion?: (path: string) => void;
+  onRetryFolderExpansion?: (path: string) => void;
   columns: ColumnDefinition[];
   sort: SortState;
   currentPath: string;
@@ -389,9 +398,11 @@ export function FileListingShell({
           inlineCreate: true
         }
       : undefined;
-  const sortedEntries: ListingEntry[] = inlineCreateEntry
-    ? [inlineCreateEntry, ...sortEntries(entries, sort, currentPath)]
-    : sortEntries(entries, sort, currentPath);
+  const treeRows = viewMode === "details" ? folderRows : undefined;
+  const rowsById = new Map(treeRows?.map((row) => [row.entry.id, row]));
+  const orderedEntries = treeRows ? treeRows.map((row) => row.entry) : sortEntries(entries, sort, currentPath);
+  const sortedEntries: ListingEntry[] = inlineCreateEntry ? [inlineCreateEntry, ...orderedEntries] : orderedEntries;
+  const treeNameAllowance = treeRows?.reduce((max, row) => Math.max(max, row.depth * FOLDER_INDENT_PX + FOLDER_TOGGLE_PX), 0) ?? 0;
 
   const prevKeyboardNavTokenRef = useRef<symbol | undefined>(undefined);
 
@@ -411,6 +422,7 @@ export function FileListingShell({
     if (!element || !scrollContainer) {
       return;
     }
+    releaseFolderExpansionControlFocus(scrollContainer);
     // 手动计算滚动位置以考虑 sticky header 的遮挡
     const containerRect = scrollContainer.getBoundingClientRect();
     const elementRect = element.getBoundingClientRect();
@@ -987,16 +999,6 @@ export function FileListingShell({
     };
   };
 
-  const renderDriveInfo = (di: NonNullable<EntryViewModel["driveInfo"]>) => {
-    if (di.totalBytes == null) return null;
-    const pct = Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100));
-    return (
-      <div className="drive-info">
-        <div className="drive-usage-bar"><div className={`drive-usage-bar__fill${pct >= 90 ? " drive-usage-bar__fill--critical" : ""}`} style={{ width: `${pct}%` }} /></div>
-        <span className="drive-info__text">可用: {formatDriveSize(di.availableBytes)} / 总计: {formatDriveSize(di.totalBytes)}</span>
-      </div>
-    );
-  };
 
   const renderEmptyState = () => <div className="file-listing__empty">当前目录为空</div>;
 
@@ -1030,7 +1032,10 @@ export function FileListingShell({
                 data-cell-column-id={column.id}
                 onContextMenu={column.id === "comment" ? (event) => openCommentContextMenu(event, entry) : undefined}
               >
-                {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+                <FolderExpansionNameCell row={column.id === "name" ? rowsById.get(entry.id) : undefined}
+                  onToggle={onToggleFolderExpansion} onRetry={onRetryFolderExpansion}>
+                  {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+                </FolderExpansionNameCell>
               </div>
             ))}
           </div>
@@ -1523,7 +1528,7 @@ export function FileListingShell({
                   getHeaderText: getLocalizedColumnLabel,
                   getCellText: (entry, candidate) => getDetailsCellText(entry, candidate.id, currentPath),
                   getMinWidth: getColumnHeaderMinWidth,
-                  getIconAllowance: (candidate) => (candidate.id === "name" ? 22 : 0)
+                  getIconAllowance: (candidate) => (candidate.id === "name" ? 22 + treeNameAllowance : 0)
                 })
               )
             }

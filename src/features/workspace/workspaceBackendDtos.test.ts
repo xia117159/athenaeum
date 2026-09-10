@@ -131,6 +131,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: 46,
+    folderExpansionEnabled: false,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
     fileVisibility: {

@@ -5,6 +5,9 @@ import { getDetailsColumnPixelWidth, getDetailsGridMetrics as getSharedDetailsGr
 import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
 import { getTextMeasureUnits } from "./textMeasure";
+import { getEntryTypeLabel, getLocationLabel } from "./fileListingSort";
+export { getEntryTypeLabel, getLocationLabel, sortEntries } from "./fileListingSort";
+import { formatDriveSize } from "./workspaceDirectoryGateway";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -68,14 +71,6 @@ export function getLocalizedColumnLabel(column: ColumnDefinition) {
   }
 }
 
-export function getEntryTypeLabel(entry: EntryViewModel) {
-  return entry.kind === "folder" ? "文件夹" : entry.extension.replace(".", "").toUpperCase() || "文件";
-}
-
-export function getLocationLabel(entry: EntryViewModel, currentPath: string) {
-  return entry.parentPath === currentPath ? "当前目录" : entry.parentPath;
-}
-
 export function getColumnMenuLabel(columnId: ColumnId) {
   switch (columnId) {
     case "name":
@@ -101,82 +96,6 @@ export function getColumnMenuLabel(columnId: ColumnId) {
     default:
       return columnId;
   }
-}
-
-function parseSizeLabel(sizeLabel: string) {
-  if (!sizeLabel || sizeLabel === "--") {
-    return -1;
-  }
-
-  const match = sizeLabel.trim().match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
-  if (!match) {
-    return Number.NaN;
-  }
-
-  const value = Number(match[1]);
-  const unit = match[2].toUpperCase();
-  const multiplierMap: Record<string, number> = {
-    B: 1,
-    KB: 1024,
-    MB: 1024 ** 2,
-    GB: 1024 ** 3,
-    TB: 1024 ** 4
-  };
-  return value * (multiplierMap[unit] ?? 1);
-}
-
-function parseModifiedLabel(label: string) {
-  const timestamp = Date.parse(label.replace(" ", "T"));
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function compareEntryByColumn(left: EntryViewModel, right: EntryViewModel, columnId: ColumnId, currentPath: string) {
-  switch (columnId) {
-    case "name":
-      return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
-    case "type":
-      return getEntryTypeLabel(left).localeCompare(getEntryTypeLabel(right), "zh-CN", {
-        numeric: true,
-        sensitivity: "base"
-      });
-    case "extension":
-      return left.extension.localeCompare(right.extension, "zh-CN", { numeric: true, sensitivity: "base" });
-    case "size":
-      return parseSizeLabel(left.sizeLabel) - parseSizeLabel(right.sizeLabel);
-    case "created":
-      return parseModifiedLabel(left.createdLabel ?? "") - parseModifiedLabel(right.createdLabel ?? "");
-    case "modified":
-      return parseModifiedLabel(left.modifiedLabel) - parseModifiedLabel(right.modifiedLabel);
-    case "accessed":
-      return parseModifiedLabel(left.accessedLabel ?? "") - parseModifiedLabel(right.accessedLabel ?? "");
-    case "tags":
-      return left.tags.join(",").localeCompare(right.tags.join(","), "zh-CN", { sensitivity: "base" });
-    case "comment":
-      return (left.comment ?? "").localeCompare(right.comment ?? "", "zh-CN", { numeric: true, sensitivity: "base" });
-    case "location":
-      return getLocationLabel(left, currentPath).localeCompare(getLocationLabel(right, currentPath), "zh-CN", {
-        numeric: true,
-        sensitivity: "base"
-      });
-    default:
-      return 0;
-  }
-}
-
-export function sortEntries(entries: EntryViewModel[], sort: SortState, currentPath: string) {
-  const direction = sort.direction === "asc" ? 1 : -1;
-  return [...entries].sort((left, right) => {
-    if (left.kind !== right.kind) {
-      return left.kind === "folder" ? -1 : 1;
-    }
-
-    const columnResult = compareEntryByColumn(left, right, sort.columnId, currentPath);
-    if (columnResult !== 0) {
-      return columnResult * direction;
-    }
-
-    return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
-  });
 }
 
 export function getSortIndicator(sort: SortState, columnId: ColumnId) {
@@ -242,6 +161,17 @@ export function renderTagStack(entry: EntryViewModel) {
   return (
     <div className="tag-stack">
       {entry.tags.length > 0 ? entry.tags.map((tag) => <span key={tag}>{tag}</span>) : <span>--</span>}
+    </div>
+  );
+}
+
+export function renderDriveInfo(di: NonNullable<EntryViewModel["driveInfo"]>) {
+  if (di.totalBytes == null) return null;
+  const pct = Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100));
+  return (
+    <div className="drive-info">
+      <div className="drive-usage-bar"><div className={`drive-usage-bar__fill${pct >= 90 ? " drive-usage-bar__fill--critical" : ""}`} style={{ width: `${pct}%` }} /></div>
+      <span className="drive-info__text">可用: {formatDriveSize(di.availableBytes)} / 总计: {formatDriveSize(di.totalBytes)}</span>
     </div>
   );
 }

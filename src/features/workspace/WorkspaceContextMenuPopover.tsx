@@ -1,7 +1,8 @@
 import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
-import type { ClipboardState, ContextMenuState, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
+import type { ClipboardState, ContextMenuState, EntryViewModel, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
+import { getTabEntries } from "./folderExpansion";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -12,6 +13,7 @@ export function WorkspaceContextMenuPopover({
   contextMenu,
   viewMode,
   tab,
+  visibleEntries,
   clipboard,
   actions,
   layoutMode,
@@ -21,6 +23,7 @@ export function WorkspaceContextMenuPopover({
   contextMenu: ContextMenuState;
   viewMode: TabViewMode;
   tab?: TabState;
+  visibleEntries?: EntryViewModel[];
   clipboard?: ClipboardState;
   actions: WorkspaceActions;
   layoutMode: PanelLayoutMode;
@@ -93,14 +96,15 @@ export function WorkspaceContextMenuPopover({
   const isDirectoryTab = tab?.kind === "directory";
   const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
   const canPaste = Boolean(clipboard?.paths.length);
+  const entries = visibleEntries ?? (tab ? getTabEntries(tab) : []);
   const commentEntry =
     tab?.kind === "directory" && contextMenu.entryPath
-      ? tab.snapshot.entries.find((entry) => entry.path === contextMenu.entryPath)
+      ? entries.find((entry) => entry.path === contextMenu.entryPath)
       : undefined;
 
   const selectedEntries =
     tab?.kind === "directory" && tab.snapshot.entries
-      ? tab.snapshot.entries.filter((entry) => (tab.selectedEntryIds ?? []).includes(entry.id))
+      ? entries.filter((entry) => (tab.selectedEntryIds ?? []).includes(entry.id))
       : [];
   const selectedFolders = selectedEntries.filter((entry) => entry.kind === "folder");
   const hasSelectedFolders = selectedFolders.length > 0;

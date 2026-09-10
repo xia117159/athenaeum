@@ -17,6 +17,8 @@ pub struct SettingsStore {
     pub navigation_columns: Vec<DetailColumnDefinition>,
     #[serde(default = "default_details_row_height")]
     pub details_row_height: u16,
+    #[serde(default)]
+    pub folder_expansion_enabled: bool,
     #[serde(default = "default_tooltip_hover_delay_ms")]
     pub tooltip_hover_delay_ms: u32,
     #[serde(default = "default_metadata_retention_hours")]
@@ -38,6 +40,7 @@ impl Default for SettingsStore {
             detail_columns: default_detail_columns(),
             navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
+            folder_expansion_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
             file_visibility: FileVisibilitySettings::default(),
@@ -116,6 +119,10 @@ impl SettingsStore {
 
     pub fn set_details_row_height(&mut self, details_row_height: u16) {
         self.details_row_height = normalize_details_row_height(details_row_height);
+    }
+
+    pub fn set_folder_expansion_enabled(&mut self, enabled: bool) {
+        self.folder_expansion_enabled = enabled;
     }
 
     pub fn set_tooltip_hover_delay_ms(&mut self, value: u32) {
@@ -503,6 +510,33 @@ mod tests {
 
         let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
         assert_eq!(reloaded.details_row_height, 68);
+    }
+
+    #[test]
+    fn folder_expansion_setting_defaults_and_persists() {
+        let temp = TestDir::new("folder-expansion");
+        let file_path = temp.path.join("settings.json");
+        let mut legacy = serde_json::to_value(SettingsStore::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("folderExpansionEnabled");
+        let defaulted: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(defaulted).unwrap()["folderExpansionEnabled"],
+            false
+        );
+        for enabled in [true, false] {
+            legacy["folderExpansionEnabled"] = serde_json::json!(enabled);
+            let mut store: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+            store.attach_path(file_path.clone());
+            store.persist().unwrap();
+            let loaded = SettingsStore::load_from(file_path.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(loaded).unwrap()["folderExpansionEnabled"],
+                enabled
+            );
+        }
     }
 
     #[test]

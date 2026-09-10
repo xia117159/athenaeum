@@ -15,7 +15,8 @@ import { useWorkspaceController } from "./useWorkspaceController";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import { filterDirectoryNodesByFileVisibility, filterEntriesByFileVisibility } from "./workspaceVisibility";
+import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
+import { getFolderListingRows, supportsFolderExpansion } from "./folderExpansion";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -52,18 +53,6 @@ function getUniqueRecentPaths(history: string[], currentPath: string) {
   return result;
 }
 
-function filterEntries(entries: EntryViewModel[], filterText: string) {
-  const normalized = filterText.trim().toLowerCase();
-  if (!normalized) {
-    return entries;
-  }
-
-  return entries.filter((entry) => {
-    const searchable = [entry.name, entry.path, entry.extension, entry.description, entry.tags.join(" ")].join(" ").toLowerCase();
-    return searchable.includes(normalized);
-  });
-}
-
 function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: string[]) {
   if (selectedEntryIds.length === 0) {
     return [];
@@ -78,11 +67,11 @@ export function WorkspaceView() {
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  const activeEntries = isActiveNavigationTab
-    ? []
-    : filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility);
-  const selectedEntries = isActiveNavigationTab ? [] : getSelectedEntriesForTab(activeEntries, activeTab.selectedEntryIds);
-  const filteredActiveEntries = isActiveNavigationTab ? [] : filterEntries(activeEntries, state.search.filterText);
+  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+    state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+  const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
+  const contextTab = state.contextMenu
+    ? state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId) : undefined;
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -428,7 +417,10 @@ export function WorkspaceView() {
             state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)?.viewMode ??
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
-          tab={state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)}
+          tab={contextTab}
+          visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
+            state.contextMenu.panelId === state.activePanelId ? state.search.filterText : "",
+            state.settings.model.folderExpansionEnabled === true).map((row) => row.entry) : []}
           clipboard={state.clipboard}
           actions={actions}
           layoutMode={state.layoutMode}
@@ -620,6 +612,7 @@ function PanelLayout({
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       fileVisibility={state.fileVisibility}
       colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
+      folderExpansionEnabled={state.settings.model.folderExpansionEnabled === true}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
       keyboardNavToken={state.keyboardNavToken}
@@ -740,6 +733,7 @@ function PanelSurface({
   tabMinWidth,
   fileVisibility,
   colorFilterEnabled,
+  folderExpansionEnabled,
   syncScrollEnabled,
   navigation,
   keyboardNavToken,
@@ -764,6 +758,7 @@ function PanelSurface({
   tabMinWidth: number;
   fileVisibility: WorkspaceState["fileVisibility"];
   colorFilterEnabled: boolean;
+  folderExpansionEnabled: boolean;
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
   keyboardNavToken?: symbol;
@@ -773,10 +768,10 @@ function PanelSurface({
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
   const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(directoryContextTab.snapshot.entries, directoryContextTab.selectedEntryIds)
+    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled).map((row) => row.entry), directoryContextTab.selectedEntryIds)
     : [];
-  const visibleEntries = isNavigationTab(activeTab) ? [] : filterEntriesByFileVisibility(activeTab.snapshot.entries, fileVisibility);
-  const entries = isNavigationTab(activeTab) ? [] : isFocused ? filterEntries(visibleEntries, filterText) : visibleEntries;
+  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled);
+  const entries = rows.map((row) => row.entry);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
 
@@ -870,6 +865,9 @@ function PanelSurface({
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}
+            folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
+            onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
+            onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}
             columns={activeTab.columns ?? columns}
             sort={activeTab.sort}
             currentPath={activeTab.snapshot.location.path}

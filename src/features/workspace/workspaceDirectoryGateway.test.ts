@@ -252,6 +252,28 @@ export const workspaceDirectoryGatewayTests = (async () => {
     assert.equal(snapshot.location.path, "sftp://cheng@192.168.1.12:6666/");
   });
 
+  for (const protocol of ["ftp", "sftp"] as const) {
+    await assertAsyncTest(`expanded ${protocol} directory reads preserve nested URI identity and real IPC errors`, async () => {
+      const profile = { ...sftpProfile, id: `nested-${protocol}`, protocol, port: protocol === "ftp" ? 21 : 22 };
+      const path = `${protocol}://cheng@127.0.0.1:${profile.port}/home/cheng/Dir`;
+      const canonicalPath = `${protocol}://cheng@127.0.0.1/home/cheng/Dir`;
+      const child = { ...createFile("/home/cheng/Dir/Report.txt", "Report.txt"),
+        location: { kind: protocol, path: "/home/cheng/Dir/Report.txt", connectionId: profile.id } };
+      const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
+        assert.equal(command, "list_remote_directory");
+        assert.deepEqual(args, { request: { profileId: profile.id, path: "/home/cheng/Dir" } });
+        return [child] as T;
+      };
+      const snapshot = await resolveWorkspaceDirectory(path, [profile], { invoke, runtimeHost });
+      assert.equal(snapshot.location.path, canonicalPath);
+      assert.equal(snapshot.entries[0].path, `${canonicalPath}/Report.txt`);
+      assert.equal(snapshot.entries[0].parentPath, canonicalPath);
+      await assert.rejects(resolveWorkspaceDirectory(path, [profile], {
+        runtimeHost, invoke: async () => { throw new Error("permission denied"); }
+      }), /permission denied/);
+    });
+  }
+
   await assertAsyncTest("resolveWorkspaceDirectory rejects remote urls that do not match a configured profile", async () => {
     await assert.rejects(
       () =>

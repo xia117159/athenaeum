@@ -32,6 +32,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     columns: model.columns.map((column) => ({ ...column })),
     navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
+    folderExpansionEnabled: model.folderExpansionEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
     fileVisibility: { ...model.fileVisibility },
@@ -83,6 +84,7 @@ function computeDirtySections(
     !hasSameJsonShape(pm.columns, dm.columns) ||
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
     pm.detailsRowHeight !== dm.detailsRowHeight ||
+    pm.folderExpansionEnabled !== dm.folderExpansionEnabled ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours
   ) {
@@ -578,6 +580,9 @@ export function SettingsWindowView() {
             ...model,
             detailsRowHeight: normalizeDetailsRowHeight(value)
           }))
+        }
+        onUpdateFolderExpansionEnabled={(enabled) =>
+          updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
         }
         onUpdateTooltipHoverDelay={(value) =>
           updateDraftModel((model) => ({

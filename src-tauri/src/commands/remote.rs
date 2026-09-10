@@ -75,6 +75,7 @@ fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
         settings.detail_columns,
         settings.navigation_columns,
         settings.details_row_height,
+        settings.folder_expansion_enabled,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
         settings.file_visibility,

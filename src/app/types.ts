@@ -347,6 +347,7 @@ export interface SettingsSnapshot {
   columns?: DetailColumnDefinition[];
   navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
+  folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
   fileVisibility?: FileVisibilitySettings;
@@ -361,6 +362,7 @@ export interface SettingsModelUpdate {
   columns: DetailColumnDefinition[];
   navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
+  folderExpansionEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilitySettings;

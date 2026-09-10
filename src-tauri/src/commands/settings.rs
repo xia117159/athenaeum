@@ -61,6 +61,7 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         settings.detail_columns,
         settings.navigation_columns,
         settings.details_row_height,
+        settings.folder_expansion_enabled,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
         settings.file_visibility,
@@ -302,6 +303,7 @@ pub fn save_settings_model(
         settings.set_detail_columns(model.columns);
         settings.set_navigation_columns(model.navigation_columns);
         settings.set_details_row_height(model.details_row_height);
+        settings.set_folder_expansion_enabled(model.folder_expansion_enabled);
         settings.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);
         settings.set_metadata_retention_hours(model.metadata_retention_hours);
         settings.set_file_visibility(model.file_visibility);

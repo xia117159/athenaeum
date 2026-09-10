@@ -4,22 +4,12 @@ import { createRemoteUri } from "./remoteUri";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { isDirectoryTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 import type { OperationTaskSnapshot, RemoteConnectionProfile, WorkspaceState } from "./types";
-
-export function isRemotePath(path: string) {
-  return path.startsWith("ftp://") || path.startsWith("sftp://");
-}
+import { getPathComparisonKey, isRemotePath, pathsEqual } from "./workspacePathRelations";
+import { getExpandedFolderPaths, getFolderListingRows } from "./folderExpansion";
+export { getPathComparisonKey, isRemotePath, pathsEqual } from "./workspacePathRelations";
 
 export function getLocationPathSeparator(path: string) {
   return isRemotePath(path) ? "/" : "\\";
-}
-
-export function getPathComparisonKey(path: string) {
-  const normalized = normalizeLocationPath(path);
-  return isRemotePath(normalized) ? normalized : normalized.toLowerCase();
-}
-
-export function pathsEqual(left: string, right: string) {
-  return getPathComparisonKey(left) === getPathComparisonKey(right);
 }
 
 export function isLocalWatchPath(path: string) {
@@ -28,17 +18,30 @@ export function isLocalWatchPath(path: string) {
 }
 
 export function getVisibleWatchRoots(state: WorkspaceState) {
-  const directoryPaths = new Set<string>();
+  const directoryPaths = new Map<string, string>();
+  const expandedPaths: string[] = [];
   let navigationVisible = false;
 
   for (const panelId of getVisiblePanelIds(state.layoutMode)) {
     const activeTab = getActiveTab(state.panels[panelId]);
     if (isDirectoryTab(activeTab) && activeTab.snapshot.location.kind === "local" && isLocalWatchPath(activeTab.snapshot.location.path)) {
-      directoryPaths.add(normalizeLocationPath(activeTab.snapshot.location.path));
+      const path = normalizeLocationPath(activeTab.snapshot.location.path);
+      directoryPaths.set(getPathComparisonKey(path), path);
+      if (state.settings.model.folderExpansionEnabled) {
+        expandedPaths.push(...getFolderListingRows(activeTab, state.fileVisibility, state.activePanelId === panelId ? state.search.filterText : "")
+          .filter((row) => row.expansion).map((row) => row.entry.path));
+      }
     }
     if (isNavigationTab(activeTab)) {
       navigationVisible = true;
     }
+  }
+
+  // Reserve every ordinary visible root before the manager/backend sort and cap.
+  // Extra expanded branches remain usable through explicit refresh.
+  for (const path of expandedPaths) {
+    if (directoryPaths.size >= 256) break;
+    directoryPaths.set(getPathComparisonKey(path), normalizeLocationPath(path));
   }
 
   const navigationParentPaths = new Set<string>();
@@ -56,12 +59,12 @@ export function getVisibleWatchRoots(state: WorkspaceState) {
     }
   }
 
-  for (const path of directoryPaths) {
+  for (const path of directoryPaths.values()) {
     gitSentinelPaths.add(path);
   }
 
   return {
-    directoryPaths: Array.from(directoryPaths).sort((left, right) => left.localeCompare(right)),
+    directoryPaths: Array.from(directoryPaths.values()).sort((left, right) => left.localeCompare(right)),
     navigationParentPaths: Array.from(navigationParentPaths).sort((left, right) => left.localeCompare(right)),
     gitSentinelPaths: Array.from(gitSentinelPaths).sort((left, right) => left.localeCompare(right))
   };
@@ -75,8 +78,8 @@ export function getVisibleDirectoryRefreshTargets(state: WorkspaceState, roots: 
       if (!isDirectoryTab(tab)) {
         return null;
       }
-      const tabPath = normalizeLocationPath(tab.snapshot.location.path);
-      if (!normalizedRoots.some((root) => pathsEqual(root, tabPath))) {
+      const paths = [tab.snapshot.location.path, ...getExpandedFolderPaths(tab)];
+      if (!paths.some((path) => normalizedRoots.some((root) => pathsEqual(root, path)))) {
         return null;
       }
       return {
