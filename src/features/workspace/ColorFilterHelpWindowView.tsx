@@ -41,11 +41,13 @@ const SECTIONS = [
   },
   {
     title: "通配符与字符串",
-    terms: "Name Extension Path wildcard shorthand escape quoted case sensitive",
+    terms: "Name Extension Path wildcard shorthand escape quoted case sensitive semicolon",
     rows: [
       ["个人", "名称完整等于“个人”的快速写法"],
       ["*个人*", "名称中包含“个人”的快速写法"],
       ["*.txt", "名称以 .txt 结尾的快速写法"],
+      ["*.cpp;*.md;*.json", "分号分隔多个同级表达式，任一段命中即命中"],
+      ["Extension == \".log\";*.tmp", "分号段各自独立解析：可以是完整表达式或快速写法"],
       ["Extension == \".txt\"", "后缀名为 .txt；Extension == \"\" 匹配无后缀文件"],
       ["Path == \"*\\\\Archive\\\\*\"", "两个反斜杠表示路径中的一个反斜杠，星号仍是通配符"],
       ["* / ? / \\* / \\? / \\\\ / \\\"", "分别表示任意长度、单个字符、字面通配符、反斜杠和引号"],
@@ -109,12 +111,14 @@ const SECTIONS = [
     terms: "errors limits invalid expression syntax tokens depth length",
     rows: [
       ["Name = 个人", "无效：相等运算符必须写成 ==，字符串含空格时必须加双引号"],
+      ["*.cpp;;*.md", "无效：分号之间不允许出现空段"],
+      ["(Name == a; Name == b)", "无效：括号内的裸分号不是合法符号；需分组请把分号段各自加括号"],
       ["1 < Size < 2MB", "无效：比较不能连写，请使用 Size > 1B AND Size < 2MB"],
       ["Szie >= 20MB", "无效：变量名拼写错误不会退回名称快速写法"],
       ["Name ==", "无效：缺少右侧值"],
       ["1024 / 256 / 24", "每条表达式最多 1024 个字符、256 个词法单元、24 层括号或语法树深度"],
       ["256 条规则 / 128 个字符", "配置最多 256 条规则；规则名去除两端空白后最多 128 个 Unicode 字符"],
-      ["16 个文本比较", "全部已启用规则合计最多包含 16 个 Name、Extension 或 Path 比较；其他变量不占用此预算"]
+      ["16 个文本比较", "全部已启用规则合计最多包含 16 个 Name、Extension 或 Path 比较；分号段的文本比较逐一计入；其他变量不占用此预算"]
     ]
   }
 ] as const;

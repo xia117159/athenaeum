@@ -96,6 +96,7 @@ enum Literal {
 pub(crate) const MAX_COLOR_RULE_COUNT: usize = 256;
 pub(crate) const MAX_COLOR_RULE_NAME_SCALARS: usize = 128;
 pub(crate) const MAX_COLOR_FILTER_TEXT_SCAN_BUDGET: usize = 16;
+pub(crate) const MAX_EXPRESSION_DEPTH: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Attribute {
@@ -445,20 +446,132 @@ fn parse_expression(source: &str) -> Result<Expression, ParseFailure> {
     }
     validate_expression_bounds(source)?;
     validate_parenthesis_depth(trimmed).map_err(|error| offset_failure(error, leading_offset))?;
-    if is_shorthand(trimmed) {
-        let pattern = if trimmed.starts_with('"') {
-            parse_quoted_text(trimmed, 0).map_err(|error| offset_failure(error, leading_offset))?
+    let segments = split_semicolon_segments(trimmed);
+    if segments.len() > 1 {
+        return parse_segmented_expression(&segments, leading_offset);
+    }
+    parse_single_expression(trimmed, leading_offset)
+}
+
+/// 拆分最外层的裸分号：引号内、括号内、转义后的 `;` 都不是分隔符。
+/// 状态机与 validate_parenthesis_depth 一致（`\` 无条件转义下一字符）。
+fn split_semicolon_segments(source: &str) -> Vec<(usize, &str)> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (offset, ch) in source.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth = depth.saturating_sub(1),
+            ';' if !quoted && depth == 0 => {
+                segments.push((start, &source[start..offset]));
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push((start, &source[start..]));
+    segments
+}
+
+/// 解析多段表达式：每段只解析一次，深度校验与 build 复用同一语法树；
+/// 按从左到右的左倾 OR 链合成，深度守卫按实际段深累计
+/// （acc = 1 + max(acc, segment_depth)），超过上限即拒绝。
+/// 段内错误 span 一律平移到段内容基址（段起始偏移 + 段内前导空白字节数）。
+fn parse_segmented_expression(
+    segments: &[(usize, &str)],
+    leading_offset: usize,
+) -> Result<Expression, ParseFailure> {
+    let mut depth = 0usize;
+    let mut result: Option<Expression> = None;
+    for (offset, segment) in segments {
+        let segment_offset = leading_offset + offset;
+        let segment_trimmed = segment.trim();
+        if segment_trimmed.is_empty() {
+            return Err(failure(
+                "Expression is required",
+                segment_offset,
+                segment_offset + 1,
+            ));
+        }
+        let content_offset = segment_offset + segment_trim_start(segment);
+        let parsed = if is_shorthand(segment_trimmed) {
+            depth = add_expression_depth(depth, 1)?;
+            parse_shorthand_expression(segment_trimmed, content_offset)?
         } else {
-            encode_bare_shorthand(trimmed)
+            let pair = parse_expression_pair(segment_trimmed)
+                .map_err(|error| offset_failure(error, content_offset))?;
+            let expression_pair = pair.into_inner().next().expect("or expression");
+            let pair_depth = validate_ast_depth(expression_pair.clone())
+                .map_err(|error| offset_failure(error, content_offset))?;
+            depth = add_expression_depth(depth, pair_depth)?;
+            build_expression(expression_pair).map_err(|error| offset_failure(error, content_offset))?
         };
-        return Ok(Expression::Compare(
-            Variable::Name,
-            Operator::Equal,
-            Literal::Text(pattern),
+        result = Some(match result {
+            None => parsed,
+            Some(left) => Expression::Or(Box::new(left), Box::new(parsed)),
+        });
+    }
+    Ok(result.expect("at least one segment"))
+}
+
+fn segment_trim_start(segment: &str) -> usize {
+    segment.len() - segment.trim_start().len()
+}
+
+fn add_expression_depth(current: usize, segment_depth: usize) -> Result<usize, ParseFailure> {
+    let combined = if current == 0 {
+        segment_depth
+    } else {
+        1 + current.max(segment_depth)
+    };
+    if combined > MAX_EXPRESSION_DEPTH {
+        return Err(failure(
+            format!("Expression nesting exceeds {MAX_EXPRESSION_DEPTH}"),
+            0,
+            1,
         ));
     }
+    Ok(combined)
+}
 
-    let pair = ExpressionParser::parse(Rule::expression, trimmed)
+/// 解析单个已 trim 的非空表达式（shorthand 或 pest 语法），错误 span 相对传入
+/// 的绝对偏移。空段检查与拆段语义由调用方负责。
+fn parse_single_expression(source: &str, offset: usize) -> Result<Expression, ParseFailure> {
+    let trimmed = source.trim();
+    if is_shorthand(trimmed) {
+        return parse_shorthand_expression(trimmed, offset);
+    }
+
+    let pair = parse_expression_pair(trimmed).map_err(|error| offset_failure(error, offset))?;
+    let expression_pair = pair.into_inner().next().expect("or expression");
+    validate_ast_depth(expression_pair.clone()).map_err(|error| offset_failure(error, offset))?;
+    build_expression(expression_pair).map_err(|error| offset_failure(error, offset))
+}
+
+fn parse_shorthand_expression(trimmed: &str, offset: usize) -> Result<Expression, ParseFailure> {
+    let pattern = if trimmed.starts_with('"') {
+        parse_quoted_text(trimmed, 0).map_err(|error| offset_failure(error, offset))?
+    } else {
+        encode_bare_shorthand(trimmed)
+    };
+    Ok(Expression::Compare(
+        Variable::Name,
+        Operator::Equal,
+        Literal::Text(pattern),
+    ))
+}
+
+fn parse_expression_pair(source: &str) -> Result<Pair<'_, Rule>, ParseFailure> {
+    ExpressionParser::parse(Rule::expression, source)
         .map_err(|error| {
             let (start, end) = match error.location {
                 InputLocation::Pos(position) => (position, position.saturating_add(1)),
@@ -466,16 +579,15 @@ fn parse_expression(source: &str) -> Result<Expression, ParseFailure> {
             };
             failure(
                 format!("Invalid expression: {error}"),
-                start + leading_offset,
-                end + leading_offset,
+                start,
+                end,
             )
-        })?
-        .next()
-        .expect("expression pair");
-    let expression_pair = pair.into_inner().next().expect("or expression");
-    validate_ast_depth(expression_pair.clone())
-        .map_err(|error| offset_failure(error, leading_offset))?;
-    build_expression(expression_pair).map_err(|error| offset_failure(error, leading_offset))
+        })
+        .and_then(|mut pairs| {
+            pairs
+                .next()
+                .ok_or_else(|| failure("Expression is required", 0, 1))
+        })
 }
 
 fn validate_expression_bounds(source: &str) -> Result<(), ParseFailure> {
@@ -493,17 +605,31 @@ pub fn validate_expression_storage_limits(source: &str) -> Result<(), String> {
     validate_expression_bounds(source).map_err(|error| error.message)?;
     let trimmed = source.trim();
     validate_parenthesis_depth(trimmed).map_err(|error| error.message)?;
-    if trimmed.is_empty() || is_shorthand(trimmed) {
-        return Ok(());
-    }
-    if let Ok(mut pairs) = ExpressionParser::parse(Rule::expression, trimmed) {
-        let expression_pair = pairs
-            .next()
-            .expect("expression pair")
-            .into_inner()
-            .next()
-            .expect("or expression");
-        validate_ast_depth(expression_pair).map_err(|error| error.message)?;
+    // 必须先拆段：`;` 不在 is_shorthand 拒绝字符集内，整式早退会把 `a;b`
+    // 误判为 shorthand 并跳过全部按段深度校验。
+    // 空段保持可存储（与旧语义一致：坏表达式只对启用规则强制），不参与深度折算。
+    let mut depth = 0usize;
+    for (offset, segment) in split_semicolon_segments(trimmed) {
+        let segment_trimmed = segment.trim();
+        if segment_trimmed.is_empty() {
+            continue;
+        }
+        let segment_offset = offset + segment_trim_start(segment);
+        if is_shorthand(segment_trimmed) {
+            depth = add_expression_depth(depth, 1).map_err(|error| error.message)?;
+            continue;
+        }
+        if let Ok(mut pair) = ExpressionParser::parse(Rule::expression, segment_trimmed) {
+            let expression_pair = pair
+                .next()
+                .expect("expression pair")
+                .into_inner()
+                .next()
+                .expect("or expression");
+            let segment_depth = validate_ast_depth(expression_pair)
+                .map_err(|error| offset_failure(error, segment_offset).message)?;
+            depth = add_expression_depth(depth, segment_depth).map_err(|error| error.message)?;
+        }
     }
     Ok(())
 }
@@ -593,8 +719,12 @@ fn validate_parenthesis_depth(source: &str) -> Result<(), ParseFailure> {
             quoted = !quoted;
         } else if !quoted && ch == '(' {
             depth += 1;
-            if depth > 24 {
-                return Err(failure("Expression nesting exceeds 24", offset, offset + 1));
+            if depth > MAX_EXPRESSION_DEPTH {
+                return Err(failure(
+                    format!("Expression nesting exceeds {MAX_EXPRESSION_DEPTH}"),
+                    offset,
+                    offset + 1,
+                ));
             }
         } else if !quoted && ch == ')' {
             depth = depth.saturating_sub(1);
@@ -604,7 +734,6 @@ fn validate_parenthesis_depth(source: &str) -> Result<(), ParseFailure> {
 }
 
 fn validate_ast_depth(pair: Pair<'_, Rule>) -> Result<usize, ParseFailure> {
-    const MAX_AST_DEPTH: usize = 24;
     let span = pair.as_span();
     let depth = match pair.as_rule() {
         Rule::or_expression => boolean_depth(pair, Rule::or_operator)?,
@@ -625,9 +754,9 @@ fn validate_ast_depth(pair: Pair<'_, Rule>) -> Result<usize, ParseFailure> {
         Rule::comparison => 1,
         _ => 0,
     };
-    if depth > MAX_AST_DEPTH {
+    if depth > MAX_EXPRESSION_DEPTH {
         return Err(failure(
-            "Expression nesting exceeds 24",
+            format!("Expression nesting exceeds {MAX_EXPRESSION_DEPTH}"),
             span.start(),
             span.end().max(span.start() + 1),
         ));
@@ -643,9 +772,9 @@ fn boolean_depth(pair: Pair<'_, Rule>, operator_rule: Rule) -> Result<usize, Par
         debug_assert_eq!(operator.as_rule(), operator_rule);
         let right_depth = validate_ast_depth(children.next().expect("right expression"))?;
         depth = depth.max(right_depth).saturating_add(1);
-        if depth > 24 {
+        if depth > MAX_EXPRESSION_DEPTH {
             return Err(failure(
-                "Expression nesting exceeds 24",
+                format!("Expression nesting exceeds {MAX_EXPRESSION_DEPTH}"),
                 span.start(),
                 span.end().max(span.start() + 1),
             ));

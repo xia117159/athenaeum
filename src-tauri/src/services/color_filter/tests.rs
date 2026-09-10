@@ -3,10 +3,11 @@ use std::{cell::Cell, time::Instant};
 use chrono::{FixedOffset, LocalResult, NaiveDate, TimeZone, Utc};
 
 use super::{
-    compile_rules, compile_rules_with_day_boundary, validate_expression, AttributeFacts,
-    CompiledWildcard, EntryFacts, LocalTimeZoneSnapshot, TextValue,
+    compile_rules, compile_rules_with_day_boundary, text_comparison_count, validate_expression,
+    validate_expression_storage_limits, AttributeFacts, CompiledWildcard, EntryFacts,
+    LocalTimeZoneSnapshot, TextValue,
 };
-use crate::domain::color_filter::{ColorRule, ColorRuleTarget};
+use crate::domain::color_filter::{ColorFilterValidationSpan, ColorRule, ColorRuleTarget};
 use crate::domain::models::EntryKind;
 
 fn rule(id: &str, expression: &str, foreground: &str, priority: u32) -> ColorRule {
@@ -477,6 +478,192 @@ fn validation_enforces_the_24_level_ast_depth_limit() {
     let mixed_depth_25 = format!("{}{} AND {compare}", "NOT ".repeat(23), compare);
     assert!(validate_expression(&mixed_depth_24).valid);
     assert!(!validate_expression(&mixed_depth_25).valid);
+}
+
+#[test]
+fn semicolon_separated_segments_match_any_segment() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+    let compiled = compile_rules(
+        &[rule("multi", "*.cpp;*.md;*.json", "#ffffff", 1)],
+        now,
+    );
+
+    for name in ["main.cpp", "README.md", "package.json"] {
+        assert!(
+            compiled.style_for(&file_facts(name)).is_some(),
+            "{name} should match one of the segments"
+        );
+    }
+    assert!(compiled.style_for(&file_facts("notes.txt")).is_none());
+}
+
+#[test]
+fn semicolon_segments_mix_full_expressions_and_shorthand() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+    let compiled = compile_rules(
+        &[rule(
+            "mixed",
+            "Extension == \".log\";*.tmp;Size >= 20MB AND Name == \"*report*\"",
+            "#ffffff",
+            1,
+        )],
+        now,
+    );
+
+    assert!(compiled.style_for(&file_facts("x.log")).is_some());
+    assert!(compiled.style_for(&file_facts("a.tmp")).is_some());
+    assert!(compiled.style_for(&file_facts("big-report.bin")).is_some());
+    assert!(compiled.style_for(&file_facts("small.bin")).is_none());
+
+    assert_eq!(
+        text_comparison_count("Extension == \".log\";*.tmp;Size >= 20MB AND Name == \"*report*\"")
+            .expect("mixed expression parses"),
+        3
+    );
+}
+
+#[test]
+fn semicolons_inside_quotes_stay_literal_and_in_parentheses_bare_is_invalid() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+    let quoted = compile_rules(&[rule("quoted", "Name == \"a;b\"", "#ffffff", 1)], now);
+    assert!(quoted.style_for(&file_facts("a;b")).is_some());
+    assert!(quoted.style_for(&file_facts("ab")).is_none());
+
+    let parenthesized = compile_rules(
+        &[rule("paren", "(Name == \"a;b\")", "#ffffff", 1)],
+        now,
+    );
+    assert!(parenthesized.style_for(&file_facts("a;b")).is_some());
+
+    assert!(!validate_expression("(Name == a; Name == b)").valid);
+    assert!(validate_expression("\"a;b\"").valid);
+}
+
+#[test]
+fn escaped_semicolons_do_not_split() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+
+    let escaped_quote = compile_rules(
+        &[rule("esc-quote", "Name == \"a\\\";b\"", "#ffffff", 1)],
+        now,
+    );
+    assert!(escaped_quote.style_for(&file_facts("a\";b")).is_some());
+
+    let escaped_backslash = compile_rules(
+        &[rule("esc-backslash", "Name == \"a\\\\;b\"", "#ffffff", 1)],
+        now,
+    );
+    assert!(escaped_backslash.style_for(&file_facts("a\\;b")).is_some());
+
+    let bare = compile_rules(&[rule("esc-bare", "a\\;b", "#ffffff", 1)], now);
+    assert!(bare.style_for(&file_facts("a\\;b")).is_some());
+}
+
+#[test]
+fn semicolon_expressions_reject_empty_segments_with_spans() {
+    for expression in ["*.cpp;;*.md", ";*.cpp", "*.cpp;", ";"] {
+        let result = validate_expression(expression);
+        assert!(!result.valid, "{expression} must be invalid");
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("required")),
+            "{expression} should report a required-expression message"
+        );
+    }
+
+    let middle = validate_expression("*.cpp;;*.md");
+    assert_eq!(middle.span, Some(ColorFilterValidationSpan { start: 6, end: 7 }));
+    let leading = validate_expression(";*.cpp");
+    assert_eq!(leading.span, Some(ColorFilterValidationSpan { start: 0, end: 1 }));
+    let trailing = validate_expression("*.cpp;");
+    assert_eq!(trailing.span, Some(ColorFilterValidationSpan { start: 6, end: 6 }));
+}
+
+#[test]
+fn segment_errors_shift_spans_to_the_segment_content_base() {
+    // 段 1 内容 "Name ==" 的 pest 错误落在字节 7；分号前留空格时基准不得漂移。
+    let pest_error = validate_expression("Name == ; *.tmp");
+    assert_eq!(pest_error.span, Some(ColorFilterValidationSpan { start: 7, end: 8 }));
+
+    // 段 2 " Szie >= q" 内容基址为字节 4（段起点 3 + 前导空白 1）。
+    let variable_error = validate_expression("a ; Szie >= q");
+    assert_eq!(variable_error.span, Some(ColorFilterValidationSpan { start: 4, end: 8 }));
+
+    // 段自身深度超限：错误 span 必须落在该段字节范围内。
+    let deep_source = format!("x ; {}Name == y", "NOT ".repeat(24));
+    let depth_error = validate_expression(&deep_source);
+    assert!(!depth_error.valid);
+    let span = depth_error.span.expect("depth error span");
+    assert!(
+        span.start >= "x ; ".len() && span.end <= deep_source.len(),
+        "depth error {span:?} should point into the second segment"
+    );
+}
+
+#[test]
+fn storage_limits_split_segments_before_depth_checks() {
+    let leaf_chain_25 = std::iter::repeat("Name==x")
+        .take(25)
+        .collect::<Vec<_>>()
+        .join(";");
+    assert!(validate_expression_storage_limits(&leaf_chain_25).is_err());
+    assert!(validate_expression_storage_limits("a;b").is_ok());
+    assert!(validate_expression_storage_limits(" ; ").is_ok());
+}
+
+#[test]
+fn escaped_quote_semicolons_follow_the_state_machine() {
+    // `a\"b;c`：反斜杠转义引号，引号态从未开启，`;` 是顶层分隔符。
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+    let compiled = compile_rules(&[rule("esc-open", "a\\\"b;c", "#ffffff", 1)], now);
+    assert!(compiled.style_for(&file_facts("a\"b")).is_some());
+    assert!(compiled.style_for(&file_facts("c")).is_some());
+    assert!(compiled.style_for(&file_facts("ab")).is_none());
+}
+
+#[test]
+fn semicolon_chains_respect_the_ast_depth_limit() {
+    let leaf_chain_24 = std::iter::repeat("Name==x")
+        .take(24)
+        .collect::<Vec<_>>()
+        .join(";");
+    assert!(validate_expression(&leaf_chain_24).valid);
+
+    let leaf_chain_25 = format!("{leaf_chain_24};Name==x");
+    let result = validate_expression(&leaf_chain_25);
+    assert!(!result.valid);
+    assert!(result
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("nesting exceeds 24")));
+
+    let deep_segment = format!("{}Name == x", "NOT ".repeat(23));
+    assert!(validate_expression(&deep_segment).valid);
+    let mixed_over = format!("{deep_segment};Name == y");
+    assert!(!validate_expression(&mixed_over).valid);
+
+    let depth_12_segment = format!("{}Name == x", "NOT ".repeat(11));
+    let mixed_within = format!("{depth_12_segment};{depth_12_segment}");
+    assert!(validate_expression(&mixed_within).valid);
+}
+
+#[test]
+fn bare_shorthand_semicolon_meaning_changes_to_alternatives() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap();
+
+    let alternatives = compile_rules(&[rule("alt", "a;b", "#ffffff", 1)], now);
+    assert!(alternatives.style_for(&file_facts("a")).is_some());
+    assert!(alternatives.style_for(&file_facts("b")).is_some());
+    assert!(alternatives.style_for(&file_facts("a;b")).is_none());
+
+    let literal = compile_rules(&[rule("literal", "Name == \"a;b\"", "#ffffff", 1)], now);
+    assert!(literal.style_for(&file_facts("a;b")).is_some());
+
+    let quoted_bare = compile_rules(&[rule("quote-bare", "a\"b;c", "#ffffff", 1)], now);
+    assert!(quoted_bare.style_for(&file_facts("a\"b;c")).is_some());
+    assert!(quoted_bare.style_for(&file_facts("c")).is_none());
 }
 
 #[test]
