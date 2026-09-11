@@ -89,8 +89,8 @@ export const completion = (async () => {
         assert.equal(h.tab.snapshot, f.tab.snapshot);
         assert.equal(h.tab.folderExpansion![t.branchKey].sizeFingerprint, "parent-stamp");
         assert.equal(h.tab.directorySizes?.snapshot?.phase, rootState === "partial" ? "partial" : "complete");
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, rootState === "partial" ? null : .6);
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, rootState === "partial" ? null : .3);
+        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, .6);
+        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, .3);
         assert.equal(t.listings.length, 1); assert.equal(t.lookups.length, 2); assert.equal(t.wire.subscribed.length, 1);
       } finally { await h.close(); }
     });

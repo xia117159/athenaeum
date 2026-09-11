@@ -119,6 +119,21 @@ export const completion = (async () => {
       assert.deepEqual(selections, [f.child.path]);
       assert.deepEqual(opens, [f.child.path]);
     });
+    await assertTest("a single click on an expandable folder row toggles the branch", async () => {
+      await render();
+      const before = toggles.length;
+      await act(async () => {
+        rowFor(f.parent.path).click();
+        await flushEffects();
+      });
+      assert.equal(toggles.length, before + 1);
+      assert.equal(toggles.at(-1), f.parent.path);
+      await act(async () => {
+        rowFor(f.parent.path).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+        await flushEffects();
+      });
+      assert.equal(toggles.length, before + 1);
+    });
     await assertTest("focused folder controls forward ordinary list shortcuts to the workspace", async () => {
       await render();
       const arrow = rowFor(f.parent.path).querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!;

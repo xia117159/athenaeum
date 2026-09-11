@@ -91,7 +91,7 @@ export const completion = (async () => {
       await act(async () => { liveRoot.render(<WorkspaceView />); await flushEffects(); });
       await waitFor(() => controller?.state.status === "ready", "live workspace did not bootstrap");
       const parentRow = [...liveContainer.querySelectorAll<HTMLElement>(".file-row")].find((row) => row.dataset.entryPath === live.parent.path)!;
-      await act(async () => { parentRow.click(); await flushEffects(); });
+      controller.state.panels["panel-1"].tabs[0].selectedEntryIds = [live.parent.id];
       const arrow = parentRow.querySelector<HTMLButtonElement>(".file-name-tree__toggle")!;
       await act(async () => { arrow.focus(); arrow.click(); await flushEffects(); });
       assert.equal(document.activeElement, arrow);

@@ -232,6 +232,7 @@ export const workspaceSettingsGatewayTests = (async () => {
         { id: "path", label: "Path", visible: true, width: "180px", align: "left" }
       ],
       detailsRowHeight: 44,
+      sizeBarMode: "folder-total",
       tooltipHoverDelayMs: 125,
       metadataRetentionHours: null,
       fileVisibility,
@@ -276,6 +277,7 @@ export const workspaceSettingsGatewayTests = (async () => {
                   : column
             ),
             detailsRowHeight: 44,
+            sizeBarMode: "folder-total",
             folderExpansionEnabled: false,
             tooltipHoverDelayMs: 125,
             metadataRetentionHours: null,

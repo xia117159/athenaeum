@@ -350,6 +350,7 @@ export interface SettingsSnapshot {
   columns?: DetailColumnDefinition[];
   navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode?: "folder-total" | "folder-max";
   folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
@@ -365,6 +366,7 @@ export interface SettingsModelUpdate {
   columns: DetailColumnDefinition[];
   navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode: "folder-total" | "folder-max";
   folderExpansionEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

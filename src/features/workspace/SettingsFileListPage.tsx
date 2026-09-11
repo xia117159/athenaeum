@@ -1,5 +1,7 @@
 export function SettingsFileListPage({
   detailsRowHeight,
+  sizeBarMode,
+  onUpdateSizeBarMode,
   folderExpansionEnabled,
   onUpdateFolderExpansionEnabled,
   tooltipHoverDelayMs,
@@ -10,6 +12,8 @@ export function SettingsFileListPage({
   onUpdateMetadataRetentionHours
 }: {
   detailsRowHeight: number;
+  sizeBarMode: "folder-total" | "folder-max";
+  onUpdateSizeBarMode: (value: "folder-total" | "folder-max") => void;
   folderExpansionEnabled: boolean;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
   tooltipHoverDelayMs: number;
@@ -64,6 +68,17 @@ export function SettingsFileListPage({
             />
             <span>px</span>
           </label>
+        </div>
+        <div className="settings-row">
+          <div><strong>大小占比基准</strong></div>
+          <div className="settings-segmented" role="group" aria-label="大小占比基准">
+            <button type="button" className={sizeBarMode === "folder-total" ? "is-active" : undefined}
+              data-setting-id="size-bar-mode-folder-total" aria-pressed={sizeBarMode === "folder-total"}
+              disabled={disabled} onClick={() => onUpdateSizeBarMode("folder-total")}>所在文件夹总大小</button>
+            <button type="button" className={sizeBarMode === "folder-max" ? "is-active" : undefined}
+              data-setting-id="size-bar-mode-folder-max" aria-pressed={sizeBarMode === "folder-max"}
+              disabled={disabled} onClick={() => onUpdateSizeBarMode("folder-max")}>所在文件夹最大项</button>
+          </div>
         </div>
         <div className="settings-row">
           <div>

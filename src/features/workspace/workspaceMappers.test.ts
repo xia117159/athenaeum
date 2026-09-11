@@ -156,6 +156,7 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
     columns: [],
     navigationColumns: [],
     detailsRowHeight: 24,
+    sizeBarMode: "folder-total",
     tooltipHoverDelayMs: 9999,
     metadataRetentionHours: -1,
     fileVisibility: {
@@ -606,6 +607,7 @@ assertTest("mergeShortcutDefaults does not carry forward navigate-parent from st
     columns: [],
     navigationColumns: [],
     detailsRowHeight: 24,
+    sizeBarMode: "folder-total",
     tooltipHoverDelayMs: 350,
     metadataRetentionHours: null,
     fileVisibility: {

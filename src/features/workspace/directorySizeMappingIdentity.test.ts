@@ -9,6 +9,7 @@ import { projectEntrySize } from "./directorySizes";
 import { sizeRecord, sizeSnapshot } from "./directorySizeTestSupport";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { getFolderListingRows } from "./folderExpansion";
+import { expansionEntry } from "./folderExpansionTestSupport";
 
 function fixture(kind: "local" | "ftp" | "sftp", root?: string, names = ["folder", "folder "]) {
   const f = controllerFixture(kind); const path = root ?? (kind === "local" ? "C:\\data" : "/home");
@@ -67,4 +68,13 @@ test("local casefold-colliding rows are identity-unverified, not partial aggrega
     assert.deepEqual(directorySizeLookupPaths(f.state, "panel-1", f.tab), []);
     for (const entry of f.tab.snapshot.entries) assert.equal(projectEntrySize(f.tab, entry).sizeDisplay?.bytes, null);
   }
+});
+
+test("raw hidden and filtered folders remain directory-size lookup targets", () => {
+  const f = fixture("local", undefined, ["visible"]);
+  const hidden = expansionEntry(f.tab.snapshot.location.path, "hidden-folder", "folder", { isHidden: true });
+  f.tab.snapshot.entries = [...f.tab.snapshot.entries, hidden];
+  f.state.fileVisibility = { ...f.state.fileVisibility, showHidden: false };
+  f.state.search.filterText = "visible-name-that-cannot-match";
+  assert.ok(directorySizeLookupPaths(f.state, "panel-1", f.tab).includes(hidden.path));
 });

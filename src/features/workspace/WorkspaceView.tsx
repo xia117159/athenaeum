@@ -71,7 +71,7 @@ export function WorkspaceView() {
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
   const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
-    state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
   const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
   const contextTab = state.contextMenu
     ? state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId) : undefined;
@@ -424,7 +424,7 @@ export function WorkspaceView() {
           tab={contextTab}
           visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
             state.contextMenu.panelId === state.activePanelId ? state.search.filterText : "",
-            state.settings.model.folderExpansionEnabled === true).map((row) => row.entry) : []}
+            state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry) : []}
           clipboard={state.clipboard}
           actions={actions}
           layoutMode={state.layoutMode}
@@ -613,6 +613,9 @@ function PanelLayout({
       activeTabBackground={state.settings.model.theme.activeTabBackground}
       dropHighlightFill={state.settings.model.theme.dropHighlightFill}
       dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
+      sizeBarMode={state.settings.model.sizeBarMode}
+      sizeBarLow={state.settings.model.theme.sizeBarLow}
+      sizeBarHigh={state.settings.model.theme.sizeBarHigh}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       fileVisibility={state.fileVisibility}
       colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
@@ -734,6 +737,9 @@ function PanelSurface({
   activeTabBackground,
   dropHighlightFill,
   dropHighlightBorder,
+  sizeBarMode,
+  sizeBarLow,
+  sizeBarHigh,
   tabMinWidth,
   fileVisibility,
   colorFilterEnabled,
@@ -759,6 +765,9 @@ function PanelSurface({
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarMode: WorkspaceState["settings"]["model"]["sizeBarMode"];
+  sizeBarLow: string;
+  sizeBarHigh: string;
   tabMinWidth: number;
   fileVisibility: WorkspaceState["fileVisibility"];
   colorFilterEnabled: boolean;
@@ -772,13 +781,12 @@ function PanelSurface({
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
   const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled).map((row) => row.entry), directoryContextTab.selectedEntryIds)
+    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
     : [];
-  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled);
+  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled, sizeBarMode);
   const entries = rows.map((row) => row.entry);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
-
   // Memoize selection callbacks to prevent useEffect re-registration in FileListing
   const handleSelectMultiple = useCallback(
     (entryIds: string[]) => {
@@ -907,6 +915,8 @@ function PanelSurface({
               actions.openEntry(panel.id, entry);
             }}
             detailsRowHeight={detailsRowHeight}
+            sizeBarLow={sizeBarLow}
+            sizeBarHigh={sizeBarHigh}
             tooltipHoverDelayMs={tooltipHoverDelayMs}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}

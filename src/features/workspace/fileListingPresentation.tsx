@@ -196,7 +196,9 @@ export function renderDetailsCell(
   columnId: ColumnDefinition["id"],
   currentPath: string,
   nameContent?: ReactNode,
-  gitStatus?: GitFileStatus
+  gitStatus?: GitFileStatus,
+  sizeBarLow?: string,
+  sizeBarHigh?: string
 ) {
   const detailIconSpec = getInlineIconSpec("details");
   switch (columnId) {
@@ -207,7 +209,7 @@ export function renderDetailsCell(
     case "extension":
       return entry.extension || "--";
     case "size":
-      return <SizeShareCell entry={entry} />;
+      return <SizeShareCell entry={entry} sizeBarLow={sizeBarLow} sizeBarHigh={sizeBarHigh} />;
     case "created":
       return entry.createdLabel ?? "--";
     case "modified":

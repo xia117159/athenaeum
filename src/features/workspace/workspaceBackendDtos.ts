@@ -11,6 +11,7 @@ import type {
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
   DEFAULT_DETAILS_ROW_HEIGHT,
+  DEFAULT_SIZE_BAR_MODE,
   DEFAULT_METADATA_RETENTION_HOURS,
   DEFAULT_COLUMNS,
   DEFAULT_CONTEXT_MENU_SETTINGS,
@@ -18,6 +19,7 @@ import {
   DEFAULT_TOOLTIP_HOVER_DELAY_MS,
   DEFAULT_THEME,
   normalizeContextMenuDefault,
+  normalizeSizeBarMode,
   normalizeColumns,
   normalizeMetadataRetentionHours,
   normalizeTabMinWidth,
@@ -69,6 +71,7 @@ export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSetti
     columns: normalizeColumns(model.columns),
     navigationColumns: normalizeNavigationColumns(model.navigationColumns),
     detailsRowHeight: model.detailsRowHeight,
+    sizeBarMode: normalizeSizeBarMode(model.sizeBarMode),
     folderExpansionEnabled: model.folderExpansionEnabled === true,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
@@ -139,6 +142,7 @@ export function createBrowserSettingsSnapshot(
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
+    sizeBarMode: DEFAULT_SIZE_BAR_MODE,
     folderExpansionEnabled: false,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,

@@ -49,6 +49,7 @@ export type SettingsSurfaceProps = {
   onUpdateSizeBarColor?: (endpoint: "sizeBarLow" | "sizeBarHigh", color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
+  onUpdateSizeBarMode?: (value: SettingsModel["sizeBarMode"]) => void;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
   onUpdateTooltipHoverDelay: (value: number) => void;
   onUpdateMetadataRetentionHours: (value: number | null) => void;
@@ -200,6 +201,7 @@ export function SettingsSurface({
   onUpdateSizeBarColor,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
+  onUpdateSizeBarMode = () => undefined,
   onUpdateFolderExpansionEnabled,
   onUpdateTooltipHoverDelay,
   onUpdateMetadataRetentionHours,
@@ -277,6 +279,8 @@ export function SettingsSurface({
           ) : settings.section === "file-list" ? (
             <SettingsFileListPage
               detailsRowHeight={settings.model.detailsRowHeight}
+              sizeBarMode={settings.model.sizeBarMode}
+              onUpdateSizeBarMode={onUpdateSizeBarMode}
               folderExpansionEnabled={settings.model.folderExpansionEnabled === true}
               onUpdateFolderExpansionEnabled={onUpdateFolderExpansionEnabled}
               tooltipHoverDelayMs={settings.model.tooltipHoverDelayMs}

@@ -22,12 +22,28 @@ test("size shares keep one root denominator for 60/30/10 and expanded descendant
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
 });
 
-test("old listing sizes below the total still need independent parent fingerprint pairing", () => {
+test("size-bar modes use the current listing root and exclude links or unknown values", () => {
+  const { tab, sizes, parent, a, b, child } = sizeFixture();
+  const link = expansionEntry(parent.path, "link", "file", { sizeBytes: 900, attributes: ["L"] });
+  const unknown = expansionEntry(parent.path, "unknown", "file", { sizeBytes: null });
+  tab.folderExpansion![getPathComparisonKey(parent.path)].entries = [child, link, unknown];
+  assert.equal(projectEntrySize(tab, parent, "folder-max").sizeDisplay?.share, 1);
+  assert.equal(projectEntrySize(tab, a, "folder-max").sizeDisplay?.share, .5);
+  assert.ok(Math.abs((projectEntrySize(tab, b, "folder-max").sizeDisplay?.share ?? 0) - 1 / 6) < 1e-6);
+  assert.equal(projectEntrySize(tab, child, "folder-total").sizeDisplay?.share, .6);
+  assert.equal(projectEntrySize(tab, child, "folder-max").sizeDisplay?.share, 1);
+  sizes.snapshot!.phase = "partial";
+  sizes.snapshot!.totalBytes = null;
+  sizes.records[getPathComparisonKey(tab.snapshot.location.path)]!.sizeFingerprint = null;
+  assert.equal(projectEntrySize(tab, a, "folder-total").sizeDisplay?.share, .3);
+});
+
+test("old listing sizes below the total still need parent fingerprint pairing", () => {
   const { tab, a, child } = sizeFixture();
   tab.snapshot.sizeFingerprint = "old-root";
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.state, "stale");
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null);
-  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, .6, "the expanded parent's own listing can be independently verified");
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, .6, "the expanded child keeps the current root denominator");
   Object.values(tab.folderExpansion!)[0].sizeFingerprint = "old-parent";
   assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, null);
 });
@@ -37,7 +53,7 @@ test("partial stale cancelled and unknown totals never look like exact shares", 
   sizes.snapshot!.phase = "partial"; sizes.snapshot!.totalBytes = null;
   sizes.records[getPathComparisonKey(parent.path)] = sizeRecord(parent.path, "40", "parent-stamp", "partial");
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "≥40 B");
-  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, null);
+  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .5);
   for (const phase of ["queued", "scanning", "failed", "stale", "cancelled"] as const) {
     sizes.snapshot!.phase = phase;
     assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null, phase);
@@ -52,7 +68,7 @@ test("incomplete legacy remote metadata can show lower bounds without a verified
   tab.snapshot.sizeFingerprint = null;
   sizes.records[getPathComparisonKey(parent.path)] = sizeRecord(parent.path, "40", "", "partial");
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "≥40 B");
-  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, null);
+  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .5);
 });
 
 test("empty directories zero files unsafe numbers and numerator overflow have honest presentation", () => {
@@ -64,7 +80,7 @@ test("empty directories zero files unsafe numbers and numerator overflow have ho
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, 0);
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, 0);
   a.sizeBytes = 1;
-  assert.equal(projectEntrySize(tab, a).sizeDisplay?.state, "stale");
+  assert.equal(projectEntrySize(tab, a).sizeDisplay?.state, "complete");
   a.sizeBytes = Number.MAX_SAFE_INTEGER + 1;
   sizes.snapshot!.totalBytes = "18446744073709551615";
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null);

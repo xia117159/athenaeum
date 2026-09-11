@@ -17,6 +17,8 @@ pub struct SettingsStore {
     pub navigation_columns: Vec<DetailColumnDefinition>,
     #[serde(default = "default_details_row_height")]
     pub details_row_height: u16,
+    #[serde(default = "default_size_bar_mode")]
+    pub size_bar_mode: String,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default = "default_tooltip_hover_delay_ms")]
@@ -40,6 +42,7 @@ impl Default for SettingsStore {
             detail_columns: default_detail_columns(),
             navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
+            size_bar_mode: default_size_bar_mode(),
             folder_expansion_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
@@ -71,6 +74,7 @@ impl SettingsStore {
         store.detail_columns = normalize_detail_columns(store.detail_columns);
         store.navigation_columns = normalize_navigation_columns(store.navigation_columns);
         store.details_row_height = normalize_details_row_height(store.details_row_height);
+        store.size_bar_mode = normalize_size_bar_mode(store.size_bar_mode);
         store.tooltip_hover_delay_ms =
             normalize_tooltip_hover_delay_ms(store.tooltip_hover_delay_ms);
         store.metadata_retention_hours =
@@ -119,6 +123,10 @@ impl SettingsStore {
 
     pub fn set_details_row_height(&mut self, details_row_height: u16) {
         self.details_row_height = normalize_details_row_height(details_row_height);
+    }
+
+    pub fn set_size_bar_mode(&mut self, value: String) {
+        self.size_bar_mode = normalize_size_bar_mode(value);
     }
 
     pub fn set_folder_expansion_enabled(&mut self, enabled: bool) {
@@ -369,6 +377,10 @@ fn normalize_details_row_height(details_row_height: u16) -> u16 {
     details_row_height.clamp(12, 72)
 }
 
+fn normalize_size_bar_mode(value: String) -> String {
+    if value == "folder-max" { value } else { default_size_bar_mode() }
+}
+
 fn normalize_tooltip_hover_delay_ms(value: u32) -> u32 {
     value.min(5000)
 }
@@ -419,6 +431,10 @@ fn normalize_theme(mut theme: UiTheme) -> UiTheme {
 
 fn default_details_row_height() -> u16 {
     24
+}
+
+fn default_size_bar_mode() -> String {
+    "folder-total".into()
 }
 
 fn default_tooltip_hover_delay_ms() -> u32 {
@@ -797,6 +813,16 @@ mod tests {
         assert_eq!(reloaded.theme.drop_highlight_fill, "#1f9d5566");
         assert_eq!(reloaded.theme.drop_highlight_border, "#b91c1c40");
         assert_eq!(reloaded.theme.tab_min_width, 132);
+    }
+
+    #[test]
+    fn size_bar_mode_defaults_and_round_trips() {
+        let mut store = SettingsStore::load_default();
+        assert_eq!(store.size_bar_mode, "folder-total");
+        store.set_size_bar_mode("folder-max".into());
+        assert_eq!(store.size_bar_mode, "folder-max");
+        store.set_size_bar_mode("invalid".into());
+        assert_eq!(store.size_bar_mode, "folder-total");
     }
 
     #[test]

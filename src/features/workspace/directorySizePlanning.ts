@@ -1,5 +1,5 @@
-import { getFolderListingRows } from "./folderExpansion";
 import { createRemoteUri, resolveRemotePath } from "./remoteUri";
+import { sortEntries } from "./fileListingSort";
 import { toBackendRemoteProfile } from "./workspaceBackendDtos";
 import { isSizingPathRepresentable } from "./directorySizeMapping";
 import { listingSizeIdentityIsReliable } from "./directorySizes";
@@ -46,19 +46,26 @@ export function directorySizeContext(tab: TabState, profiles: RemoteConnectionPr
   };
 }
 
-/** Only directories are looked up, including each visible row's immediate parent. */
+/** Lookups follow raw listing branches so hidden and filtered children still have
+ * directory records available for their parent's denominator. */
 export function directorySizeLookupPaths(state: WorkspaceState, panelId: PanelId, tab: TabState): string[] {
   const root = tab.snapshot.location.path;
   if (!listingSizeIdentityIsReliable(tab, root)) return [];
   const paths = new Map<string, string>([[getPathComparisonKey(root), root]]);
-  const rows = getFolderListingRows(tab, state.fileVisibility, state.activePanelId === panelId ? state.search.filterText : "",
-    state.settings.model.folderExpansionEnabled === true);
-  for (const { entry } of rows) {
-    if (!listingSizeIdentityIsReliable(tab, entry.parentPath)) continue;
-    if (isSameOrDescendantPath(root, entry.parentPath)) paths.set(getPathComparisonKey(entry.parentPath), entry.parentPath);
-    if (entry.kind === "folder" && !entry.attributes.includes("L") && isSameOrDescendantPath(root, entry.path)) {
-      paths.set(getPathComparisonKey(entry.path), entry.path);
+  const visited = new Set<string>();
+  const visit = (entries: TabState["snapshot"]["entries"]) => {
+    for (const entry of sortEntries(entries, tab.sort, root)) {
+      const entryKey = getPathComparisonKey(entry.path);
+      if (visited.has(entryKey)) continue;
+      visited.add(entryKey);
+      if (!listingSizeIdentityIsReliable(tab, entry.parentPath)) continue;
+      if (isSameOrDescendantPath(root, entry.parentPath)) paths.set(getPathComparisonKey(entry.parentPath), entry.parentPath);
+      if (entry.kind !== "folder" || entry.attributes.includes("L") || !isSameOrDescendantPath(root, entry.path)) continue;
+      paths.set(entryKey, entry.path);
+      const branch = tab.folderExpansion?.[entryKey];
+      if (branch?.status === "ready") visit(branch.entries);
     }
-  }
+  };
+  visit(tab.snapshot.entries);
   return [...paths.values()];
 }

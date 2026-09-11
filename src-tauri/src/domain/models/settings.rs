@@ -54,6 +54,8 @@ pub struct SettingsSnapshot {
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
     pub details_row_height: u16,
+    #[serde(default = "default_size_bar_mode")]
+    pub size_bar_mode: String,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
@@ -74,6 +76,8 @@ pub struct SettingsModelUpdate {
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,
     pub details_row_height: u16,
+    #[serde(default = "default_size_bar_mode")]
+    pub size_bar_mode: String,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
@@ -83,4 +87,8 @@ pub struct SettingsModelUpdate {
     #[serde(default)]
     pub context_menu: ContextMenuSettings,
     pub theme: UiTheme,
+}
+
+fn default_size_bar_mode() -> String {
+    "folder-total".into()
 }

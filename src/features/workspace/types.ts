@@ -45,6 +45,7 @@ export type EntryFocusMove =
   | { kind: "absolute"; position: "first" | "last" }
   | { kind: "page"; direction: "up" | "down"; pageSize: number };
 export type ContextMenuDefault = "native" | "custom";
+export type SizeBarMode = "folder-total" | "folder-max";
 export type RemoteAuthKind = "password" | "keyFile" | "anonymous";
 export type SortDirection = "asc" | "desc";
 export type RemoteConnectionState = "unknown" | "connecting" | "connected" | "error";
@@ -304,6 +305,7 @@ export interface SettingsModel {
   columns: ColumnDefinition[];
   navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode: SizeBarMode;
   folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

@@ -5,6 +5,7 @@ import {
   DEFAULT_THEME,
   normalizeContextMenuDefault,
   normalizeDetailsRowHeight,
+  normalizeSizeBarMode,
   normalizeMetadataRetentionHours,
   normalizeSettingsModel,
   normalizeTabMinWidth,
@@ -33,6 +34,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     columns: model.columns.map((column) => ({ ...column })),
     navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
+    sizeBarMode: model.sizeBarMode,
     folderExpansionEnabled: model.folderExpansionEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
@@ -85,6 +87,7 @@ function computeDirtySections(
     !hasSameJsonShape(pm.columns, dm.columns) ||
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
     pm.detailsRowHeight !== dm.detailsRowHeight ||
+    pm.sizeBarMode !== dm.sizeBarMode ||
     pm.folderExpansionEnabled !== dm.folderExpansionEnabled ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours
@@ -585,6 +588,7 @@ export function SettingsWindowView() {
             detailsRowHeight: normalizeDetailsRowHeight(value)
           }))
         }
+        onUpdateSizeBarMode={(value) => updateDraftModel((model) => ({ ...model, sizeBarMode: normalizeSizeBarMode(value) }))}
         onUpdateFolderExpansionEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
         }

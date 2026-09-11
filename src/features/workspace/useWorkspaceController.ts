@@ -340,6 +340,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
         current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+        current.sizeBarMode !== next.sizeBarMode ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
     };
@@ -567,6 +568,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
     state.settings.model.folderExpansionEnabled,
+    state.settings.model.sizeBarMode,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
     state.settings.model.metadataRetentionHours,

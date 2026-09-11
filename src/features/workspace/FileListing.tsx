@@ -315,6 +315,8 @@ export function FileListingShell({
   onClearSelection,
   onOpen,
   detailsRowHeight,
+  sizeBarLow,
+  sizeBarHigh,
   tooltipHoverDelayMs = 200,
   onOpenContextMenu,
   onOpenNativeContextMenu,
@@ -360,6 +362,8 @@ export function FileListingShell({
   onClearSelection?: () => void;
   onOpen: (entry: EntryViewModel) => void;
   detailsRowHeight: number;
+  sizeBarLow?: string;
+  sizeBarHigh?: string;
   tooltipHoverDelayMs?: number;
   onOpenContextMenu: (payload: ContextMenuState) => void;
   onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => void;
@@ -869,6 +873,9 @@ export function FileListingShell({
 
         lastClickedEntryIdRef.current = entry.id;
         onSelect(entry, event.ctrlKey || event.metaKey);
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && viewMode === "details" && folderRows !== undefined && entry.kind === "folder" && !entry.driveInfo) {
+          onToggleFolderExpansion?.(entry.path);
+        }
       },
       onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (suppressNextEntryClickRef.current === entry.id) {
@@ -1023,7 +1030,7 @@ export function FileListingShell({
               >
                 <FolderExpansionNameCell row={column.id === "name" ? rowsById.get(entry.id) : undefined}
                   onToggle={onToggleFolderExpansion} onRetry={onRetryFolderExpansion}>
-                  {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+                  {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path), sizeBarLow, sizeBarHigh)}
                 </FolderExpansionNameCell>
               </div>
             ))}

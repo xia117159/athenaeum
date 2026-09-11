@@ -30,6 +30,7 @@ import type {
   PanelState,
   RemoteConnectionProfile,
   SettingsSection,
+  SizeBarMode,
   SettingsModel,
   TabState,
   WorkspaceBootstrap
@@ -340,6 +341,7 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
 ];
 
 export const DEFAULT_DETAILS_ROW_HEIGHT = 24;
+export const DEFAULT_SIZE_BAR_MODE: SizeBarMode = "folder-total";
 export const DEFAULT_THEME: SettingsModel["theme"] = {
   panelFocusAccent: "#0f6cbd",
   activeTabBackground: "#ffffff",
@@ -379,6 +381,10 @@ export function normalizeDetailsRowHeight(value?: number | null) {
   }
 
   return clamp(12, Math.round(value), 72);
+}
+
+export function normalizeSizeBarMode(value?: string | null): SizeBarMode {
+  return value === "folder-max" ? "folder-max" : DEFAULT_SIZE_BAR_MODE;
 }
 
 export function normalizeTooltipHoverDelayMs(value?: number | null) {
@@ -870,6 +876,7 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     columns: normalizeColumns(settings.columns),
     navigationColumns: normalizeNavigationColumns(settings.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settings.detailsRowHeight),
+    sizeBarMode: normalizeSizeBarMode(settings.sizeBarMode),
     folderExpansionEnabled: settings.folderExpansionEnabled === true,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
@@ -910,6 +917,7 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     columns: normalizeColumns(settingsModel.columns),
     navigationColumns: normalizeNavigationColumns(settingsModel.navigationColumns),
     detailsRowHeight: normalizeDetailsRowHeight(settingsModel.detailsRowHeight),
+    sizeBarMode: normalizeSizeBarMode(settingsModel.sizeBarMode),
     folderExpansionEnabled: settingsModel.folderExpansionEnabled === true,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),

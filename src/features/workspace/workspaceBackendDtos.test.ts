@@ -111,6 +111,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     columns: [],
     navigationColumns: [],
     detailsRowHeight: 46,
+    sizeBarMode: "folder-max",
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
     fileVisibility: {
@@ -137,6 +138,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: 46,
+    sizeBarMode: "folder-max",
     folderExpansionEnabled: false,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
