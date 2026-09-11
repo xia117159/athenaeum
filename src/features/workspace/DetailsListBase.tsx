@@ -40,6 +40,7 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
   dropIndicatorClassName,
   dataAttributeName,
   headerDataAttributes,
+  renderHeaderAccessory,
   children
 }: {
   columns: C[];
@@ -65,6 +66,7 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
   dropIndicatorClassName?: string;
   dataAttributeName?: string;
   headerDataAttributes?: Record<string, string>;
+  renderHeaderAccessory?: (column: C) => ReactNode;
   children: (context: DetailsListBaseRenderContext<T, C>) => ReactNode;
 }) {
   const visibleColumns = columns.filter((column) => column.visible ?? true);
@@ -173,6 +175,7 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
         resizerClassName={resizerClassName}
         dataAttributeName={dataAttributeName}
         getColumnLabel={getColumnLabel}
+        renderAccessory={renderHeaderAccessory}
         onContextMenu={openColumnHeaderMenu}
         onHeaderPointerDown={(event, column) => startColumnPointerDrag(event, column)}
         onHeaderClick={(event, column) => handleHeaderClick(event, column)}

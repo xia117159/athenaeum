@@ -54,6 +54,8 @@ function createSettingsSnapshot(overrides: Partial<BackendSettingsSnapshot> = {}
       activeTabBackground: "#ffffff",
       dropHighlightFill: "#0f6cbd",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 96
     },
     layout: {
@@ -138,6 +140,8 @@ export const workspaceSettingsGatewayTests = (async () => {
           activeTabBackground: "#ffffffcc",
           dropHighlightFill: "#abcdef66",
           dropHighlightBorder: "#336699",
+          sizeBarLow: "#dceaf7",
+          sizeBarHigh: "#3979b7",
           tabMinWidth: 132
         }
       }) as T;
@@ -149,6 +153,8 @@ export const workspaceSettingsGatewayTests = (async () => {
         activeTabBackground: "#ffffffcc",
         dropHighlightFill: "#abcdef66",
         dropHighlightBorder: "#336699",
+        sizeBarLow: "#dceaf7",
+        sizeBarHigh: "#3979b7",
         tabMinWidth: 132
       },
       { invoke, runtimeHost }
@@ -163,6 +169,8 @@ export const workspaceSettingsGatewayTests = (async () => {
             activeTabBackground: "#ffffffcc",
             dropHighlightFill: "#abcdef66",
             dropHighlightBorder: "#336699",
+            sizeBarLow: "#dceaf7",
+            sizeBarHigh: "#3979b7",
             tabMinWidth: 132
           }
         }
@@ -180,6 +188,8 @@ export const workspaceSettingsGatewayTests = (async () => {
           activeTabBackground: "#ffffff80",
           dropHighlightFill: "#abcdef",
           dropHighlightBorder: "#336699",
+          sizeBarLow: "#dceaf7",
+          sizeBarHigh: "#3979b7",
           tabMinWidth: 4096
         }
       }) as T;
@@ -233,6 +243,8 @@ export const workspaceSettingsGatewayTests = (async () => {
         activeTabBackground: "#ffffff80",
         dropHighlightFill: "#abcdef",
         dropHighlightBorder: "#336699",
+        sizeBarLow: "#dceaf7",
+        sizeBarHigh: "#3979b7",
         tabMinWidth: 4096
       }
     };
@@ -276,6 +288,8 @@ export const workspaceSettingsGatewayTests = (async () => {
               activeTabBackground: "#ffffff80",
               dropHighlightFill: "#abcdef",
               dropHighlightBorder: "#336699",
+              sizeBarLow: "#dceaf7",
+              sizeBarHigh: "#3979b7",
               tabMinWidth: 4096
             }
           }
@@ -337,6 +351,8 @@ export const workspaceSettingsGatewayTests = (async () => {
                 activeTabBackground: "#ffffff80",
                 dropHighlightFill: "#0f6cbd",
                 dropHighlightBorder: "#0f6cbd",
+                sizeBarLow: "#dceaf7",
+                sizeBarHigh: "#3979b7",
                 tabMinWidth: 4096
               }
             }) as unknown as T

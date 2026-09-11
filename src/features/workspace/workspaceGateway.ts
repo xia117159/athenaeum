@@ -102,6 +102,8 @@ import type {
 import {
   getWorkspaceItemProperties
 } from "./workspacePropertiesGateway";
+import { createDirectorySizesGateway } from "./directorySizeGateway";
+import type { DirectorySizesGateway } from "./directorySizeTypes";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationHistoryEventEnvelope,
@@ -141,6 +143,7 @@ import type {
 } from "./types";
 
 export interface WorkspaceGateway {
+  directorySizes?: DirectorySizesGateway;
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
   listDriveRoots(): Promise<import("../../app/types").DriveRoot[]>;
@@ -257,6 +260,7 @@ export function createWorkspaceGateway(): WorkspaceGateway {
   let currentWatchRootsKey = "";
 
   return {
+    directorySizes: createDirectorySizesGateway(),
     async loadBootstrap() {
       if (!hasTauriRuntime()) {
         return createMockWorkspaceBootstrap("mock");

@@ -6,6 +6,7 @@ import { FileSystemIcon } from "./FileSystemIcon";
 import type { SystemIconImageList } from "./systemIconGateway";
 import { getTextMeasureUnits } from "./textMeasure";
 import { getEntryTypeLabel, getLocationLabel } from "./fileListingSort";
+import { SizeShareCell } from "./SizeShareCell";
 export { getEntryTypeLabel, getLocationLabel, sortEntries } from "./fileListingSort";
 import { formatDriveSize } from "./workspaceDirectoryGateway";
 import type {
@@ -13,6 +14,7 @@ import type {
   ColumnId,
   EntryViewModel,
   GitFileStatus,
+  InlineEditState,
   SortState,
   TabViewMode
 } from "./types";
@@ -43,6 +45,19 @@ export type InlineIconSpec = {
 export type ListingEntry = EntryViewModel & {
   inlineCreate?: boolean;
 };
+
+export function createInlineCreateEntry(inlineEdit: InlineEditState | undefined): ListingEntry | undefined {
+  if (inlineEdit?.mode !== "create-folder" && inlineEdit?.mode !== "create-file") return undefined;
+  return {
+    id: inlineEdit.mode === "create-folder" ? "__inline-create-folder__" : "__inline-create-file__",
+    name: inlineEdit.value, kind: inlineEdit.kind,
+    path: `${inlineEdit.parentPath}${inlineEdit.mode === "create-folder" ? "__inline_create_folder__" : "__inline_create_file__"}`,
+    parentPath: inlineEdit.parentPath, sizeLabel: "--", modifiedLabel: "",
+    extension: inlineEdit.mode === "create-file" && inlineEdit.value.includes(".") ? `.${inlineEdit.value.split(".").pop()}` : "",
+    attributes: inlineEdit.kind === "folder" ? ["D"] : ["A"], accentColor: "#0f6cbd", tags: [], comment: "",
+    description: inlineEdit.mode === "create-folder" ? "New folder" : "New file", inlineCreate: true
+  };
+}
 
 export function getLocalizedColumnLabel(column: ColumnDefinition) {
   switch (column.id) {
@@ -192,7 +207,7 @@ export function renderDetailsCell(
     case "extension":
       return entry.extension || "--";
     case "size":
-      return entry.sizeLabel;
+      return <SizeShareCell entry={entry} />;
     case "created":
       return entry.createdLabel ?? "--";
     case "modified":
@@ -252,24 +267,24 @@ export function estimateAutoFitColumnWidth(column: ColumnDefinition, entries: En
   });
 }
 
-export function getColumnHeaderMinWidth(column: ColumnDefinition) {
+export function getColumnHeaderMinWidth(column: ColumnDefinition, sizeAccessory = false) {
   const label = getLocalizedColumnLabel(column) || column.label || column.id;
-  return Math.max(DETAILS_MIN_COLUMN_WIDTH_PX, Math.ceil(getTextMeasureUnits(label) * 6 + 4));
+  return Math.max(DETAILS_MIN_COLUMN_WIDTH_PX, Math.ceil(getTextMeasureUnits(label) * 6 + 4)) + (sizeAccessory && column.id === "size" ? 21 : 0);
 }
 
-export function getColumnPixelWidth(column: ColumnDefinition) {
+export function getColumnPixelWidth(column: ColumnDefinition, sizeAccessory = false) {
   const fallbackWidth = DEFAULT_DETAILS_COLUMN_WIDTHS[column.id] ?? 120;
   return getDetailsColumnPixelWidth({
     column,
-    minWidth: getColumnHeaderMinWidth(column),
+    minWidth: getColumnHeaderMinWidth(column, sizeAccessory),
     fallbackWidth
   });
 }
 
-export function getDetailsGridMetrics(columns: ColumnDefinition[]) {
+export function getDetailsGridMetrics(columns: ColumnDefinition[], sizeAccessory = false) {
   return getSharedDetailsGridMetrics({
     columns,
     gap: DETAILS_GRID_COLUMN_GAP_PX,
-    getColumnPixelWidth
+    getColumnPixelWidth: (column) => getColumnPixelWidth(column, sizeAccessory)
   });
 }

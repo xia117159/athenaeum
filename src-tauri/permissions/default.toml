@@ -3,6 +3,9 @@ description = "Allows Athenaeum workspace commands required by the main desktop 
 permissions = [
   "allow-initialize-workspace",
   "allow-list-directory",
+  "allow-subscribe-directory-sizes",
+  "allow-release-directory-sizes",
+  "allow-lookup-directory-sizes",
   "allow-set-workspace-watch-roots",
   "allow-get-item-properties",
   "allow-get-tree-children",
@@ -88,6 +91,21 @@ commands.allow = ["list_directory"]
 identifier = "allow-set-workspace-watch-roots"
 description = "Allows replacing the visible local directories watched for live refresh events."
 commands.allow = ["set_workspace_watch_roots"]
+
+[[permission]]
+identifier = "allow-subscribe-directory-sizes"
+description = "Allows window-owned bounded background directory size statistics."
+commands.allow = ["subscribe_directory_sizes"]
+
+[[permission]]
+identifier = "allow-release-directory-sizes"
+description = "Allows releasing the invoking window's directory size subscription."
+commands.allow = ["release_directory_sizes"]
+
+[[permission]]
+identifier = "allow-lookup-directory-sizes"
+description = "Allows bounded generation-fenced directory size lookups."
+commands.allow = ["lookup_directory_sizes"]
 
 [[permission]]
 identifier = "allow-get-item-properties"

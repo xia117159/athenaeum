@@ -955,6 +955,8 @@ function createSettingsModel(): SettingsModel {
       activeTabBackground: "#ffffff",
       dropHighlightFill: "#0f6cbd",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 96
     }
   };

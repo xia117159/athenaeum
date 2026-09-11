@@ -1,15 +1,15 @@
 mod adapter_factory;
+mod connection;
 mod host_key;
 mod listing;
+pub(crate) mod size_metadata;
 mod remote_path;
 pub(super) mod windows_credentials;
 
 use std::{
     fs, io,
-    net::{TcpStream, ToSocketAddrs},
     path::Path,
     process::{Command, Output},
-    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -18,19 +18,20 @@ use chrono::{TimeZone, Utc};
 use ssh2::{FileStat, Session, Sftp};
 
 use crate::domain::models::{
-    DirectorySizeAvailability, DirectorySizeState, EntryKind, EntryViewModel, ItemProperties,
+    DirectoryListing, DirectorySizeAvailability, DirectorySizeState, EntryKind, EntryViewModel, ItemProperties,
     ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability,
     ItemPropertyFieldState, LocationKind, RemoteAdapterKind, RemoteAuthKind, RemoteHostKeyInfo,
     RemoteProfile, RemoteProfileUpsertRequest, RemoteTestResult, RemoteTrustHostKeyRequest,
 };
 
 use self::{
+    connection::{connect_sftp, connect_ssh_session},
     adapter_factory::{preferred_curl_executable, select_adapter},
     host_key::{
         create_remote_host_key_info, host_key_type_from_algorithm, verify_sftp_host_key,
         write_known_host_entry,
     },
-    listing::{parse_listing_entries, parse_sftp_entries},
+    listing::parse_listing_entries,
     remote_path::{
         available_local_conflict_path, available_sftp_conflict_path, build_url,
         create_remote_transfer_temp_dir, ensure_remote_not_inside_source, join_remote_path,
@@ -43,6 +44,7 @@ use self::{
 
 #[cfg(test)]
 use self::{
+    listing::parse_sftp_entries,
     host_key::{host_key_algorithm, host_key_fingerprint_sha256, known_hosts_host},
     remote_path::{
         available_remote_conflict_path, encode_remote_url_path, remote_path_is_within_root,
@@ -200,6 +202,10 @@ pub fn list_directory(
     password: Option<&str>,
     path: Option<&str>,
 ) -> Result<Vec<EntryViewModel>> {
+    Ok(list_directory_snapshot(profile, password, path)?.entries)
+}
+
+pub fn list_directory_snapshot(profile: &RemoteProfile, password: Option<&str>, path: Option<&str>) -> Result<DirectoryListing> {
     let profile = normalize_profile(profile.clone());
     validate_profile(&profile)?;
     if let Some(path) = path {
@@ -701,7 +707,7 @@ trait RemoteAdapter {
         profile: &RemoteProfile,
         password: Option<&str>,
         path: Option<&str>,
-    ) -> Result<Vec<EntryViewModel>>;
+    ) -> Result<DirectoryListing>;
     fn create_directory(
         &self,
         profile: &RemoteProfile,
@@ -806,15 +812,8 @@ impl RemoteAdapter for CurlRemoteAdapter {
         profile: &RemoteProfile,
         password: Option<&str>,
         path: Option<&str>,
-    ) -> Result<Vec<EntryViewModel>> {
-        let output = run_curl_list(profile, password, path)?;
-        if !output.status.success() {
-            bail!(
-                "{}",
-                stderr_message(&output, "remote directory listing failed")
-            );
-        }
-        Ok(parse_listing_entries(profile, path, &output.stdout))
+    ) -> Result<DirectoryListing> {
+        size_metadata::ftp_listing(profile, password, &normalize_remote_path(path.unwrap_or(&profile.root_path)))
     }
 
     fn create_directory(
@@ -1040,13 +1039,13 @@ impl RemoteAdapter for SftpRemoteAdapter {
         profile: &RemoteProfile,
         password: Option<&str>,
         path: Option<&str>,
-    ) -> Result<Vec<EntryViewModel>> {
+    ) -> Result<DirectoryListing> {
         let (_, sftp) = connect_sftp(profile, password)?;
         let base_path = normalize_remote_path(path.unwrap_or(&profile.root_path));
         let entries = sftp
             .readdir(Path::new(&base_path))
             .with_context(|| format!("failed to list remote directory {base_path}"))?;
-        Ok(parse_sftp_entries(profile, &base_path, entries))
+        Ok(size_metadata::sftp_listing(profile, &base_path, entries))
     }
 
     fn create_directory(
@@ -1249,7 +1248,7 @@ impl RemoteAdapter for UnsupportedRemoteAdapter {
         _profile: &RemoteProfile,
         _password: Option<&str>,
         _path: Option<&str>,
-    ) -> Result<Vec<EntryViewModel>> {
+    ) -> Result<DirectoryListing> {
         bail!("remote directory listing is unavailable because no supported adapter was found")
     }
 
@@ -1655,44 +1654,6 @@ fn resolve_secret(profile: &RemoteProfile, password: Option<&str>) -> Option<Str
                 .as_deref()
                 .and_then(windows_credentials::read_secret)
         })
-}
-
-fn connect_sftp(profile: &RemoteProfile, password: Option<&str>) -> Result<(Session, Sftp)> {
-    let session = connect_ssh_session(profile)?;
-    verify_sftp_host_key(&session, profile)?;
-
-    authenticate_sftp_session(&session, profile, password)?;
-
-    let sftp = session.sftp().context("failed to open SFTP subsystem")?;
-    Ok((session, sftp))
-}
-
-fn connect_ssh_session(profile: &RemoteProfile) -> Result<Session> {
-    let address = (profile.host.as_str(), profile.port)
-        .to_socket_addrs()
-        .with_context(|| format!("failed to resolve {}:{}", profile.host, profile.port))?
-        .next()
-        .ok_or_else(|| anyhow!("failed to resolve {}:{}", profile.host, profile.port))?;
-    let tcp =
-        TcpStream::connect_timeout(&address, Duration::from_secs(profile.connect_timeout_secs))
-            .with_context(|| format!("failed to connect to {}:{}", profile.host, profile.port))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
-        .context("failed to configure SFTP read timeout")?;
-    tcp.set_write_timeout(Some(Duration::from_secs(profile.command_timeout_secs)))
-        .context("failed to configure SFTP write timeout")?;
-
-    let mut session = Session::new().context("failed to create SSH session")?;
-    session.set_tcp_stream(tcp);
-    session.set_timeout(
-        profile
-            .command_timeout_secs
-            .saturating_mul(1000)
-            .min(u32::MAX as u64) as u32,
-    );
-    session
-        .handshake()
-        .context("failed to complete SSH handshake")?;
-    Ok(session)
 }
 
 fn authenticate_sftp_session(

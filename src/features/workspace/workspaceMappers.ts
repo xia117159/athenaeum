@@ -8,6 +8,7 @@ import type {
   WorkspaceBootstrap as BackendWorkspaceBootstrap
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
+import { directoryListingIdentityIsReliable } from "./directorySizeMapping";
 import { normalizeNavigationColumns } from "./NavigationTabColumns";
 import { createRemoteRootUri, createRemoteUri, resolveRemotePath, trimTrailingSlash } from "./remoteUri";
 import {
@@ -344,6 +345,8 @@ export const DEFAULT_THEME: SettingsModel["theme"] = {
   activeTabBackground: "#ffffff",
   dropHighlightFill: "#0f6cbd",
   dropHighlightBorder: "#0f6cbd",
+  sizeBarLow: "#dceaf7",
+  sizeBarHigh: "#3979b7",
   tabMinWidth: 96
 };
 export const DEFAULT_CONTEXT_MENU_SETTINGS: SettingsModel["contextMenu"] = {
@@ -718,6 +721,8 @@ function mapEntryViewModel(
 
 function cloneDirectorySnapshot(snapshot: DirectorySnapshot): DirectorySnapshot {
   return {
+    sizeFingerprint: snapshot.sizeFingerprint,
+    sizeIdentityReliable: snapshot.sizeIdentityReliable,
     location: { ...snapshot.location },
     breadcrumbs: snapshot.breadcrumbs.map((breadcrumb) => ({ ...breadcrumb })),
     entries: snapshot.entries.map((entry) => ({
@@ -744,8 +749,12 @@ export function mapDirectoryListingToSnapshot(
     ? createRemoteUri(remoteProfile, listing.location.path)
     : normalizeLocationPath(listing.location.path);
   const kind = listing.location.kind;
+  const entries = listing.entries.map((entry) => mapEntryViewModel(entry, locationPath, profiles));
+  const sizeIdentityReliable = directoryListingIdentityIsReliable(listing, locationPath, entries);
 
   return {
+    sizeFingerprint: sizeIdentityReliable ? listing.sizeFingerprint : null,
+    sizeIdentityReliable,
     location: {
       kind,
       label: createLocationLabel(locationPath, remoteProfile ?? undefined),
@@ -754,7 +763,7 @@ export function mapDirectoryListingToSnapshot(
     },
     breadcrumbs:
       isRemote && remoteProfile ? buildRemoteBreadcrumbs(locationPath, remoteProfile) : buildLocalBreadcrumbs(locationPath),
-    entries: listing.entries.map((entry) => mapEntryViewModel(entry, locationPath, profiles))
+    entries
   };
 }
 
@@ -873,6 +882,8 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
       activeTabBackground: normalizeThemeAccentColor(settings.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
       dropHighlightFill: normalizeThemeAccentColor(settings.theme?.dropHighlightFill),
       dropHighlightBorder: normalizeThemeAccentColor(settings.theme?.dropHighlightBorder),
+      sizeBarLow: normalizeThemeAccentColor(settings.theme?.sizeBarLow, DEFAULT_THEME.sizeBarLow),
+      sizeBarHigh: normalizeThemeAccentColor(settings.theme?.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
       tabMinWidth: normalizeTabMinWidth(settings.theme?.tabMinWidth)
     }
   };
@@ -911,6 +922,8 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
       activeTabBackground: normalizeThemeAccentColor(settingsModel.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
       dropHighlightFill: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightFill),
       dropHighlightBorder: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightBorder),
+      sizeBarLow: normalizeThemeAccentColor(settingsModel.theme?.sizeBarLow, DEFAULT_THEME.sizeBarLow),
+      sizeBarHigh: normalizeThemeAccentColor(settingsModel.theme?.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
       tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)
     }
   };

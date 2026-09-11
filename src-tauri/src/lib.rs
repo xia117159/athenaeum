@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use commands::{
     color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
+    directory_sizes::{subscribe_directory_sizes, release_directory_sizes, lookup_directory_sizes},
     operations::{
         cancel_file_operation, clear_operation_records, copy_entries, create_directory,
         create_file, delete_entries, list_file_operation_tasks, list_operation_history,
@@ -35,15 +36,20 @@ use commands::{
     },
 };
 use services::{metadata_store::MetadataStore, settings_store::SettingsStore, AppState};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(Arc::new(AppState::new(
             MetadataStore::load_default(),
             SettingsStore::load_default(),
         )))
         .on_window_event(|window, event| {
+            if let WindowEvent::Destroyed = event {
+                let state = window.state::<Arc<AppState>>();
+                state.directory_sizes.close_owner(window.label());
+                if window.label() == "main" { state.directory_sizes.shutdown(); }
+            }
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     for webview in window.app_handle().webview_windows().values() {
@@ -54,10 +60,16 @@ pub fn run() {
                 }
             }
         })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview.state::<Arc<AppState>>().directory_sizes.open_owner(webview.label());
+            }
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let state = app.state::<Arc<AppState>>().inner().clone();
             state.initialize_paths(&app_handle)?;
+            state.directory_sizes.open_owner("main");
 
             #[cfg(windows)]
             {
@@ -74,6 +86,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize_workspace,
             list_directory,
+            subscribe_directory_sizes,
+            release_directory_sizes,
+            lookup_directory_sizes,
             list_drive_roots,
             set_workspace_watch_roots,
             get_item_properties,
@@ -145,6 +160,17 @@ pub fn run() {
             show_native_background_context_menu,
             show_native_context_menu
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    // The outer run scope owns the emitter. Managed state and worker threads
+    // keep only a Weak reference, so no AppHandle/AppState ownership cycle forms.
+    let event_app = app.handle().clone();
+    let sink: Arc<services::directory_size::EventSink> = Arc::new(move |owner, snapshot| {
+        let _ = event_app.emit_to(owner, "directory_sizes_changed", snapshot);
+    });
+    app.state::<Arc<AppState>>().directory_sizes.start(Arc::downgrade(&sink));
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) { app.state::<Arc<AppState>>().directory_sizes.shutdown(); }
+    });
+    drop(sink);
 }

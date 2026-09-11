@@ -15,6 +15,7 @@ use crate::domain::models::{
 use crate::services::color_filter::{
     compile_rules, AttributeFacts, ColorStyle, CompiledColorRules, EntryFacts,
 };
+use crate::services::directory_size::{local::local_metadata_kind, metadata::{ListingFingerprint, MetadataKind}};
 
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
@@ -78,7 +79,7 @@ fn is_protected_operating_system(metadata: Option<&fs::Metadata>) -> bool {
 }
 
 fn is_symlink(metadata: &fs::Metadata) -> bool {
-    metadata.file_type().is_symlink()
+    local_metadata_kind(metadata) == MetadataKind::Link
 }
 
 fn extension_with_dot(path: &Path) -> Option<String> {
@@ -151,10 +152,13 @@ fn entry_from_path(
     color_rules: &CompiledColorRules,
     tag_names: Vec<String>,
     comment: Option<String>,
+    size_fingerprint: &mut ListingFingerprint,
 ) -> Result<EntryViewModel> {
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("failed to get metadata for {}", path.display()))?;
     let is_dir = metadata.is_dir();
+    let size_kind = local_metadata_kind(&metadata);
+    size_fingerprint.add(path.file_name().and_then(|name| name.to_str()).unwrap_or_default(), size_kind);
     let hidden = is_hidden(&path, Some(&metadata));
     let system = is_system(Some(&metadata));
     let read_only = metadata.permissions().readonly();
@@ -179,7 +183,7 @@ fn entry_from_path(
         } else {
             EntryKind::File
         },
-        size: (!is_dir).then_some(metadata.len()),
+        size: if let MetadataKind::File(bytes) = size_kind { Some(bytes) } else { None },
         created_at: metadata_created_at(&metadata),
         modified_at: metadata_modified_at(&metadata),
         accessed_at: metadata_accessed_at(&metadata),
@@ -274,6 +278,7 @@ where
     };
 
     let mut entries = Vec::new();
+    let mut size_fingerprint = ListingFingerprint::default();
     for entry in fs::read_dir(&canonical)
         .with_context(|| format!("failed to read directory {}", canonical.display()))?
     {
@@ -285,6 +290,7 @@ where
             &compiled_color_rules,
             tags,
             comment,
+            &mut size_fingerprint,
         )?);
     }
 
@@ -301,6 +307,7 @@ where
             .parent()
             .map(|parent| parent.to_string_lossy().into_owned()),
         can_go_up: canonical.parent().is_some(),
+        size_fingerprint: size_fingerprint.finish(),
     })
 }
 

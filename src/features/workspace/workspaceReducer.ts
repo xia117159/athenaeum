@@ -64,10 +64,12 @@ import { compareRevisionTokens } from "./colorFilterEditorModel";
 import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
+import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | DirectorySizeAction
   | FolderExpansionAction
   | { type: "bootstrapLoaded"; payload: WorkspaceBootstrap }
   | { type: "bootstrapFailed" }
@@ -1641,6 +1643,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
               snapshot: action.payload.snapshot,
+              directorySizes: pathChanged ? undefined : tab.directorySizes,
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,
               historyIndex: nextHistoryIndex,
@@ -1767,6 +1770,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               },
               addressDraft: action.payload.path,
               status: "reconnect-required",
+              directorySizes: pathsEqual(tab.snapshot.location.path, action.payload.path) ? tab.directorySizes : undefined,
               inlineEdit: undefined,
               search: undefined,
               reconnect: {
@@ -1789,6 +1793,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             }
         )
       );
+
+    case "directorySizeRequested":
+    case "directorySizeLeaseStarted":
+    case "directorySizeReleased":
+    case "directorySizeSnapshotReceived":
+    case "directorySizeLookupReceived":
+    case "directorySizeFailed":
+    case "directorySizeListingAlignmentFailed":
+    case "directorySizeListingAligned":
+      return invalidatePropertiesIfTargetChanged(updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => reduceDirectorySizes(tab, action))));
 
     case "folderExpansionToggled":
     case "folderExpansionRetryRequested":

@@ -67,6 +67,8 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       activeTabBackground: "#FFFFFF80",
       dropHighlightFill: "#ABCDEFAA",
       dropHighlightBorder: "not-a-color",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 4096
     }),
     {
@@ -74,6 +76,8 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       activeTabBackground: "#ffffff80",
       dropHighlightFill: "#abcdefaa",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 4096
     }
   );
@@ -122,6 +126,8 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       activeTabBackground: "invalid",
       dropHighlightFill: "#ABCDEF",
       dropHighlightBorder: "invalid",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 4096
     }
   };
@@ -147,6 +153,8 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       activeTabBackground: "#ffffff",
       dropHighlightFill: "#abcdef",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
       tabMinWidth: 4096
     }
   });

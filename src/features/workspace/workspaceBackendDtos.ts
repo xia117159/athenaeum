@@ -57,6 +57,8 @@ export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
     activeTabBackground: normalizeThemeAccentColor(theme.activeTabBackground, DEFAULT_THEME.activeTabBackground),
     dropHighlightFill: normalizeThemeAccentColor(theme.dropHighlightFill),
     dropHighlightBorder: normalizeThemeAccentColor(theme.dropHighlightBorder),
+    sizeBarLow: normalizeThemeAccentColor(theme.sizeBarLow, DEFAULT_THEME.sizeBarLow),
+    sizeBarHigh: normalizeThemeAccentColor(theme.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
     tabMinWidth: normalizeTabMinWidth(theme.tabMinWidth)
   };
 }

@@ -13,6 +13,7 @@ import type {
   TreeNode as BackendTreeNode
 } from "../../app/types";
 import type { WorkspaceInvoke } from "./workspaceIpc";
+import { createTabFromSnapshot } from "./workspaceMappers";
 
 function assertTest(name: string, fn: () => void) {
   try {
@@ -165,7 +166,8 @@ export const workspaceDirectoryGatewayTests = (async () => {
       },
       entries: [createFile("E:\\Workspace\\report.txt", "report.txt")],
       parent: "E:\\",
-      canGoUp: true
+      canGoUp: true,
+      sizeFingerprint: "local-stamp"
     };
 
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
@@ -182,6 +184,8 @@ export const workspaceDirectoryGatewayTests = (async () => {
     assert.deepEqual(invokedArgs, { path: "E:\\Workspace" });
     assert.equal(snapshot.location.path, "E:\\Workspace");
     assert.equal(snapshot.entries[0].path, "E:\\Workspace\\report.txt");
+    assert.equal(snapshot.sizeFingerprint, "local-stamp");
+    assert.equal(createTabFromSnapshot(snapshot, "copy").snapshot.sizeFingerprint, "local-stamp");
   });
 
   await assertAsyncTest("resolveWorkspaceDirectory routes remote paths through list_remote_directory", async () => {
@@ -217,7 +221,8 @@ export const workspaceDirectoryGatewayTests = (async () => {
           path: "/home/cheng"
         }
       });
-      return [remoteEntry] as T;
+      return { location: { kind: "sftp", path: "/home/cheng", connectionId: sftpProfile.id },
+        entries: [remoteEntry], parent: null, canGoUp: false, sizeFingerprint: "remote-stamp" } as T;
     };
 
     const snapshot = await resolveWorkspaceDirectory("sftp://cheng@127.0.0.1:6666/home/cheng", [sftpProfile], {
@@ -227,6 +232,7 @@ export const workspaceDirectoryGatewayTests = (async () => {
 
     assert.equal(snapshot.location.kind, "sftp");
     assert.equal(snapshot.entries[0].path, "sftp://cheng@127.0.0.1:6666/home/cheng/releases");
+    assert.equal(snapshot.sizeFingerprint, "remote-stamp");
   });
 
   await assertAsyncTest("resolveWorkspaceDirectory routes configured SFTP root urls through the remote command", async () => {
@@ -234,7 +240,7 @@ export const workspaceDirectoryGatewayTests = (async () => {
     const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
       assert.equal(command, "list_remote_directory");
       invokedArgs = args;
-      return [] as T;
+      return { location: { kind: "sftp", path: "/", connectionId: sftpRootProfile.id }, entries: [], parent: null, canGoUp: false } as T;
     };
 
     const snapshot = await resolveWorkspaceDirectory("sftp://cheng@192.168.1.12:6666/", [sftpRootProfile], {
@@ -262,12 +268,14 @@ export const workspaceDirectoryGatewayTests = (async () => {
       const invoke: WorkspaceInvoke = async <T>(command: string, args: Record<string, unknown>) => {
         assert.equal(command, "list_remote_directory");
         assert.deepEqual(args, { request: { profileId: profile.id, path: "/home/cheng/Dir" } });
-        return [child] as T;
+        return { location: { kind: protocol, path: "/home/cheng/Dir", connectionId: profile.id },
+          entries: [child], parent: "/home/cheng", canGoUp: true, sizeFingerprint: "branch-stamp" } as T;
       };
       const snapshot = await resolveWorkspaceDirectory(path, [profile], { invoke, runtimeHost });
       assert.equal(snapshot.location.path, canonicalPath);
       assert.equal(snapshot.entries[0].path, `${canonicalPath}/Report.txt`);
       assert.equal(snapshot.entries[0].parentPath, canonicalPath);
+      assert.equal(snapshot.sizeFingerprint, "branch-stamp");
       await assert.rejects(resolveWorkspaceDirectory(path, [profile], {
         runtimeHost, invoke: async () => { throw new Error("permission denied"); }
       }), /permission denied/);

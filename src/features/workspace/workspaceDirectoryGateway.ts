@@ -1,12 +1,11 @@
 import type {
   DirectoryListing as BackendDirectoryListing,
   DriveRoot as BackendDriveRoot,
-  EntryViewModel as BackendEntryViewModel,
   RemoteProfile as BackendRemoteProfile,
   TreeNode as BackendTreeNode
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
-import { normalizeRemotePath, resolveRemotePath } from "./remoteUri";
+import { resolveRemotePath } from "./remoteUri";
 import { invokeRequired, invokeWithBrowserFallback, type WorkspaceInvoke } from "./workspaceIpc";
 import { mapDirectoryListingToSnapshot } from "./workspaceMappers";
 import type { DirectoryNode, DirectorySnapshot, EntryViewModel } from "./types";
@@ -120,7 +119,7 @@ export async function resolveWorkspaceDirectory(
 
   const remote = resolveRemotePath(path, profiles);
   if (remote) {
-    const entries = await invokeRequired<BackendEntryViewModel[]>(
+    const listing = await invokeRequired<BackendDirectoryListing>(
       "list_remote_directory",
       {
         request: {
@@ -128,21 +127,12 @@ export async function resolveWorkspaceDirectory(
           path: remote.remotePath
         }
       },
-      async () => [],
+      async () => ({ location: { kind: remote.profile.protocol, path: remote.remotePath, connectionId: remote.profile.id },
+        entries: [], parent: null, canGoUp: false }),
       runtime.invoke,
       runtime.runtimeHost
     );
 
-    const listing: BackendDirectoryListing = {
-      location: {
-        kind: remote.profile.protocol,
-        path: remote.remotePath,
-        connectionId: remote.profile.id
-      },
-      entries,
-      parent: remote.remotePath === normalizeRemotePath(remote.profile.rootPath) ? null : undefined,
-      canGoUp: true
-    };
     return mapDirectoryListingToSnapshot(listing, profiles);
   }
 

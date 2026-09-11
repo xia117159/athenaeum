@@ -110,6 +110,8 @@ pub struct DirectoryListing {
     pub entries: Vec<EntryViewModel>,
     pub parent: Option<String>,
     pub can_go_up: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -437,43 +439,7 @@ impl UiLayout {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct UiTheme {
-    pub panel_focus_accent: String,
-    #[serde(default = "default_active_tab_background")]
-    pub active_tab_background: String,
-    #[serde(default = "default_drop_highlight_color")]
-    pub drop_highlight_fill: String,
-    #[serde(default = "default_drop_highlight_color")]
-    pub drop_highlight_border: String,
-    #[serde(default = "default_tab_min_width")]
-    pub tab_min_width: u32,
-}
-
-impl Default for UiTheme {
-    fn default() -> Self {
-        Self {
-            panel_focus_accent: "#0f6cbd".into(),
-            active_tab_background: default_active_tab_background(),
-            drop_highlight_fill: default_drop_highlight_color(),
-            drop_highlight_border: default_drop_highlight_color(),
-            tab_min_width: default_tab_min_width(),
-        }
-    }
-}
-
-fn default_active_tab_background() -> String {
-    "#ffffff".into()
-}
-
-fn default_drop_highlight_color() -> String {
-    "#0f6cbd".into()
-}
-
-fn default_tab_min_width() -> u32 {
-    96
-}
+pub use super::ui_theme::UiTheme;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1143,6 +1109,7 @@ mod tests {
             drop_highlight_fill: "#1f9d5566".into(),
             drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
+            ..UiTheme::default()
         };
 
         let value = serde_json::to_value(&theme).expect("theme should serialize");

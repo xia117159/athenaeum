@@ -5,6 +5,7 @@ import { pathsEqual } from "./workspacePathRelations";
 import type { FolderExpansionBranch, WorkspaceState } from "./types";
 import type { WorkspaceAction } from "./workspaceReducer";
 import type { WorkspaceGateway } from "./workspaceGateway";
+import { useDirectoryListingBudget } from "./directoryListingBudget";
 
 const MAX_CONCURRENT_READS = 4;
 
@@ -18,6 +19,7 @@ export function useFolderExpansionController({ state, dispatch, workspaceGateway
   const sequence = useRef(0);
   const mounted = useRef(false);
   const [completion, wakeScheduler] = useReducer((value: number) => value + 1, 0);
+  const { budget, version: budgetVersion } = useDirectoryListingBudget(workspaceGateway);
 
   useEffect(() => {
     mounted.current = true;
@@ -33,6 +35,8 @@ export function useFolderExpansionController({ state, dispatch, workspaceGateway
           if (running.current.size >= MAX_CONCURRENT_READS) return;
           const branch = getFolderBranch(tab, path)!;
           if (branch.status !== "idle" || running.current.has(branch)) continue;
+          const releaseRead = budget.tryAcquire();
+          if (!releaseRead) return;
           // Check the current committed branch immediately before starting IPC. A
           // collapsed/moved/refreshed queued branch is never captured by this scan.
           const payload = { panelId: panel.id, tabId: tab.id, path, rootSnapshot: tab.snapshot, requestId: ++sequence.current };
@@ -51,11 +55,12 @@ export function useFolderExpansionController({ state, dispatch, workspaceGateway
             })
             .finally(() => {
               running.current.delete(branch);
+              releaseRead();
               // A stale result may leave reducer state unchanged, but still frees a slot.
               if (mounted.current) wakeScheduler();
             });
         }
       }
     }
-  }, [state.panels, state.status, state.settings.model.folderExpansionEnabled, workspaceGateway, dispatch, completion]);
+  }, [state.panels, state.status, state.settings.model.folderExpansionEnabled, workspaceGateway, dispatch, completion, budget, budgetVersion]);
 }

@@ -46,6 +46,7 @@ export type SettingsSurfaceProps = {
   onUpdateActiveTabBackground: (color: string) => void;
   onUpdateDropHighlightFill: (color: string) => void;
   onUpdateDropHighlightBorder: (color: string) => void;
+  onUpdateSizeBarColor?: (endpoint: "sizeBarLow" | "sizeBarHigh", color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
@@ -196,6 +197,7 @@ export function SettingsSurface({
   onUpdateActiveTabBackground,
   onUpdateDropHighlightFill,
   onUpdateDropHighlightBorder,
+  onUpdateSizeBarColor,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
   onUpdateFolderExpansionEnabled,
@@ -296,6 +298,9 @@ export function SettingsSurface({
               activeTabBackground={settings.model.theme.activeTabBackground}
               dropHighlightFill={settings.model.theme.dropHighlightFill}
               dropHighlightBorder={settings.model.theme.dropHighlightBorder}
+              sizeBarLow={settings.model.theme.sizeBarLow}
+              sizeBarHigh={settings.model.theme.sizeBarHigh}
+              onUpdateSizeBarColor={onUpdateSizeBarColor}
               tabMinWidth={settings.model.theme.tabMinWidth}
               disabled={controlsDisabled}
               onUpdatePanelFocusAccent={onUpdatePanelFocusAccent}
@@ -882,6 +887,9 @@ function AppearancePage({
   activeTabBackground,
   dropHighlightFill,
   dropHighlightBorder,
+  sizeBarLow,
+  sizeBarHigh,
+  onUpdateSizeBarColor,
   tabMinWidth,
   disabled,
   onUpdatePanelFocusAccent,
@@ -894,6 +902,9 @@ function AppearancePage({
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarLow: string;
+  sizeBarHigh: string;
+  onUpdateSizeBarColor?: SettingsSurfaceProps["onUpdateSizeBarColor"];
   tabMinWidth: number;
   disabled: boolean;
   onUpdatePanelFocusAccent: (color: string) => void;
@@ -976,6 +987,26 @@ function AppearancePage({
             onUpdate={onUpdateDropHighlightBorder}
           />
         </div>
+      </section>
+
+      <section className="settings-group">
+        <header className="settings-group__header">
+          <div>
+            <strong>大小比例</strong>
+            <span>详细信息列表中，占比越大越接近较大占比颜色；不改变文字颜色。</span>
+          </div>
+        </header>
+        {([
+          { endpoint: "sizeBarLow", id: "size-bar-low", label: "较小占比颜色", value: sizeBarLow, fallback: "#dceaf7" },
+          { endpoint: "sizeBarHigh", id: "size-bar-high", label: "较大占比颜色", value: sizeBarHigh, fallback: "#3979b7" }
+        ] as const).map((color) => (
+          <div className="settings-row" key={color.id}>
+            <div><strong>{color.label}</strong><span>支持颜色和不透明度。</span></div>
+            <ThemeColorControl value={color.value} fallback={color.fallback} settingId={color.id}
+              disabled={disabled || !onUpdateSizeBarColor} isOpen={openThemeColorId === color.id}
+              onOpenChange={(open) => setThemeColorOpen(color.id, open)} onUpdate={(value) => onUpdateSizeBarColor?.(color.endpoint, value)} />
+          </div>
+        ))}
       </section>
 
       <section className="settings-group">

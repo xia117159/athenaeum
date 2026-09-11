@@ -94,7 +94,7 @@ pub(super) fn parse_sftp_entries(
                 } else {
                     EntryKind::File
                 },
-                size: (!is_directory).then_some(stat.size).flatten(),
+                size: if let crate::services::directory_size::metadata::MetadataKind::File(bytes) = super::size_metadata::sftp_metadata_kind(&stat) { Some(bytes) } else { None },
                 created_at: None,
                 modified_at: stat
                     .mtime

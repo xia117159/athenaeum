@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { SettingsSurface } from "./SettingsSurface";
 import type { RemoteConnectionProfile, SettingsModel, SettingsSection, WorkspaceState } from "./types";
 import {
+  DEFAULT_THEME,
   normalizeContextMenuDefault,
   normalizeDetailsRowHeight,
   normalizeMetadataRetentionHours,
@@ -123,7 +124,7 @@ async function closeSettingsWindow() {
 }
 
 export function SettingsWindowView() {
-  const { state, actions } = useWorkspaceController();
+  const { state, actions } = useWorkspaceController(undefined, { role: "settings" });
   const settingsReady = state.status === "ready";
   const [draftState, setDraftState] = useState<WorkspaceState>(() => createDraftState(state));
   const [dirty, setDirty] = useState(false);
@@ -575,6 +576,9 @@ export function SettingsWindowView() {
             }
           }))
         }
+        onUpdateSizeBarColor={(endpoint, color) => updateDraftModel((model) => ({ ...model, theme: {
+          ...model.theme, [endpoint]: normalizeThemeAccentColor(color, DEFAULT_THEME[endpoint])
+        } }))}
         onUpdateDetailsRowHeight={(value) =>
           updateDraftModel((model) => ({
             ...model,

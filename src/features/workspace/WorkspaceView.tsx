@@ -17,6 +17,9 @@ import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
 import { getFolderListingRows, supportsFolderExpansion } from "./folderExpansion";
+import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
+import { DirectorySizeControl } from "./DirectorySizeControl";
+import { ReconnectPanel } from "./ReconnectPanel";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -238,6 +241,7 @@ export function WorkspaceView() {
       data-workspace-root
       tabIndex={-1}
       className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}
+      style={{ "--size-bar-low": state.settings.model.theme.sizeBarLow, "--size-bar-high": state.settings.model.theme.sizeBarHigh } as CSSProperties}
       onDragEnter={handleExternalFileDrag}
       onDragOver={handleExternalFileDrag}
       onDrop={handleExternalFileDrag}
@@ -866,6 +870,9 @@ function PanelSurface({
             tabId={activeTab.id}
             entries={entries}
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
+            sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
+              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind}
+              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}
             onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
             onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}
             columns={activeTab.columns ?? columns}
@@ -918,17 +925,5 @@ function PanelSurface({
         )}
       </div>
     </section>
-  );
-}
-
-function ReconnectPanel({ tab, onReconnect }: { tab: TabState; onReconnect: () => void }) {
-  return (
-    <div className="reconnect-panel">
-      <button type="button" className="toolbar-button reconnect-panel__button" onClick={onReconnect}>
-        重新连接
-      </button>
-      <span title={tab.reconnect?.path ?? tab.snapshot.location.path}>{tab.reconnect?.path ?? tab.snapshot.location.path}</span>
-      {tab.reconnect?.message ? <small>{tab.reconnect.message}</small> : null}
-    </div>
   );
 }

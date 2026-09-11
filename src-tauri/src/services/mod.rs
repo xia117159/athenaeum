@@ -1,6 +1,7 @@
 pub mod atomic_file;
 pub mod color_filter;
 pub mod drive_service;
+pub mod directory_size;
 pub mod file_watcher;
 pub mod fs_service;
 pub mod git_status_service;
@@ -41,6 +42,7 @@ pub struct AppState {
     pub system_icon_cache: Mutex<HashMap<String, SystemIconBitmap>>,
     pub operations: Mutex<OperationStore>,
     pub file_watcher: FileWatchService,
+    pub directory_sizes: directory_size::DirectorySizeService,
 }
 
 impl AppState {
@@ -53,6 +55,7 @@ impl AppState {
             system_icon_cache: Mutex::new(HashMap::new()),
             operations: Mutex::new(OperationStore::default()),
             file_watcher: FileWatchService::default(),
+            directory_sizes: directory_size::DirectorySizeService::default(),
         }
     }
 

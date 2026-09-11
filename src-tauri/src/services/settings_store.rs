@@ -411,6 +411,8 @@ fn normalize_theme(mut theme: UiTheme) -> UiTheme {
         normalize_hex_color(&theme.drop_highlight_fill, &defaults.drop_highlight_fill);
     theme.drop_highlight_border =
         normalize_hex_color(&theme.drop_highlight_border, &defaults.drop_highlight_border);
+    theme.size_bar_low = normalize_hex_color(&theme.size_bar_low, &defaults.size_bar_low);
+    theme.size_bar_high = normalize_hex_color(&theme.size_bar_high, &defaults.size_bar_high);
     theme.tab_min_width = normalize_tab_min_width(theme.tab_min_width);
     theme
 }
@@ -785,6 +787,7 @@ mod tests {
             drop_highlight_fill: "#1f9d5566".into(),
             drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
+            ..UiTheme::default()
         });
         store.persist().expect("failed to persist settings");
 
@@ -797,6 +800,25 @@ mod tests {
     }
 
     #[test]
+    fn size_bar_theme_defaults_normalization_and_round_trip() {
+        let old: UiTheme = serde_json::from_value(serde_json::json!({ "panelFocusAccent": "#0f6cbd" })).unwrap();
+        let defaults = serde_json::to_value(&old).unwrap();
+        assert_eq!(defaults["sizeBarLow"], "#dceaf7");
+        assert_eq!(defaults["sizeBarHigh"], "#3979b7");
+        let temp = TestDir::new("size-bar-theme");
+        let file_path = temp.path.join("settings.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_theme(serde_json::from_value(serde_json::json!({
+            "panelFocusAccent": "#0f6cbd", "sizeBarLow": " #ABCDEF80 ", "sizeBarHigh": "invalid"
+        })).unwrap());
+        store.persist().unwrap();
+        let theme = serde_json::to_value(SettingsStore::load_from(file_path).unwrap().theme).unwrap();
+        assert_eq!(theme["sizeBarLow"], "#abcdef80");
+        assert_eq!(theme["sizeBarHigh"], "#3979b7");
+    }
+
+    #[test]
     fn theme_normalizes_invalid_drop_highlight_colors_to_defaults() {
         let mut store = SettingsStore::load_default();
         store.set_theme(UiTheme {
@@ -805,6 +827,7 @@ mod tests {
             drop_highlight_fill: "not-a-color".into(),
             drop_highlight_border: "#ZZZZZZ".into(),
             tab_min_width: 96,
+            ..UiTheme::default()
         });
 
         let defaults = UiTheme::default();

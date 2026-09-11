@@ -14,6 +14,8 @@ import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
 import { getFolderListingRows, getTabEntries } from "./folderExpansion";
 import { useFolderExpansionController } from "./useFolderExpansionController";
+import { useDirectorySizeController } from "./useDirectorySizeController";
+import { supportsDirectorySizes } from "./directorySizes";
 import { getTopLevelPaths } from "./workspacePathRelations";
 import { subscribeOperationEvents } from "./operationSubscriptions";
 import { useColorFilterController } from "./useColorFilterController";
@@ -93,12 +95,13 @@ import { THIS_PC_PATH } from "./types";
 import type { GitFileStatus } from "./types";
 export { planNotificationDismissals } from "./workspaceControllerUtils";
 const defaultWorkspaceGateway = createWorkspaceGateway();
-export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
+export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway, options: { role?: "workspace" | "settings" } = {}) {
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () => ({
     ...createWorkspaceState(createMockWorkspaceBootstrap("mock")),
     status: "loading" as const
   }));
   useFolderExpansionController({ state, dispatch, workspaceGateway });
+  useDirectorySizeController({ state, dispatch, workspaceGateway, enabled: options.role !== "settings" });
   const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
@@ -911,6 +914,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshNavigationTargets();
       return;
     }
+    if (supportsDirectorySizes(activeTab)) dispatch({ type: "directorySizeRequested", payload: {
+      panelId, tabId: activeTab.id, rootPath: activeTab.snapshot.location.path, intent: "refresh"
+    } });
     await commitNavigation(panelId, activeTab.snapshot.location.path, false, {
       tabId: activeTab.id,
       activatePanel: false,
@@ -3106,6 +3112,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "folderExpansionToggled", payload: { panelId, tabId, path } }),
       retryFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
         dispatch({ type: "folderExpansionRetryRequested", payload: { panelId, tabId, path } }),
+      requestDirectorySizes: (panelId: PanelId, tabId: string, intent: "calculate" | "cancel") => {
+        const tab = findTab(state, panelId, tabId);
+        if (tab && supportsDirectorySizes(tab)) dispatch({ type: "directorySizeRequested", payload: { panelId, tabId, rootPath: tab.snapshot.location.path, intent } });
+      },
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),

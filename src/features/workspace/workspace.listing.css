@@ -486,6 +486,73 @@ body.is-column-pointer-dragging * {
   text-align: right;
 }
 
+/* The two-pixel strip uses the existing cell's bottom padding, not row height. */
+.file-cell[data-cell-column-id="size"] {
+  position: relative;
+}
+
+.size-share-track {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+}
+
+.size-share-bar {
+  display: block;
+  height: 100%;
+  width: var(--size-share);
+  background: color-mix(in srgb, var(--size-bar-low, #dceaf7), var(--size-bar-high, #3979b7) var(--size-share));
+  pointer-events: none;
+}
+
+.details-column-header__accessory {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 3px;
+}
+
+.details-column-header__cell:has(> .details-column-header__accessory) .details-column-header__button {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.directory-size-control {
+  display: inline-flex;
+  align-items: center;
+  color: #526577;
+}
+
+.directory-size-control > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.directory-size-control > button:hover { background: #e5f1fb; }
+.directory-size-control > button:focus-visible { outline: 1px solid #0f6cbd; outline-offset: -1px; }
+.directory-size-control.is-loading { color: #0f6cbd; }
+.directory-size-control.is-error { color: #b42318; }
+.directory-size-control__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .file-listing__tooltip {
   position: fixed;
   z-index: 59;

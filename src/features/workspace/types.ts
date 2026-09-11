@@ -95,6 +95,7 @@ export interface EntryViewModel {
   parentPath: string;
   sizeBytes?: number | null;
   sizeLabel: string;
+  sizeDisplay?: import("./directorySizeTypes").EntrySizeDisplay;
   createdLabel?: string;
   modifiedLabel: string;
   accessedLabel?: string;
@@ -122,12 +123,16 @@ export interface DirectorySnapshot {
   location: LocationDescriptor;
   breadcrumbs: BreadcrumbItem[];
   entries: EntryViewModel[];
+  sizeFingerprint?: string | null;
+  sizeIdentityReliable?: boolean;
 }
 
 export interface FolderExpansionBranch {
   path: string;
   entries: EntryViewModel[];
   status: "idle" | "loading" | "ready" | "error";
+  sizeFingerprint?: string | null;
+  sizeIdentityReliable?: boolean;
   requestId?: number;
   errorMessage?: string;
   selectionReplacements?: SelectionPathReplacement[];
@@ -275,6 +280,8 @@ export interface ThemeSettings {
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarLow: string;
+  sizeBarHigh: string;
   tabMinWidth: number;
 }
 
@@ -616,6 +623,7 @@ export interface TabState {
   expandedNodePaths: string[];
   /** Transient details-list branches; independent of the navigation tree and session. */
   folderExpansion?: Record<string, FolderExpansionBranch>;
+  directorySizes?: import("./directorySizeTypes").DirectorySizeTabState;
   viewMode: TabViewMode;
   sort: SortState;
   columns: ColumnDefinition[];

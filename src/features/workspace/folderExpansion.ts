@@ -1,4 +1,5 @@
 import { sortEntries } from "./fileListingSort";
+import { projectEntrySize } from "./directorySizes";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { DEFAULT_FILE_VISIBILITY, entryMatchesFileVisibility } from "./workspaceVisibility";
 import type { EntryViewModel, FileVisibilityState, FolderExpansionBranch, TabState } from "./types";
@@ -48,7 +49,7 @@ export function getFolderListingRows(
   const seen = new Set<string>();
   const visit = (entries: EntryViewModel[], depth: number): FolderListingRow[] => {
     const rows: FolderListingRow[] = [];
-    for (const entry of sortEntries(entries, tab.sort, tab.snapshot.location.path)) {
+    for (const entry of sortEntries(entries.map((item) => projectEntrySize(tab, item)), tab.sort, tab.snapshot.location.path)) {
       const key = getPathComparisonKey(entry.path);
       if ((treeEnabled && seen.has(key)) || !entryMatchesFileVisibility(entry, visibility)) continue;
       seen.add(key);

@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     domain::models::{
-        EntryViewModel, OperationResult, RemoteCreateDirectoryRequest, RemoteDirectoryRequest,
+        DirectoryListing, EntryViewModel, OperationResult, RemoteCreateDirectoryRequest, RemoteDirectoryRequest,
         RemoteFileOperationRequest, RemoteHostKeyInfo, RemoteProfile, RemoteProfileUpsertRequest,
         RemoteRenameRequest, RemoteTestResult, RemoteTransferOperation, RemoteTransferRequest,
         RemoteTrustHostKeyRequest,
@@ -95,6 +95,16 @@ where
         .map_err(|error| format!("remote operation task failed: {error}"))?
 }
 
+async fn run_remote_mutation<T, F>(state: &Arc<AppState>, profile_ids: &[String], operation: F) -> Result<T, String>
+where T: Send + 'static, F: FnOnce() -> Result<T, String> + Send + 'static {
+    for id in profile_ids { state.directory_sizes.invalidate_profile(id); }
+    let result = run_remote_blocking(operation).await;
+    // Partial failures can still have modified remote entries. A calculation
+    // started during the operation must also lose exactness at its end.
+    for id in profile_ids { state.directory_sizes.invalidate_profile(id); }
+    result
+}
+
 #[tauri::command]
 pub fn list_remote_profiles(state: State<'_, Arc<AppState>>) -> Result<Vec<RemoteProfile>, String> {
     let profiles = hydrate_remote_profiles(
@@ -114,24 +124,20 @@ pub fn save_remote_profile(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<Vec<RemoteProfile>, String> {
-    let existing_credential_target = {
-        state
-            .metadata
-            .read()
-            .expect("metadata lock poisoned")
-            .remote_profiles
-            .iter()
-            .find(|profile| profile.id == request.profile.id)
-            .and_then(|profile| profile.credential_target.clone())
-    };
-    let profile =
-        remote_service::prepare_profile_for_save(request, existing_credential_target.as_deref())
-            .map_err(|error| error.to_string())?;
+    let profile_id = request.profile.id.trim().to_string();
+    let update = state.directory_sizes.profile_update(&profile_id);
     {
+        // Serialize credentials + configuration publication, including concurrent
+        // saves. The size-store lock is never held during Credential Manager I/O.
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        let existing_credential_target = metadata.remote_profiles.iter().find(|profile| profile.id == profile_id)
+            .and_then(|profile| profile.credential_target.clone());
+        let profile = remote_service::prepare_profile_for_save(request, existing_credential_target.as_deref())
+            .map_err(|error| error.to_string())?;
         metadata.upsert_remote_profile(profile);
         metadata.persist().map_err(|error| error.to_string())?;
     }
+    drop(update);
     emit_settings_changed(&app, state.inner());
     list_remote_profiles(state)
 }
@@ -145,6 +151,7 @@ pub fn delete_remote_profile(
     let removed_profile = {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
         let removed = metadata.delete_remote_profile(&id);
+        state.directory_sizes.invalidate_profile(&id);
         metadata.persist().map_err(|error| error.to_string())?;
         removed
     };
@@ -201,7 +208,8 @@ pub async fn trust_remote_host_key(
     state: State<'_, Arc<AppState>>,
 ) -> Result<RemoteHostKeyInfo, String> {
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
-    run_remote_blocking(move || {
+    let _update = state.directory_sizes.profile_update(&profile.id);
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         remote_service::trust_host_key(&profile, &request).map_err(|error| error.to_string())
     })
     .await
@@ -211,7 +219,7 @@ pub async fn trust_remote_host_key(
 pub async fn list_remote_directory(
     request: RemoteDirectoryRequest,
     state: State<'_, Arc<AppState>>,
-) -> Result<Vec<EntryViewModel>, String> {
+) -> Result<DirectoryListing, String> {
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
     let metadata = {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
@@ -222,17 +230,17 @@ pub async fn list_remote_directory(
     let password = request.password;
     let path = request.path;
     let profile_for_listing = profile.clone();
-    let mut entries = run_remote_blocking(move || {
-        remote_service::list_directory(&profile_for_listing, password.as_deref(), path.as_deref())
+    let mut listing = run_remote_blocking(move || {
+        remote_service::list_directory_snapshot(&profile_for_listing, password.as_deref(), path.as_deref())
             .map_err(|error| error.to_string())
     })
     .await?;
-    apply_remote_color_rules(&mut entries, &compiled_color_rules);
-    for entry in &mut entries {
+    apply_remote_color_rules(&mut listing.entries, &compiled_color_rules);
+    for entry in &mut listing.entries {
         let key = remote_entry_uri(&profile, &entry.path);
         entry.comment = metadata.comment_for_path(&key);
     }
-    Ok(entries)
+    Ok(listing)
 }
 
 #[tauri::command]
@@ -244,7 +252,7 @@ pub async fn create_remote_directory(
     let password = request.password;
     let parent = request.parent;
     let name = request.name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let created =
             remote_service::create_directory(&profile, password.as_deref(), &parent, &name)
                 .map_err(|error| error.to_string())?;
@@ -264,7 +272,7 @@ pub async fn create_remote_file(
     let password = request.password;
     let parent = request.parent;
     let name = request.name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let created = remote_service::create_file(&profile, password.as_deref(), &parent, &name)
             .map_err(|error| error.to_string())?;
         Ok(OperationResult {
@@ -282,7 +290,7 @@ pub async fn delete_remote_entries(
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
     let password = request.password;
     let sources = request.sources;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let deleted = remote_service::delete_entries(&profile, password.as_deref(), &sources)
             .map_err(|error| error.to_string())?;
         Ok(OperationResult {
@@ -301,7 +309,7 @@ pub async fn rename_remote_entry(
     let password = request.password;
     let source = request.source;
     let new_name = request.new_name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let renamed =
             remote_service::rename_entry(&profile, password.as_deref(), &source, &new_name)
                 .map_err(|error| error.to_string())?;
@@ -323,7 +331,7 @@ pub async fn upload_remote_files(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote upload".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let uploaded =
             remote_service::upload_files(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -367,7 +375,7 @@ pub async fn copy_remote_entries(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote copy".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let copied =
             remote_service::copy_entries(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -389,7 +397,7 @@ pub async fn move_remote_entries(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote move".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let moved =
             remote_service::move_entries(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -407,7 +415,7 @@ pub async fn transfer_remote_entries(
 ) -> Result<OperationResult, String> {
     let source_profile = remote_profile_by_id(&state, &request.source_profile_id)?;
     let destination_profile = remote_profile_by_id(&state, &request.destination_profile_id)?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[source_profile.id.clone(), destination_profile.id.clone()], move || {
         let transferred = match request.operation {
             RemoteTransferOperation::Copy => remote_service::transfer_entries(
                 &source_profile,
@@ -523,6 +531,34 @@ mod tests {
         },
     };
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn remote_size_mutations_invalidate_before_and_after_even_a_partial_failure() {
+        use crate::{domain::directory_sizes::*, services::{AppState, metadata_store::MetadataStore, settings_store::SettingsStore}};
+        use std::sync::Arc;
+        let state = Arc::new(AppState::new(MetadataStore::load_default(), SettingsStore::load_default()));
+        state.directory_sizes.open_owner("main");
+        let profile = RemoteProfile { id: "size-profile".into(), name: "Sizes".into(), protocol: LocationKind::Sftp,
+            host: "example.invalid".into(), port: 22, username: "user".into(), root_path: "/".into(),
+            auth_kind: RemoteAuthKind::Password, private_key_path: None, passive_mode: true, ignore_host_key: false,
+            connect_timeout_secs: 10, command_timeout_secs: 20, credential_target: None, password: None };
+        let request = SubscribeDirectorySizesRequest { consumer_id: "size-test".into(), refresh: false,
+            target: DirectorySizeTarget::Remote { profile_id: profile.id.clone(), path: "/".into() } };
+        let token = state.directory_sizes.owner_token("main").unwrap();
+        let before = state.directory_sizes.subscribe(token.clone(), request.clone(), Some(profile.clone())).unwrap();
+        let inner = state.clone(); let inner_request = request.clone(); let inner_profile = profile.clone(); let inner_token = token.clone();
+        let during = Arc::new(std::sync::atomic::AtomicU64::new(0)); let observed = during.clone();
+        let result = tauri::async_runtime::block_on(super::run_remote_mutation(&state, &[profile.id.clone()], move || {
+            let snapshot = inner.directory_sizes.subscribe(inner_token, inner_request, Some(inner_profile)).unwrap();
+            observed.store(snapshot.generation, std::sync::atomic::Ordering::SeqCst);
+            Err::<(), _>("partially failed".to_string())
+        }));
+        assert!(result.is_err());
+        let during = during.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(during > before.generation, "invalidate before the remote mutation begins");
+        let after = state.directory_sizes.subscribe(token, request, Some(profile)).unwrap();
+        assert!(after.generation > during, "a calculation started during an operation also becomes stale");
+    }
 
     #[test]
     fn remote_blocking_runner_executes_work_on_background_thread() {

@@ -431,7 +431,7 @@ export const completion = (async () => {
       });
 
       assert.equal(container.querySelectorAll(".theme-color-control .react-colorful").length, 0);
-      assert.equal(container.querySelectorAll<HTMLButtonElement>(".theme-color-control__trigger").length, 4);
+      assert.equal(container.querySelectorAll<HTMLButtonElement>(".theme-color-control__trigger").length, 6);
 
       const accentTrigger = container.querySelector<HTMLButtonElement>("[data-setting-id='panel-focus-accent']");
       assert.ok(accentTrigger);

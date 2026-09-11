@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type ReactNode,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -20,6 +21,7 @@ import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
 import { devLog, devWarn } from "./devLog";
 import {
+  createInlineCreateEntry,
   getColumnHeaderMinWidth,
   getColumnPixelWidth,
   getDetailsCellText,
@@ -294,6 +296,7 @@ export function FileListingShell({
   tabId,
   entries,
   folderRows,
+  sizeHeaderAccessory,
   onToggleFolderExpansion,
   onRetryFolderExpansion,
   columns,
@@ -338,6 +341,7 @@ export function FileListingShell({
   tabId: string;
   entries: EntryViewModel[];
   folderRows?: FolderListingRow[];
+  sizeHeaderAccessory?: ReactNode;
   onToggleFolderExpansion?: (path: string) => void;
   onRetryFolderExpansion?: (path: string) => void;
   columns: ColumnDefinition[];
@@ -379,25 +383,10 @@ export function FileListingShell({
   colorFilterEnabled?: boolean;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
-  const inlineCreateEntry: ListingEntry | undefined =
-    inlineEdit?.mode === "create-folder" || inlineEdit?.mode === "create-file"
-      ? {
-          id: inlineEdit.mode === "create-folder" ? "__inline-create-folder__" : "__inline-create-file__",
-          name: inlineEdit.value,
-          kind: inlineEdit.kind,
-          path: `${inlineEdit.parentPath}${inlineEdit.mode === "create-folder" ? "__inline_create_folder__" : "__inline_create_file__"}`,
-          parentPath: inlineEdit.parentPath,
-          sizeLabel: "--",
-          modifiedLabel: "",
-          extension: inlineEdit.mode === "create-file" && inlineEdit.value.includes(".") ? `.${inlineEdit.value.split(".").pop()}` : "",
-          attributes: inlineEdit.kind === "folder" ? ["D"] : ["A"],
-          accentColor: "#0f6cbd",
-          tags: [],
-          comment: "",
-          description: inlineEdit.mode === "create-folder" ? "New folder" : "New file",
-          inlineCreate: true
-        }
-      : undefined;
+  const inlineCreateEntry = createInlineCreateEntry(inlineEdit);
+  const hasSizeAccessory = viewMode === "details" && Boolean(sizeHeaderAccessory);
+  const headerMinWidth = (column: ColumnDefinition) => getColumnHeaderMinWidth(column, hasSizeAccessory);
+  const headerPixelWidth = (column: ColumnDefinition) => getColumnPixelWidth(column, hasSizeAccessory);
   const treeRows = viewMode === "details" ? folderRows : undefined;
   const rowsById = new Map(treeRows?.map((row) => [row.entry.id, row]));
   const orderedEntries = treeRows ? treeRows.map((row) => row.entry) : sortEntries(entries, sort, currentPath);
@@ -493,7 +482,7 @@ export function FileListingShell({
   // 一个 window 监听器导致“多面板下 Ctrl+A 对所有面板同时生效”的 BUG。
 
   const visibleOrderedEntryIds = sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id);
-  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns);
+  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns, hasSizeAccessory);
   const gridStyle = {
     gridTemplateColumns: detailsGridMetrics.gridTemplateColumns,
     width: `${detailsGridMetrics.width}px`
@@ -1510,8 +1499,9 @@ export function FileListingShell({
             sort={sort}
             gap={4}
             getColumnLabel={getLocalizedColumnLabel}
-            getColumnMinWidth={getColumnHeaderMinWidth}
-            getColumnPixelWidth={getColumnPixelWidth}
+            getColumnMinWidth={headerMinWidth}
+            getColumnPixelWidth={headerPixelWidth}
+            renderHeaderAccessory={(column) => column.id === "size" ? sizeHeaderAccessory : null}
             onSort={onSort}
             onResizeColumn={onResizeColumn}
             onMoveColumn={onMoveColumn}
@@ -1527,7 +1517,7 @@ export function FileListingShell({
                   cellDataAttribute: "data-cell-column-id",
                   getHeaderText: getLocalizedColumnLabel,
                   getCellText: (entry, candidate) => getDetailsCellText(entry, candidate.id, currentPath),
-                  getMinWidth: getColumnHeaderMinWidth,
+                  getMinWidth: headerMinWidth,
                   getIconAllowance: (candidate) => (candidate.id === "name" ? 22 + treeNameAllowance : 0)
                 })
               )

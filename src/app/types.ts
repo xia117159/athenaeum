@@ -50,6 +50,7 @@ export interface DirectoryListing {
   entries: EntryViewModel[];
   parent?: string | null;
   canGoUp: boolean;
+  sizeFingerprint?: string | null;
 }
 
 export type ItemPropertyField =
@@ -229,6 +230,8 @@ export interface UiTheme {
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarLow: string;
+  sizeBarHigh: string;
   tabMinWidth: number;
 }
 

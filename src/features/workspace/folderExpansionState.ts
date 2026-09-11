@@ -68,6 +68,28 @@ export function refreshFolderExpansion(tab: TabState, snapshot: DirectorySnapsho
   return reconcileFolderSelection(tab, next, replacements);
 }
 
+/** Align one metadata listing, never turn a fingerprint mismatch into a subtree refresh. */
+export function alignFolderListing(tab: TabState, snapshot: DirectorySnapshot, expectedRoot: DirectorySnapshot, expectedBranch?: FolderExpansionBranch): TabState {
+  if (tab.snapshot !== expectedRoot) return tab;
+  const path = snapshot.location.path;
+  let next: TabState;
+  if (pathsEqual(path, tab.snapshot.location.path)) {
+    if (expectedBranch) return tab;
+    next = { ...tab, snapshot, folderExpansion: tab.folderExpansion && Object.fromEntries(Object.entries(tab.folderExpansion)
+      .map(([key, branch]) => [key, branch.status === "loading" ? { ...branch, status: "idle", requestId: undefined } : branch])) };
+  } else {
+    if (!expectedBranch || getFolderBranch(tab, path) !== expectedBranch) return tab;
+    next = { ...tab, folderExpansion: { ...tab.folderExpansion, [getPathComparisonKey(path)]: {
+      path, status: "ready", sizeFingerprint: snapshot.sizeFingerprint,
+      sizeIdentityReliable: snapshot.sizeIdentityReliable,
+      entries: snapshot.entries.filter((entry) => pathsEqual(entry.parentPath, path) &&
+        !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path))
+    } } };
+  }
+  next.folderExpansion = pruneBranches(next);
+  return reconcileFolderSelection(tab, next);
+}
+
 export function reduceFolderExpansion(
   tab: TabState, action: FolderExpansionAction, enabled: boolean, visibility: FileVisibilityState, filterText: string
 ): TabState {
@@ -114,7 +136,8 @@ export function reduceFolderExpansion(
   if (action.type === "folderExpansionLoadSucceeded" && !pathsEqual(action.payload.snapshot.location.path, path)) return tab;
   const updatedBranch: FolderExpansionBranch = action.type === "folderExpansionLoadFailed"
     ? { path: branch.path, entries: [], status: "error", errorMessage: action.payload.errorMessage }
-    : { path: branch.path, status: "ready", entries: action.payload.snapshot.entries.filter((entry) =>
+    : { path: branch.path, status: "ready", sizeFingerprint: action.payload.snapshot.sizeFingerprint,
+      sizeIdentityReliable: action.payload.snapshot.sizeIdentityReliable, entries: action.payload.snapshot.entries.filter((entry) =>
         pathsEqual(entry.parentPath, path) && !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path)) };
   let next: TabState = { ...tab, folderExpansion: { ...tab.folderExpansion, [key]: updatedBranch } };
   next = { ...next, folderExpansion: pruneBranches(next) };
