@@ -83,6 +83,9 @@ function createProps(state: WorkspaceState) {
     onSelectSection: () => undefined,
     onUpdateShortcut: () => undefined,
     onUpdateColorRules: () => undefined,
+    onUpdateFileAssociations: () => undefined,
+    onChooseAssociationProgram: async () => null,
+    onInspectAssociationPrograms: async () => [],
     onValidateColorRule: async () => ({ valid: true, message: null, span: null }),
     onOpenColorRulesHelp: () => undefined,
     onUpdatePanelFocusAccent: () => undefined,
@@ -163,7 +166,7 @@ export const completion = (async () => {
       assert.equal(container.querySelectorAll(".settings-window__nav-group").length, 3);
       assert.deepEqual(
         navItems.map((item) => item.dataset.sectionId),
-        ["shortcuts", "file-list", "menu-mouse", "appearance", "color-rules", "tag-rules", "connections"]
+        ["shortcuts", "file-list", "menu-mouse", "file-associations", "appearance", "color-rules", "tag-rules", "connections"]
       );
       assert.ok(activeNavItem);
 

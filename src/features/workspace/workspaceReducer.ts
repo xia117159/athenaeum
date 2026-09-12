@@ -65,10 +65,12 @@ import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFol
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
 import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
+import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | FileOpeningAction
   | DirectorySizeAction
   | FolderExpansionAction
   | { type: "bootstrapLoaded"; payload: WorkspaceBootstrap }
@@ -1236,6 +1238,10 @@ function updateColumnsForSettingsAndTab(
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+  return reconcileOpenWithMenu(reduceFileOpening(state, action) ?? reduceWorkspace(state, action));
+}
+
+function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "bootstrapLoaded":
       return createWorkspaceState(action.payload);
@@ -1878,8 +1884,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                     action.payload.toEntryId,
                     action.payload.orderedEntryIds
                   ),
-                  selectionAnchorId: null,
-                  selectionCursorId: null
+                  selectionAnchorId: action.payload.fromEntryId,
+                  selectionCursorId: action.payload.toEntryId
                 }
           )
       ));

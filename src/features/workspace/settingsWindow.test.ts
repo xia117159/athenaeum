@@ -12,6 +12,7 @@ import {
 } from "./settingsWindow";
 import { COMMENT_WINDOW_LABEL } from "./commentWindow";
 import { ABOUT_WINDOW_LABEL } from "./aboutWindow";
+import type { SettingsNavigationRequest, SettingsNavigationRuntime } from "./settingsNavigation";
 
 function assertTest(name: string, fn: () => Promise<void> | void) {
   return Promise.resolve()
@@ -84,6 +85,31 @@ function createAdapter({
 }
 
 export const completion = (async () => {
+  await assertTest("settings deep links queue before creation and target an existing window", async () => {
+    let pending: SettingsNavigationRequest | null = null;
+    const emitted: SettingsNavigationRequest[] = [];
+    const navigation: SettingsNavigationRuntime = {
+      read: () => pending, write: value => { pending = value; },
+      emit: async value => { emitted.push(value); }, listen: async () => () => {}
+    };
+    const options: SettingsWindowOptions[] = [];
+    const created = createAdapter({ createdOptions: options });
+    await openSettingsWindow({ ...created.adapter, navigation }, "file-associations");
+    assert.equal(new URL(options[0].url, "http://localhost").searchParams.get("section"), "file-associations");
+    assert.equal(navigation.read()?.section, "file-associations");
+    const existing = createAdapter({ existing: createWindowHandle([]) });
+    await openSettingsWindow({ ...existing.adapter, navigation }, "shortcuts");
+    assert.equal(emitted.at(-1)?.section, "shortcuts");
+    assert.equal(navigation.read()?.id, emitted.at(-1)?.id);
+    await assert.rejects(openSettingsWindow({ ...existing.adapter,
+      navigation: { ...navigation, emit: async () => { throw new Error("cannot navigate"); } }
+    }, "file-associations"), /cannot navigate/);
+    assert.equal(navigation.read(), null, "failed navigation must not leave a stale pending request");
+    const browser = createAdapter({ tauri: false });
+    await openSettingsWindow(browser.adapter, "file-associations");
+    assert.equal(new URL(browser.browserOpens[0].url, "http://localhost").searchParams.get("section"), "file-associations");
+  });
+
   await assertTest("openSettingsWindow focuses an existing settings window", async () => {
     const existingEvents: string[] = [];
     const existing = createWindowHandle(existingEvents);

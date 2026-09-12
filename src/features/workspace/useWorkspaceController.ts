@@ -15,6 +15,8 @@ import { disposeQuietly } from "./workspaceIpc";
 import { getFolderListingRows, getTabEntries } from "./folderExpansion";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
+import { useFileOpeningController } from "./useFileOpeningController";
+import { currentListingEntry } from "./fileOpeningState";
 import { supportsDirectorySizes } from "./directorySizes";
 import { getTopLevelPaths } from "./workspacePathRelations";
 import { subscribeOperationEvents } from "./operationSubscriptions";
@@ -155,6 +157,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+  const fileOpening = useFileOpeningController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification });
 
   /**
    * Broadcasts a completed git status result to all waiting consumers (tabs
@@ -2157,13 +2161,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     if (item.targetKind === "file") {
-      try {
-        await workspaceGateway.openPathWithSystemDefault(item.path);
-        await markNavigationItemOpened(item.id);
-        pushNotification("success", "已使用系统默认方式打开。");
-      } catch (error) {
-        pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-      }
+      if (await fileOpening.openFile(item.path)) await markNavigationItemOpened(item.id);
       return;
     }
     pushNotification("warning", "该导航目标暂不支持打开。");
@@ -2189,11 +2187,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    try {
-      await workspaceGateway.openPathWithSystemDefault(entry.path);
-    } catch (error) {
-      pushNotification("danger", getErrorMessage(error, "Unable to open with the system default app."));
-    }
+    await fileOpening.openFile(entry.path);
   });
 
   const openNavigationNativeContextMenu = useEffectEvent(async (itemIds: string[], clientX: number, clientY: number, screenX: number, screenY: number) => {
@@ -2777,12 +2771,20 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     };
 
     const handleWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
+      if (event.defaultPrevented || options.role === "settings") {
         return;
       }
+      if (state.openWithMenu) { event.preventDefault(); return; }
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+
+      if (shortcutMatches(shortcuts, "open-with", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
+        event.preventDefault();
+        if (!event.repeat) fileOpening.requestOpenWith();
+        return;
+      }
 
       if (shortcutMatches(shortcuts, "undo", eventBinding) && !editable) {
         event.preventDefault();
@@ -2940,9 +2942,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           return;
         }
         if (matchedListShortcut === "open-entry") {
-          const selectedIds = activeTab.selectedEntryIds;
-          const targetId = selectedIds[selectedIds.length - 1] ?? orderedEntryIds[0];
-          const targetEntry = visibleEntries.find((entry) => entry.id === targetId);
+          const targetEntry = currentListingEntry(state);
           if (targetEntry) {
             if (targetEntry.driveInfo && !targetEntry.driveInfo.enterable) {
               return;
@@ -2950,9 +2950,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             if (targetEntry.kind === "folder") {
               void commitNavigation(activePanel.id, targetEntry.path);
             } else {
-              void workspaceGateway.openPathWithSystemDefault(targetEntry.path).catch((error) => {
-                pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-              });
+              void fileOpening.openFile(targetEntry.path);
             }
           }
           return;
@@ -3039,11 +3037,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     refreshPanel,
     renameSelection,
     state,
-    undoLatestOperation
+    undoLatestOperation,
+    options.role, fileOpening.requestOpenWith, fileOpening.openFile
   ]);
 
   const actions = useMemo(
     () => ({
+      ...fileOpening.actions,
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3151,13 +3151,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           void commitNavigation(panelId, entry.path);
           return;
         }
-        void (async () => {
-          try {
-            await workspaceGateway.openPathWithSystemDefault(entry.path);
-          } catch (error) {
-            pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-          }
-        })();
+        void fileOpening.openFile(entry.path);
       },
       dropEntries: (paths: string[], destination: string, operation: "copy" | "move") =>
         dropEntries(paths, destination, operation),
@@ -3308,6 +3302,8 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       showNotification: (intent: WorkspaceState["notifications"][number]["intent"], message: string) =>
         pushNotification(intent, message),
       closeContextMenu: () => dispatch({ type: "contextMenuSet", payload: undefined }),
+      chooseAssociationProgram: () => workspaceGateway.chooseAssociationProgram(),
+      inspectAssociationPrograms: (paths: string[]) => workspaceGateway.inspectAssociationPrograms(paths),
       dismissNotification: (id: string) => dispatch({ type: "notificationDismissed", payload: { id } })
     }),
     [
@@ -3359,7 +3355,8 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       testRemoteProfile,
       undoLatestOperation,
       undoOperation,
-      workspaceGateway
+      workspaceGateway,
+      fileOpening.actions, fileOpening.openFile
     ]
   );
 

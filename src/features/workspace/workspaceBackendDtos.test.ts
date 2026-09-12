@@ -134,6 +134,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
   };
 
   assert.deepEqual(toBackendSettingsModelUpdate(model), {
+    fileAssociations: [],
     shortcuts: [{ id: "navigate-forward", action: "navigate-forward", accelerator: "Alt+Right", scope: "panel" }],
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,

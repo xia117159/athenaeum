@@ -294,25 +294,12 @@ pub fn save_settings_model(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<SettingsSnapshot, String> {
-    validate_shortcuts(&model.shortcuts).map_err(|error| error.to_string())?;
     {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
-        metadata.set_shortcuts(model.shortcuts);
-    }
-    {
         let mut settings = state.settings.write().expect("settings lock poisoned");
-        settings.set_detail_columns(model.columns);
-        settings.set_navigation_columns(model.navigation_columns);
-        settings.set_details_row_height(model.details_row_height);
-        settings.set_size_bar_mode(model.size_bar_mode);
-        settings.set_folder_expansion_enabled(model.folder_expansion_enabled);
-        settings.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);
-        settings.set_metadata_retention_hours(model.metadata_retention_hours);
-        settings.set_file_visibility(model.file_visibility);
-        settings.set_context_menu(model.context_menu);
-        settings.set_theme(model.theme);
+        crate::services::settings_model::commit_model(&mut metadata, &mut settings, model)
+            .map_err(|error| format!("{error:#}"))?;
     }
-    persist_state(state.inner())?;
     emit_current_settings_changed(&app, state)
 }
 

@@ -1,4 +1,4 @@
-mod ftp;
+pub(super) mod ftp;
 mod parser;
 mod sftp;
 mod process;
@@ -11,6 +11,7 @@ pub(crate) use ftp::{FtpMetadataSource, ListingCommand, TransportError};
 #[cfg(test)]
 use ftp::FtpTransport;
 pub(crate) use parser::{parse_ftp_line, RemoteFact};
+pub(crate) use parser::{FtpEntryFact, FtpEntryKind};
 pub(crate) use sftp::{scanner_profile, sftp_metadata_kind};
 pub(crate) use listing::sftp_listing;
 pub(crate) use listing::ftp_listing;

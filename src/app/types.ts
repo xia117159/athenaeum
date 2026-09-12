@@ -1,4 +1,5 @@
 import type { ColorFilterConfigSnapshot, ColorFilterRule } from "../features/workspace/colorFilterTypes";
+import type { FileAssociationRule } from "./fileAssociations";
 
 export type {
   ColorFilterConfigSnapshot,
@@ -340,6 +341,7 @@ export interface RemoteTrustHostKeyRequest {
 }
 
 export interface SettingsSnapshot {
+  fileAssociations?: FileAssociationRule[];
   bookmarks: Bookmark[];
   hotlist: HotlistEntry[];
   navigationItems?: NavigationItem[];
@@ -362,6 +364,7 @@ export interface SettingsSnapshot {
 }
 
 export interface SettingsModelUpdate {
+  fileAssociations?: FileAssociationRule[];
   shortcuts: ShortcutBinding[];
   columns: DetailColumnDefinition[];
   navigationColumns: DetailColumnDefinition[];

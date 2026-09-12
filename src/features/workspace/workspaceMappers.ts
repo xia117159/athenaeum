@@ -337,6 +337,13 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "listing",
     binding: "Enter",
     description: "打开当前选中的文件夹或文件。"
+  },
+  {
+    id: "open-with",
+    action: "打开方式",
+    scope: "listing",
+    binding: "Ctrl+Alt+O",
+    description: "选择当前文件匹配的自定义关联，或打开关联设置。"
   }
 ];
 
@@ -431,6 +438,7 @@ export function normalizeSettingsSection(value?: string | null): SettingsSection
     case "shortcuts":
     case "file-list":
     case "menu-mouse":
+    case "file-associations":
     case "appearance":
     case "color-rules":
     case "tag-rules":
@@ -847,6 +855,7 @@ function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
 
 export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsModel {
   return {
+    fileAssociations: (settings.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: mergeShortcutDefaults(
       settings.shortcuts.map((shortcut: BackendShortcutBinding) => ({
         id: shortcut.id,
@@ -908,6 +917,7 @@ export function mapSettingsSnapshotToWorkspaceSettings(settings: BackendSettings
 
 export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsModel {
   return {
+    fileAssociations: (settingsModel.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: mergeShortcutDefaults(settingsModel.shortcuts),
     colorRules: settingsModel.colorRules,
     colorFilterEnabled: settingsModel.colorFilterEnabled ?? true,

@@ -9,6 +9,7 @@ import {
 import { HexAlphaColorPicker } from "react-colorful";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
 import { ColorRulesPage } from "./ColorRulesPage";
+import { FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
 import { SettingsFileListPage } from "./SettingsFileListPage";
 import type { ColorFilterRule, ColorFilterValidationResult } from "./colorFilterTypes";
 import type { RemoteTestResult } from "../../app/types";
@@ -33,6 +34,9 @@ export type SettingsSurfaceProps = {
   onSelectSection: (section: WorkspaceState["settings"]["section"]) => void;
   onUpdateShortcut: (id: string, binding: string) => void;
   onUpdateColorRules: (rules: ColorFilterRule[]) => void;
+  onUpdateFileAssociations: FileAssociationsPageProps["onChange"];
+  onChooseAssociationProgram: FileAssociationsPageProps["onChooseProgram"];
+  onInspectAssociationPrograms: FileAssociationsPageProps["onInspectPrograms"];
   onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
   onOpenColorRulesHelp: () => void;
   onColorRulesValidityChange?: (valid: boolean) => void;
@@ -81,7 +85,8 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
     sections: [
       { id: "shortcuts", label: "快捷键", description: "键盘操作与工作区命令" },
       { id: "file-list", label: "文件列表", description: "详细信息视图与显示列" },
-      { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" }
+      { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" },
+      { id: "file-associations", label: "自定义文件关联", description: "按文件后缀选择打开程序" }
     ]
   },
   {
@@ -185,6 +190,9 @@ export function SettingsSurface({
   onSelectSection,
   onUpdateShortcut,
   onUpdateColorRules,
+  onUpdateFileAssociations,
+  onChooseAssociationProgram,
+  onInspectAssociationPrograms,
   onValidateColorRule,
   onOpenColorRulesHelp,
   onColorRulesValidityChange,
@@ -296,6 +304,10 @@ export function SettingsSurface({
               disabled={controlsDisabled}
               onUpdateContextMenuDefault={onUpdateContextMenuDefault}
             />
+          ) : settings.section === "file-associations" ? (
+            <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
+              onChange={onUpdateFileAssociations} onChooseProgram={onChooseAssociationProgram}
+              onInspectPrograms={onInspectAssociationPrograms} />
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}

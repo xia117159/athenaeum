@@ -127,6 +127,7 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
     },
     async () =>
       createBrowserSettingsSnapshot({
+        fileAssociations: toBackendSettingsModelUpdate(model).fileAssociations,
         shortcuts: model.shortcuts.map(toBackendShortcut),
         columns: model.columns,
         navigationColumns: model.navigationColumns,

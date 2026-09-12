@@ -10,7 +10,37 @@ pub(crate) struct RemoteFact {
     pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FtpEntryKind {
+    File(Option<u64>),
+    Directory,
+    Link,
+    Special,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FtpEntryFact {
+    pub name: String,
+    pub kind: FtpEntryKind,
+    pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 pub(crate) fn parse_ftp_line(command: ListingCommand, line: &[u8]) -> Result<Option<RemoteFact>, ()> {
+    parse_typed_ftp_line(command, line)?.map(|fact| {
+        // Exact size statistics must keep treating absent byte counts as incomplete.
+        let kind = match fact.kind {
+            FtpEntryKind::File(size) => MetadataKind::File(size.ok_or(())?),
+            FtpEntryKind::Directory => MetadataKind::Directory,
+            FtpEntryKind::Link => MetadataKind::Link,
+            FtpEntryKind::Special => MetadataKind::Special,
+            FtpEntryKind::Unknown => MetadataKind::Unknown,
+        };
+        Ok(RemoteFact { name: fact.name, kind, modified_at: fact.modified_at })
+    }).transpose()
+}
+
+pub(crate) fn parse_typed_ftp_line(command: ListingCommand, line: &[u8]) -> Result<Option<FtpEntryFact>, ()> {
     let line = std::str::from_utf8(line).map_err(|_| ())?.trim_end_matches('\r');
     if line.is_empty() { return Ok(None); }
     if line.chars().any(|ch| ch.is_control()) { return Err(()); }
@@ -27,7 +57,7 @@ fn bytes(value: &str) -> Result<u64, ()> {
     value.parse().map_err(|_| ())
 }
 
-fn parse_mlsd(line: &str) -> Result<Option<RemoteFact>, ()> {
+fn parse_mlsd(line: &str) -> Result<Option<FtpEntryFact>, ()> {
     let (facts, name) = line.split_once(' ').ok_or(())?;
     if !facts.ends_with(';') { return Err(()); }
     let mut entry_type = None;
@@ -47,15 +77,15 @@ fn parse_mlsd(line: &str) -> Result<Option<RemoteFact>, ()> {
     let entry_type = entry_type.ok_or(())?;
     if matches!(entry_type.as_str(), "cdir" | "pdir") { return Ok(None); }
     let kind = if link || entry_type.starts_with("os.unix=slink") || entry_type.starts_with("os.unix=symlink") {
-        MetadataKind::Link
+        FtpEntryKind::Link
     } else {
         match entry_type.as_str() {
-            "file" => MetadataKind::File(size.ok_or(())?),
-            "dir" => MetadataKind::Directory,
+            "file" => FtpEntryKind::File(size),
+            "dir" => FtpEntryKind::Directory,
             _ => return Err(()),
         }
     };
-    Ok(Some(RemoteFact { name: name.into(), kind, modified_at }))
+    Ok(Some(FtpEntryFact { name: name.into(), kind, modified_at }))
 }
 
 fn take_field<'a>(rest: &mut &'a str) -> Result<&'a str, ()> {
@@ -66,7 +96,7 @@ fn take_field<'a>(rest: &mut &'a str) -> Result<&'a str, ()> {
     if field.is_empty() { Err(()) } else { Ok(field) }
 }
 
-fn parse_list(line: &str) -> Result<Option<RemoteFact>, ()> {
+fn parse_list(line: &str) -> Result<Option<FtpEntryFact>, ()> {
     if line.strip_prefix("total ").is_some_and(|value| value.trim().parse::<u64>().is_ok()) { return Ok(None); }
     let mut rest = line.trim_start_matches(' ');
     let first = take_field(&mut rest)?;
@@ -79,17 +109,17 @@ fn parse_list(line: &str) -> Result<Option<RemoteFact>, ()> {
         let _day = take_field(&mut rest)?;
         let _time = take_field(&mut rest)?;
         let kind = match first.as_bytes()[0] {
-            b'-' => MetadataKind::File(size), b'd' => MetadataKind::Directory,
-            b'l' => MetadataKind::Link, _ => MetadataKind::Special,
+            b'-' => FtpEntryKind::File(Some(size)), b'd' => FtpEntryKind::Directory,
+            b'l' => FtpEntryKind::Link, _ => FtpEntryKind::Special,
         };
-        let name = if kind == MetadataKind::Link { rest.split_once(" -> ").ok_or(())?.0 } else { rest };
+        let name = if kind == FtpEntryKind::Link { rest.split_once(" -> ").ok_or(())?.0 } else { rest };
         if matches!(name, "." | "..") { return Ok(None); }
-        return Ok(Some(RemoteFact { name: name.into(), kind, modified_at: None }));
+        return Ok(Some(FtpEntryFact { name: name.into(), kind, modified_at: None }));
     }
     let date = NaiveDate::parse_from_str(first, "%m-%d-%y").or_else(|_| NaiveDate::parse_from_str(first, "%m-%d-%Y")).map_err(|_| ())?;
     let time = NaiveTime::parse_from_str(&take_field(&mut rest)?.to_ascii_uppercase(), "%I:%M%p").map_err(|_| ())?;
     let size = take_field(&mut rest)?;
-    let kind = if size.eq_ignore_ascii_case("<DIR>") { MetadataKind::Directory } else { MetadataKind::File(bytes(size)?) };
+    let kind = if size.eq_ignore_ascii_case("<DIR>") { FtpEntryKind::Directory } else { FtpEntryKind::File(Some(bytes(size)?)) };
     if matches!(rest, "." | "..") { return Ok(None); }
-    Ok(Some(RemoteFact { name: rest.into(), kind, modified_at: Some(date.and_time(time).and_utc()) }))
+    Ok(Some(FtpEntryFact { name: rest.into(), kind, modified_at: Some(date.and_time(time).and_utc()) }))
 }

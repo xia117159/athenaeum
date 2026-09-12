@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Bookmark, ColorFilterConfigSnapshot, ContextMenuSettings, EntryTag, HotlistEntry,
+    Bookmark, ColorFilterConfigSnapshot, ContextMenuSettings, EntryTag, FileAssociationRule, HotlistEntry,
     NavigationItem, RemoteProfile, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
 };
 
@@ -43,6 +43,8 @@ impl Default for FileVisibilitySettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
+    #[serde(default)]
+    pub file_associations: Vec<FileAssociationRule>,
     pub bookmarks: Vec<Bookmark>,
     pub hotlist: Vec<HotlistEntry>,
     #[serde(default)]
@@ -72,6 +74,8 @@ pub struct SettingsSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsModelUpdate {
+    #[serde(default)]
+    pub file_associations: Option<Vec<FileAssociationRule>>,
     pub shortcuts: Vec<ShortcutBinding>,
     pub columns: Vec<DetailColumnDefinition>,
     pub navigation_columns: Vec<DetailColumnDefinition>,

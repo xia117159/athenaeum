@@ -439,7 +439,16 @@ return { statuses: {}, isGitRepo: false };
     },
     async openPathWithSystemDefault(path) {
       interactions.systemOpens?.push(path);
-    }
+    },
+    async openFile(request) {
+      interactions.systemOpens?.push(request.target.path);
+      return {status:"opened",localPath:request.target.path,associationId:request.associationId ?? null};
+    },
+    async cancelFileOpen() { return true; },
+    async inspectAssociationPrograms(paths) {
+      return paths.map(path => ({path,displayName:path.split(/[\\/]/).pop() || path,exists:true}));
+    },
+    async chooseAssociationProgram() { return null; }
   };
 }
 

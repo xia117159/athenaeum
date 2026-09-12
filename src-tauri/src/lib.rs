@@ -7,6 +7,7 @@ use std::sync::Arc;
 use commands::{
     color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
     directory_sizes::{subscribe_directory_sizes, release_directory_sizes, lookup_directory_sizes},
+    file_opening::{open_file, cancel_file_open, inspect_association_programs, choose_association_program},
     operations::{
         cancel_file_operation, clear_operation_records, copy_entries, create_directory,
         create_file, delete_entries, list_file_operation_tasks, list_operation_history,
@@ -48,7 +49,11 @@ pub fn run() {
             if let WindowEvent::Destroyed = event {
                 let state = window.state::<Arc<AppState>>();
                 state.directory_sizes.close_owner(window.label());
-                if window.label() == "main" { state.directory_sizes.shutdown(); }
+                state.file_open_jobs.close_owner(window.label());
+                if window.label() == "main" {
+                    state.directory_sizes.shutdown();
+                    state.file_open_jobs.begin_shutdown();
+                }
             }
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
@@ -63,6 +68,7 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 webview.state::<Arc<AppState>>().directory_sizes.open_owner(webview.label());
+                webview.state::<Arc<AppState>>().file_open_jobs.open_owner(webview.label());
             }
         })
         .setup(|app| {
@@ -70,6 +76,7 @@ pub fn run() {
             let state = app.state::<Arc<AppState>>().inner().clone();
             state.initialize_paths(&app_handle)?;
             state.directory_sizes.open_owner("main");
+            state.file_open_jobs.open_owner("main");
 
             #[cfg(windows)]
             {
@@ -152,6 +159,10 @@ pub fn run() {
             transfer_remote_entries,
             resolve_navigation_targets,
             open_path_with_system_default,
+            open_file,
+            cancel_file_open,
+            inspect_association_programs,
+            choose_association_program,
             set_system_file_clipboard,
             read_system_file_clipboard,
             get_windows_drag_drop_environment,
@@ -169,8 +180,28 @@ pub fn run() {
         let _ = event_app.emit_to(owner, "directory_sizes_changed", snapshot);
     });
     app.state::<Arc<AppState>>().directory_sizes.start(Arc::downgrade(&sink));
-    app.run(|app, event| {
-        if matches!(event, tauri::RunEvent::Exit) { app.state::<Arc<AppState>>().directory_sizes.shutdown(); }
+    let mut waiting_for_file_open_cleanup = false;
+    app.run(move |app, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+            let jobs = app.state::<Arc<AppState>>().file_open_jobs.clone();
+            if !jobs.begin_shutdown() && *code != Some(tauri::RESTART_EXIT_CODE) {
+                api.prevent_exit();
+                if !waiting_for_file_open_cleanup {
+                    waiting_for_file_open_cleanup = true;
+                    let app = app.clone();
+                    let exit_code = code.unwrap_or(0);
+                    std::thread::spawn(move || {
+                        jobs.shutdown();
+                        app.exit(exit_code);
+                    });
+                }
+            }
+        }
+        if matches!(event, tauri::RunEvent::Exit) {
+            let state = app.state::<Arc<AppState>>();
+            state.directory_sizes.shutdown();
+            state.file_open_jobs.shutdown();
+        }
     });
     drop(sink);
 }

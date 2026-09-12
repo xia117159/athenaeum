@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::services::directory_size::{metadata::{MetadataEntry, MetadataKind}, scan::MetadataSource};
-use super::{parse_ftp_line, RemoteFact};
+use super::{parse_ftp_line, RemoteFact, FtpEntryFact, FtpEntryKind, parser::parse_typed_ftp_line};
 use super::super::join_remote_path;
 use crate::domain::models::RemoteProfile;
 use std::process::Command;
@@ -74,6 +74,19 @@ impl<T: FtpTransport> FtpMetadataSource<T> {
 
     pub fn read_facts(&mut self, path: &str, cancelled: &AtomicBool,
         visit: &mut dyn FnMut(RemoteFact) -> bool) -> Result<(), TransportError> {
+        self.read_parsed(path, cancelled, parse_ftp_line,
+            || RemoteFact { name: String::new(), kind: MetadataKind::Unknown, modified_at: None }, visit)
+    }
+
+    pub fn read_typed_facts(&mut self, path: &str, cancelled: &AtomicBool,
+        visit: &mut dyn FnMut(FtpEntryFact) -> bool) -> Result<(), TransportError> {
+        self.read_parsed(path, cancelled, parse_typed_ftp_line,
+            || FtpEntryFact { name: String::new(), kind: FtpEntryKind::Unknown, modified_at: None }, visit)
+    }
+
+    fn read_parsed<Fact>(&mut self, path: &str, cancelled: &AtomicBool,
+        parse: fn(ListingCommand, &[u8]) -> Result<Option<Fact>, ()>,
+        invalid: impl Fn() -> Fact, visit: &mut dyn FnMut(Fact) -> bool) -> Result<(), TransportError> {
         self.incomplete = None;
         self.malformed = false;
         let mut command = if self.mlsd == Some(false) { ListingCommand::ListAll } else { ListingCommand::Mlsd };
@@ -84,10 +97,10 @@ impl<T: FtpTransport> FtpMetadataSource<T> {
             let result = self.transport.list(path, command, cancelled, &mut |line| {
                 any_output = true;
                 if cancelled.load(Ordering::Relaxed) { return false; }
-                match parse_ftp_line(command, line) {
+                match parse(command, line) {
                     Ok(Some(fact)) => visit(fact),
                     Ok(None) => true,
-                    Err(()) => { malformed = true; visit(RemoteFact { name: String::new(), kind: MetadataKind::Unknown, modified_at: None }) }
+                    Err(()) => { malformed = true; visit(invalid()) }
                 }
             });
             match result {

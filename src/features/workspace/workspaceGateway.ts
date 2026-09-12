@@ -104,6 +104,8 @@ import {
 } from "./workspacePropertiesGateway";
 import { createDirectorySizesGateway } from "./directorySizeGateway";
 import type { DirectorySizesGateway } from "./directorySizeTypes";
+import type { FileOpenProgress, FileOpenRequest, FileOpenResult, AssociationProgramInfo } from "../../app/fileAssociations";
+import { openWorkspaceFile, cancelWorkspaceFileOpen, inspectAssociationPrograms, chooseAssociationProgram } from "./fileOpeningGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationHistoryEventEnvelope,
@@ -180,6 +182,10 @@ export interface WorkspaceGateway {
   markNavigationItemOpened(id: string): Promise<{ navigationItems: NavigationItem[] }>;
   resolveNavigationTargets(paths: string[]): Promise<NavigationTargetInfo[]>;
   openPathWithSystemDefault(path: string): Promise<void>;
+  openFile(request: FileOpenRequest, onProgress: (progress: FileOpenProgress) => void): Promise<FileOpenResult>;
+  cancelFileOpen(requestId: string): Promise<boolean>;
+  inspectAssociationPrograms(paths: string[]): Promise<AssociationProgramInfo[]>;
+  chooseAssociationProgram(): Promise<string | null>;
   saveRemoteProfile(profile: RemoteConnectionProfile, password?: string): Promise<{ remoteProfiles: RemoteConnectionProfile[] }>;
   deleteRemoteProfile(id: string): Promise<{ remoteProfiles: RemoteConnectionProfile[] }>;
   testRemoteProfile(profile: RemoteConnectionProfile, password?: string): Promise<BackendRemoteTestResult>;
@@ -440,6 +446,10 @@ return { statuses: {}, isGitRepo: false };
     async openPathWithSystemDefault(path) {
       await openWorkspacePathWithSystemDefault(path);
     },
+    openFile: openWorkspaceFile,
+    cancelFileOpen: cancelWorkspaceFileOpen,
+    inspectAssociationPrograms,
+    chooseAssociationProgram,
 
     async saveRemoteProfile(profile, password) {
       return saveWorkspaceRemoteProfile(profile, password);

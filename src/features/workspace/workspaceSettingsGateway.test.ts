@@ -256,6 +256,7 @@ export const workspaceSettingsGatewayTests = (async () => {
         command: "save_settings_model",
         args: {
           model: {
+            fileAssociations: [],
             shortcuts: [{ id: "navigate-up", action: "navigate-up", accelerator: "Alt+Up", scope: "panel" }],
             columns: [
               { id: "name", label: "名称", visible: true, width: "240px", align: "left" },

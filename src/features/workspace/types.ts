@@ -5,6 +5,8 @@ import type {
   OperationTaskSnapshot
 } from "../../app/types";
 import type { ColorFilterRule, RevisionToken } from "./colorFilterTypes";
+import type { FileAssociationRule } from "../../app/fileAssociations";
+import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
 
 export type DataSource = "mock" | "tauri";
 
@@ -15,6 +17,7 @@ export type SettingsSection =
   | "shortcuts"
   | "file-list"
   | "menu-mouse"
+  | "file-associations"
   | "appearance"
   | "color-rules"
   | "tag-rules"
@@ -297,6 +300,7 @@ export interface SortState {
 
 export interface SettingsModel {
   shortcuts: ShortcutBinding[];
+  fileAssociations?: FileAssociationRule[];
   colorRules: ColorFilterRule[];
   colorFilterEnabled?: boolean;
   colorFilterRevision?: RevisionToken;
@@ -696,6 +700,8 @@ export interface WorkspaceState {
   clipboard?: ClipboardState;
   notifications: NotificationItem[];
   contextMenu?: ContextMenuState;
+  openWithMenu?: OpenWithMenuState;
+  fileOpens?: PendingFileOpen[];
   operations: OperationWorkspaceState;
   keyboardNavToken?: symbol;
 }

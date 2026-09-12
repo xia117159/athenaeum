@@ -1,0 +1,65 @@
+.file-associations-page {
+  min-width: 0;
+  border: 1px solid #d6d6d6;
+  background: #fff;
+  overflow: hidden;
+}
+.file-association-expression {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.file-associations-page .color-rules-list-row:focus-visible {
+  outline: 1px solid #0078d4;
+  outline-offset: -1px;
+}
+.file-associations-page .color-rules-list-row > svg { flex: none; }
+.file-association-fields {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #e3e3e3;
+  padding-top: 10px;
+}
+.file-association-fields > button { justify-self: start; }
+.file-association-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 3px 5px;
+  border: 1px solid #adadad;
+  border-radius: 2px;
+  background: #fff;
+  color: #202020;
+  font: inherit;
+}
+.file-association-fields input:focus {
+  outline: 1px solid #0078d4;
+  border-color: #0078d4;
+}
+.file-association-fields input:disabled { background: #f3f3f3; color: #777; }
+.file-association-hint,
+.file-association-help,
+.file-association-warning,
+.file-association-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.file-association-hint,
+.file-association-help { color: #626262; }
+.file-association-help {
+  padding: 7px 10px;
+  border-top: 1px solid #d6d6d6;
+  background: #f7f7f7;
+}
+.file-association-warning { color: #805900; }
+.file-association-error { color: #b42318; }
+@container settings-content (max-width: 560px) {
+  .file-associations-page .color-rules-content { grid-template-columns: minmax(0, 1fr) 206px; }
+  .file-associations-page .color-rules-operations { padding: 8px; }
+}

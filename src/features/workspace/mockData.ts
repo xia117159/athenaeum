@@ -911,6 +911,7 @@ function createSettingsModel(): SettingsModel {
     // 避免在此处维护一份重复的快捷键清单导致与本任务的列表导航新增项漂移。
     shortcuts: DEFAULT_SHORTCUTS.map((shortcut) => ({ ...shortcut })),
     colorRules: colorFilter.rules.map((rule) => ({ ...rule })),
+    fileAssociations: [],
     colorFilterEnabled: colorFilter.enabled,
     colorFilterRevision: colorFilter.revision,
     colorRulesRevision: colorFilter.rulesRevision,

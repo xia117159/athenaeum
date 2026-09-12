@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
     Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag,
-    FileVisibilitySettings, HotlistEntry, NavigationItem, NavigationItemUpsertRequest,
+    FileVisibilitySettings, FileAssociationRule, HotlistEntry, NavigationItem, NavigationItemUpsertRequest,
     NavigationTargetStatus, RemoteProfile, SettingsSnapshot, ShortcutBinding, TagDefinition,
     UiLayout, UiTheme,
 };
@@ -28,6 +28,7 @@ pub struct EntryComment {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MetadataStore {
+    pub file_associations: Vec<FileAssociationRule>,
     pub bookmarks: Vec<Bookmark>,
     pub hotlist: Vec<HotlistEntry>,
     #[serde(default)]
@@ -81,6 +82,7 @@ fn default_color_rule_schema_version() -> u32 {
 impl Default for MetadataStore {
     fn default() -> Self {
         Self {
+            file_associations: Vec::new(),
             bookmarks: Vec::new(),
             hotlist: Vec::new(),
             navigation_items: Vec::new(),
@@ -225,6 +227,7 @@ impl MetadataStore {
             crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
 
         SettingsSnapshot {
+            file_associations: self.file_associations.clone(),
             bookmarks: self.bookmarks.clone(),
             hotlist: self.hotlist.clone(),
             navigation_items: self.navigation_items.clone(),

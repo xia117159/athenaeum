@@ -44,6 +44,7 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["select-all", "Ctrl+A"],
   ["clear-selection", "Escape"],
   ["open-entry", "Enter"],
+  ["open-with", "Ctrl+Alt+O"],
   ["copy-name", "Alt+Shift+N"],
   ["copy-path", "Alt+Shift+P"]
 ]);

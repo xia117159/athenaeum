@@ -14,6 +14,8 @@ import {
 } from "./workspaceMappers";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { openColorFilterHelpWindow } from "./colorFilterHelpWindow";
+import { associationRulesError, normalizeAssociationRule } from "./fileAssociations";
+import { listenSettingsNavigation, requestedSettingsSection } from "./settingsNavigation";
 import { getColorRuleNameErrors, hasColorRuleDraftChanges } from "./colorFilterEditorModel";
 import {
   formatSettingsApplyFailure,
@@ -25,6 +27,7 @@ import "./workspace.css";
 
 function cloneSettingsModel(model: SettingsModel): SettingsModel {
   return {
+    fileAssociations: (model.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: model.shortcuts.map((shortcut) => ({ ...shortcut })),
     colorRules: model.colorRules.map((rule) => ({ ...rule })),
     colorFilterEnabled: model.colorFilterEnabled ?? true,
@@ -83,6 +86,7 @@ function computeDirtySections(
   const dm = draft.settings.model;
   const pm = normalizedPersistedModel;
   if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
+  if (!hasSameJsonShape(pm.fileAssociations, dm.fileAssociations)) sections.add("file-associations");
   if (
     !hasSameJsonShape(pm.columns, dm.columns) ||
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
@@ -129,7 +133,11 @@ async function closeSettingsWindow() {
 export function SettingsWindowView() {
   const { state, actions } = useWorkspaceController(undefined, { role: "settings" });
   const settingsReady = state.status === "ready";
-  const [draftState, setDraftState] = useState<WorkspaceState>(() => createDraftState(state));
+  const [draftState, setDraftState] = useState<WorkspaceState>(() => {
+    const draft = createDraftState(state);
+    draft.settings.section = requestedSettingsSection(window.location.search, draft.settings.section);
+    return draft;
+  });
   const [dirty, setDirty] = useState(false);
   const [applying, setApplying] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -141,6 +149,19 @@ export function SettingsWindowView() {
   const [colorRulesValid, setColorRulesValid] = useState(true);
   const [colorRulesRawDraftDirty, setColorRulesRawDraftDirty] = useState(false);
   const [colorRulesResetSequence, setColorRulesResetSequence] = useState(0);
+
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listenSettingsNavigation(section => {
+      if (!disposed) setDraftState(current => ({ ...current, settings: { ...current.settings, section } }));
+    }).then(unlisten => {
+      if (disposed) unlisten(); else stop = unlisten;
+    }).catch(error => {
+      if (!disposed) setErrorMessage(getSettingsErrorMessage(error, "无法切换设置页"));
+    });
+    return () => { disposed = true; stop?.(); };
+  }, []);
 
   const normalizedPersistedModel = useMemo(
     () => normalizeSettingsModel(state.settings.model),
@@ -322,7 +343,15 @@ export function SettingsWindowView() {
     setApplying(true);
     setErrorMessage(null);
     try {
-      const model = draftState.settings.model;
+      const model = {
+        ...draftState.settings.model,
+        fileAssociations: (draftState.settings.model.fileAssociations ?? []).map(normalizeAssociationRule)
+      };
+      const associationsError = associationRulesError(model.fileAssociations);
+      if (associationsError) {
+        setErrorMessage(associationsError);
+        return;
+      }
       const nameErrors = getColorRuleNameErrors(model.colorRules);
       const expressionResults = await Promise.all(
         model.colorRules.map(async (rule) => ({ rule, result: await actions.validateColorRule(rule.expression) }))
@@ -506,6 +535,9 @@ export function SettingsWindowView() {
   return (
     <div className="settings-window-shell">
       <SettingsSurface
+        onUpdateFileAssociations={(fileAssociations) => updateDraftModel(model => ({...model, fileAssociations}))}
+        onChooseAssociationProgram={actions.chooseAssociationProgram}
+        onInspectAssociationPrograms={actions.inspectAssociationPrograms}
         state={draftState}
         dirtySections={dirtySections}
         onSelectSection={updateDraftSection}

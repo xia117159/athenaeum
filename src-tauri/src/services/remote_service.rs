@@ -2,6 +2,7 @@ mod adapter_factory;
 mod connection;
 mod host_key;
 mod listing;
+pub mod open_download;
 pub(crate) mod size_metadata;
 mod remote_path;
 pub(super) mod windows_credentials;

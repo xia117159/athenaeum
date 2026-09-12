@@ -1,5 +1,7 @@
 import type { Event } from "@tauri-apps/api/event";
 import { WebviewWindow as TauriWebviewWindow, type WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { SettingsSection } from "./types";
+import { defaultSettingsNavigationRuntime, type SettingsNavigationRuntime } from "./settingsNavigation";
 
 export const SETTINGS_WINDOW_LABEL = "settings";
 export const SETTINGS_WINDOW_URL = "/?view=settings";
@@ -21,6 +23,7 @@ export type SettingsWindowOptions = {
 };
 
 export type SettingsWindowAdapter = {
+  navigation?: SettingsNavigationRuntime;
   hasTauriRuntime: () => boolean;
   openBrowserWindow: (url: string, target: string, features: string) => void;
   loadWebviewWindow: () => Promise<{
@@ -65,33 +68,39 @@ function waitForWindowCreation(windowHandle: SettingsWindowHandle) {
   });
 }
 
-export async function openSettingsWindow(adapter: SettingsWindowAdapter = defaultSettingsWindowAdapter) {
+export async function openSettingsWindow(adapter: SettingsWindowAdapter = defaultSettingsWindowAdapter, section?: SettingsSection) {
+  const url = section ? `${SETTINGS_WINDOW_URL}&section=${encodeURIComponent(section)}` : SETTINGS_WINDOW_URL;
   if (!adapter.hasTauriRuntime()) {
-    adapter.openBrowserWindow(SETTINGS_WINDOW_URL, SETTINGS_WINDOW_LABEL, SETTINGS_WINDOW_FEATURES);
+    adapter.openBrowserWindow(url, SETTINGS_WINDOW_LABEL, SETTINGS_WINDOW_FEATURES);
     return;
   }
-
-  const { WebviewWindow } = await adapter.loadWebviewWindow();
-  const existingWindow = await WebviewWindow.getByLabel(SETTINGS_WINDOW_LABEL);
-
-  if (existingWindow) {
-    await existingWindow.show();
-    await existingWindow.setFocus();
-    return;
+  const navigation = adapter.navigation ?? defaultSettingsNavigationRuntime;
+  const request = section ? { id: crypto.randomUUID(), section } : undefined;
+  if (request) navigation.write(request);
+  try {
+    const { WebviewWindow } = await adapter.loadWebviewWindow();
+    const existingWindow = await WebviewWindow.getByLabel(SETTINGS_WINDOW_LABEL);
+    if (existingWindow) {
+      if (request) await navigation.emit(request);
+      await existingWindow.show();
+      await existingWindow.setFocus();
+      return;
+    }
+    const settingsWindow = new WebviewWindow(SETTINGS_WINDOW_LABEL, {
+      url,
+      title: "设置",
+      width: 920,
+      height: 720,
+      minWidth: 800,
+      minHeight: 560,
+      resizable: true,
+      decorations: true,
+      focus: true,
+      center: true
+    });
+    await waitForWindowCreation(settingsWindow);
+  } catch (error) {
+    if (request && navigation.read()?.id === request.id) navigation.write(null);
+    throw error;
   }
-
-  const settingsWindow = new WebviewWindow(SETTINGS_WINDOW_LABEL, {
-    url: SETTINGS_WINDOW_URL,
-    title: "设置",
-    width: 920,
-    height: 720,
-    minWidth: 800,
-    minHeight: 560,
-    resizable: true,
-    decorations: true,
-    focus: true,
-    center: true
-  });
-
-  await waitForWindowCreation(settingsWindow);
 }

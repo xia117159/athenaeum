@@ -50,6 +50,10 @@ permissions = [
   "allow-mark-navigation-item-opened",
   "allow-resolve-navigation-targets",
   "allow-open-path-with-system-default",
+  "allow-open-file",
+  "allow-cancel-file-open",
+  "allow-inspect-association-programs",
+  "allow-choose-association-program",
   "allow-set-system-file-clipboard",
   "allow-read-system-file-clipboard",
   "allow-get-windows-drag-drop-environment",
@@ -81,6 +85,26 @@ permissions = [
 identifier = "allow-initialize-workspace"
 description = "Allows loading the initial workspace bootstrap from the local machine."
 commands.allow = ["initialize_workspace"]
+
+[[permission]]
+identifier = "allow-open-file"
+description = "Allows opening a local file or one downloaded remote file with saved associations."
+commands.allow = ["open_file"]
+
+[[permission]]
+identifier = "allow-cancel-file-open"
+description = "Allows cancelling only the invoking window's pending file open."
+commands.allow = ["cancel_file_open"]
+
+[[permission]]
+identifier = "allow-inspect-association-programs"
+description = "Allows reading executable names and availability for file associations."
+commands.allow = ["inspect_association_programs"]
+
+[[permission]]
+identifier = "allow-choose-association-program"
+description = "Allows choosing an executable with the native Windows file dialog."
+commands.allow = ["choose_association_program"]
 
 [[permission]]
 identifier = "allow-list-directory"

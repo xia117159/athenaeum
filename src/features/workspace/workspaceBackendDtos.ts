@@ -29,6 +29,7 @@ import {
 import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import { normalizeAssociationRule } from "./fileAssociations";
 
 export function toBackendLayout(
   layoutMode: PanelLayoutMode,
@@ -67,6 +68,7 @@ export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
 
 export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSettingsModelUpdate {
   return {
+    fileAssociations: (model.fileAssociations ?? []).map(normalizeAssociationRule),
     shortcuts: model.shortcuts.map(toBackendShortcut),
     columns: normalizeColumns(model.columns),
     navigationColumns: normalizeNavigationColumns(model.navigationColumns),
@@ -130,6 +132,7 @@ export function createBrowserSettingsSnapshot(
     bookmarks: [],
     hotlist: [],
     navigationItems: [],
+    fileAssociations: [],
     tagDefinitions: [],
     entryTags: [],
     colorFilter: {

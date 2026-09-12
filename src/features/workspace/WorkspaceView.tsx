@@ -1,9 +1,11 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2 } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
+import { OpenWithMenu } from "./OpenWithMenu";
+import { WorkspaceFeedback } from "./WorkspaceFeedback";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
@@ -433,28 +435,10 @@ export function WorkspaceView() {
         />
       ) : null}
 
-      {state.notifications.length > 0 ? (
-        <div className="workspace-notification-stack" role="region" aria-label="通知">
-          {state.notifications.map((notification) => (
-            <div
-              key={notification.id}
-              className={`workspace-notification workspace-notification--${notification.intent}`}
-              role={notification.intent === "danger" ? "alert" : "status"}
-            >
-              <span>{notification.message}</span>
-              <button
-                type="button"
-                className="workspace-notification__close"
-                title="关闭通知"
-                aria-label="关闭通知"
-                onClick={() => actions.dismissNotification(notification.id)}
-              >
-                <X size={12} strokeWidth={2} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {state.openWithMenu ? <OpenWithMenu menu={state.openWithMenu} rules={state.settings.model.fileAssociations ?? []}
+        onSelect={actions.selectOpenWith} onConfirm={actions.confirmOpenWith} onClose={actions.closeOpenWith} /> : null}
+      <WorkspaceFeedback notifications={state.notifications} fileOpens={state.fileOpens ?? []}
+        onCancelOpen={actions.cancelFileOpen} onDismiss={actions.dismissNotification} />
 
       {state.status === "loading" ? (
         <div className="workspace-loading">

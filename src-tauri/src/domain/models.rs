@@ -8,9 +8,11 @@ pub use super::operation_clear::{
     OperationClearOutcome, OperationClearRequest, OperationClearScope, OperationClearStatus,
 };
 
+mod file_associations;
 mod remote;
 mod settings;
 
+pub use file_associations::*;
 pub use remote::*;
 pub use settings::*;
 

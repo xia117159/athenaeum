@@ -3,6 +3,8 @@ pub mod color_filter;
 pub mod drive_service;
 pub mod directory_size;
 pub mod file_watcher;
+pub mod file_associations;
+pub mod file_opening;
 pub mod fs_service;
 pub mod git_status_service;
 pub mod icon_service;
@@ -13,8 +15,11 @@ pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
 pub mod settings_store;
+pub mod settings_model;
 pub mod webview_recovery;
 pub mod windows_shell;
+#[cfg(windows)]
+pub(crate) mod windows_sta;
 
 use std::{
     collections::HashMap,
@@ -43,6 +48,8 @@ pub struct AppState {
     pub operations: Mutex<OperationStore>,
     pub file_watcher: FileWatchService,
     pub directory_sizes: directory_size::DirectorySizeService,
+    pub file_open_jobs: file_opening::registry::FileOpenJobs,
+    pub association_programs: file_associations::programs::ProgramInfoCache,
 }
 
 impl AppState {
@@ -56,6 +63,8 @@ impl AppState {
             operations: Mutex::new(OperationStore::default()),
             file_watcher: FileWatchService::default(),
             directory_sizes: directory_size::DirectorySizeService::default(),
+            file_open_jobs: file_opening::registry::FileOpenJobs::default(),
+            association_programs: file_associations::programs::ProgramInfoCache::default(),
         }
     }
 

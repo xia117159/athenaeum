@@ -1,0 +1,69 @@
+.open-with-menu {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
+  border: 1px solid #c8c8c8;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 16%);
+  color: #1f1f1f;
+  font: 12px/1.4 "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  outline: none;
+}
+.open-with-menu__heading {
+  flex: none;
+  padding: 6px 9px;
+  border-bottom: 1px solid #e5e5e5;
+  color: #606060;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.open-with-menu__choices { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 3px; }
+.open-with-menu__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.open-with-menu__item.is-selected { background: #e5f1fb; border-color: #b5d7f1; }
+.open-with-menu__text { display: grid; min-width: 0; gap: 1px; }
+.open-with-menu__text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open-with-menu__detail { color: #626262; font-size: 11px; }
+.open-with-menu__warning-icon { color: #805900; }
+.open-with-menu__footer { flex: none; border-top: 1px solid #e5e5e5; padding: 3px; }
+.open-with-menu__empty { padding: 10px 7px; color: #626262; }
+.open-with-menu__message { flex: none; padding: 4px 9px; color: #805900; font-size: 11px; }
+
+.workspace-file-open { grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-left: 3px solid #0f6cbd; }
+.workspace-file-open__text { display: grid; min-width: 0; gap: 2px; }
+.workspace-file-open__text > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-file-open__progress { color: #606060; font-size: 11px; }
+.workspace-file-open__cancel {
+  min-height: 24px;
+  padding: 1px 7px;
+  border: 1px solid #adadad;
+  border-radius: 2px;
+  background: #fafafa;
+  color: #202020;
+  font: inherit;
+}
+.workspace-file-open__cancel:hover:enabled { background: #e5f1fb; border-color: #0078d4; }
+.workspace-file-open__cancel:focus-visible { outline: 1px solid #0078d4; outline-offset: 1px; }
+.workspace-file-open__cancel:disabled { color: #777; border-color: #d6d6d6; }
