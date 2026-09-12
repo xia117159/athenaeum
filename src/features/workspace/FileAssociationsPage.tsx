@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
 import type { AssociationProgramInfo, FileAssociationRule } from "../../app/fileAssociations";
 import { formatAssociationExpression, normalizeAssociationRule, parseAssociationExpression, validateAssociationRule } from "./fileAssociations";
+import { AssociationProgramIcon } from "./AssociationProgramIcon";
 import "./color-rules.css";
 import "./file-associations.css";
 
@@ -13,7 +14,7 @@ export interface FileAssociationsPageProps {
   onInspectPrograms: (paths: string[]) => Promise<AssociationProgramInfo[]>;
 }
 
-type Editing = { id: string; raw: string; original: Pick<FileAssociationRule, "patterns" | "executablePath"> };
+type Editing = { id: string; raw: string; original: Pick<FileAssociationRule, "patterns" | "executablePath" | "argumentsTemplate"> };
 
 export function FileAssociationsPage({rules, disabled = false, onChange, onChooseProgram, onInspectPrograms}: FileAssociationsPageProps) {
   const [selectedId, setSelectedId] = useState<string | null>(rules[0]?.id ?? null);
@@ -96,7 +97,9 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
     if (!rule) return;
     setSelectedId(id);
     setPickerError(null);
-    const next = {id, raw: formatAssociationExpression(rule), original: {patterns:rule.patterns, executablePath:rule.executablePath}};
+    const next = {id, raw: formatAssociationExpression(rule), original: {
+      patterns:rule.patterns, executablePath:rule.executablePath, argumentsTemplate:rule.argumentsTemplate
+    }};
     editingRef.current = next;
     setEditing(next);
   };
@@ -155,6 +158,7 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
             {rules.map((rule, rowIndex) => {
               const active = rule.id === selectedId;
               const error = diagnostics.get(rule.id);
+              const path = normalizeAssociationRule(rule).executablePath;
               return (
                 <li key={rule.id} role="option" aria-selected={active} aria-invalid={error ? true : undefined}
                   className={"color-rules-list-row" + (active ? " is-selected" : "")}
@@ -172,6 +176,7 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
                       listRef.current?.querySelectorAll<HTMLElement>("[data-rule-id]")[next]?.focus();
                     }
                   }}>
+                  <AssociationProgramIcon path={path} exists={programs[path]?.exists} />
                   {editing?.id === rule.id ? (
                     <input ref={inputRef} className="color-rules-expression-input" aria-label="关联表达式"
                       value={editing.raw} disabled={disabled} spellCheck={false}
@@ -208,31 +213,26 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
           <div className="color-rules-operations__commands">
             <button ref={newButtonRef} type="button" className="toolbar-button" data-action="association-add" disabled={disabled} onClick={addRule}><Plus size={15} />新建</button>
             <button type="button" className="toolbar-button" data-action="association-edit" disabled={disabled || !selected || !!editing} onClick={() => selected && startEditing(selected.id)}><Pencil size={15} />编辑</button>
+            <button type="button" className="toolbar-button" data-action="association-choose-program" disabled={disabled || !selected || picking} onClick={() => void chooseProgram()}>
+              <FolderOpen size={15} />{picking ? "正在选择…" : "选择程序…"}
+            </button>
             <button type="button" className="toolbar-button toolbar-button--danger" data-action="association-delete" disabled={disabled || !selected} onClick={() => deleteSelected()}><Trash2 size={15} />删除</button>
           </div>
           <div className="color-rules-operations__commands color-rules-operations__commands--secondary">
             <button type="button" className="toolbar-button" data-action="association-up" disabled={disabled || index <= 0} onClick={() => move(-1)}><ArrowUp size={15} />上移</button>
             <button type="button" className="toolbar-button" data-action="association-down" disabled={disabled || index < 0 || index >= rules.length - 1} onClick={() => move(1)}><ArrowDown size={15} />下移</button>
           </div>
-          <div className="file-association-fields">
-            <button type="button" className="toolbar-button" data-action="association-choose-program" disabled={disabled || !selected || picking} onClick={() => void chooseProgram()}>
-              <FolderOpen size={15} />{picking ? "正在选择…" : "选择程序…"}
-            </button>
-            <label className="color-rules-field">
-              <span>参数模板</span>
-              <input aria-label="参数模板" type="text" spellCheck={false} value={selected?.argumentsTemplate ?? ""}
-                placeholder="--new-window {file}" disabled={disabled || !selected}
-                onChange={event => selected && update(selected.id, {argumentsTemplate:event.currentTarget.value})} />
-            </label>
-            <p className="file-association-hint">{"{file} 表示文件路径；未填写时自动追加。"}</p>
-          </div>
+        </aside>
+      </div>
+      {ruleError || pickerError || incomplete || warning || inspectionError ? (
+        <div className="file-association-feedback">
           {ruleError || pickerError ? <p className="file-association-error" role="alert">{pickerError || ruleError}</p> : null}
           {incomplete ? <p className="file-association-hint" role="status">此规则未填写完整，打开文件时将忽略。</p>
             : warning ? <p className="file-association-warning" role="status">{warning}</p> : null}
           {inspectionError ? <p className="file-association-hint" role="status">无法检查程序：{inspectionError}</p> : null}
-        </aside>
-      </div>
-      <p className="file-association-help">{"后缀用分号分隔，支持 *.md、.md、md。按从上到下的顺序匹配；双击或 F2 编辑。"}</p>
+        </div>
+      ) : null}
+      <p className="file-association-help">{'后缀用分号分隔，双击或 F2 编辑。含空格的程序路径需加双引号；参数可省略，未写 {file} 时自动追加文件路径。'}</p>
     </section>
   );
 }

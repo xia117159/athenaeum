@@ -6,9 +6,13 @@ import { createWorkspaceState, workspaceReducer } from "./workspaceReducer";
 import { createOpenWithMenu } from "./fileOpeningState";
 import { createEntry, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { WorkspaceState } from "./types";
+import { setSystemIconResolverForTests, type SystemIconRequest } from "./systemIconGateway";
 
 export const completion = (async () => {
   const dom = installDomEnvironment();
+  const iconRequests: SystemIconRequest[] = [];
+  const programIcon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="green"/></svg>');
+  setSystemIconResolverForTests(async request => { iconRequests.push(request); return programIcon; });
   const ReactDOM = require("react-dom/client") as typeof import("react-dom/client");
   const state = createWorkspaceState(createMockWorkspaceBootstrap("tauri"));
   const tab = state.panels[state.activePanelId].tabs[0];
@@ -55,11 +59,17 @@ export const completion = (async () => {
   try {
     await tick(() => root.render(<Harness />));
     assert.ok(menu(),"menu should be rendered");
+    assert.equal(menu().querySelector(".open-with-menu__heading") === null, true, "menu has no filename heading");
+    assert.equal(menu().textContent?.includes("文档.txt"), false);
     assert.equal(document.activeElement,menu());
     assert.equal(menu().style.left,"432px"); assert.equal(menu().style.top,"432px");
     assert.equal(menu().querySelectorAll('[role="menuitem"]').length,3);
     assert.match(menu().textContent ?? "",/editor.exe/);
-    assert.match(menu().textContent ?? "",/--new/); assert.match(menu().textContent ?? "",/--reuse/);
+    assert.equal(menu().textContent?.includes("--new"), false);
+    assert.equal(menu().textContent?.includes("--reuse"), false);
+    assert.equal(menu().textContent?.includes("C:\\editor.exe"), false);
+    const items = menu().querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    assert.match(items[0].title, /--new/); assert.match(items[1].title, /--reuse/);
     assert.equal(menu().querySelector(".open-with-menu__choices")?.contains(menu().querySelector(".open-with-menu__footer")),false);
     await key("ArrowDown"); assert.equal(latest.openWithMenu?.selectedIndex,1);
     await key("ArrowDown"); assert.equal(latest.openWithMenu?.selectedIndex,2);
@@ -70,6 +80,10 @@ export const completion = (async () => {
     menuHeight = 260;
     await tick(() => change(previous => ({...previous,openWithMenu:{...previous.openWithMenu!,programs:{"C:\\editor.exe":{path:"C:\\editor.exe",displayName:"中文 编辑器",exists:true}}}})));
     assert.match(menu().textContent ?? "",/中文 编辑器/); assert.equal(menu().style.top,"332px","late labels must trigger a new measurement");
+    assert.equal(menu().querySelectorAll(`img[src="${programIcon}"]`).length, 2, "both choices display the executable's own resolved icon");
+    assert.equal(iconRequests.length, 1, "same executable shares its icon regardless of arguments");
+    assert.equal(iconRequests[0].path, "C:\\editor.exe");
+    assert.equal(iconRequests[0].includeOverlays, true);
     await key("Escape"); assert.equal(menu(),null); assert.equal(document.activeElement,listing);
     await reopen(); await key("Tab"); assert.equal(menu(),null); assert.equal(document.activeElement,listing);
     await reopen();
@@ -83,5 +97,6 @@ export const completion = (async () => {
     console.log("ok - menu labels, keyboard, focus, async positioning and permanent settings footer");
   } finally {
     await tick(() => root.unmount()); listing.remove(); dom.window.HTMLElement.prototype.getBoundingClientRect = originalRect;
+    setSystemIconResolverForTests();
   }
 })();

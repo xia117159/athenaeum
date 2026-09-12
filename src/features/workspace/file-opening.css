@@ -15,15 +15,6 @@
   font: 12px/1.4 "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
   outline: none;
 }
-.open-with-menu__heading {
-  flex: none;
-  padding: 6px 9px;
-  border-bottom: 1px solid #e5e5e5;
-  color: #606060;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .open-with-menu__choices { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 3px; }
 .open-with-menu__item {
   display: grid;
@@ -43,10 +34,7 @@
   cursor: default;
 }
 .open-with-menu__item.is-selected { background: #e5f1fb; border-color: #b5d7f1; }
-.open-with-menu__text { display: grid; min-width: 0; gap: 1px; }
-.open-with-menu__text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.open-with-menu__detail { color: #626262; font-size: 11px; }
-.open-with-menu__warning-icon { color: #805900; }
+.open-with-menu__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .open-with-menu__footer { flex: none; border-top: 1px solid #e5e5e5; padding: 3px; }
 .open-with-menu__empty { padding: 10px 7px; color: #626262; }
 .open-with-menu__message { flex: none; padding: 4px 9px; color: #805900; font-size: 11px; }

@@ -53,12 +53,13 @@ export const completion = (async () => {
     await tick(() => rows()[0].click());
     assert.equal(button("association-up").disabled, true);
     await tick(() => key(rows()[0], "F2"));
-    const expression = String.raw`*.md;.json;txt > D:\Program Files (x86)\Notepad++\notepad++.exe`;
+    const expression = String.raw`*.md;.json;txt > "D:\Program Files (x86)\Notepad++\notepad++.exe" --new-window {file}`;
     for (let i = 0; i <= expression.length; i++) {
       await change(input(), expression.slice(0,i));
       assert.equal(input().value, expression.slice(0,i), "typing must preserve separators and spaces");
     }
     assert.ok(latest[0].executablePath.includes("Program Files (x86)"), "current input already belongs to settings draft");
+    assert.equal(latest[0].argumentsTemplate, "--new-window {file}");
     await tick(() => key(input(), "Enter", true));
     assert.ok(input(), "IME Enter must not commit");
     await tick(() => key(input(), "Enter"));
@@ -67,9 +68,10 @@ export const completion = (async () => {
     assert.equal(document.activeElement, rows()[0]);
 
     await tick(() => rows()[0].dispatchEvent(new dom.window.MouseEvent("dblclick", {bubbles:true})));
-    await change(input(), "log > C:\\changed.exe");
+    await change(input(), "log > C:\\changed.exe --reuse-window");
     await tick(() => key(input(), "Escape"));
     assert.equal(latest[0].patterns, "*.md;.json;txt");
+    assert.equal(latest[0].argumentsTemplate, "--new-window {file}", "Escape also restores the original parameter template");
     await tick(() => button("association-down").click());
     assert.deepEqual(latest.map(rule => rule.id), ["two", "one"]);
     await tick(() => button("association-delete").click());
@@ -82,8 +84,10 @@ export const completion = (async () => {
     await tick(() => key(input(), "Enter"));
     assert.equal(latest[1].patterns, "");
     assert.equal(latest[1].executablePath, "");
-    const argumentsInput = container.querySelector<HTMLInputElement>('[aria-label="参数模板"]')!;
-    await change(argumentsInput, '--new-window "{file}"');
+    assert.equal(container.querySelector('[aria-label="参数模板"]'), null, "parameters are edited only in the expression row");
+    await tick(() => button("association-edit").click());
+    await change(input(), 'txt > "" --new-window "{file}"');
+    await tick(() => key(input(), "Enter"));
     assert.equal(latest[1].argumentsTemplate, '--new-window "{file}"');
 
     let resolvePicker!: (path: string | null) => void;
@@ -104,6 +108,11 @@ export const completion = (async () => {
     choose = async () => "D:\\Program Files\\chosen.exe";
     await tick(() => button("association-choose-program").click());
     assert.equal(latest[0].executablePath, "D:\\Program Files\\chosen.exe");
+    assert.equal(latest[0].argumentsTemplate, "{file}", "program selection preserves arguments");
+    assert.ok(rows()[0].textContent?.includes('"D:\\Program Files\\chosen.exe" {file}'), "chosen paths with spaces are quoted");
+    assert.deepEqual([...container.querySelectorAll("aside button")].map(element => element.getAttribute("data-action")), [
+      "association-add", "association-edit", "association-choose-program", "association-delete", "association-up", "association-down"
+    ]);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 280)); });
     assert.ok(container.textContent?.includes("程序不存在或无法访问"));
     await tick(() => setRules(initial.map(rule => ({...rule}))));

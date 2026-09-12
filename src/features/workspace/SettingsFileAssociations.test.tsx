@@ -44,13 +44,28 @@ export const completion = (async () => {
   try {
     await tick(() => root.render(<SettingsWindowView key="confirm" />));
     assert.ok(container.querySelector('[data-section-id="file-associations"]'), "General navigation entry");
-    await typeExpression(String.raw`*.md; .json;txt > D:\Program Files (x86)\中文编辑器.exe`);
+    await typeExpression(String.raw`*.md; .json;txt > "D:\Program Files (x86)\中文编辑器.exe" --new-window "{file}"`);
     assert.ok(container.querySelector('[data-section-id="file-associations"] .settings-window__nav-dirty'));
     assert.equal(state.settings.model.fileAssociations[0].patterns, "md");
     await tick(() => button("确定").click());
     assert.equal(saved.length, 1, "confirm must include the currently focused inline input");
     assert.equal(saved[0].fileAssociations?.[0].patterns, "*.md;.json;txt");
     assert.equal(saved[0].fileAssociations?.[0].executablePath, String.raw`D:\Program Files (x86)\中文编辑器.exe`);
+    assert.equal(saved[0].fileAssociations?.[0].argumentsTemplate, '--new-window "{file}"');
+
+    saved.length = 0;
+    await tick(() => root.render(<SettingsWindowView key="no-arguments" />));
+    await typeExpression(String.raw`txt > "D:\Program Files\中文编辑器.exe"`);
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].fileAssociations?.[0].argumentsTemplate, "", "saving a program without any parameters needs no placeholder");
+
+    saved.length = 0;
+    await tick(() => root.render(<SettingsWindowView key="no-placeholder" />));
+    await typeExpression(String.raw`txt > C:\Editor\editor.exe --new-window`);
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].fileAssociations?.[0].argumentsTemplate, "--new-window");
 
     saved.length = 0;
     await tick(() => root.render(<SettingsWindowView key="cancel" />));
@@ -64,6 +79,39 @@ export const completion = (async () => {
     await tick(() => button("确定").click());
     assert.equal(saved.length, 0);
     assert.ok(container.textContent?.includes("后缀格式无效"));
+
+    await tick(() => root.render(<SettingsWindowView key="invalid-path-quote" />));
+    const unfinishedPath = String.raw`txt > "C:\Program Files\editor.exe`;
+    await typeExpression(unfinishedPath);
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 0);
+    assert.ok(container.textContent?.includes("引号"));
+    await tick(() => {
+      const navigation = container.querySelector<HTMLButtonElement>('[data-section-id="appearance"]')!;
+      navigation.focus(); navigation.click();
+    });
+    await tick(() => container.querySelector<HTMLButtonElement>('[data-section-id="file-associations"]')!.click());
+    assert.ok(container.querySelector('[role="option"]')?.textContent?.includes(unfinishedPath), "invalid path draft survives section unmount");
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 0);
+
+    await tick(() => root.render(<SettingsWindowView key="invalid-argument-quote" />));
+    await typeExpression(String.raw`txt > C:\Editor\editor.exe --title "unfinished`);
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 0);
+    assert.ok(container.textContent?.includes("参数中的双引号未闭合"));
+
+    await tick(() => root.render(<SettingsWindowView key="repeated-path-quotes" />));
+    const repeatedQuotes = String.raw`txt > ""C:\Editor\editor.exe""`;
+    await typeExpression(repeatedQuotes);
+    await tick(() => {
+      const navigation = container.querySelector<HTMLButtonElement>('[data-section-id="appearance"]')!;
+      navigation.focus(); navigation.click();
+    });
+    await tick(() => container.querySelector<HTMLButtonElement>('[data-section-id="file-associations"]')!.click());
+    await tick(() => button("确定").click());
+    assert.equal(saved.length, 0, "malformed quotes stay invalid after blur, a section change and confirmation");
+    assert.ok(container.querySelector('[role="option"]')?.textContent?.includes(repeatedQuotes));
     console.log("ok - actual settings window commits current raw association draft, validates and cancels");
   } finally {
     await tick(() => root.unmount());

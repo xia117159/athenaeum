@@ -2,8 +2,9 @@ import type { FileAssociationRule } from "../../app/fileAssociations";
 import type { OpenWithMenuState } from "./fileOpeningState";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AppWindow, Settings2, TriangleAlert } from "lucide-react";
-import { associationProgramFallback } from "./fileAssociations";
+import { Settings2 } from "lucide-react";
+import { associationProgramFallback, formatAssociationCommand } from "./fileAssociations";
+import { AssociationProgramIcon } from "./AssociationProgramIcon";
 import "./file-opening.css";
 
 export interface OpenWithMenuProps {
@@ -81,7 +82,6 @@ export function OpenWithMenu({ menu, rules, onSelect, onConfirm, onClose }: Open
     if (index < menu.ruleIds.length) restoreListingFocus();
     onConfirm(menu.requestId, index);
   };
-  const fileName = menu.path.split(/[\\/]/).at(-1) || menu.path;
   const byId = new Map(rules.map(rule => [rule.id, rule]));
   return createPortal(
     <div ref={root} className="open-with-menu" role="menu" aria-label="打开方式" tabIndex={-1}
@@ -99,7 +99,6 @@ export function OpenWithMenu({ menu, rules, onSelect, onConfirm, onClose }: Open
           restoreListingFocus(); onClose(menu.requestId);
         }
       }}>
-      <div className="open-with-menu__heading" title={menu.path}>打开方式：{fileName}</div>
       <div className="open-with-menu__choices" ref={choices}>
         {menu.ruleIds.length === 0 ? <div className="open-with-menu__empty">没有匹配的自定义关联</div> : null}
         {menu.ruleIds.map((id, index) => {
@@ -107,15 +106,15 @@ export function OpenWithMenu({ menu, rules, onSelect, onConfirm, onClose }: Open
           if (!rule) return null;
           const program = menu.programs[rule.executablePath];
           const name = program?.displayName.trim() || associationProgramFallback(rule.executablePath);
-          const detail = rule.argumentsTemplate ? `${rule.argumentsTemplate} · ${rule.executablePath}` : rule.executablePath;
+          const detail = formatAssociationCommand(rule);
           const warning = program?.exists === false ? "程序不存在或无法访问" : "";
           return <button key={id} id={`${menu.requestId}-${index}`} type="button" role="menuitem" tabIndex={-1}
             className={`open-with-menu__item${menu.selectedIndex === index ? " is-selected" : ""}`}
             title={[name, detail, warning].filter(Boolean).join("\n")}
             aria-label={[name, detail, warning].filter(Boolean).join("，")}
             onMouseEnter={() => onSelect(menu.requestId, index)} onClick={() => confirm(index)}>
-            {warning ? <TriangleAlert size={16} className="open-with-menu__warning-icon" aria-hidden="true" /> : <AppWindow size={16} aria-hidden="true" />}
-            <span className="open-with-menu__text"><span>{name}</span><span className="open-with-menu__detail">{detail}</span></span>
+            <AssociationProgramIcon path={rule.executablePath} exists={program?.exists} />
+            <span className="open-with-menu__text">{name}</span>
           </button>;
         })}
       </div>

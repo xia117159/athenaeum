@@ -1,0 +1,16 @@
+.association-program-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.association-program-icon > .entry-icon,
+.association-program-icon .entry-icon__img,
+.association-program-icon .entry-icon__svg {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+.association-program-icon__invalid { color: #b42318; }

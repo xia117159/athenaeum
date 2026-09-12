@@ -23,27 +23,42 @@ export function matchingFileAssociations(rules: readonly FileAssociationRule[], 
   });
 }
 
-/** Preserve every typed character; only commit/save normalizes token boundaries. */
-export function parseAssociationExpression(expression: string): Pick<FileAssociationRule, "patterns" | "executablePath"> {
+type AssociationExpressionFields = Pick<FileAssociationRule, "patterns" | "executablePath" | "argumentsTemplate">;
+
+/** Parse the draft without throwing; malformed path quotes remain visible to validation. */
+export function parseAssociationExpression(expression: string): AssociationExpressionFields {
   const separator = expression.indexOf(">");
-  return separator < 0
-    ? { patterns: expression, executablePath: "" }
-    : { patterns: expression.slice(0, separator), executablePath: expression.slice(separator + 1) };
+  const patterns = separator < 0 ? expression : expression.slice(0, separator);
+  const command = separator < 0 ? "" : expression.slice(separator + 1).trimStart();
+  if (command.startsWith('"')) {
+    const end = command.indexOf('"', 1);
+    if (end < 0 || (end + 1 < command.length && !/[ \t]/.test(command[end + 1]))) {
+      return { patterns, executablePath: command, argumentsTemplate: "" };
+    }
+    return { patterns, executablePath: command.slice(1, end), argumentsTemplate: command.slice(end + 1).trimStart() };
+  }
+  const end = command.search(/[ \t]/);
+  return end < 0
+    ? { patterns, executablePath: command, argumentsTemplate: "" }
+    : { patterns, executablePath: command.slice(0, end), argumentsTemplate: command.slice(end).trimStart() };
+}
+
+export function formatAssociationCommand(rule: Pick<FileAssociationRule, "executablePath" | "argumentsTemplate">): string {
+  const { executablePath: path, argumentsTemplate } = rule;
+  const quotePath = (/[ \t]/.test(path) || (!path && !!argumentsTemplate)) && !path.includes('"');
+  const executable = quotePath ? `"${path}"` : path;
+  return argumentsTemplate ? `${executable} ${argumentsTemplate}` : executable;
 }
 
 export function formatAssociationExpression(rule: FileAssociationRule): string {
-  return `${rule.patterns} > ${rule.executablePath}`;
+  return `${rule.patterns} > ${formatAssociationCommand(rule)}`;
 }
 
 export function normalizeAssociationRule(rule: FileAssociationRule): FileAssociationRule {
-  let executablePath = rule.executablePath.trim();
-  if (executablePath.startsWith('"') && executablePath.endsWith('"') && executablePath.length > 1) {
-    executablePath = executablePath.slice(1, -1);
-  }
   return {
     ...rule,
     patterns: rule.patterns.split(";").map(token => token.trim()).filter(Boolean).join(";"),
-    executablePath
+    executablePath: rule.executablePath.trim()
   };
 }
 
@@ -51,6 +66,7 @@ export function validateAssociationRule(rule: FileAssociationRule): string | nul
   try {
     parseAssociationExtensions(rule.patterns);
     const path = normalizeAssociationRule(rule).executablePath;
+    if (path.includes('"')) return "程序路径的引号或参数分隔格式不正确";
     if (/[<>|?*"\u0000-\u001f]/u.test(path)) return "程序路径含有无效字符";
     parseWindowsArguments(rule.argumentsTemplate);
     return null;
