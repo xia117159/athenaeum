@@ -16,6 +16,8 @@ import { getFolderListingRows, getTabEntries } from "./folderExpansion";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
 import { useFileOpeningController } from "./useFileOpeningController";
+import { useBatchRenameController } from "./useBatchRenameController";
+import { captureRenameTarget } from "./renameTarget";
 import { currentListingEntry } from "./fileOpeningState";
 import { supportsDirectorySizes } from "./directorySizes";
 import { getTopLevelPaths } from "./workspacePathRelations";
@@ -975,7 +977,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId: target.tabId,
           activatePanel: false,
           historyIndex: target.historyIndex,
-          selectionReplacements
+          selectionReplacements: selectionReplacements.filter(replacement => (!replacement.panelId || replacement.panelId === target.panelId)
+            && (!replacement.tabId || replacement.tabId === target.tabId))
         })
       )
     );
@@ -1254,6 +1257,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     const alreadyRefreshed = refreshedOperationTasksRef.current.has(task.taskId);
     const pendingInlineRefreshPaths = consumePendingInlineRefreshPaths(task.taskId);
+    batchRename.prepareSelectionRestore(task);
     const pendingSelectionReplacements = consumePendingInlineSelectionReplacements(task.taskId);
     if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0 && pendingSelectionReplacements.length === 0) {
       return;
@@ -2324,7 +2328,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   });
 
-  const renameSelection = useEffectEvent((panelId: PanelId) => {
+  const batchRename = useBatchRenameController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification, projectTask: projectOperationTask });
+  const renameSelection = useEffectEvent((panelId: PanelId, source: "toolbar" | "shortcut" | "contextMenu" = "toolbar") => {
+    if (state.contextMenu?.renameTarget) { batchRename.rename(state.contextMenu.renameTarget); return; }
+    if (state.contextMenu?.mode === "system-fallback") return;
     if (isNavigationTab(getActiveTab(state.panels[panelId]))) {
       const selectedId = state.navigation.selectedItemIds[0];
       const selectedItem = state.navigation.items.find((item) => item.id === selectedId);
@@ -2339,34 +2347,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       }
       return;
     }
-    const activeTab = getActiveDirectoryTab(state, panelId);
-    if (!activeTab) {
-      pushNotification("warning", "当前标签页不支持重命名文件。");
-      return;
-    }
-    const selection = getSelectedEntries(state, panelId);
-    if (selection.length !== 1) {
-      pushNotification("warning", "请选择一个项目进行重命名。");
-      return;
-    }
-
-    const [entry] = selection;
-    dispatch({
-      type: "inlineEditStarted",
-      payload: {
-        panelId,
-        tabId: activeTab.id,
-        edit: {
-          mode: "rename",
-          value: entry.name,
-          kind: entry.kind,
-          parentPath: entry.parentPath,
-          entryId: entry.id,
-          originalName: entry.name,
-          originalPath: entry.path
-        }
-      }
-    });
+    batchRename.rename(captureRenameTarget(state, panelId, source));
   });
 
   const createFolder = useEffectEvent((panelId: PanelId) => {
@@ -2629,6 +2610,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   };
 
   const openNativeContextMenu = useEffectEvent(async (request: NativeContextMenuRequest) => {
+    if (state.batchRename) return;
+    const renameTarget = captureRenameTarget(state, request.panelId, "contextMenu", request.tabId, request.paths);
     dispatch({ type: "contextMenuSet", payload: undefined });
     const target = request.target ?? "selection";
     const fallbackScope = target === "background" ? "panel" : "selection";
@@ -2641,6 +2624,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           panelId: request.panelId,
           tabId: request.tabId,
           mode: "system-fallback",
+          ...(renameTarget ? { renameTarget } : {}),
           scope: fallbackScope
         }
       });
@@ -2694,6 +2678,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     let result: import("./types").NativeSelectionContextMenuResult = { opened: false };
     try {
       result = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY, {
+        allowRename: Boolean(renameTarget),
+        rename: getShortcutBinding(state.settings.model.shortcuts, request.paths.length > 1 ? "batch-rename" : "rename"),
         copyName: getShortcutBinding(state.settings.model.shortcuts, "copy-name"),
         copyFullPath: getShortcutBinding(state.settings.model.shortcuts, "copy-path")
       });
@@ -2706,9 +2692,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
 
     if (result.action) {
-      const entries = getSelectedEntries(state, request.panelId);
+      const entries = renameTarget?.entries ?? [];
       let clipboardText = "";
       switch (result.action.type) {
+        case "rename":
+          batchRename.rename(renameTarget);
+          return;
         case "copyName":
           clipboardText = entries.map((e) => e.name).join("\n");
           break;
@@ -2774,10 +2763,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       if (event.defaultPrevented || options.role === "settings") {
         return;
       }
+      if (state.batchRename) { event.preventDefault(); return; }
       if (state.openWithMenu) { event.preventDefault(); return; }
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+      if (shortcutMatches(shortcuts, "batch-rename", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
+        event.preventDefault();
+        if (!event.repeat && !state.contextMenu) batchRename.rename(captureRenameTarget(state, state.activePanelId, "shortcut"), true);
+        return;
+      }
 
       if (shortcutMatches(shortcuts, "open-with", eventBinding) && !editable && !event.isComposing) {
         if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
@@ -2861,7 +2857,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
       if (shortcutMatches(shortcuts, "rename", eventBinding) && !editable) {
         event.preventDefault();
-        void renameSelection(state.activePanelId);
+        if (!event.repeat && !event.isComposing) renameSelection(state.activePanelId, "shortcut");
         return;
       }
 
@@ -3044,6 +3040,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const actions = useMemo(
     () => ({
       ...fileOpening.actions,
+      ...batchRename.actions,
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3356,7 +3353,7 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       undoLatestOperation,
       undoOperation,
       workspaceGateway,
-      fileOpening.actions, fileOpening.openFile
+      fileOpening.actions, fileOpening.openFile, batchRename.actions
     ]
   );
 

@@ -7,6 +7,7 @@ import type {
 import type { ColorFilterRule, RevisionToken } from "./colorFilterTypes";
 import type { FileAssociationRule } from "../../app/fileAssociations";
 import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
+import type { BatchRenameDialogState, RenameTarget } from "./batchRenameState";
 
 export type DataSource = "mock" | "tauri";
 
@@ -143,6 +144,8 @@ export interface FolderExpansionBranch {
 }
 
 export interface SelectionPathReplacement {
+  panelId?: PanelId;
+  tabId?: string;
   fromPath: string;
   toPath: string;
 }
@@ -349,6 +352,7 @@ export interface NotificationItem {
 }
 
 export interface ContextMenuState {
+  renameTarget?: RenameTarget;
   x: number;
   y: number;
   panelId: PanelId;
@@ -513,6 +517,7 @@ export interface NativeBackgroundContextMenuResult {
 }
 
 export type NativeSelectionContextMenuAction =
+  | { type: "rename" }
   | { type: "copyName" }
   | { type: "copyFullPath" }
   | { type: "copyParentPath" }
@@ -520,6 +525,8 @@ export type NativeSelectionContextMenuAction =
   | { type: "copyExtension" };
 
 export interface NativeSelectionContextMenuShortcuts {
+  allowRename?: boolean;
+  rename?: string;
   copyName: string;
   copyFullPath: string;
 }
@@ -613,6 +620,9 @@ export interface TabState {
   history: string[];
   historyIndex: number;
   selectedEntryIds: string[];
+  /** Transient interaction revision and selection to apply after operation-driven refreshes. */
+  selectionRevision?: number;
+  selectionRestore?: { rootPath: string; paths: string[] };
   /**
    * Shift 区间选中的锚点条目 id。仅在按下 Shift 进行区间多选时确立，
    * 纯方向键/点击/进入新目录会复位为 null。仅内存态（不参与会话持久化）。
@@ -701,6 +711,7 @@ export interface WorkspaceState {
   notifications: NotificationItem[];
   contextMenu?: ContextMenuState;
   openWithMenu?: OpenWithMenuState;
+  batchRename?: BatchRenameDialogState;
   fileOpens?: PendingFileOpen[];
   operations: OperationWorkspaceState;
   keyboardNavToken?: symbol;

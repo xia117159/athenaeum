@@ -339,7 +339,7 @@ export function WorkspaceContextMenuPopover({
             <span className="context-menu__check" />
             <span>剪切</span>
           </button>
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.renameSelection(contextMenu.panelId))}>
+          <button type="button" className="context-menu__item" disabled={!isDirectoryTab || (contextMenu.mode === "system-fallback" && !contextMenu.renameTarget)} onClick={() => handleAction(() => actions.renameSelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>重命名</span>
           </button>

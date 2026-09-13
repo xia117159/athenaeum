@@ -5,6 +5,7 @@ import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { OpenWithMenu } from "./OpenWithMenu";
+import { BatchRenameDialog } from "./BatchRenameDialog";
 import { WorkspaceFeedback } from "./WorkspaceFeedback";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
@@ -437,6 +438,8 @@ export function WorkspaceView() {
 
       {state.openWithMenu ? <OpenWithMenu menu={state.openWithMenu} rules={state.settings.model.fileAssociations ?? []}
         onSelect={actions.selectOpenWith} onConfirm={actions.confirmOpenWith} onClose={actions.closeOpenWith} /> : null}
+      {state.batchRename ? <BatchRenameDialog dialog={state.batchRename} onChange={actions.changeBatchRename}
+        onConfirm={actions.confirmBatchRename} onClose={actions.closeBatchRename} onHelp={actions.openBatchRenameHelp} /> : null}
       <WorkspaceFeedback notifications={state.notifications} fileOpens={state.fileOpens ?? []}
         onCancelOpen={actions.cancelFileOpen} onDismiss={actions.dismissNotification} />
 

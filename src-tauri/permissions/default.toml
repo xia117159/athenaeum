@@ -1,6 +1,12 @@
 [default]
 description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
+  "allow-create-batch-rename-session",
+  "allow-preview-batch-rename",
+  "allow-invalidate-batch-rename-preview",
+  "allow-apply-batch-rename",
+  "allow-close-batch-rename-session",
+  "allow-get-batch-rename-functions",
   "allow-initialize-workspace",
   "allow-list-directory",
   "allow-subscribe-directory-sizes",
@@ -80,6 +86,36 @@ permissions = [
   "allow-get-git-status",
   "allow-list-drive-roots"
 ]
+
+[[permission]]
+identifier = "allow-create-batch-rename-session"
+description = "Create a local batch rename editing session."
+commands.allow = ["create_batch_rename_session"]
+
+[[permission]]
+identifier = "allow-preview-batch-rename"
+description = "Preview names using the server expression registry."
+commands.allow = ["preview_batch_rename"]
+
+[[permission]]
+identifier = "allow-invalidate-batch-rename-preview"
+description = "Invalidate an obsolete preview revision without starting another worker."
+commands.allow = ["invalidate_batch_rename_preview"]
+
+[[permission]]
+identifier = "allow-apply-batch-rename"
+description = "Apply a validated batch rename preview."
+commands.allow = ["apply_batch_rename"]
+
+[[permission]]
+identifier = "allow-close-batch-rename-session"
+description = "Release a batch rename editing session."
+commands.allow = ["close_batch_rename_session"]
+
+[[permission]]
+identifier = "allow-get-batch-rename-functions"
+description = "Read the rename function help catalog."
+commands.allow = ["get_batch_rename_functions"]
 
 [[permission]]
 identifier = "allow-initialize-workspace"

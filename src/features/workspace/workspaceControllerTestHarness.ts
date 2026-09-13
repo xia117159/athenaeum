@@ -111,6 +111,7 @@ export function createTestGateway(
   });
 
   return {
+    batchRename: createBatchRenameGateway({ runtimeHost: null }),
     async loadBootstrap() {
       onLoadBootstrap();
       return overrides.loadBootstrap ? overrides.loadBootstrap() : createMockWorkspaceBootstrap("tauri");
@@ -532,3 +533,4 @@ export function createEntry(parentPath: string, name: string, kind: EntryViewMod
     description: name
   };
 }
+import { createBatchRenameGateway } from "./batchRenameGateway";

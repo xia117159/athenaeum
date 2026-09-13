@@ -537,6 +537,7 @@ pub struct NativeBackgroundContextMenuResult {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NativeSelectionContextMenuAction {
+    Rename,
     CopyName,
     CopyFullPath,
     CopyParentPath,
@@ -547,6 +548,10 @@ pub enum NativeSelectionContextMenuAction {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeSelectionContextMenuShortcuts {
+    #[serde(default)]
+    pub allow_rename: bool,
+    #[serde(default)]
+    pub rename: String,
     #[serde(default)]
     pub copy_name: String,
     #[serde(default)]

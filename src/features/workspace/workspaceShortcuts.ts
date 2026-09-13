@@ -24,6 +24,7 @@ const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
   ["create-folder", "Ctrl+Shift+N"],
   ["delete", "Delete"],
   ["rename", "F2"],
+  ["batch-rename", "Ctrl+M"],
   ["refresh", "F5"],
   ["navigate-up", "Alt+Up"],
   ["navigate-forward", "Alt+Right"],

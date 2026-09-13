@@ -530,7 +530,7 @@ impl OperationStore {
         self.history
             .iter()
             .filter(|record| {
-                matches!(
+                self.batch_record_protected(&record.record_id) || matches!(
                     record.status,
                     OperationHistoryStatus::Undoing | OperationHistoryStatus::PendingConfirmation
                 ) || record.undo_task_id.as_ref().is_some_and(|id| {

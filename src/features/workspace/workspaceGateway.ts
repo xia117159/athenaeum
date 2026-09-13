@@ -106,6 +106,7 @@ import { createDirectorySizesGateway } from "./directorySizeGateway";
 import type { DirectorySizesGateway } from "./directorySizeTypes";
 import type { FileOpenProgress, FileOpenRequest, FileOpenResult, AssociationProgramInfo } from "../../app/fileAssociations";
 import { openWorkspaceFile, cancelWorkspaceFileOpen, inspectAssociationPrograms, chooseAssociationProgram } from "./fileOpeningGateway";
+import { createBatchRenameGateway, type BatchRenameGateway } from "./batchRenameGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationHistoryEventEnvelope,
@@ -145,6 +146,7 @@ import type {
 } from "./types";
 
 export interface WorkspaceGateway {
+  batchRename: BatchRenameGateway;
   directorySizes?: DirectorySizesGateway;
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
@@ -266,6 +268,7 @@ export function createWorkspaceGateway(): WorkspaceGateway {
   let currentWatchRootsKey = "";
 
   return {
+    batchRename: createBatchRenameGateway(),
     directorySizes: createDirectorySizesGateway(),
     async loadBootstrap() {
       if (!hasTauriRuntime()) {

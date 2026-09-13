@@ -12,7 +12,7 @@ use crate::{
     services::{
         fs_service,
         operation_service::{
-            execute_conflict_resolution, execute_operation_task, execute_undo_task,
+            execute_conflict_resolution, execute_operation_task, execute_workspace_undo,
         },
         AppState,
     },
@@ -26,7 +26,7 @@ fn app_data_dir(state: &AppState) -> Option<std::path::PathBuf> {
         .clone()
 }
 
-fn emit_operation_result(
+pub(super) fn emit_operation_result(
     app: &tauri::AppHandle,
     result: &crate::services::operation_service::OperationServiceResult,
 ) {
@@ -313,16 +313,8 @@ pub fn undo_latest_operation(
     emit_operation_result(&app, &result);
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
-        let undo_result = execute_undo_task(execution);
-        let finished = {
-            let mut operations = app_state
-                .operations
-                .lock()
-                .expect("operation store lock poisoned");
-            operations.finish_undo_operation(undo_result)
-        };
-        if let Ok(finished) = finished {
-            emit_operation_result(&app_for_thread, &finished);
+        if let Err(error) = execute_workspace_undo(&app_state, execution, &|result| emit_operation_result(&app_for_thread, result)) {
+            eprintln!("undo worker failed: {error:#}");
         }
     });
     Ok(result.snapshot)
@@ -348,16 +340,8 @@ pub fn undo_operation(
     emit_operation_result(&app, &result);
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
-        let undo_result = execute_undo_task(execution);
-        let finished = {
-            let mut operations = app_state
-                .operations
-                .lock()
-                .expect("operation store lock poisoned");
-            operations.finish_undo_operation(undo_result)
-        };
-        if let Ok(finished) = finished {
-            emit_operation_result(&app_for_thread, &finished);
+        if let Err(error) = execute_workspace_undo(&app_state, execution, &|result| emit_operation_result(&app_for_thread, result)) {
+            eprintln!("undo worker failed: {error:#}");
         }
     });
     Ok(result.snapshot)

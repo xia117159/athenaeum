@@ -28,12 +28,23 @@ pub(super) enum UndoAction {
         trash_path: PathBuf,
         original_path: PathBuf,
     },
+    BatchRename {
+        payload: Box<crate::services::batch_rename::transaction::BatchPayload>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct UndoPayload {
     pub(super) actions: Vec<UndoAction>,
+}
+impl UndoPayload {
+    pub(super) fn batch(&self) -> Option<&crate::services::batch_rename::transaction::BatchPayload> {
+        match self.actions.as_slice() {
+            [UndoAction::BatchRename { payload }] => Some(payload),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -190,6 +201,12 @@ pub(super) fn normalize_reloaded_journal(
 ) -> (Vec<OperationHistoryRecord>, HashMap<String, UndoPayload>) {
     let mut undoable_record_ids = Vec::new();
     for record in &mut records {
+        // Batch recovery owns normalization: keep interrupted, blocked and committed
+        // payloads until their recovery logs have been reconciled with this journal.
+        if undo_payloads.get(&record.record_id).is_some_and(|payload| payload.batch().is_some()) {
+            undoable_record_ids.push(record.record_id.clone());
+            continue;
+        }
         if matches!(
             record.status,
             OperationHistoryStatus::Undoing | OperationHistoryStatus::PendingConfirmation
@@ -227,6 +244,7 @@ pub(super) fn normalize_reloaded_journal(
 fn validate_undo_payload_entities(payload: &UndoPayload) -> Option<String> {
     for action in &payload.actions {
         match action {
+            UndoAction::BatchRename { .. } => {}
             UndoAction::DeleteCreated { path } => {
                 if !path.exists() {
                     return Some(format!("Undo target no longer exists: {}", path.display()));

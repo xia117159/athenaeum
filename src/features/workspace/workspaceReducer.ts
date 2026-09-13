@@ -66,10 +66,13 @@ import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion
 import { pathsEqual } from "./workspacePathRelations";
 import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
 import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
+import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
+import { prepareSelectionInteraction } from "./folderSelectionRestore";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | BatchRenameAction
   | FileOpeningAction
   | DirectorySizeAction
   | FolderExpansionAction
@@ -1238,7 +1241,8 @@ function updateColumnsForSettingsAndTab(
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
-  return reconcileOpenWithMenu(reduceFileOpening(state, action) ?? reduceWorkspace(state, action));
+  state = prepareSelectionInteraction(state, action);
+  return reconcileOpenWithMenu(reduceBatchRename(state, action) ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action));
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {

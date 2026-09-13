@@ -1,5 +1,6 @@
 import { getExpandedFolderPaths, getFolderBranch, getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./folderExpansion";
 import { getPathComparisonKey, isSameOrDescendantPath, pathsEqual } from "./workspacePathRelations";
+import { restorePendingFolderSelection } from "./folderSelectionRestore";
 import type { DirectorySnapshot, FileVisibilityState, FolderExpansionBranch, PanelId, PanelState, SelectionPathReplacement, TabState } from "./types";
 
 type BranchTarget = { panelId: PanelId; tabId: string; path: string };
@@ -33,13 +34,13 @@ export function reconcileFolderSelection(before: TabState, after: TabState, repl
     if (nextId && !selectedEntryIds.includes(nextId)) selectedEntryIds.push(nextId);
   }
   const edit = after.inlineEdit;
-  return {
+  return restorePendingFolderSelection({
     ...after,
     selectedEntryIds,
     selectionAnchorId: before.selectionAnchorId && nextIds.has(before.selectionAnchorId) ? before.selectionAnchorId : null,
     selectionCursorId: before.selectionCursorId && nextIds.has(before.selectionCursorId) ? before.selectionCursorId : null,
     inlineEdit: edit?.entryId && !nextIds.has(edit.entryId) ? undefined : edit
-  };
+  });
 }
 
 export function clearFolderExpansion(tab: TabState): TabState {

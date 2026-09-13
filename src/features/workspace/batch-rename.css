@@ -1,0 +1,69 @@
+.batch-rename-overlay {
+  position: fixed; inset: 0; z-index: 11000; display: grid; place-items: center;
+  padding: 24px; background: rgb(0 0 0 / 22%);
+}
+.batch-rename {
+  box-sizing: border-box; display: flex; flex-direction: column; width: min(860px, 100%);
+  height: min(590px, 100%); min-height: 0; overflow: hidden; border: 1px solid #9c9c9c;
+  border-radius: 5px; background: #fff; color: #202020; outline: none;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 24%);
+  font: 13px/1.4 "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+}
+.batch-rename button, .batch-rename input { font: inherit; box-sizing: border-box; }
+.batch-rename__header { display: flex; align-items: center; gap: 12px; height: 40px; padding-left: 16px; flex: none; background: #f5f5f5; border-bottom: 1px solid #dcdcdc; }
+.batch-rename__header strong { font-weight: 600; font-size: 14px; }
+.batch-rename__header > span { color: #666; font-size: 12px; }
+.batch-rename__close { display: grid; place-items: center; margin-left: auto; align-self: stretch; width: 42px; background: transparent; border: 0; color: #333; }
+.batch-rename__close:hover:enabled { color: white; background: #c42b1c; }
+.batch-rename__expression-area { padding: 12px 16px 10px; flex: none; }
+.batch-rename__expression-label { display: block; margin-bottom: 5px; }
+.batch-rename__expression-line { display: flex; gap: 10px; }
+.batch-rename__button { display: inline-flex; gap: 5px; align-items: center; justify-content: center; min-width: 80px; height: 28px; padding: 0 12px; border: 1px solid #adadad; border-radius: 3px; background: #fbfbfb; color: #222; white-space: nowrap; }
+.batch-rename__button:hover:enabled { background: #eef5fc; border-color: #5595c6; }
+.batch-rename__button--primary { color: #fff; background: #0f6cbd; border-color: #0f6cbd; }
+.batch-rename__button--primary:hover:enabled { color: #fff; background: #0b5fa8; }
+.batch-rename button:disabled { color: #888; background: #f2f2f2; border-color: #d6d6d6; }
+.batch-rename :focus-visible { outline: 2px solid #0f6cbd; outline-offset: -2px; }
+.batch-rename__hint { padding-top: 7px; font-size: 12px; color: #626262; }
+.batch-rename code { font-family: Consolas, monospace; color: #075b97; }
+.rename-expression { position: relative; display: flex; min-width: 0; flex: 1; height: 28px; border: 1px solid #999; border-radius: 2px; background: white; }
+.rename-expression:focus-within { border-color: #0f6cbd; box-shadow: 0 0 0 1px #0f6cbd; }
+.rename-expression input { width: 100%; min-width: 0; flex: 1; border: 0; outline: none !important; padding: 3px 7px; background: transparent; color: #1f1f1f; font-family: Consolas, "Microsoft YaHei UI", monospace; }
+.rename-expression input:disabled { background: #f5f5f5; color: #666; }
+.rename-expression__toggle { width: 27px; padding: 0; display: grid; place-items: center; border: 0; border-left: 1px solid #ddd; background: #f6f6f6; color: #444; }
+.rename-expression__history { position: absolute; top: calc(100% + 3px); left: -1px; right: -1px; z-index: 3; max-height: 190px; overflow: auto; padding: 3px; border: 1px solid #aaa; background: #fff; box-shadow: 0 4px 10px rgb(0 0 0 / 15%); }
+.rename-expression__history button { display: block; width: 100%; border: 1px solid transparent; background: white; height: 27px; padding: 3px 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, "Microsoft YaHei UI", monospace; }
+.rename-expression__history button[aria-selected="true"], .rename-expression__history button:hover { background: #e5f1fb; border-color: #b5d7f1; }
+.batch-rename__grid { flex: 1; min-height: 70px; min-width: 0; display: flex; flex-direction: column; margin: 0 16px; border: 1px solid #bcbcbc; outline: none; }
+.batch-rename__columns, .batch-rename__row { display: grid; grid-template-columns: 32px minmax(0, 1fr) 22px minmax(0, 1fr) 76px; align-items: center; }
+.batch-rename__columns { height: 28px; flex: none; border-bottom: 1px solid #ccc; background: #f5f5f5; font-size: 12px; padding-right: 17px; }
+.batch-rename__columns > span { padding-left: 5px; }
+.batch-rename__viewport { overflow: auto; overflow-x: hidden; min-height: 0; flex: 1; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.batch-rename__row { box-sizing: border-box; height: 30px; border: 1px solid transparent; cursor: default; }
+.batch-rename__row:hover { background: #f3f8fc; }
+.batch-rename__row.is-selected { background: #e8f2fc; border-color: #bdd9ef; }
+.batch-rename__number { text-align: right; padding-right: 6px; font-size: 11px; color: #737373; }
+.batch-rename__old-name { display: flex; align-items: center; gap: 5px; padding-left: 3px; }
+.batch-rename__old-name > span:last-child, .batch-rename__new-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.batch-rename__old-name, .batch-rename__new-name { min-width: 0; }
+.batch-rename .entry-icon { display: inline-block; flex: none; width: 16px; height: 16px; position: relative; }
+.batch-rename .entry-icon__img, .batch-rename .entry-icon__svg { width: 100%; height: 100%; object-fit: contain; }
+.batch-rename__arrow { justify-self: center; color: #888; }
+.batch-rename__row del { color: #86634d; text-decoration-color: #a78a79; text-decoration-thickness: 1px; }
+.batch-rename__row mark { color: #074c82; background: #d4e9fc; border-bottom: 1px solid #8dbde2; }
+.batch-rename__row-status { display: flex; align-items: center; gap: 3px; justify-content: center; color: #777; font-size: 11px; }
+.batch-rename__row.is-error .batch-rename__row-status { color: #a4262c; }
+.batch-rename__message { min-height: 36px; max-height: 72px; flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 16px; overflow: auto; overflow-wrap: anywhere; color: #626262; font-size: 12px; box-sizing: border-box; }
+.batch-rename__message svg { flex: none; }
+.batch-rename__message.is-error { color: #a4262c; }
+.batch-rename__progress { height: 4px; width: calc(100% - 32px); margin: 0 16px 7px; accent-color: #0f6cbd; }
+.batch-rename__footer { display: flex; align-items: center; gap: 8px; flex: none; min-height: 52px; padding: 8px 16px; box-sizing: border-box; border-top: 1px solid #dedede; background: #f7f7f7; }
+.batch-rename__footer > span { flex: 1; color: #666; font-size: 12px; }
+@media (max-width: 680px) {
+  .batch-rename-overlay { padding: 12px; }
+  .batch-rename__expression-area { padding: 10px; }
+  .batch-rename__grid { margin: 0 10px; }
+  .batch-rename__hint { font-size: 11px; }
+  .batch-rename__footer { padding: 8px 10px; }
+  .batch-rename__columns, .batch-rename__row { grid-template-columns: 27px minmax(0, 1fr) 17px minmax(0, 1fr) 58px; }
+}

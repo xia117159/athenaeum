@@ -344,6 +344,13 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     scope: "listing",
     binding: "Ctrl+Alt+O",
     description: "选择当前文件匹配的自定义关联，或打开关联设置。"
+  },
+  {
+    id: "batch-rename",
+    action: "批量重命名",
+    scope: "listing",
+    binding: "Ctrl+M",
+    description: "预览并批量重命名选中的本地项目，也适用于单个项目。"
   }
 ];
 

@@ -5,6 +5,11 @@ mod journal;
 #[cfg(test)]
 mod journal_integration_tests;
 mod local_fs_ops;
+mod undo_action;
+mod undo_dispatch;
+pub(crate) use undo_dispatch::execute_workspace_undo;
+pub mod batch;
+use self::undo_action::apply_undo_action;
 use std::{
     collections::HashMap,
     fs,
@@ -69,6 +74,7 @@ pub(crate) struct OperationUndoExecution {
     task_id: String,
     record_id: String,
     payload: UndoPayload,
+    already_started: bool,
 }
 
 pub(crate) struct OperationUndoExecutionResult {
@@ -114,6 +120,12 @@ pub(crate) struct ExecutionResult {
 
 impl OperationStore {
     pub fn load_from(file_path: PathBuf) -> Result<Self> {
+        let mut store = Self::load_journal(file_path)?;
+        store.recover_batch_logs()?;
+        Ok(store)
+    }
+
+    fn load_journal(file_path: PathBuf) -> Result<Self> {
         let read_path = recover_journal_path(&file_path)?;
         if !read_path.exists() {
             return Ok(Self {
@@ -513,7 +525,7 @@ impl OperationStore {
         }
         self.pending_conflicts
             .retain(|_, pending| pending.conflict.task_id != task_id);
-        if matches!(task.status, OperationTaskStatus::Running) {
+        if matches!(task.status, OperationTaskStatus::Running | OperationTaskStatus::Cancelling) {
             task.status = OperationTaskStatus::Cancelling;
             task.cancelable = false;
             task.message = Some("Cancelling operation.".into());
@@ -587,6 +599,9 @@ impl OperationStore {
         record_id: String,
         request_id: String,
     ) -> Result<(OperationServiceResult, OperationUndoExecution)> {
+        if self.undo_payloads.get(&record_id).is_some_and(|payload| payload.batch().is_some()) {
+            return self.prepare_batch_undo(record_id, request_id);
+        }
         let record_index = self
             .history
             .iter()
@@ -650,6 +665,7 @@ impl OperationStore {
                 task_id,
                 record_id,
                 payload,
+                already_started: false,
             },
         ))
     }
@@ -1527,80 +1543,6 @@ fn create_conflict_request(
     }
 }
 
-fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryResult> {
-    match action {
-        UndoAction::DeleteCreated { path } => {
-            remove_path(path)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: path.to_string_lossy().into_owned(),
-                }),
-                destination: None,
-                kind: OperationEntryResultKind::Deleted,
-                error: None,
-            })
-        }
-        UndoAction::RecreateDirectory { path } => {
-            fs::create_dir_all(path)
-                .with_context(|| format!("failed to recreate directory {}", path.display()))?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: None,
-                destination: Some(OperationPathRef::Local {
-                    path: path.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Created,
-                error: None,
-            })
-        }
-        UndoAction::MoveBack { from, to } => {
-            if to.exists() {
-                bail!(
-                    "cannot restore {}, destination already exists",
-                    to.display()
-                );
-            }
-            let cancellation = AtomicBool::new(false);
-            move_entry_exact(from, to, &cancellation)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: from.to_string_lossy().into_owned(),
-                }),
-                destination: Some(OperationPathRef::Local {
-                    path: to.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Moved,
-                error: None,
-            })
-        }
-        UndoAction::RestoreTrash {
-            trash_path,
-            original_path,
-        } => {
-            if original_path.exists() {
-                bail!(
-                    "cannot restore {}, destination already exists",
-                    original_path.display()
-                );
-            }
-            let cancellation = AtomicBool::new(false);
-            move_entry_exact(trash_path, original_path, &cancellation)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: trash_path.to_string_lossy().into_owned(),
-                }),
-                destination: Some(OperationPathRef::Local {
-                    path: original_path.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Moved,
-                error: None,
-            })
-        }
-    }
-}
 
 fn cancelled_execution(
     intent: &OperationIntent,

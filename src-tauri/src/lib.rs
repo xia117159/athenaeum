@@ -5,6 +5,8 @@ mod services;
 use std::sync::Arc;
 
 use commands::{
+    batch_rename::{create_batch_rename_session, preview_batch_rename, apply_batch_rename,
+        close_batch_rename_session, get_batch_rename_functions, invalidate_batch_rename_preview},
     color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
     directory_sizes::{subscribe_directory_sizes, release_directory_sizes, lookup_directory_sizes},
     file_opening::{open_file, cancel_file_open, inspect_association_programs, choose_association_program},
@@ -50,6 +52,7 @@ pub fn run() {
                 let state = window.state::<Arc<AppState>>();
                 state.directory_sizes.close_owner(window.label());
                 state.file_open_jobs.close_owner(window.label());
+                state.batch_rename.close_owner(window.label());
                 if window.label() == "main" {
                     state.directory_sizes.shutdown();
                     state.file_open_jobs.begin_shutdown();
@@ -67,6 +70,7 @@ pub fn run() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview.state::<Arc<AppState>>().batch_rename.close_owner(webview.label());
                 webview.state::<Arc<AppState>>().directory_sizes.open_owner(webview.label());
                 webview.state::<Arc<AppState>>().file_open_jobs.open_owner(webview.label());
             }
@@ -91,6 +95,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            create_batch_rename_session,
+            preview_batch_rename,
+            invalidate_batch_rename_preview,
+            apply_batch_rename,
+            close_batch_rename_session,
+            get_batch_rename_functions,
             initialize_workspace,
             list_directory,
             subscribe_directory_sizes,

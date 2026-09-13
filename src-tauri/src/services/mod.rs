@@ -1,4 +1,5 @@
 pub mod atomic_file;
+pub mod batch_rename;
 pub mod color_filter;
 pub mod drive_service;
 pub mod directory_size;
@@ -50,6 +51,7 @@ pub struct AppState {
     pub directory_sizes: directory_size::DirectorySizeService,
     pub file_open_jobs: file_opening::registry::FileOpenJobs,
     pub association_programs: file_associations::programs::ProgramInfoCache,
+    pub batch_rename: batch_rename::sessions::BatchRenameSessions,
 }
 
 impl AppState {
@@ -65,6 +67,7 @@ impl AppState {
             directory_sizes: directory_size::DirectorySizeService::default(),
             file_open_jobs: file_opening::registry::FileOpenJobs::default(),
             association_programs: file_associations::programs::ProgramInfoCache::default(),
+            batch_rename: batch_rename::sessions::BatchRenameSessions::default(),
         }
     }
 
