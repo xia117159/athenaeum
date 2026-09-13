@@ -33,7 +33,7 @@ export const completion = (async () => {
     return <>
       {state.contextMenu ? <WorkspaceContextMenuPopover contextMenu={state.contextMenu} tab={tab} actions={actions}
         viewMode="details" layoutMode="single" panelIds={["panel-1"]}
-        templateMenuOpen={Boolean(state.templateMenu && !Reflect.get(state.templateMenu, "rootHidden"))}
+        templateMenuOpen={Boolean(state.templateMenu && !state.templateMenu.rootHidden)}
         onClose={actions.closeContextMenu} /> : null}
       {state.templateMenu ? <TemplateCreationMenu key={state.templateMenu.id} menu={state.templateMenu} actions={actions} /> : null}
     </>;
@@ -61,6 +61,7 @@ export const completion = (async () => {
     await tick(() => root.render(<Harness />)); await openContext();
     await move(button("新建项目"));
     const sessionId = controller.state.templateMenu!.id;
+    const initialReads = rootReads;
     assert.equal(depth(), 1);
     await tick(() => checkbox(file.relativePath).click());
     assert.equal(button("创建所选（1）").disabled, false);
@@ -76,10 +77,18 @@ export const completion = (async () => {
     await move(document.body); await pause(40); await move(template(child.relativePath)); await pause();
     assert.equal(depth(), 2, "a short crossing outside the portal must not close the menu chain");
     await tick(() => checkbox(child.relativePath).click());
+    await tick(() => template(child.relativePath).focus());
     await move(template(ppt.relativePath).querySelector("svg")!); await pause();
     assert.equal(depth(), 2); assert.ok(template("PPT/slides.pptx"));
     assert.ok(!document.querySelector('[data-template-path="Word/report.docx"]'));
+    assert.ok(document.activeElement === template(ppt.relativePath), "replacing a focused child menu returns focus to its new parent item");
+    await key(template(ppt.relativePath), "ArrowRight");
+    assert.ok(document.activeElement?.closest('.template-menu[data-template-depth="1"]'), "the new branch remains keyboard reachable");
     assert.equal(controller.state.templateMenu?.selected.length, 2, "changing branches preserves cross-level selection");
+    await tick(() => template(file.relativePath).focus());
+    await move(template(word.relativePath)); await pause();
+    await move(template(ppt.relativePath)); await pause();
+    assert.ok(document.activeElement === template(file.relativePath), "hover does not steal focus from an item that remains visible");
 
     await tick(() => template("PPT/slides.pptx").focus());
     await move(button("新建文件")); await pause();
@@ -90,9 +99,15 @@ export const completion = (async () => {
     assert.equal(controller.state.templateMenu?.id, sessionId);
     assert.equal(controller.state.templateMenu?.selected.length, 2);
     await key(button("新建项目"), "ArrowRight");
-    assert.equal(depth(), 1); assert.equal(rootReads, 1, "re-entering a submenu reuses the same selection session");
+    assert.equal(depth(), 1); assert.equal(rootReads, initialReads, "re-entering a submenu does not reload its catalog");
+    assert.equal(controller.state.templateMenu?.id, sessionId, "re-entering a submenu reuses the same selection session");
     assert.equal(button("新建项目").getAttribute("aria-expanded"), "true");
     assert.equal(checkbox(file.relativePath).checked, true);
+    await tick(() => button("新建项目").focus());
+    await move(document.body);
+    await key(button("新建项目"), "ArrowRight"); await pause();
+    assert.equal(depth(), 1, "keyboard navigation on the parent cancels a pending hover dismissal");
+    assert.ok(document.activeElement?.closest('.template-menu[data-template-depth="0"]'), "ArrowRight also enters an already open submenu");
     await move(template(word.relativePath)); await pause();
     assert.equal(checkbox(child.relativePath).checked, true);
     await tick(() => checkbox(child.relativePath).click());

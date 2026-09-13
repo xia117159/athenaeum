@@ -433,7 +433,7 @@ export function WorkspaceView() {
           actions={actions}
           layoutMode={state.layoutMode}
           panelIds={getVisiblePanelIds(state.layoutMode)}
-          templateMenuOpen={Boolean(state.templateMenu)}
+          templateMenuOpen={Boolean(state.templateMenu && !state.templateMenu.rootHidden)}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}

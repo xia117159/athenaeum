@@ -12,6 +12,8 @@ export interface TemplateAnchor { x: number; y: number; left?: number }
 export interface TemplateLevel { relativePath: string; anchor: TemplateAnchor; parent?: CreationTemplateEntry }
 export interface TemplateMenuState {
   id: string; target: TemplateTarget; settingsRoot: string; rootPath: string;
+  /** A collapsed submenu retains this context-menu session's selection until the whole menu closes. */
+  rootHidden?: boolean;
   levels: TemplateLevel[]; selected: CreationTemplateEntry[];
   directories: Record<string, { status: "loading" | "ready" | "error"; entries: CreationTemplateEntry[]; error?: string }>;
 }
@@ -110,7 +112,8 @@ export function reduceTemplates(state: WorkspaceState, input: WorkspaceAction): 
     case "templateSelectionToggled": return update({ selected: toggleTemplateSelection(menu.selected, action.payload.entry) });
     case "templateMenuExpanded": return update({ levels: [...menu.levels.slice(0, action.payload.depth + 1),
       { relativePath: action.payload.entry.relativePath, parent: action.payload.entry, anchor: action.payload.anchor }] });
-    case "templateMenuCollapsed": return update({ levels: menu.levels.slice(0, Math.max(1, action.payload.depth)) });
+    case "templateMenuCollapsed": return update({ rootHidden: action.payload.depth === 0,
+      levels: menu.levels.slice(0, Math.max(1, action.payload.depth)) });
     case "templateDirectoryRequested": return update({ directories: { ...menu.directories,
       [templateKey(action.payload.relativePath)]: { status: "loading", entries: [] } } });
     case "templateDirectoryFailed": return update({ directories: { ...menu.directories,

@@ -50,6 +50,11 @@ export function useTemplateCreationController({ state, dispatch, gateway, enable
     if (state.panels[panelId].tabs.find(tab => tab.id === tabId)?.pendingNavigationRequestId !== undefined) {
       notify("info", "正在切换目录，请稍后再打开新建项目菜单。"); return;
     }
+    const menu = state.templateMenu;
+    if (menu?.rootHidden && menu.target.panelId === panelId && menu.target.tabId === tabId && templateTargetMatches(state, menu.target)) {
+      dispatch({ type: "templateMenuOpened", payload: { ...menu, rootHidden: false, levels: [{ relativePath: "", anchor }] } });
+      return;
+    }
     openCaptured(captureTemplateTarget(state, panelId, tabId), anchor);
   });
   const close = useEffectEvent((id: string) => {

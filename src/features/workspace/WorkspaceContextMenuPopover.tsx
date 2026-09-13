@@ -97,8 +97,15 @@ export function WorkspaceContextMenuPopover({
   const isNavigationTab = tab?.kind === "navigation";
   const isDirectoryTab = tab?.kind === "directory";
   const canCreateTemplate = isDirectoryTab && tab.snapshot.location.kind === "local";
-  const openTemplates = (button: HTMLElement) => {
-    if (!canCreateTemplate || templateMenuOpen) return;
+  const openTemplates = (button: HTMLElement, moveFocus = false) => {
+    if (!canCreateTemplate) return;
+    if (templateMenuOpen) {
+      if (moveFocus) {
+        const menu = document.querySelector<HTMLElement>('.template-menu-host [data-template-depth="0"]');
+        (menu?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? menu)?.focus({ preventScroll: true });
+      }
+      return;
+    }
     const rect = button.getBoundingClientRect();
     actions.openTemplateMenu(contextMenu.panelId, contextMenu.tabId, { x: rect.right, y: rect.top, left: rect.left });
   };
@@ -289,9 +296,10 @@ export function WorkspaceContextMenuPopover({
         <span>新建文件夹</span>
       </button>
       <button type="button" className="context-menu__item context-menu__item--submenu-trigger" disabled={!canCreateTemplate}
+        data-template-menu-trigger data-template-panel={contextMenu.panelId} data-template-tab={contextMenu.tabId}
         aria-haspopup="menu" aria-expanded={templateMenuOpen} title={canCreateTemplate ? undefined : "新建项目仅支持本地文件夹"}
-        onMouseEnter={event => openTemplates(event.currentTarget)} onClick={event => openTemplates(event.currentTarget)}
-        onKeyDown={event => { if (event.key === "ArrowRight") { event.preventDefault(); openTemplates(event.currentTarget); } }}>
+        onMouseEnter={event => openTemplates(event.currentTarget)} onClick={event => openTemplates(event.currentTarget, true)}
+        onKeyDown={event => { if (event.key === "ArrowRight") { event.preventDefault(); openTemplates(event.currentTarget, true); } }}>
         <span className="context-menu__check" /><span>新建项目</span>
       </button>
       {renderViewSubmenu()}

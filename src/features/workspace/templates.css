@@ -11,7 +11,9 @@
   position: fixed;
   display: flex;
   flex-direction: column;
-  width: min(300px, calc(100vw - 16px));
+  width: max-content;
+  min-width: min(180px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
   max-height: min(540px, calc(100vh - 16px));
   box-sizing: border-box;
   overflow: hidden;
@@ -23,7 +25,7 @@
   font: 12px/1.4 "Microsoft YaHei UI", "Segoe UI", sans-serif;
   outline: none;
 }
-.template-menu__body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 3px; }
+.template-menu__body { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 3px; }
 .template-menu__footer { flex: none; padding: 3px; border-top: 1px solid var(--border, #e5e5e5); }
 .template-menu__row { display: flex; align-items: center; min-width: 0; border-radius: 2px; }
 .template-menu__row > input { flex: none; width: 14px; height: 14px; margin: 0 5px 0 7px; accent-color: var(--accent, #0078d4); cursor: default; }
