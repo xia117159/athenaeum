@@ -442,6 +442,7 @@ export function normalizeContextMenuDefault(value?: string | null): SettingsMode
 
 export function normalizeSettingsSection(value?: string | null): SettingsSection {
   switch (value) {
+    case "templates":
     case "shortcuts":
     case "file-list":
     case "menu-mouse":
@@ -862,6 +863,7 @@ function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
 
 export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsModel {
   return {
+    templateRoot: settings.templateRoot ?? "",
     fileAssociations: (settings.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: mergeShortcutDefaults(
       settings.shortcuts.map((shortcut: BackendShortcutBinding) => ({
@@ -924,6 +926,7 @@ export function mapSettingsSnapshotToWorkspaceSettings(settings: BackendSettings
 
 export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsModel {
   return {
+    templateRoot: settingsModel.templateRoot ?? "",
     fileAssociations: (settingsModel.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: mergeShortcutDefaults(settingsModel.shortcuts),
     colorRules: settingsModel.colorRules,

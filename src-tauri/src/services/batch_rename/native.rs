@@ -3,17 +3,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileIdentity {
-    pub version: u32,
-    pub volume: u64,
-    pub id: [u8; 16],
-    pub id_bits: u8,
-    pub created: i64,
-    pub kind: u32,
-    pub stable: bool,
-}
+pub use crate::services::file_identity::FileIdentity;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

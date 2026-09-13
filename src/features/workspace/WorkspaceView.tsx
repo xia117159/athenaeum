@@ -6,6 +6,7 @@ import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { OpenWithMenu } from "./OpenWithMenu";
 import { BatchRenameDialog } from "./BatchRenameDialog";
+import { TemplateCreationMenu } from "./TemplateCreationMenu";
 import { WorkspaceFeedback } from "./WorkspaceFeedback";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
@@ -432,12 +433,14 @@ export function WorkspaceView() {
           actions={actions}
           layoutMode={state.layoutMode}
           panelIds={getVisiblePanelIds(state.layoutMode)}
+          templateMenuOpen={Boolean(state.templateMenu)}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
 
       {state.openWithMenu ? <OpenWithMenu menu={state.openWithMenu} rules={state.settings.model.fileAssociations ?? []}
         onSelect={actions.selectOpenWith} onConfirm={actions.confirmOpenWith} onClose={actions.closeOpenWith} /> : null}
+      {state.templateMenu ? <TemplateCreationMenu key={state.templateMenu.id} menu={state.templateMenu} actions={actions} /> : null}
       {state.batchRename ? <BatchRenameDialog dialog={state.batchRename} onChange={actions.changeBatchRename}
         onConfirm={actions.confirmBatchRename} onClose={actions.closeBatchRename} onHelp={actions.openBatchRenameHelp} /> : null}
       <WorkspaceFeedback notifications={state.notifications} fileOpens={state.fileOpens ?? []}

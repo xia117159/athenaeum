@@ -31,6 +31,9 @@ pub(super) enum UndoAction {
     BatchRename {
         payload: Box<crate::services::batch_rename::transaction::BatchPayload>,
     },
+    TemplateCreation {
+        trees: Vec<crate::services::templates::owned::OwnedTree>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -39,6 +42,9 @@ pub(super) struct UndoPayload {
     pub(super) actions: Vec<UndoAction>,
 }
 impl UndoPayload {
+    pub(super) fn templates(&self) -> Option<&[crate::services::templates::owned::OwnedTree]> {
+        match self.actions.as_slice() { [UndoAction::TemplateCreation { trees }] => Some(trees), _ => None }
+    }
     pub(super) fn batch(&self) -> Option<&crate::services::batch_rename::transaction::BatchPayload> {
         match self.actions.as_slice() {
             [UndoAction::BatchRename { payload }] => Some(payload),
@@ -201,6 +207,20 @@ pub(super) fn normalize_reloaded_journal(
 ) -> (Vec<OperationHistoryRecord>, HashMap<String, UndoPayload>) {
     let mut undoable_record_ids = Vec::new();
     for record in &mut records {
+        if let Some(UndoPayload { actions }) = undo_payloads.get_mut(&record.record_id) {
+            if let [UndoAction::TemplateCreation { trees }] = actions.as_mut_slice() {
+                #[cfg(windows)]
+                crate::services::templates::owned::refresh_recovery_locations(trees);
+                record.recovery_items = crate::services::templates::owned::recovery_items(trees);
+                if record.status == OperationHistoryStatus::Undoing {
+                    record.status = OperationHistoryStatus::Undoable;
+                    record.blocked_reason = Some("上次撤销未完成，可重新校验并继续撤销。".into());
+                    record.undo_task_id = None;
+                }
+                undoable_record_ids.push(record.record_id.clone());
+                continue;
+            }
+        }
         // Batch recovery owns normalization: keep interrupted, blocked and committed
         // payloads until their recovery logs have been reconciled with this journal.
         if undo_payloads.get(&record.record_id).is_some_and(|payload| payload.batch().is_some()) {
@@ -244,7 +264,7 @@ pub(super) fn normalize_reloaded_journal(
 fn validate_undo_payload_entities(payload: &UndoPayload) -> Option<String> {
     for action in &payload.actions {
         match action {
-            UndoAction::BatchRename { .. } => {}
+            UndoAction::BatchRename { .. } | UndoAction::TemplateCreation { .. } => {}
             UndoAction::DeleteCreated { path } => {
                 if !path.exists() {
                     return Some(format!("Undo target no longer exists: {}", path.display()));

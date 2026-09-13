@@ -68,6 +68,7 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         settings.file_visibility,
         settings.context_menu,
         settings.theme,
+        settings.template_root,
     ))
 }
 

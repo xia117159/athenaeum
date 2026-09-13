@@ -66,6 +66,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
             settings.file_visibility,
             settings.context_menu,
             settings.theme,
+            settings.template_root,
         ),
     };
 

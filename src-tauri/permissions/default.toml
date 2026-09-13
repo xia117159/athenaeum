@@ -1,6 +1,9 @@
 [default]
 description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
+  "allow-list-creation-templates",
+  "allow-create-template-items",
+  "allow-choose-template-root",
   "allow-create-batch-rename-session",
   "allow-preview-batch-rename",
   "allow-invalidate-batch-rename-preview",
@@ -86,6 +89,21 @@ permissions = [
   "allow-get-git-status",
   "allow-list-drive-roots"
 ]
+
+[[permission]]
+identifier = "allow-list-creation-templates"
+description = "List one folder in the configured creation template library."
+commands.allow = ["list_creation_templates"]
+
+[[permission]]
+identifier = "allow-create-template-items"
+description = "Create local items from the configured templates without overwriting existing files."
+commands.allow = ["create_template_items"]
+
+[[permission]]
+identifier = "allow-choose-template-root"
+description = "Choose a template folder using the native Windows folder dialog."
+commands.allow = ["choose_template_root"]
 
 [[permission]]
 identifier = "allow-create-batch-rename-session"

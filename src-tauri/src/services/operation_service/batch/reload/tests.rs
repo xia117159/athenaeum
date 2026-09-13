@@ -207,6 +207,7 @@ fn temporary_log_read_errors_disappear_only_after_the_real_mapping_is_durable() 
     let result = ready
         .clear_records(
             OperationClearRequest {
+                recovery_confirmation: None,
                 scope: OperationClearScope::All,
                 confirm_undo_loss: true,
             },

@@ -68,10 +68,12 @@ import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeS
 import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
 import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
 import { prepareSelectionInteraction } from "./folderSelectionRestore";
+import { reduceTemplates, reconcileTemplates, type TemplateCreationAction } from "./templateCreationState";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | TemplateCreationAction
   | BatchRenameAction
   | FileOpeningAction
   | DirectorySizeAction
@@ -314,6 +316,7 @@ function cloneRecoveredTab(tab: TabState, panelId: PanelId): TabState {
   return {
     ...tab,
     id,
+    pendingNavigationRequestId: undefined,
     selectedEntryIds: [...tab.selectedEntryIds],
     expandedNodePaths: [...tab.expandedNodePaths],
     history: [...tab.history],
@@ -1242,7 +1245,8 @@ function updateColumnsForSettingsAndTab(
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   state = prepareSelectionInteraction(state, action);
-  return reconcileOpenWithMenu(reduceBatchRename(state, action) ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action));
+  return reconcileTemplates(reconcileOpenWithMenu(reduceTemplates(state, action) ?? reduceBatchRename(state, action)
+    ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action);
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -1664,7 +1668,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
               selectionCursorId: pathChanged ? null : refreshedTab.selectionCursorId,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
-              inlineEdit: undefined,
+              inlineEdit: !pathChanged && action.payload.activatePanel === false ? refreshedTab.inlineEdit : undefined,
               search: undefined,
               reconnect: undefined,
               gitStatus: pathChanged ? undefined : tab.gitStatus

@@ -8,6 +8,7 @@ import type { ColorFilterRule, RevisionToken } from "./colorFilterTypes";
 import type { FileAssociationRule } from "../../app/fileAssociations";
 import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
 import type { BatchRenameDialogState, RenameTarget } from "./batchRenameState";
+import type { TemplateMenuState, TemplateCreationPending } from "./templateCreationState";
 
 export type DataSource = "mock" | "tauri";
 
@@ -15,6 +16,7 @@ export const THIS_PC_PATH = "此电脑";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
 export type SettingsSection =
+  | "templates"
   | "shortcuts"
   | "file-list"
   | "menu-mouse"
@@ -302,6 +304,7 @@ export interface SortState {
 }
 
 export interface SettingsModel {
+  templateRoot?: string;
   shortcuts: ShortcutBinding[];
   fileAssociations?: FileAssociationRule[];
   colorRules: ColorFilterRule[];
@@ -501,6 +504,7 @@ export interface NativeContextMenuRequest {
 export type NativeBackgroundContextMenuAction =
   | { type: "createFile" }
   | { type: "createFolder" }
+  | { type: "createTemplate" }
   | { type: "setViewMode"; viewMode: TabViewMode }
   | { type: "setSort"; columnId?: ColumnId; direction?: SortDirection }
   | { type: "paste" };
@@ -623,6 +627,9 @@ export interface TabState {
   /** Transient interaction revision and selection to apply after operation-driven refreshes. */
   selectionRevision?: number;
   selectionRestore?: { rootPath: string; paths: string[] };
+  /** Transient navigation intent; retained after completion to reject late menu results. */
+  navigationRevision?: number;
+  pendingNavigationRequestId?: number;
   /**
    * Shift 区间选中的锚点条目 id。仅在按下 Shift 进行区间多选时确立，
    * 纯方向键/点击/进入新目录会复位为 null。仅内存态（不参与会话持久化）。
@@ -712,6 +719,8 @@ export interface WorkspaceState {
   contextMenu?: ContextMenuState;
   openWithMenu?: OpenWithMenuState;
   batchRename?: BatchRenameDialogState;
+  templateMenu?: TemplateMenuState;
+  templateCreation?: TemplateCreationPending;
   fileOpens?: PendingFileOpen[];
   operations: OperationWorkspaceState;
   keyboardNavToken?: symbol;

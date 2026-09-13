@@ -10,6 +10,8 @@ use crate::domain::models::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStore {
+    #[serde(default)]
+    pub template_root: String,
     pub layout: UiLayout,
     #[serde(default = "default_detail_columns")]
     pub detail_columns: Vec<DetailColumnDefinition>,
@@ -38,6 +40,7 @@ pub struct SettingsStore {
 impl Default for SettingsStore {
     fn default() -> Self {
         Self {
+            template_root: String::new(),
             layout: UiLayout::fallback(),
             detail_columns: default_detail_columns(),
             navigation_columns: default_navigation_columns(),

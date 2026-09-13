@@ -52,11 +52,12 @@ export function getFolderListingRows(
     const rows: FolderListingRow[] = [];
     for (const entry of sortEntries(entries.map((item) => projectEntrySize(tab, item, sizeBarMode)), tab.sort, tab.snapshot.location.path)) {
       const key = getPathComparisonKey(entry.path);
-      if ((treeEnabled && seen.has(key)) || !entryMatchesFileVisibility(entry, visibility)) continue;
+      const editing = tab.inlineEdit?.mode === "rename" && tab.inlineEdit.entryId === entry.id;
+      if ((treeEnabled && seen.has(key)) || (!editing && !entryMatchesFileVisibility(entry, visibility))) continue;
       seen.add(key);
       const expansion = treeEnabled && entry.kind === "folder" ? tab.folderExpansion?.[key] : undefined;
       const children = expansion ? visit(expansion.entries, depth + 1) : [];
-      if (entryMatchesQuickFilter(entry, filter) || children.length > 0) {
+      if (editing || entryMatchesQuickFilter(entry, filter) || children.length > 0) {
         rows.push({ entry, depth, expansion }, ...children);
       }
     }

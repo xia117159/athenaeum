@@ -82,6 +82,7 @@ fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
         settings.file_visibility,
         settings.context_menu,
         settings.theme,
+        settings.template_root,
     );
     let _ = app.emit("settings_changed", snapshot);
 }

@@ -34,6 +34,7 @@ fn insert_payload(
 ) {
     let now = chrono::Utc::now();
     store.history.push(OperationHistoryRecord {
+        recovery_items: Vec::new(),
         record_id: record_id.into(),
         task_id: record_id.into(),
         kind: OperationIntentKind::Delete,
@@ -65,6 +66,7 @@ fn clear_problems(store: &mut OperationStore, trash_root: &Path) -> Vec<String> 
     store
         .clear_records(
             OperationClearRequest {
+                recovery_confirmation: None,
                 scope: OperationClearScope::Problems,
                 confirm_undo_loss: false,
             },

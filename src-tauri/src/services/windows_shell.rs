@@ -6,6 +6,8 @@ mod context_menu;
 use navigation::NavigationOpenValidationError;
 #[cfg(windows)]
 mod imp {
+    #[cfg(test)]
+    mod background_template_tests;
     use std::{
         ffi::OsStr,
         os::windows::ffi::OsStrExt,
@@ -88,6 +90,7 @@ mod imp {
     const BACKGROUND_SHELL_CMD_FIRST: u32 = 1000;
     const BACKGROUND_CMD_CREATE_FILE: u32 = 1;
     const BACKGROUND_CMD_CREATE_FOLDER: u32 = 2;
+    const BACKGROUND_CMD_CREATE_TEMPLATE: u32 = 3;
     const BACKGROUND_CMD_VIEW_EXTRA_LARGE: u32 = 10;
     const BACKGROUND_CMD_VIEW_LARGE: u32 = 11;
     const BACKGROUND_CMD_VIEW_MEDIUM: u32 = 12;
@@ -103,7 +106,7 @@ mod imp {
     const BACKGROUND_CMD_SORT_ASC: u32 = 40;
     const BACKGROUND_CMD_SORT_DESC: u32 = 41;
     const BACKGROUND_CMD_PASTE: u32 = 50;
-    const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 6;
+    const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 7;
 
     const SELECTION_SHELL_CMD_FIRST: u32 = 1000;
     const SELECTION_CMD_COPY_NAME: u32 = 1;
@@ -1355,6 +1358,7 @@ mod imp {
             BACKGROUND_CMD_CREATE_FOLDER,
             "新建文件夹",
         )?;
+        append_menu_item(menu, MENU_ITEM_FLAGS(0), BACKGROUND_CMD_CREATE_TEMPLATE, "新建项目")?;
         append_background_view_menu(menu, options)?;
         append_background_sort_menu(menu, options)?;
         append_menu_item(
@@ -1372,6 +1376,7 @@ mod imp {
         match command_id {
             BACKGROUND_CMD_CREATE_FILE => Some(NativeBackgroundContextMenuAction::CreateFile),
             BACKGROUND_CMD_CREATE_FOLDER => Some(NativeBackgroundContextMenuAction::CreateFolder),
+            BACKGROUND_CMD_CREATE_TEMPLATE => Some(NativeBackgroundContextMenuAction::CreateTemplate),
             BACKGROUND_CMD_VIEW_EXTRA_LARGE => {
                 Some(NativeBackgroundContextMenuAction::SetViewMode {
                     view_mode: NativeBackgroundContextMenuViewMode::ExtraLargeIcons,

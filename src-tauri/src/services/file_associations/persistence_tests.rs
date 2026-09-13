@@ -24,6 +24,7 @@ fn file_associations_persisted_legacy_shape_survives_round_trip_and_snapshot() {
         settings.file_visibility,
         settings.context_menu,
         settings.theme,
+        settings.template_root,
     );
     assert_eq!(
         serde_json::to_value(snapshot).unwrap()["fileAssociations"],

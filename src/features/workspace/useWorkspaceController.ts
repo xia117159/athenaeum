@@ -17,7 +17,9 @@ import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
 import { useFileOpeningController } from "./useFileOpeningController";
 import { useBatchRenameController } from "./useBatchRenameController";
+import { useTemplateCreationController } from "./useTemplateCreationController";
 import { captureRenameTarget } from "./renameTarget";
+import { captureTemplateTarget } from "./templateCreationState";
 import { currentListingEntry } from "./fileOpeningState";
 import { supportsDirectorySizes } from "./directorySizes";
 import { getTopLevelPaths } from "./workspacePathRelations";
@@ -108,6 +110,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   useDirectorySizeController({ state, dispatch, workspaceGateway, enabled: options.role !== "settings" });
   const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
+  const userNavigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
   // navigationRequestsRef (an in-flight token cleared on completion), this is
   // never deleted, so late-arriving async side-results (e.g. git status) can
@@ -342,6 +345,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       theme: !hasSameJsonShape(current.theme, next.theme),
       contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
       fileListModel:
+        current.templateRoot !== next.templateRoot ||
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
@@ -353,6 +357,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   };
 
   const persistedSettingsChanged = (current: SettingsModel, next: SettingsModel) =>
+    current.templateRoot !== next.templateRoot ||
     !hasSameJsonShape(current.shortcuts, next.shortcuts) ||
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
@@ -571,6 +576,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void workspaceGateway.saveSettingsModel(state.settings.model);
   }, [
     state.settings.model.columns,
+    state.settings.model.templateRoot,
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
     state.settings.model.folderExpansionEnabled,
@@ -768,8 +774,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         return;
       }
       const requestKey = `${panelId}:${tabId}`;
+      const userNavigation = options.activatePanel !== false;
+      if (!userNavigation && userNavigationRequestsRef.current.has(requestKey)) return;
       const requestId = nextNavigationRequestIdRef.current + 1;
       nextNavigationRequestIdRef.current = requestId;
+      if (userNavigation) {
+        userNavigationRequestsRef.current.set(requestKey, requestId);
+        dispatch({ type: "templateTargetNavigationStarted", payload: { panelId, tabId, requestId } });
+      }
       navigationRequestsRef.current.set(requestKey, requestId);
       latestNavigationIdRef.current.set(requestKey, requestId);
       if (isRemotePath(path)) {
@@ -898,6 +910,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
         pushNotification("danger", message);
       } finally {
+        if (userNavigationRequestsRef.current.get(requestKey) === requestId) userNavigationRequestsRef.current.delete(requestKey);
+        if (userNavigation) dispatch({ type: "templateTargetNavigationFinished", payload: { panelId, tabId, requestId } });
         if (navigationRequestsRef.current.get(requestKey) === requestId) {
           navigationRequestsRef.current.delete(requestKey);
         }
@@ -1258,6 +1272,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const alreadyRefreshed = refreshedOperationTasksRef.current.has(task.taskId);
     const pendingInlineRefreshPaths = consumePendingInlineRefreshPaths(task.taskId);
     batchRename.prepareSelectionRestore(task);
+    templateCreation.prepareCompletion(task);
     const pendingSelectionReplacements = consumePendingInlineSelectionReplacements(task.taskId);
     if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0 && pendingSelectionReplacements.length === 0) {
       return;
@@ -1273,6 +1288,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
 
     await markDeletedMetadataForOperationTask(task);
+    templateCreation.finishCompletion(task);
   });
 
   const projectOperationResult = useEffectEvent(async (task: OperationTaskSnapshot | void) => {
@@ -2330,6 +2346,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const batchRename = useBatchRenameController({ state, dispatch, gateway: workspaceGateway,
     enabled: options.role !== "settings", notify: pushNotification, projectTask: projectOperationTask });
+  const templateCreation = useTemplateCreationController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification, projectTask: projectOperationTask, rename: batchRename.rename });
   const renameSelection = useEffectEvent((panelId: PanelId, source: "toolbar" | "shortcut" | "contextMenu" = "toolbar") => {
     if (state.contextMenu?.renameTarget) { batchRename.rename(state.contextMenu.renameTarget); return; }
     if (state.contextMenu?.mode === "system-fallback") return;
@@ -2350,10 +2368,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     batchRename.rename(captureRenameTarget(state, panelId, source));
   });
 
-  const createFolder = useEffectEvent((panelId: PanelId) => {
+  const createEntry = useEffectEvent((panelId: PanelId, kind: "folder" | "file") => {
     const activeTab = getActiveDirectoryTab(state, panelId);
     if (!activeTab) {
-      pushNotification("warning", "当前标签页不能新建文件夹。");
+      pushNotification("warning", `当前标签页不能新建${kind === "folder" ? "文件夹" : "文件"}。`);
       return;
     }
     dispatch({
@@ -2362,35 +2380,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         panelId,
         tabId: activeTab.id,
         edit: {
-          mode: "create-folder",
-          value: "新文件夹",
-          kind: "folder",
+          mode: kind === "folder" ? "create-folder" : "create-file",
+          value: kind === "folder" ? "新文件夹" : "新文件",
+          kind,
           parentPath: activeTab.snapshot.location.path
         }
       }
     });
   });
-
-  const createFile = useEffectEvent((panelId: PanelId) => {
-    const activeTab = getActiveDirectoryTab(state, panelId);
-    if (!activeTab) {
-      pushNotification("warning", "当前标签页不能新建文件。");
-      return;
-    }
-    dispatch({
-      type: "inlineEditStarted",
-      payload: {
-        panelId,
-        tabId: activeTab.id,
-        edit: {
-          mode: "create-file",
-          value: "新文件",
-          kind: "file",
-          parentPath: activeTab.snapshot.location.path
-        }
-      }
-    });
-  });
+  const createFolder = useEffectEvent((panelId: PanelId) => createEntry(panelId, "folder"));
+  const createFile = useEffectEvent((panelId: PanelId) => createEntry(panelId, "file"));
 
   const updateInlineEdit = useEffectEvent((panelId: PanelId, tabId: string, value: string) => {
     dispatch({ type: "inlineEditChanged", payload: { panelId, tabId, value } });
@@ -2612,6 +2611,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const openNativeContextMenu = useEffectEvent(async (request: NativeContextMenuRequest) => {
     if (state.batchRename) return;
     const renameTarget = captureRenameTarget(state, request.panelId, "contextMenu", request.tabId, request.paths);
+    const templateTarget = captureTemplateTarget(state, request.panelId, request.tabId);
     dispatch({ type: "contextMenuSet", payload: undefined });
     const target = request.target ?? "selection";
     const fallbackScope = target === "background" ? "panel" : "selection";
@@ -2658,7 +2658,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         opened = false;
       }
       if (action) {
-        runNativeBackgroundContextMenuAction(action, request.panelId, request.tabId);
+        if (action.type === "createTemplate") templateCreation.openCaptured(templateTarget, { x: request.clientX, y: request.clientY });
+        else runNativeBackgroundContextMenuAction(action, request.panelId, request.tabId);
         return;
       }
       if (!opened) {
@@ -3041,6 +3042,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     () => ({
       ...fileOpening.actions,
       ...batchRename.actions,
+      ...templateCreation.actions,
+      chooseTemplateRoot: () => workspaceGateway.templates.chooseRoot(),
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3353,7 +3356,7 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       undoLatestOperation,
       undoOperation,
       workspaceGateway,
-      fileOpening.actions, fileOpening.openFile, batchRename.actions
+      fileOpening.actions, fileOpening.openFile, batchRename.actions, templateCreation.actions
     ]
   );
 

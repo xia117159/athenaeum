@@ -267,6 +267,7 @@ export function OperationHistoryWindowView({ gateway, readEnvironment }: Operati
             aria-labelledby="operation-history-confirmation-title" aria-describedby="operation-history-confirmation-description">
             <header><AlertTriangle size={18} aria-hidden="true" /><h2 id="operation-history-confirmation-title">{"\u6c38\u4e45\u6e05\u7406\u64cd\u4f5c\u5386\u53f2\uff1f"}</h2></header>
             <p id="operation-history-confirmation-description">
+              {controller.confirmation.recoveryCount > 0 ? `将永久清理最多 ${controller.confirmation.recoveryCount} 个恢复副本，包含副本中后来保存的内容。` : null}
               {"\u6b64\u64cd\u4f5c\u4f1a\u6c38\u4e45\u79fb\u9664\u53ef\u64a4\u9500\u8bb0\u5f55\u53ca\u5176\u64a4\u9500\u80fd\u529b\u3002\u786e\u8ba4\u65f6\u5c06\u6e05\u7406\u5f53\u65f6\u6240\u6709\u7b26\u5408\u6761\u4ef6\u7684\u8bb0\u5f55\u3002"}
             </p>
             <div className="operation-history-confirmation__actions">

@@ -27,6 +27,7 @@ import "./workspace.css";
 
 function cloneSettingsModel(model: SettingsModel): SettingsModel {
   return {
+    templateRoot: model.templateRoot ?? "",
     fileAssociations: (model.fileAssociations ?? []).map(rule => ({ ...rule })),
     shortcuts: model.shortcuts.map((shortcut) => ({ ...shortcut })),
     colorRules: model.colorRules.map((rule) => ({ ...rule })),
@@ -87,6 +88,7 @@ function computeDirtySections(
   const pm = normalizedPersistedModel;
   if (!hasSameJsonShape(pm.shortcuts, dm.shortcuts)) sections.add("shortcuts");
   if (!hasSameJsonShape(pm.fileAssociations, dm.fileAssociations)) sections.add("file-associations");
+  if (pm.templateRoot !== dm.templateRoot) sections.add("templates");
   if (
     !hasSameJsonShape(pm.columns, dm.columns) ||
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
@@ -536,6 +538,8 @@ export function SettingsWindowView() {
     <div className="settings-window-shell">
       <SettingsSurface
         onUpdateFileAssociations={(fileAssociations) => updateDraftModel(model => ({...model, fileAssociations}))}
+        onUpdateTemplateRoot={templateRoot => updateDraftModel(model => ({ ...model, templateRoot }))}
+        onChooseTemplateRoot={actions.chooseTemplateRoot}
         onChooseAssociationProgram={actions.chooseAssociationProgram}
         onInspectAssociationPrograms={actions.inspectAssociationPrograms}
         state={draftState}

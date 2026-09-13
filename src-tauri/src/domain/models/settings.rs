@@ -44,6 +44,8 @@ impl Default for FileVisibilitySettings {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
     #[serde(default)]
+    pub template_root: String,
+    #[serde(default)]
     pub file_associations: Vec<FileAssociationRule>,
     pub bookmarks: Vec<Bookmark>,
     pub hotlist: Vec<HotlistEntry>,
@@ -74,6 +76,8 @@ pub struct SettingsSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsModelUpdate {
+    #[serde(default)]
+    pub template_root: String,
     #[serde(default)]
     pub file_associations: Option<Vec<FileAssociationRule>>,
     pub shortcuts: Vec<ShortcutBinding>,

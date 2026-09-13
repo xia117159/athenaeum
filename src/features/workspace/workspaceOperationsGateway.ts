@@ -193,7 +193,7 @@ export async function clearWorkspaceOperationRecords(
     { request },
     async () => ({
       status: "cleared",
-      eligibleUndoableCount: 0,
+      eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
       removedTaskIds: [],
       removedRecordIds: [],
       taskClearWatermark: 0,

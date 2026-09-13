@@ -33,7 +33,7 @@ export const completion = (async () => {
     async listOperationHistory() { calls.push("list-history"); return { records: [], historySequence: 0 }; },
     async clearOperationRecords() {
       return {
-        status: "cleared", eligibleUndoableCount: 0, removedTaskIds: [], removedRecordIds,
+        status: "cleared", eligibleUndoableCount: 0, eligibleRecoveryCount: 0, removedTaskIds: [], removedRecordIds,
         taskClearWatermark: 0, historyClearWatermark: 0,
         protectedRecordIds: protectedIds, cleanupWarnings: []
       };

@@ -14,6 +14,8 @@ pub enum OperationClearScope {
 pub struct OperationClearRequest {
     pub scope: OperationClearScope,
     pub confirm_undo_loss: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_confirmation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +30,9 @@ pub enum OperationClearStatus {
 pub struct OperationClearOutcome {
     pub status: OperationClearStatus,
     pub eligible_undoable_count: usize,
+    pub eligible_recovery_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_confirmation: Option<String>,
     pub removed_task_ids: Vec<String>,
     pub removed_record_ids: Vec<String>,
     pub task_clear_watermark: u64,

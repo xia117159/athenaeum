@@ -341,6 +341,7 @@ export interface RemoteTrustHostKeyRequest {
 }
 
 export interface SettingsSnapshot {
+  templateRoot?: string;
   fileAssociations?: FileAssociationRule[];
   bookmarks: Bookmark[];
   hotlist: HotlistEntry[];
@@ -364,6 +365,7 @@ export interface SettingsSnapshot {
 }
 
 export interface SettingsModelUpdate {
+  templateRoot?: string;
   fileAssociations?: FileAssociationRule[];
   shortcuts: ShortcutBinding[];
   columns: DetailColumnDefinition[];
@@ -559,6 +561,7 @@ export type OperationHistoryStatus =
   | "pendingConfirmation";
 
 export interface OperationHistoryRecord {
+  recoveryItems?: { originalPath: string; recoveryPath: string }[];
   recordId: string;
   taskId: string;
   kind: OperationIntentKind;
@@ -587,11 +590,14 @@ export type OperationClearScope = "problems" | "completed" | "history" | "all";
 export interface OperationClearRequest {
   scope: OperationClearScope;
   confirmUndoLoss: boolean;
+  recoveryConfirmation?: string;
 }
 
 export interface OperationClearOutcome {
   status: "confirmationRequired" | "cleared";
   eligibleUndoableCount: number;
+  eligibleRecoveryCount: number;
+  recoveryConfirmation?: string;
   removedTaskIds: string[];
   removedRecordIds: string[];
   taskClearWatermark: number;

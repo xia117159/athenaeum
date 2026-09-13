@@ -11,6 +11,7 @@ import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
 import { ColorRulesPage } from "./ColorRulesPage";
 import { FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
 import { SettingsFileListPage } from "./SettingsFileListPage";
+import { TemplateSettingsPage } from "./TemplateSettingsPage";
 import type { ColorFilterRule, ColorFilterValidationResult } from "./colorFilterTypes";
 import type { RemoteTestResult } from "../../app/types";
 import type {
@@ -35,6 +36,8 @@ export type SettingsSurfaceProps = {
   onUpdateShortcut: (id: string, binding: string) => void;
   onUpdateColorRules: (rules: ColorFilterRule[]) => void;
   onUpdateFileAssociations: FileAssociationsPageProps["onChange"];
+  onUpdateTemplateRoot?: (path: string) => void;
+  onChooseTemplateRoot?: () => Promise<string | null>;
   onChooseAssociationProgram: FileAssociationsPageProps["onChooseProgram"];
   onInspectAssociationPrograms: FileAssociationsPageProps["onInspectPrograms"];
   onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
@@ -86,7 +89,8 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
       { id: "shortcuts", label: "快捷键", description: "键盘操作与工作区命令" },
       { id: "file-list", label: "文件列表", description: "详细信息视图与显示列" },
       { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" },
-      { id: "file-associations", label: "自定义文件关联", description: "按文件后缀选择打开程序" }
+      { id: "file-associations", label: "自定义文件关联", description: "按文件后缀选择打开程序" },
+      { id: "templates", label: "新建项目", description: "用于创建副本的模板文件夹" }
     ]
   },
   {
@@ -191,6 +195,8 @@ export function SettingsSurface({
   onUpdateShortcut,
   onUpdateColorRules,
   onUpdateFileAssociations,
+  onUpdateTemplateRoot,
+  onChooseTemplateRoot,
   onChooseAssociationProgram,
   onInspectAssociationPrograms,
   onValidateColorRule,
@@ -308,6 +314,9 @@ export function SettingsSurface({
             <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
               onChange={onUpdateFileAssociations} onChooseProgram={onChooseAssociationProgram}
               onInspectPrograms={onInspectAssociationPrograms} />
+          ) : settings.section === "templates" ? (
+            <TemplateSettingsPage path={settings.model.templateRoot ?? ""} disabled={controlsDisabled}
+              onChange={onUpdateTemplateRoot ?? (() => {})} onChoose={onChooseTemplateRoot ?? (async () => null)} />
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}

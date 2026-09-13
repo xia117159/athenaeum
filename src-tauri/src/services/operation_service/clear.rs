@@ -16,6 +16,8 @@ use crate::domain::models::{
 use super::{journal::OperationJournalDisk, OperationStore, UndoAction, UndoPayload};
 
 mod artifact;
+mod confirmation;
+mod template_recovery;
 #[cfg(test)]
 mod batch_tests;
 #[cfg(test)]
@@ -440,7 +442,7 @@ impl OperationStore {
             !all_protected.contains(&record.record_id)
                 && history_matches_scope(&request.scope, &record.status)
         };
-        let removed_history = self
+        let mut removed_history = self
             .history
             .iter()
             .filter(remove_history)
@@ -450,9 +452,24 @@ impl OperationStore {
             .iter()
             .filter(|record| matches!(record.status, OperationHistoryStatus::Undoable))
             .count();
-        if undoable_count > 0 && !request.confirm_undo_loss {
-            return Ok(self.confirmation_required(undoable_count, protected));
+        let recovery_count = self.template_recovery_count(&removed_history);
+        let recovery_confirmation =
+            self.template_recovery_confirmation(&removed_history, &request.scope)?;
+        let changed_recovery =
+            recovery_count > 0 && request.recovery_confirmation != recovery_confirmation;
+        if ((undoable_count > 0 || recovery_count > 0) && !request.confirm_undo_loss) || changed_recovery
+        {
+            return Ok(self.confirmation_required(
+                undoable_count,
+                recovery_count,
+                recovery_confirmation,
+                protected,
+            ));
         }
+
+        // Template recovery mappings remain durable until physical cleanup succeeds.
+        // A failed cleanup or final journal write can be retried without losing ownership.
+        let mut template_warnings = self.cleanup_template_records(&mut removed_history);
 
         let remove_task = |task: &&OperationTaskSnapshot| match request.scope {
             OperationClearScope::Problems => matches!(
@@ -511,18 +528,20 @@ impl OperationStore {
         self.task_sequence = task_watermark;
         self.history_sequence = history_watermark;
 
-        let warnings = self.cleanup_removed_payloads(removed_payloads, operation_trash_root);
+        template_warnings.extend(self.cleanup_removed_payloads(removed_payloads, operation_trash_root));
         let mut protected_record_ids = protected.into_iter().collect::<Vec<_>>();
         protected_record_ids.sort();
         Ok(OperationClearOutcome {
             status: OperationClearStatus::Cleared,
             eligible_undoable_count: undoable_count,
+            eligible_recovery_count: recovery_count,
+            recovery_confirmation: None,
             removed_task_ids,
             removed_record_ids,
             task_clear_watermark: task_watermark,
             history_clear_watermark: history_watermark,
             protected_record_ids,
-            cleanup_warnings: warnings,
+            cleanup_warnings: template_warnings,
         })
     }
 
@@ -541,23 +560,6 @@ impl OperationStore {
             })
             .map(|record| record.record_id.clone())
             .collect()
-    }
-
-    fn confirmation_required(
-        &self,
-        count: usize,
-        protected: HashSet<String>,
-    ) -> OperationClearOutcome {
-        OperationClearOutcome {
-            status: OperationClearStatus::ConfirmationRequired,
-            eligible_undoable_count: count,
-            removed_task_ids: Vec::new(),
-            removed_record_ids: Vec::new(),
-            task_clear_watermark: self.task_sequence,
-            history_clear_watermark: self.history_sequence,
-            protected_record_ids: protected.into_iter().collect(),
-            cleanup_warnings: Vec::new(),
-        }
     }
 
     fn cleanup_removed_payloads(
@@ -782,6 +784,7 @@ mod tests {
     ) -> OperationHistoryRecord {
         let now = chrono::Utc::now();
         OperationHistoryRecord {
+            recovery_items: Vec::new(),
             record_id: record_id.into(),
             task_id: task_id.into(),
             kind: OperationIntentKind::Delete,
@@ -872,6 +875,7 @@ mod tests {
         let problems = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Problems,
                     confirm_undo_loss: false,
                 },
@@ -894,6 +898,7 @@ mod tests {
         let completed = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Completed,
                     confirm_undo_loss: false,
                 },
@@ -920,6 +925,7 @@ mod tests {
         let outcome = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Completed,
                     confirm_undo_loss: false,
                 },
@@ -976,6 +982,7 @@ mod tests {
         let outcome = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::All,
                     confirm_undo_loss: true,
                 },
@@ -1037,6 +1044,7 @@ mod tests {
         let preflight = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::History,
                     confirm_undo_loss: false,
                 },
@@ -1050,6 +1058,7 @@ mod tests {
         let cleared = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::History,
                     confirm_undo_loss: true,
                 },
@@ -1113,6 +1122,7 @@ mod tests {
         let cleared = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Problems,
                     confirm_undo_loss: false,
                 },
@@ -1169,6 +1179,7 @@ mod tests {
             store.journal_persist_failure_for_test = Some(failure);
             let error = store.clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::All,
                     confirm_undo_loss: true,
                 },
@@ -1244,6 +1255,7 @@ mod tests {
         let outcome = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Problems,
                     confirm_undo_loss: false,
                 },
@@ -1353,6 +1365,7 @@ mod tests {
         let outcome = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Problems,
                     confirm_undo_loss: false,
                 },
@@ -1457,6 +1470,7 @@ mod tests {
         let outcome = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::Problems,
                     confirm_undo_loss: false,
                 },

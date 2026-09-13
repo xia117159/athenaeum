@@ -22,7 +22,7 @@ export function useOperationHistoryController(gateway: WorkspaceGateway = defaul
   const [pendingRecordIds, setPendingRecordIds] = useState<Set<string>>(() => new Set());
   const [undoLatestPending, setUndoLatestPending] = useState(false);
   const [clearPending, setClearPending] = useState(false);
-  const [confirmation, setConfirmation] = useState<{ scope: OperationClearScope; count: number } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ scope: OperationClearScope; count: number; recoveryCount: number; recoveryConfirmation?: string } | null>(null);
   const mountedRef = useRef(true);
   const mutationLockRef = useRef(false);
 
@@ -138,10 +138,13 @@ export function useOperationHistoryController(gateway: WorkspaceGateway = defaul
     setClearNotice(null);
     setCleanupWarnings([]);
     try {
-      const outcome = await gateway.clearOperationRecords({ scope, confirmUndoLoss });
+      const outcome = await gateway.clearOperationRecords({ scope, confirmUndoLoss,
+        ...(confirmUndoLoss && confirmation?.scope === scope && confirmation.recoveryConfirmation
+          ? { recoveryConfirmation: confirmation.recoveryConfirmation } : {}) });
       if (!mountedRef.current) return undefined;
       if (outcome.status === "confirmationRequired") {
-        setConfirmation({ scope, count: outcome.eligibleUndoableCount });
+        setConfirmation({ scope, count: outcome.eligibleUndoableCount, recoveryCount: outcome.eligibleRecoveryCount ?? 0,
+          recoveryConfirmation: outcome.recoveryConfirmation });
       } else {
         dispatch({ type: "recordsCleared", payload: outcome });
         setConfirmation(null);
@@ -161,7 +164,7 @@ export function useOperationHistoryController(gateway: WorkspaceGateway = defaul
       mutationLockRef.current = false;
       if (mountedRef.current) setClearPending(false);
     }
-  }, [gateway]);
+  }, [gateway, confirmation]);
 
   const hasUndoable = useMemo(
     () => operations.history.some((record) => record.status === "undoable"),

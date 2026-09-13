@@ -13,6 +13,7 @@ import type {
   WorkspaceWatchRootsRequest
 } from "./types";
 import type { WorkspaceGateway } from "./workspaceGateway";
+import { createTemplateGateway } from "./templateCreationGateway";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -112,6 +113,7 @@ export function createTestGateway(
 
   return {
     batchRename: createBatchRenameGateway({ runtimeHost: null }),
+    templates: createTemplateGateway({ runtimeHost: null }),
     async loadBootstrap() {
       onLoadBootstrap();
       return overrides.loadBootstrap ? overrides.loadBootstrap() : createMockWorkspaceBootstrap("tauri");
@@ -350,7 +352,7 @@ return { statuses: {}, isGitRepo: false };
       }
       return {
         status: "cleared",
-        eligibleUndoableCount: 0,
+        eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
         removedTaskIds: [],
         removedRecordIds: [],
         taskClearWatermark: 0,

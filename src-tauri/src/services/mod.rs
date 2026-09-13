@@ -1,4 +1,6 @@
 pub mod atomic_file;
+pub mod templates;
+pub(crate) mod file_identity;
 pub mod batch_rename;
 pub mod color_filter;
 pub mod drive_service;

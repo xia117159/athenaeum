@@ -5,6 +5,7 @@ mod services;
 use std::sync::Arc;
 
 use commands::{
+    templates::{list_creation_templates, create_template_items, choose_template_root},
     batch_rename::{create_batch_rename_session, preview_batch_rename, apply_batch_rename,
         close_batch_rename_session, get_batch_rename_functions, invalidate_batch_rename_preview},
     color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
@@ -95,6 +96,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_creation_templates,
+            create_template_items,
+            choose_template_root,
             create_batch_rename_session,
             preview_batch_rename,
             invalidate_batch_rename_preview,

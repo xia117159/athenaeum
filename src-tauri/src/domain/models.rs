@@ -11,10 +11,12 @@ pub use super::operation_clear::{
 mod file_associations;
 mod remote;
 mod settings;
+mod templates;
 
 pub use file_associations::*;
 pub use remote::*;
 pub use settings::*;
+pub use templates::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -512,6 +514,7 @@ pub struct NativeBackgroundContextMenuOptions {
 pub enum NativeBackgroundContextMenuAction {
     CreateFile,
     CreateFolder,
+    CreateTemplate,
     SetViewMode {
         #[serde(rename = "viewMode")]
         view_mode: NativeBackgroundContextMenuViewMode,
@@ -953,6 +956,8 @@ pub enum OperationHistoryStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationHistoryRecord {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_items: Vec<TemplateRecoveryItem>,
     pub record_id: String,
     pub task_id: String,
     pub kind: OperationIntentKind,

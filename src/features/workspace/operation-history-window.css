@@ -10,6 +10,13 @@
   color: #1f1f1f;
 }
 
+.operation-history-recovery { margin-top: 4px; font-size: 12px; }
+.operation-history-recovery summary { cursor: pointer; }
+.operation-history-recovery p { margin: 5px 0; }
+.operation-history-recovery__item { display: grid; gap: 2px; margin: 5px 0; }
+.operation-history-recovery__item > span,
+.operation-history-recovery__item > code { overflow-wrap: anywhere; white-space: normal; user-select: text; font: inherit; }
+
 .operation-history-window__header {
   display: flex;
   align-items: center;

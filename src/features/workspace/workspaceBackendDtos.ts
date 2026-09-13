@@ -68,6 +68,7 @@ export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
 
 export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSettingsModelUpdate {
   return {
+    templateRoot: (model.templateRoot ?? "").trim(),
     fileAssociations: (model.fileAssociations ?? []).map(normalizeAssociationRule),
     shortcuts: model.shortcuts.map(toBackendShortcut),
     columns: normalizeColumns(model.columns),

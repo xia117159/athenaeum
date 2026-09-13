@@ -116,6 +116,13 @@ export function OperationHistoryRow({ record, pending, disabled, onUndoRecord }:
           <span>{historyStatusLabel(record)}</span>
         </div>
         {record.blockedReason || location ? <small title={record.blockedReason ?? location}>{record.blockedReason ?? location}</small> : null}
+        {record.recoveryItems?.length ? <details className="operation-history-recovery">
+          <summary>恢复副本（{record.recoveryItems.length}）</summary>
+          <p>恢复副本将保留至明确清理此条历史。</p>
+          {record.recoveryItems.map(item => <div key={item.recoveryPath} className="operation-history-recovery__item">
+            <span>{item.originalPath}</span><code>{item.recoveryPath}</code>
+          </div>)}
+        </details> : null}
       </div>
       <button type="button" className="toolbar-button toolbar-button--icon" title="\u64a4\u9500\u64cd\u4f5c"
         aria-label="\u64a4\u9500\u64cd\u4f5c" disabled={disabled || pending || record.status !== "undoable"}

@@ -119,6 +119,13 @@ export const completion = (async () => {
     container.querySelector<HTMLButtonElement>("button")?.click();
     assert.equal(undoRecordId, "record-undoable");
 
+    await act(async () => root.render(<OperationHistoryRow record={{ ...history("undone"), recoveryItems: [
+      { originalPath: "D:\\target\\Report.docx", recoveryPath: "D:\\target\\.athenaeum-template-recovery-test" }
+    ] } as never} onUndoRecord={() => {}} />));
+    assert.match(container.textContent ?? "", /恢复副本（1）/);
+    assert.ok(container.textContent?.includes("D:\\target\\Report.docx"));
+    assert.ok(container.textContent?.includes("D:\\target\\.athenaeum-template-recovery-test"));
+
     assert.equal(document.querySelector(".operation-dialog-backdrop"), null);
   } finally {
     await act(async () => root.unmount());

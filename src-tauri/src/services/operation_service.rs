@@ -9,6 +9,8 @@ mod undo_action;
 mod undo_dispatch;
 pub(crate) use undo_dispatch::execute_workspace_undo;
 pub mod batch;
+#[cfg(windows)]
+pub mod templates;
 use self::undo_action::apply_undo_action;
 use std::{
     collections::HashMap,
@@ -505,7 +507,7 @@ impl OperationStore {
     pub fn cancel_task(&mut self, task_id: &str) -> Option<OperationServiceResult> {
         let task_index = self.tasks.iter().position(|task| task.task_id == task_id)?;
         let mut task = self.tasks[task_index].clone();
-        if matches!(
+        if !task.cancelable || matches!(
             task.status,
             OperationTaskStatus::Succeeded
                 | OperationTaskStatus::Failed
@@ -599,6 +601,12 @@ impl OperationStore {
         record_id: String,
         request_id: String,
     ) -> Result<(OperationServiceResult, OperationUndoExecution)> {
+        if self.undo_payloads.get(&record_id).is_some_and(|payload| payload.templates().is_some()) {
+            #[cfg(windows)]
+            return self.prepare_template_undo(record_id, request_id);
+            #[cfg(not(windows))]
+            bail!("模板副本撤销目前仅支持 Windows");
+        }
         if self.undo_payloads.get(&record_id).is_some_and(|payload| payload.batch().is_some()) {
             return self.prepare_batch_undo(record_id, request_id);
         }
@@ -768,6 +776,7 @@ impl OperationStore {
         let record_id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let record = OperationHistoryRecord {
+            recovery_items: Vec::new(),
             record_id: record_id.clone(),
             task_id: task.task_id.clone(),
             kind: task.kind.clone(),

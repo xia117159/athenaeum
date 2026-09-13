@@ -9,6 +9,10 @@ pub(crate) fn execute_workspace_undo(
     if execution.already_started() {
         return Ok(());
     }
+    #[cfg(windows)]
+    if execution.payload.templates().is_some() {
+        return templates::execute_undo(state, execution, emit);
+    }
     if let Some(payload) = execution.batch_payload() {
         batch::execute_batch(state, payload, emit)?;
         return Ok(());

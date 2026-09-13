@@ -18,6 +18,7 @@ pub fn commit_model(
         .map(file_associations::normalize_rules)
         .transpose()?;
     let mut staged = settings.clone();
+    staged.template_root = model.template_root.trim().to_string();
     staged.set_detail_columns(model.columns);
     staged.set_navigation_columns(model.navigation_columns);
     staged.set_details_row_height(model.details_row_height);

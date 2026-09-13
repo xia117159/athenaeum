@@ -49,7 +49,7 @@ function history(recordId: string): OperationHistoryRecord {
 
 const cleared: OperationClearOutcome = {
   status: "cleared",
-  eligibleUndoableCount: 0,
+  eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
   removedTaskIds: ["removed-task"],
   removedRecordIds: ["removed-record"],
   taskClearWatermark: 11,

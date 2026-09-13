@@ -399,7 +399,7 @@ export const workspaceOperationsGatewayTests = (async () => {
       invocations.push({ command, args });
       return {
         status: "confirmationRequired",
-        eligibleUndoableCount: 2,
+        eligibleUndoableCount: 2, eligibleRecoveryCount: 0,
         removedTaskIds: [],
         removedRecordIds: [],
         taskClearWatermark: 3,

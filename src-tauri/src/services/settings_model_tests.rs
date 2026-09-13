@@ -2,11 +2,27 @@ use super::*;
 use crate::domain::models::FileAssociationRule;
 use std::fs;
 
+#[test]
+fn template_root_settings_round_trip() {
+    let root = std::env::temp_dir().join(format!("sfm-template-settings-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default();
+    metadata.attach_path(root.join("metadata.json"));
+    let mut settings = SettingsStore::load_from(root.join("settings.json")).unwrap();
+    let mut value = serde_json::to_value(update(&settings, None)).unwrap();
+    value["templateRoot"] = serde_json::json!(r" C:\模板文件 ");
+    commit_model(&mut metadata, &mut settings, serde_json::from_value(value).unwrap()).unwrap();
+    let persisted = SettingsStore::load_from(root.join("settings.json")).unwrap();
+    assert_eq!(serde_json::to_value(persisted).unwrap()["templateRoot"], r"C:\模板文件");
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn update(
     settings: &SettingsStore,
     rules: Option<Vec<FileAssociationRule>>,
 ) -> SettingsModelUpdate {
     SettingsModelUpdate {
+        template_root: settings.template_root.clone(),
         file_associations: rules,
         shortcuts: vec![],
         columns: settings.detail_columns.clone(),

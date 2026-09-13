@@ -257,6 +257,7 @@ export const workspaceSettingsGatewayTests = (async () => {
         args: {
           model: {
             fileAssociations: [],
+            templateRoot: "",
             shortcuts: [{ id: "navigate-up", action: "navigate-up", accelerator: "Alt+Up", scope: "panel" }],
             columns: [
               { id: "name", label: "名称", visible: true, width: "240px", align: "left" },

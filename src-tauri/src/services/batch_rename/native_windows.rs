@@ -91,52 +91,7 @@ impl RenameHandle {
         Ok(info)
     }
     pub fn identity(&self) -> Result<FileIdentity> {
-        let basic = self.basic()?;
-        let mut filesystem = vec![0u16; 64];
-        unsafe {
-            GetVolumeInformationByHandleW(self.0, None, None, None, None, Some(&mut filesystem))
-        }
-        .context("无法读取卷能力，尚未改动文件")?;
-        let end = filesystem
-            .iter()
-            .position(|ch| *ch == 0)
-            .unwrap_or(filesystem.len());
-        let filesystem = String::from_utf16_lossy(&filesystem[..end]).to_ascii_uppercase();
-        let mut info = FILE_ID_INFO::default();
-        let has_full_id = unsafe {
-            GetFileInformationByHandleEx(
-                self.0,
-                FileIdInfo,
-                (&mut info as *mut FILE_ID_INFO).cast(),
-                std::mem::size_of::<FILE_ID_INFO>() as u32,
-            )
-        }
-        .is_ok()
-            && info.FileId.Identifier != [0; 16];
-        let (volume, id, id_bits) = if has_full_id {
-            (info.VolumeSerialNumber, info.FileId.Identifier, 128)
-        } else {
-            if !matches!(filesystem.as_str(), "NTFS" | "FAT" | "FAT32" | "EXFAT") {
-                bail!("卷 {filesystem} 无法提供可靠文件身份，尚未改动文件");
-            }
-            let index = (basic.nFileIndexHigh as u64) << 32 | basic.nFileIndexLow as u64;
-            if index == 0 {
-                bail!("卷没有提供可靠文件 ID，尚未改动文件");
-            }
-            let mut id = [0u8; 16];
-            id[..8].copy_from_slice(&index.to_le_bytes());
-            (basic.dwVolumeSerialNumber as u64, id, 64)
-        };
-        Ok(FileIdentity {
-            version: 1,
-            volume,
-            id,
-            id_bits,
-            created: filetime_ticks(basic.ftCreationTime),
-            kind: basic.dwFileAttributes
-                & (FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0),
-            stable: matches!(filesystem.as_str(), "NTFS" | "REFS"),
-        })
+        crate::services::file_identity::read(self.0)
     }
     pub fn check_metadata(
         &self,

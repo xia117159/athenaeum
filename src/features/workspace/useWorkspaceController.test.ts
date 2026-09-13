@@ -3450,7 +3450,7 @@ export const completion = (async () => {
         await act(async () => {
           clearListener?.({
             status: "cleared",
-            eligibleUndoableCount: 0,
+            eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
             removedTaskIds: [currentTask.taskId, failedTask.taskId, partialTask.taskId],
             removedRecordIds: [],
             taskClearWatermark: 5,

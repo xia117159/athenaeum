@@ -34,12 +34,17 @@ export function reconcileFolderSelection(before: TabState, after: TabState, repl
     if (nextId && !selectedEntryIds.includes(nextId)) selectedEntryIds.push(nextId);
   }
   const edit = after.inlineEdit;
+  const editTarget = edit?.mode === "rename" ? entries.find(entry => entry.id === edit.entryId) : undefined;
+  const validEdit = edit?.mode === "rename"
+    ? editTarget?.kind === edit.kind && (!edit.originalPath || pathsEqual(editTarget.path, edit.originalPath))
+      && (!edit.originalName || editTarget.name === edit.originalName)
+    : edit && pathsEqual(edit.parentPath, after.snapshot.location.path);
   return restorePendingFolderSelection({
     ...after,
     selectedEntryIds,
     selectionAnchorId: before.selectionAnchorId && nextIds.has(before.selectionAnchorId) ? before.selectionAnchorId : null,
     selectionCursorId: before.selectionCursorId && nextIds.has(before.selectionCursorId) ? before.selectionCursorId : null,
-    inlineEdit: edit?.entryId && !nextIds.has(edit.entryId) ? undefined : edit
+    inlineEdit: validEdit ? edit : undefined
   });
 }
 

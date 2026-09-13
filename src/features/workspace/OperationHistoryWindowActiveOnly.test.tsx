@@ -49,7 +49,7 @@ export const completion = (async () => {
     async clearOperationRecords(request) {
       requests.push(request);
       return {
-        status: "cleared", eligibleUndoableCount: 0, removedTaskIds: [], removedRecordIds: [],
+        status: "cleared", eligibleUndoableCount: 0, eligibleRecoveryCount: 0, removedTaskIds: [], removedRecordIds: [],
         taskClearWatermark: 2, historyClearWatermark: 0, protectedRecordIds: [], cleanupWarnings: []
       };
     }

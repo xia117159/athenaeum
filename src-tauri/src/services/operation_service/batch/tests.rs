@@ -92,6 +92,7 @@ impl Drop for Fixture {
 
 fn seed(store: &mut OperationStore, payload: BatchPayload, status: OperationHistoryStatus) {
     store.history.push(OperationHistoryRecord {
+        recovery_items: Vec::new(),
         record_id: payload.batch_id.clone(),
         task_id: payload.task_id.clone(),
         kind: OperationIntentKind::Rename,
@@ -185,6 +186,7 @@ fn clearing_history_protects_recovery_and_committed_records_with_remaining_logs(
         let cleared = store
             .clear_records(
                 OperationClearRequest {
+                    recovery_confirmation: None,
                     scope: OperationClearScope::All,
                     confirm_undo_loss: true,
                 },
@@ -254,6 +256,7 @@ fn restored_undo_keeps_its_log_until_the_new_mapping_is_durable() {
     let cleared = store
         .clear_records(
             OperationClearRequest {
+                recovery_confirmation: None,
                 scope: OperationClearScope::All,
                 confirm_undo_loss: true,
             },
@@ -452,6 +455,7 @@ fn committed_forward_and_undo_logs_cannot_resurrect_a_cleared_or_undone_batch() 
     let cleared = store
         .clear_records(
             OperationClearRequest {
+                recovery_confirmation: None,
                 scope: OperationClearScope::All,
                 confirm_undo_loss: true,
             },
@@ -470,6 +474,7 @@ fn committed_forward_and_undo_logs_cannot_resurrect_a_cleared_or_undone_batch() 
     let cleared = reloaded
         .clear_records(
             OperationClearRequest {
+                recovery_confirmation: None,
                 scope: OperationClearScope::All,
                 confirm_undo_loss: true,
             },

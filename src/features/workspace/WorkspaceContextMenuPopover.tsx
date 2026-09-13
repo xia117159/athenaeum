@@ -18,6 +18,7 @@ export function WorkspaceContextMenuPopover({
   actions,
   layoutMode,
   panelIds,
+  templateMenuOpen = false,
   onClose
 }: {
   contextMenu: ContextMenuState;
@@ -28,6 +29,7 @@ export function WorkspaceContextMenuPopover({
   actions: WorkspaceActions;
   layoutMode: PanelLayoutMode;
   panelIds: PanelId[];
+  templateMenuOpen?: boolean;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -60,7 +62,7 @@ export function WorkspaceContextMenuPopover({
       if (!armed || !(event.target instanceof Node)) {
         return;
       }
-      if (menuRef.current?.contains(event.target)) {
+      if (menuRef.current?.contains(event.target) || (event.target instanceof window.Element && event.target.closest(".template-menu-host"))) {
         return;
       }
       onClose();
@@ -94,6 +96,12 @@ export function WorkspaceContextMenuPopover({
   };
   const isNavigationTab = tab?.kind === "navigation";
   const isDirectoryTab = tab?.kind === "directory";
+  const canCreateTemplate = isDirectoryTab && tab.snapshot.location.kind === "local";
+  const openTemplates = (button: HTMLElement) => {
+    if (!canCreateTemplate || templateMenuOpen) return;
+    const rect = button.getBoundingClientRect();
+    actions.openTemplateMenu(contextMenu.panelId, contextMenu.tabId, { x: rect.right, y: rect.top, left: rect.left });
+  };
   const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
   const canPaste = Boolean(clipboard?.paths.length);
   const entries = visibleEntries ?? (tab ? getTabEntries(tab) : []);
@@ -279,6 +287,12 @@ export function WorkspaceContextMenuPopover({
       <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建文件夹</span>
+      </button>
+      <button type="button" className="context-menu__item context-menu__item--submenu-trigger" disabled={!canCreateTemplate}
+        aria-haspopup="menu" aria-expanded={templateMenuOpen} title={canCreateTemplate ? undefined : "新建项目仅支持本地文件夹"}
+        onMouseEnter={event => openTemplates(event.currentTarget)} onClick={event => openTemplates(event.currentTarget)}
+        onKeyDown={event => { if (event.key === "ArrowRight") { event.preventDefault(); openTemplates(event.currentTarget); } }}>
+        <span className="context-menu__check" /><span>新建项目</span>
       </button>
       {renderViewSubmenu()}
       {renderSortSubmenu()}

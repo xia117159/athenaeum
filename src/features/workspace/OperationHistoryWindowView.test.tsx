@@ -61,14 +61,15 @@ export const completion = (async () => {
       clearRequests.push(request);
       if (request.scope === "problems") {
         return {
-          status: "cleared", eligibleUndoableCount: 0, removedTaskIds: [], removedRecordIds: ["failed-history"],
+          status: "cleared", eligibleUndoableCount: 0, eligibleRecoveryCount: 0, removedTaskIds: [], removedRecordIds: ["failed-history"],
           taskClearWatermark: 4, historyClearWatermark: 2,
           protectedRecordIds: ["protected-partial"], cleanupWarnings: []
         };
       }
       if (!request.confirmUndoLoss) {
         return {
-          status: "confirmationRequired", eligibleUndoableCount: 1, removedTaskIds: [], removedRecordIds: [],
+          status: "confirmationRequired", eligibleUndoableCount: 1, eligibleRecoveryCount: 2, removedTaskIds: [], removedRecordIds: [],
+          ...{ recoveryConfirmation: "recovery-set-1" },
           taskClearWatermark: 4, historyClearWatermark: 1, protectedRecordIds: [], cleanupWarnings: []
         };
       }
@@ -151,6 +152,8 @@ export const completion = (async () => {
     });
     const dialog = container.querySelector<HTMLElement>("[role=alertdialog]");
     assert.ok(dialog);
+    assert.match(dialog.textContent!, /永久清理最多 2 个恢复副本/);
+    assert.match(dialog.textContent!, /后来保存的内容/);
     assert.equal(document.activeElement?.textContent, "\u53d6\u6d88");
     assert.deepEqual(clearRequests[1], { scope: "history", confirmUndoLoss: false });
     await act(async () => {
@@ -180,13 +183,27 @@ export const completion = (async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.deepEqual(clearRequests[2], { scope: "history", confirmUndoLoss: false });
-    assert.deepEqual(clearRequests[3], { scope: "history", confirmUndoLoss: true });
+    assert.deepEqual(clearRequests[3], { scope: "history", confirmUndoLoss: true, recoveryConfirmation: "recovery-set-1" });
     assert.equal(clearRequests.length, 4);
     assert.equal(confirmedDialog.getAttribute("aria-busy"), "true");
     assert.equal(document.activeElement === confirmedDialog, true);
     await act(async () => {
+      resolveConfirmedClear?.({ status: "confirmationRequired", eligibleUndoableCount: 1, eligibleRecoveryCount: 3,
+        ...{ recoveryConfirmation: "recovery-set-2" }, removedTaskIds: [], removedRecordIds: [], taskClearWatermark: 4,
+        historyClearWatermark: 2, protectedRecordIds: [], cleanupWarnings: [] });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    assert.match(confirmedDialog.textContent!, /永久清理最多 3 个恢复副本/);
+    assert.equal(clearRequests.length, 4, "new confirmation must wait for the user, never auto-submit");
+    assert.equal(document.activeElement?.textContent, "取消");
+    await act(async () => {
+      confirmedDialog.querySelectorAll<HTMLButtonElement>("button")[1].click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(clearRequests[4], { scope: "history", confirmUndoLoss: true, recoveryConfirmation: "recovery-set-2" });
+    await act(async () => {
       resolveConfirmedClear?.({
-        status: "cleared", eligibleUndoableCount: 1, removedTaskIds: ["done"],
+        status: "cleared", eligibleUndoableCount: 1, eligibleRecoveryCount: 0, removedTaskIds: ["done"],
         removedRecordIds: ["history-undoable"], taskClearWatermark: 5, historyClearWatermark: 2,
         protectedRecordIds: [], cleanupWarnings: []
       });

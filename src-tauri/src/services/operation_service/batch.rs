@@ -80,6 +80,7 @@ impl OperationStore {
             index
         } else {
             disk.history.push(OperationHistoryRecord {
+                recovery_items: Vec::new(),
                 record_id: payload.batch_id.clone(),
                 task_id: payload.task_id.clone(),
                 kind: OperationIntentKind::Rename,
