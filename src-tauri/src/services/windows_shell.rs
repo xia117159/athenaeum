@@ -106,7 +106,7 @@ mod imp {
     const BACKGROUND_CMD_SORT_ASC: u32 = 40;
     const BACKGROUND_CMD_SORT_DESC: u32 = 41;
     const BACKGROUND_CMD_PASTE: u32 = 50;
-    const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 7;
+    const BACKGROUND_CUSTOM_TOP_ITEM_COUNT: u32 = 6;
 
     const SELECTION_SHELL_CMD_FIRST: u32 = 1000;
     const SELECTION_CMD_COPY_NAME: u32 = 1;
@@ -1358,7 +1358,7 @@ mod imp {
             BACKGROUND_CMD_CREATE_FOLDER,
             "新建文件夹",
         )?;
-        append_menu_item(menu, MENU_ITEM_FLAGS(0), BACKGROUND_CMD_CREATE_TEMPLATE, "新建项目")?;
+        // The template picker needs persistent cross-level selection in the application menu.
         append_background_view_menu(menu, options)?;
         append_background_sort_menu(menu, options)?;
         append_menu_item(
