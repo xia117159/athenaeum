@@ -6,11 +6,13 @@ import type { WorkspaceAction } from "./workspaceReducer";
 import { getTabEntries } from "./folderExpansion";
 import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
 import { templateKey, toggleTemplateSelection } from "./templateSelection";
+import { menuParentIsActive, type MenuAnchor, type MenuParent } from "./workspaceMenuState";
 
 export interface TemplateTarget { panelId: PanelId; tabId: string; rootPath: string; selectionRevision: number; navigationRevision?: number }
-export interface TemplateAnchor { x: number; y: number; left?: number }
+export type TemplateAnchor = MenuAnchor;
 export interface TemplateLevel { relativePath: string; anchor: TemplateAnchor; parent?: CreationTemplateEntry }
 export interface TemplateMenuState {
+  parent?: MenuParent;
   id: string; target: TemplateTarget; settingsRoot: string; rootPath: string;
   /** A collapsed submenu retains this context-menu session's selection until the whole menu closes. */
   rootHidden?: boolean;
@@ -78,9 +80,10 @@ export function reduceTemplates(state: WorkspaceState, input: WorkspaceAction): 
     return { ...next, templateMenu: state.templateMenu && matches(state.templateMenu.target) ? undefined : state.templateMenu,
       templateCreation: state.templateCreation && matches(state.templateCreation.target) ? invalidateTemplateRename(state.templateCreation) : state.templateCreation };
   }
-  if (action.type === "templateMenuOpened") return state.templateCreation || state.batchRename || !templateTargetMatches(state, action.payload.target) ? state
+  if (action.type === "templateMenuOpened") return state.templateCreation || state.batchRename
+    || !menuParentIsActive(state, action.payload.parent) || !templateTargetMatches(state, action.payload.target) ? state
     : { ...state, openWithMenu: undefined, templateMenu: action.payload };
-  if (action.type === "templateCreationStarted") return state.templateCreation || state.batchRename || !templateTargetMatches(state, action.payload.target) ? state : { ...state, templateMenu: undefined, contextMenu: undefined,
+  if (action.type === "templateCreationStarted") return state.templateCreation || state.batchRename || !templateTargetMatches(state, action.payload.target) ? state : { ...state, templateMenu: undefined, contextMenu: undefined, menuBar: undefined,
     templateCreation: { ...action.payload, allowRename: true, phase: "running", paths: [] } };
   const pending = state.templateCreation;
   if (action.type === "templateTaskCompleted") {

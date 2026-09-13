@@ -1,4 +1,7 @@
-import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useState } from "react";
+import { MenuSurface, MenuSubmenu } from "./MenuPrimitives";
+import { WorkspaceFeatureMenuTrigger } from "./WorkspaceFeatureMenuTrigger";
+import { handleMenuKeyDown, menuOwnsTarget, positionMenu } from "./menuInteraction";
+import { type CSSProperties, type ReactNode, useLayoutEffect, useEffect, useRef, useId } from "react";
 import { createPortal } from "react-dom";
 import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceSharedMenuItems";
 import type { ClipboardState, ContextMenuState, EntryViewModel, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
@@ -6,7 +9,6 @@ import { getTabEntries } from "./folderExpansion";
 import type { useWorkspaceController } from "./useWorkspaceController";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
-const MENU_VIEWPORT_PADDING = 8;
 const MENU_Z_INDEX = 10000;
 
 export function WorkspaceContextMenuPopover({
@@ -33,8 +35,7 @@ export function WorkspaceContextMenuPopover({
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState(() => ({ x: contextMenu.x, y: contextMenu.y }));
-  const [inputMode, setInputMode] = useState<"pointer" | "keyboard">("pointer");
+  const hostId = useId();
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -42,15 +43,14 @@ export function WorkspaceContextMenuPopover({
       return;
     }
 
-    const rect = menu.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    const maxX = Math.max(MENU_VIEWPORT_PADDING, viewportWidth - rect.width - MENU_VIEWPORT_PADDING);
-    const maxY = Math.max(MENU_VIEWPORT_PADDING, viewportHeight - rect.height - MENU_VIEWPORT_PADDING);
-    setPosition({
-      x: Math.min(Math.max(MENU_VIEWPORT_PADDING, contextMenu.x), maxX),
-      y: Math.min(Math.max(MENU_VIEWPORT_PADDING, contextMenu.y), maxY)
-    });
+    const measure = () => {
+      const { left, top } = positionMenu(contextMenu, menu.getBoundingClientRect());
+      menu.style.left = `${left}px`; menu.style.top = `${top}px`;
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(menu); window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
   }, [contextMenu.x, contextMenu.y]);
 
   useEffect(() => {
@@ -60,39 +60,34 @@ export function WorkspaceContextMenuPopover({
     }, 0);
 
     const handlePointerDown = (event: PointerEvent) => {
-      setInputMode("pointer");
       if (!armed || !(event.target instanceof Node)) {
         return;
       }
-      if (menuRef.current?.contains(event.target) || (event.target instanceof window.Element && event.target.closest(".template-menu-host"))) {
+      if (menuRef.current?.contains(event.target) || menuOwnsTarget(event.target, hostId)) {
         return;
       }
       onClose();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!["Shift", "Control", "Alt", "Meta"].includes(event.key)) setInputMode("keyboard");
       if (event.key === "Escape") {
         onClose();
       }
     };
-    const handlePointerMove = () => setInputMode("pointer");
 
     window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onClose]);
+  }, [onClose, hostId]);
 
   const menuStyle = {
     position: "fixed",
-    left: `${position.x}px`,
-    top: `${position.y}px`,
+    left: `${contextMenu.x}px`,
+    top: `${contextMenu.y}px`,
     zIndex: MENU_Z_INDEX
   } as CSSProperties;
 
@@ -102,19 +97,7 @@ export function WorkspaceContextMenuPopover({
   };
   const isNavigationTab = tab?.kind === "navigation";
   const isDirectoryTab = tab?.kind === "directory";
-  const canCreateTemplate = isDirectoryTab && tab.snapshot.location.kind === "local";
-  const openTemplates = (button: HTMLElement, moveFocus = false) => {
-    if (!canCreateTemplate) return;
-    if (templateMenuOpen) {
-      if (moveFocus) {
-        const menu = document.querySelector<HTMLElement>('.template-menu-host [data-template-depth="0"]');
-        (menu?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? menu)?.focus({ preventScroll: true });
-      }
-      return;
-    }
-    const rect = button.getBoundingClientRect();
-    actions.openTemplateMenu(contextMenu.panelId, contextMenu.tabId, { x: rect.right, y: rect.top, left: rect.left });
-  };
+  const canCreateTemplate = isDirectoryTab && tab.snapshot.location.kind === "local" && !tab.inlineEdit && tab.pendingNavigationRequestId === undefined;
   const currentSort = tab?.kind === "directory" ? tab.sort : undefined;
   const canPaste = Boolean(clipboard?.paths.length);
   const entries = visibleEntries ?? (tab ? getTabEntries(tab) : []);
@@ -136,44 +119,8 @@ export function WorkspaceContextMenuPopover({
     navigator.clipboard?.writeText(text).catch(() => {});
   };
 
-  const adjustSubmenuPosition = (wrapper: HTMLElement) => {
-    const items = wrapper.querySelector(".context-menu__submenu-items") as HTMLElement | null;
-    if (!items) return;
-    items.style.removeProperty("left");
-    items.style.removeProperty("right");
-    items.style.removeProperty("top");
-    const rect = items.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    if (rect.right > vw - MENU_VIEWPORT_PADDING) {
-      items.style.left = "auto";
-      items.style.right = "calc(100% - 1px)";
-    }
-    if (rect.bottom > vh - MENU_VIEWPORT_PADDING) {
-      items.style.top = `${-3 - (rect.bottom - vh + MENU_VIEWPORT_PADDING)}px`;
-    }
-  };
-
   const renderSubmenu = (label: string, children: ReactNode, disabled = false) => (
-    <div
-      className={`context-menu__submenu${disabled ? " is-disabled" : ""}`}
-      role="none"
-      onMouseEnter={(e) => adjustSubmenuPosition(e.currentTarget)}
-      onFocusCapture={(e) => adjustSubmenuPosition(e.currentTarget)}
-    >
-      <button
-        type="button"
-        className="context-menu__item context-menu__item--submenu-trigger"
-        disabled={disabled}
-        aria-haspopup="menu"
-      >
-        <span className="context-menu__check" />
-        <span>{label}</span>
-      </button>
-      <div className="context-menu__submenu-items" role="menu">
-        {children}
-      </div>
-    </div>
+    <MenuSubmenu label={label} disabled={disabled} hostId={hostId} hostKind="context" classPrefix="context-menu">{children}</MenuSubmenu>
   );
 
   const renderViewSubmenu = () =>
@@ -181,7 +128,7 @@ export function WorkspaceContextMenuPopover({
       "视图",
       <WorkspaceViewMenuItems
         classNames={{
-          item: "context-menu__item",
+          item: "app-menu__item context-menu__item",
           check: "context-menu__check"
         }}
         viewMode={viewMode}
@@ -197,9 +144,9 @@ export function WorkspaceContextMenuPopover({
       "排序方式",
       <WorkspaceSortMenuItems
         classNames={{
-          item: "context-menu__item",
+          item: "app-menu__item context-menu__item",
           check: "context-menu__check",
-          separator: "context-menu__separator"
+          separator: "app-menu__separator context-menu__separator"
         }}
         sort={currentSort}
         onSelectColumn={(columnId) => handleAction(() => actions.setSort(contextMenu.panelId, contextMenu.tabId, { columnId }))}
@@ -219,24 +166,24 @@ export function WorkspaceContextMenuPopover({
     const extensions = selectedEntries.map((e) => e.extension.replace(/^\./, "")).filter(Boolean);
     return renderSubmenu("到剪切板", (
       <>
-        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.name).join("\n")))}>
+        <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.name).join("\n")))}>
           <span className="context-menu__check" />
           <span>复制文件名</span>
         </button>
-        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.path).join("\n")))}>
+        <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => writeClipboard(selectedEntries.map((e) => e.path).join("\n")))}>
           <span className="context-menu__check" />
           <span>复制完整路径</span>
         </button>
-        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard([...new Set(selectedEntries.map((e) => e.parentPath))].join("\n")))}>
+        <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => writeClipboard([...new Set(selectedEntries.map((e) => e.parentPath))].join("\n")))}>
           <span className="context-menu__check" />
           <span>复制所在文件夹路径</span>
         </button>
-        <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(namesWithoutExt.join("\n")))}>
+        <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => writeClipboard(namesWithoutExt.join("\n")))}>
           <span className="context-menu__check" />
           <span>复制文件名（不含扩展名）</span>
         </button>
         {extensions.length > 0 && (
-          <button type="button" className="context-menu__item" onClick={() => handleAction(() => writeClipboard(extensions.join("\n")))}>
+          <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => writeClipboard(extensions.join("\n")))}>
             <span className="context-menu__check" />
             <span>复制扩展名</span>
           </button>
@@ -247,30 +194,30 @@ export function WorkspaceContextMenuPopover({
 
   const renderTabMenu = () => (
     <>
-      <button type="button" className="context-menu__item" onClick={() => handleAction(() => actions.toggleTabLock(contextMenu.panelId, contextMenu.tabId))}>
+      <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.toggleTabLock(contextMenu.panelId, contextMenu.tabId))}>
         <span className="context-menu__check">{tab?.locked ? "✓" : ""}</span>
         <span>{tab?.locked ? "取消锁定标签页" : "锁定标签页"}</span>
       </button>
-      <button type="button" className="context-menu__item" onClick={() => handleAction(() => actions.closeOtherTabs(contextMenu.panelId, contextMenu.tabId, true))}>
+      <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.closeOtherTabs(contextMenu.panelId, contextMenu.tabId, true))}>
         <span className="context-menu__check" />
         <span>关闭所有其他标签页</span>
       </button>
-      <button type="button" className="context-menu__item" onClick={() => handleAction(() => actions.closeTab(contextMenu.panelId, contextMenu.tabId))} disabled={tab?.locked}>
+      <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.closeTab(contextMenu.panelId, contextMenu.tabId))} disabled={tab?.locked}>
         <span className="context-menu__check" />
         <span>关闭当前标签页</span>
       </button>
-      <button type="button" className="context-menu__item" onClick={() => handleAction(() => actions.closeOtherTabs(contextMenu.panelId, contextMenu.tabId, false))}>
+      <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.closeOtherTabs(contextMenu.panelId, contextMenu.tabId, false))}>
         <span className="context-menu__check" />
         <span>关闭所有其他未锁定的标签页</span>
       </button>
-      <div className="context-menu__separator" />
-      <button type="button" className="context-menu__item" disabled={isNavigationTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
+      <div className="app-menu__separator context-menu__separator" />
+      <button type="button" className="app-menu__item context-menu__item" disabled={isNavigationTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
         <span className="context-menu__check" />
         <span>复制路径</span>
       </button>
       <button
         type="button"
-        className="context-menu__item"
+        className="app-menu__item context-menu__item"
         disabled={isNavigationTab}
         onClick={() =>
           handleAction(() => {
@@ -284,7 +231,7 @@ export function WorkspaceContextMenuPopover({
         <span className="context-menu__check" />
         <span>重命名标签页</span>
       </button>
-      <button type="button" className="context-menu__item" disabled={isNavigationTab} onClick={() => handleAction(() => actions.openNewTab(contextMenu.panelId, tab?.snapshot.location.path))}>
+      <button type="button" className="app-menu__item context-menu__item" disabled={isNavigationTab} onClick={() => handleAction(() => actions.openNewTab(contextMenu.panelId, tab?.snapshot.location.path))}>
         <span className="context-menu__check" />
         <span>复制到新标签页</span>
       </button>
@@ -293,46 +240,41 @@ export function WorkspaceContextMenuPopover({
 
   const renderPanelMenu = () => (
     <>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFile(contextMenu.panelId))}>
+      <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFile(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建文件</span>
       </button>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
+      <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.createFolder(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建文件夹</span>
       </button>
-      <button type="button" className="context-menu__item context-menu__item--submenu-trigger" disabled={!canCreateTemplate}
-        data-template-menu-trigger data-template-panel={contextMenu.panelId} data-template-tab={contextMenu.tabId}
-        aria-haspopup="menu" aria-expanded={templateMenuOpen} title={canCreateTemplate ? undefined : "新建项目仅支持本地文件夹"}
-        onMouseEnter={event => openTemplates(event.currentTarget)} onClick={event => openTemplates(event.currentTarget, true)}
-        onKeyDown={event => { if (event.key === "ArrowRight") { event.preventDefault(); openTemplates(event.currentTarget, true); } }}>
-        <span className="context-menu__check" /><span>新建项目</span>
-      </button>
+      <WorkspaceFeatureMenuTrigger feature="templates" parent={{ kind: "context", hostId }} panelId={contextMenu.panelId}
+        tabId={contextMenu.tabId} disabled={!canCreateTemplate} expanded={templateMenuOpen} actions={actions} classPrefix="context-menu" />
       {renderViewSubmenu()}
       {renderSortSubmenu()}
       <button
         type="button"
-        className="context-menu__item"
+        className="app-menu__item context-menu__item"
         disabled={!isDirectoryTab || !canPaste}
         onClick={() => handleAction(() => actions.pasteIntoPanel(contextMenu.panelId))}
       >
         <span className="context-menu__check" />
         <span>粘贴</span>
       </button>
-      <div className="context-menu__separator" />
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
+      <div className="app-menu__separator context-menu__separator" />
+      <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copyTabPath(contextMenu.panelId, contextMenu.tabId))}>
         <span className="context-menu__check" />
         <span>复制路径</span>
       </button>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addCurrentFolderToNavigation())}>
+      <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addCurrentFolderToNavigation())}>
         <span className="context-menu__check" />
         <span>添加当前文件夹到导航页</span>
       </button>
-      <button type="button" className="context-menu__item" disabled={!isDirectoryTab && !isNavigationTab} onClick={() => handleAction(() => actions.refreshPanel(contextMenu.panelId))}>
+      <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab && !isNavigationTab} onClick={() => handleAction(() => actions.refreshPanel(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>刷新</span>
       </button>
-      <button type="button" className="context-menu__item" onClick={() => handleAction(() => actions.openNewTab(contextMenu.panelId))}>
+      <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.openNewTab(contextMenu.panelId))}>
         <span className="context-menu__check" />
         <span>新建标签页</span>
       </button>
@@ -340,38 +282,38 @@ export function WorkspaceContextMenuPopover({
         <>
           {hasSelectedFolders && (
             <>
-              <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.openNewTab(contextMenu.panelId, f.path)))}>
+              <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.openNewTab(contextMenu.panelId, f.path)))}>
                 <span className="context-menu__check" />
                 <span>在新标签页打开</span>
               </button>
               {layoutMode !== "single" && adjacentPanelId && (
-                <button type="button" className="context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.navigateToPath(adjacentPanelId, f.path)))}>
+                <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => selectedFolders.forEach((f) => actions.navigateToPath(adjacentPanelId, f.path)))}>
                   <span className="context-menu__check" />
                   <span>在相邻窗格打开</span>
                 </button>
               )}
-              <div className="context-menu__separator" />
+              <div className="app-menu__separator context-menu__separator" />
             </>
           )}
-          <div className="context-menu__separator" />
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addSelectedEntriesToNavigation(contextMenu.panelId))}>
+          <div className="app-menu__separator context-menu__separator" />
+          <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.addSelectedEntriesToNavigation(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>添加到导航页</span>
           </button>
           {renderClipboardSubmenu()}
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copySelection(contextMenu.panelId))}>
+          <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.copySelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>复制</span>
           </button>
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.cutSelection(contextMenu.panelId))}>
+          <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.cutSelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>剪切</span>
           </button>
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab || (contextMenu.mode === "system-fallback" && !contextMenu.renameTarget)} onClick={() => handleAction(() => actions.renameSelection(contextMenu.panelId))}>
+          <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab || (contextMenu.mode === "system-fallback" && !contextMenu.renameTarget)} onClick={() => handleAction(() => actions.renameSelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>重命名</span>
           </button>
-          <button type="button" className="context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.deleteSelection(contextMenu.panelId))}>
+          <button type="button" className="app-menu__item context-menu__item" disabled={!isDirectoryTab} onClick={() => handleAction(() => actions.deleteSelection(contextMenu.panelId))}>
             <span className="context-menu__check" />
             <span>删除</span>
           </button>
@@ -387,7 +329,7 @@ export function WorkspaceContextMenuPopover({
       <>
         <button
           type="button"
-          className="context-menu__item"
+          className="app-menu__item context-menu__item"
           disabled={!entryPath}
           onClick={() => entryPath && handleAction(() => actions.editEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
         >
@@ -396,7 +338,7 @@ export function WorkspaceContextMenuPopover({
         </button>
         <button
           type="button"
-          className="context-menu__item"
+          className="app-menu__item context-menu__item"
           disabled={!entryPath || !hasComment}
           onClick={() => entryPath && handleAction(() => actions.copyEntryComment(entryPath, commentEntry?.comment ?? ""))}
         >
@@ -405,7 +347,7 @@ export function WorkspaceContextMenuPopover({
         </button>
         <button
           type="button"
-          className="context-menu__item"
+          className="app-menu__item context-menu__item"
           disabled={!entryPath}
           onClick={() => entryPath && handleAction(() => actions.pasteEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
         >
@@ -414,7 +356,7 @@ export function WorkspaceContextMenuPopover({
         </button>
         <button
           type="button"
-          className="context-menu__item"
+          className="app-menu__item context-menu__item"
           disabled={!entryPath || !hasComment}
           onClick={() => entryPath && handleAction(() => actions.removeEntryComment(contextMenu.panelId, contextMenu.tabId, entryPath))}
         >
@@ -426,7 +368,7 @@ export function WorkspaceContextMenuPopover({
   };
 
   const menu = (
-    <div ref={menuRef} className="context-menu" data-input-mode={inputMode} style={menuStyle}>
+    <MenuSurface ref={menuRef} className="context-menu" data-menu-host={hostId} style={menuStyle} onKeyDown={event => handleMenuKeyDown(event, onClose)}>
       <div className="context-menu__header">
         <strong>
           {contextMenu.scope === "tab"
@@ -440,7 +382,7 @@ export function WorkspaceContextMenuPopover({
         <span>{contextMenu.mode === "custom" ? "应用右键菜单" : "系统菜单不可用，已回退到应用菜单"}</span>
       </div>
       {contextMenu.scope === "tab" ? renderTabMenu() : contextMenu.scope === "comment" ? renderCommentMenu() : renderPanelMenu()}
-    </div>
+    </MenuSurface>
   );
 
   return createPortal(menu, document.body);

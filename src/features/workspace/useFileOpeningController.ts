@@ -6,6 +6,7 @@ import { fileOpenTarget } from "./fileOpeningGateway";
 import { createOpenWithMenu, reconcileOpenWithMenu } from "./fileOpeningState";
 import { getErrorMessage, getEntryNameFromPath } from "./workspaceControllerUtils";
 import { openSettingsWindow } from "./settingsWindow";
+import type { MenuAnchor, MenuParent } from "./workspaceMenuState";
 
 export interface FileOpeningControllerOptions {
   state: WorkspaceState;
@@ -88,12 +89,12 @@ export function useFileOpeningController({ state, dispatch, gateway, enabled, no
     }
   });
 
-  const requestOpenWith = useEffectEvent(() => {
-    if (!enabled || state.status !== "ready" || state.contextMenu) return;
+  const requestOpenWith = useEffectEvent((parent?: MenuParent, anchor?: MenuAnchor) => {
+    if (!enabled || state.status !== "ready" || (!parent && state.contextMenu)) return;
     const panel = state.panels[state.activePanelId];
     if (panel.tabs.find(tab => tab.id === panel.activeTabId)?.inlineEdit) return;
     const requestId = `menu-${crypto.randomUUID()}`;
-    if (createOpenWithMenu(state, requestId)) dispatch({ type: "openWithRequested", payload: { requestId } });
+    if (createOpenWithMenu(state, requestId)) dispatch({ type: "openWithRequested", payload: { requestId, parent, anchor } });
   });
 
   const menu = state.openWithMenu;
@@ -111,8 +112,8 @@ export function useFileOpeningController({ state, dispatch, gateway, enabled, no
     return () => { disposed = true; };
   }, [menu?.requestId, gateway, dispatch]);
 
-  const closeOpenWith = useEffectEvent((requestId: string) => {
-    if (state.openWithMenu?.requestId === requestId) dispatch({ type: "openWithClosed" });
+  const closeOpenWith = useEffectEvent((requestId: string, keepParent = false) => {
+    if (state.openWithMenu?.requestId === requestId) dispatch({ type: "openWithClosed", payload: { keepParent } });
   });
   const selectOpenWith = useEffectEvent((requestId: string, index: number) => {
     if (state.openWithMenu?.requestId === requestId) dispatch({ type: "openWithSelectionChanged", payload: index });
@@ -131,5 +132,5 @@ export function useFileOpeningController({ state, dispatch, gateway, enabled, no
     }
   });
 
-  return { openFile, requestOpenWith, actions: { closeOpenWith, selectOpenWith, confirmOpenWith, cancelFileOpen } };
+  return { openFile, requestOpenWith, actions: { requestOpenWith, closeOpenWith, selectOpenWith, confirmOpenWith, cancelFileOpen } };
 }

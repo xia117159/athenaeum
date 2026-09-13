@@ -143,16 +143,15 @@ test("configured list colors paint the name-label background and keep foreground
   // details 视图：选中/拖放/内联编辑的文本覆盖作用于 .file-row__grid（含 :hover 组合，0,5,0），
   // 网格级前景回写必须位于所有这些覆盖之后，才能按级联源顺序取胜。
   const selectedGridOverride = css.indexOf(".file-row.is-selected .file-row__grid");
-  const selectedHoverOverride = css.indexOf(".file-row.has-color-filter.is-selected:hover .file-row__grid");
-  const dropHoverOverride = css.indexOf(".file-row.has-color-filter.is-drop-target:hover .file-row__grid");
-  const inlineHoverOverride = css.indexOf(".file-row.has-color-filter.is-inline-editing:hover .file-row__grid");
+
+  const dropOverride = css.indexOf(".file-row.is-drop-target .file-row__grid");
+  const inlineOverride = css.indexOf(".file-row.is-inline-editing .file-row__grid");
   const gridForegroundRestore = css.indexOf(
     ".file-row.has-color-filter--foreground.is-selected .file-row__grid"
   );
   assert.ok(gridForegroundRestore > selectedGridOverride, "grid-level foreground restore must follow the selection text override");
-  assert.ok(gridForegroundRestore > selectedHoverOverride, "grid-level foreground restore must follow the selection:hover override");
-  assert.ok(gridForegroundRestore > dropHoverOverride, "grid-level foreground restore must follow the drop-target:hover override");
-  assert.ok(gridForegroundRestore > inlineHoverOverride, "grid-level foreground restore must follow the inline-editing:hover override");
+  assert.ok(gridForegroundRestore > dropOverride, "grid-level foreground restore must follow the drop-target override");
+  assert.ok(gridForegroundRestore > inlineOverride, "grid-level foreground restore must follow the inline-editing override");
   assert.ok(css.indexOf("@media (forced-colors: active)") > gridForegroundRestore, "forced-colors overrides stay after the restore block");
   assert.match(css, /\.file-row\.has-color-filter--foreground\.is-selected \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
   assert.match(css, /\.file-row\.has-color-filter--foreground\.is-selected:hover \.file-row__grid[^{]*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);

@@ -69,6 +69,9 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       dropHighlightBorder: "not-a-color",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }),
     {
@@ -78,6 +81,9 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       dropHighlightBorder: "#0f6cbd",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   );
@@ -129,6 +135,9 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       dropHighlightBorder: "invalid",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   };
@@ -159,6 +168,9 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       dropHighlightBorder: "#0f6cbd",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   });

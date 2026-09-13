@@ -5,7 +5,7 @@ const REPO_URL = "https://github.com/xia117159/athenaeum";
 
 export const ABOUT_APP_INFO = {
   name: "Athenaeum",
-  version: "0.0.1",
+  version: "0.0.2",
   description: "Windows 文件管理器桌面应用",
   copyright: "Copyright (c) 2026 Cheng",
   license: "Apache License 2.0",

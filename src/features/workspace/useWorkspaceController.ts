@@ -2766,6 +2766,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       }
       if (state.batchRename) { event.preventDefault(); return; }
       if (state.openWithMenu) { event.preventDefault(); return; }
+      if (state.menuBar || state.contextMenu || state.templateMenu) { event.preventDefault(); return; }
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
@@ -3302,6 +3303,8 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       showNotification: (intent: WorkspaceState["notifications"][number]["intent"], message: string) =>
         pushNotification(intent, message),
       closeContextMenu: () => dispatch({ type: "contextMenuSet", payload: undefined }),
+      setMenuBar: (id?: string) => dispatch({ type: "workspaceMenuBarSet", payload: id ? { id, sessionId: crypto.randomUUID() } : undefined }),
+      closeMenus: () => dispatch({ type: "workspaceMenusClosed" }),
       chooseAssociationProgram: () => workspaceGateway.chooseAssociationProgram(),
       inspectAssociationPrograms: (paths: string[]) => workspaceGateway.inspectAssociationPrograms(paths),
       dismissNotification: (id: string) => dispatch({ type: "notificationDismissed", payload: { id } })

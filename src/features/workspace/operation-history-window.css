@@ -43,34 +43,7 @@
 .operation-history-window__heading span { color: #606060; font-size: 11px; white-space: nowrap; }
 
 .operation-history-window__clear { position: relative; }
-.operation-history-window__clear-menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 3px);
-  right: 0;
-  display: grid;
-  width: 172px;
-  padding: 3px;
-  border: 1px solid #c8c8c8;
-  border-radius: 4px;
-  background: #ffffff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
-}
-
-.operation-history-window__clear-menu button {
-  min-height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.operation-history-window__clear-menu button:hover:not(:disabled),
-.operation-history-window__clear-menu button:focus-visible { background: #e9f3fc; outline: none; }
-.operation-history-window__clear-menu button:disabled { color: #8a8a8a; }
+.app-menu.operation-history-window__clear-menu { position: absolute; z-index: 20; top: calc(100% + 3px); right: 0; width: 172px; }
 
 .operation-history-window__messages {
   display: grid;

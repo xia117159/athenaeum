@@ -1,3 +1,5 @@
+import { normalizeTheme as toBackendTheme } from "./workspaceTheme";
+export { normalizeTheme as toBackendTheme } from "./workspaceTheme";
 import type {
   RemoteProfile as BackendRemoteProfile,
   RemoteProfileUpsertRequest as BackendRemoteProfileUpsertRequest,
@@ -5,8 +7,7 @@ import type {
   SettingsModelUpdate as BackendSettingsModelUpdate,
   SettingsSnapshot as BackendSettingsSnapshot,
   ShortcutBinding as BackendShortcutBinding,
-  UiLayout as BackendUiLayout,
-  UiTheme as BackendUiTheme
+  UiLayout as BackendUiLayout
 } from "../../app/types";
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
@@ -22,9 +23,7 @@ import {
   normalizeSizeBarMode,
   normalizeColumns,
   normalizeMetadataRetentionHours,
-  normalizeTabMinWidth,
-  normalizeTooltipHoverDelayMs,
-  normalizeThemeAccentColor
+  normalizeTooltipHoverDelayMs
 } from "./workspaceMappers";
 import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
@@ -51,18 +50,6 @@ export function toBackendShortcut(shortcut: SettingsModel["shortcuts"][number]):
     action: shortcut.id,
     accelerator: normalizeShortcutBindingForStorage(shortcut.binding),
     scope: shortcut.scope
-  };
-}
-
-export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
-  return {
-    panelFocusAccent: normalizeThemeAccentColor(theme.panelFocusAccent),
-    activeTabBackground: normalizeThemeAccentColor(theme.activeTabBackground, DEFAULT_THEME.activeTabBackground),
-    dropHighlightFill: normalizeThemeAccentColor(theme.dropHighlightFill),
-    dropHighlightBorder: normalizeThemeAccentColor(theme.dropHighlightBorder),
-    sizeBarLow: normalizeThemeAccentColor(theme.sizeBarLow, DEFAULT_THEME.sizeBarLow),
-    sizeBarHigh: normalizeThemeAccentColor(theme.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
-    tabMinWidth: normalizeTabMinWidth(theme.tabMinWidth)
   };
 }
 

@@ -284,15 +284,7 @@ export interface NavigationState {
   gitStatusLoadingDirs: string[];
 }
 
-export interface ThemeSettings {
-  panelFocusAccent: string;
-  activeTabBackground: string;
-  dropHighlightFill: string;
-  dropHighlightBorder: string;
-  sizeBarLow: string;
-  sizeBarHigh: string;
-  tabMinWidth: number;
-}
+export type ThemeSettings = import("../../app/types").UiTheme;
 
 export interface ContextMenuSettings {
   defaultMenu: ContextMenuDefault;
@@ -717,6 +709,7 @@ export interface WorkspaceState {
   clipboard?: ClipboardState;
   notifications: NotificationItem[];
   contextMenu?: ContextMenuState;
+  menuBar?: import("./workspaceMenuState").WorkspaceMenuBarState;
   openWithMenu?: OpenWithMenuState;
   batchRename?: BatchRenameDialogState;
   templateMenu?: TemplateMenuState;

@@ -69,10 +69,12 @@ import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from
 import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
 import { prepareSelectionInteraction } from "./folderSelectionRestore";
 import { reduceTemplates, reconcileTemplates, type TemplateCreationAction } from "./templateCreationState";
+import { reduceWorkspaceMenus, reconcileWorkspaceMenus, type WorkspaceMenuAction } from "./workspaceMenuState";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | WorkspaceMenuAction
   | TemplateCreationAction
   | BatchRenameAction
   | FileOpeningAction
@@ -1245,8 +1247,9 @@ function updateColumnsForSettingsAndTab(
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   state = prepareSelectionInteraction(state, action);
-  return reconcileTemplates(reconcileOpenWithMenu(reduceTemplates(state, action) ?? reduceBatchRename(state, action)
-    ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action);
+  return reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceMenus(state, action)
+    ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
+    ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -2594,6 +2597,9 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         defaultMenu: normalizeContextMenuDefault(action.payload.value)
       }));
 
+    case "contextMenuSet":
+      return { ...state, contextMenu: action.payload };
+
     case "themePanelFocusAccentSet":
       {
         const nextColor = normalizeThemeAccentColor(action.payload.color);
@@ -2742,11 +2748,6 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         notifications: state.notifications.filter((notification) => notification.id !== action.payload.id)
       };
 
-    case "contextMenuSet":
-      return {
-        ...state,
-        contextMenu: action.payload
-      };
 
     default:
       return state;

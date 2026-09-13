@@ -6,7 +6,9 @@ import type { TemplateMenuState } from "./templateCreationState";
 import type { useTemplateCreationController } from "./useTemplateCreationController";
 import { templateKey, templateSelectionStatus } from "./templateSelection";
 import { FileSystemIcon } from "./FileSystemIcon";
-import { findTemplateMenuTrigger, useTemplateMenuHover } from "./useTemplateMenuHover";
+import { useTemplateMenuHover } from "./useTemplateMenuHover";
+import { MenuSurface } from "./MenuPrimitives";
+import { findMenuTrigger, parentMenuContains, positionMenu } from "./menuInteraction";
 import "./templates.css";
 
 export interface TemplateCreationMenuProps { menu: TemplateMenuState; actions: ReturnType<typeof useTemplateCreationController>["actions"] }
@@ -23,7 +25,7 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
   const focusDepth = useRef<number | undefined>(0);
   const restoreFocus = () => {
     if (originalFocus.current?.isConnected && originalFocus.current !== document.body
-      && !originalFocus.current.closest(".context-menu, .template-menu-host")) focus(originalFocus.current);
+      && !originalFocus.current.closest(".app-menu, .template-menu-host")) focus(originalFocus.current);
     else {
       const listing = document.querySelector<HTMLElement>(`.file-listing__scroll[data-panel-id="${menu.target.panelId}"]`);
       if (listing) { listing.tabIndex = -1; focus(listing); }
@@ -32,7 +34,7 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
   const close = () => { restoreFocus(); actions.closeTemplateMenu(menu.id); };
   const collapse = (depth: number, moveFocus = true) => {
     const parentPath = menu.levels[depth]?.relativePath;
-    const parent = depth === 0 ? findTemplateMenuTrigger(menu.target)
+    const parent = depth === 0 ? findMenuTrigger(menu.parent)
       : buttons(panels.current[depth - 1]).find(button => button.dataset.templatePath === parentPath);
     focusDepth.current = undefined;
     if (moveFocus || panels.current.slice(depth).some(panel => panel?.contains(document.activeElement))) focus(parent);
@@ -53,7 +55,7 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
   const cancelHover = useTemplateMenuHover({ menu, host,
     onExpand: (depth, entry, button) => expand(depth, entry, button, false),
     onCollapse: depth => collapse(depth, false),
-    onLeave: () => { if (findTemplateMenuTrigger(menu.target)) collapse(0, false); else close(); }
+    onLeave: () => { if (findMenuTrigger(menu.parent)) collapse(0, false); else close(); }
   });
 
   useLayoutEffect(() => {
@@ -64,19 +66,12 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
         const panel = panels.current[depth];
         if (!panel) return;
         const parentButton = buttons(panels.current[depth - 1]).find(button => button.dataset.templatePath === level.relativePath);
-        const parent = parentButton?.closest(".template-menu__row")?.getBoundingClientRect();
+        const parent = depth === 0 ? findMenuTrigger(menu.parent)?.getBoundingClientRect() : parentButton?.closest(".template-menu__row")?.getBoundingClientRect();
         const anchor = parent ? { x: parent.right, left: parent.left, y: parent.top } : level.anchor;
         const bounds = panel.getBoundingClientRect();
-        let left = anchor.x;
-        if (anchor.left !== undefined) {
-          const candidates = { right: anchor.x - 1, left: anchor.left - bounds.width + 1 };
-          const fits = (value: number) => value >= 8 && value + bounds.width <= window.innerWidth - 8;
-          const alternative = direction === "left" ? "right" : "left";
-          if (!fits(candidates[direction]) && fits(candidates[alternative])) direction = alternative;
-          left = candidates[direction];
-        }
-        panel.style.left = `${Math.max(8, Math.min(left, window.innerWidth - bounds.width - 8))}px`;
-        panel.style.top = `${Math.max(8, Math.min(anchor.y, window.innerHeight - bounds.height - 8))}px`;
+        const position = positionMenu(anchor, bounds, undefined, direction);
+        direction = position.direction;
+        panel.style.left = `${position.left}px`; panel.style.top = `${position.top}px`;
       });
     };
     measure();
@@ -102,7 +97,7 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
     const outside = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && !host.current?.contains(target)
-        && !(target instanceof window.Element && target.closest(".context-menu"))) actions.closeTemplateMenu(menu.id);
+        && !parentMenuContains(target, menu.parent)) actions.closeTemplateMenu(menu.id);
     };
     window.addEventListener("pointerdown", outside);
     return () => { window.removeEventListener("pointerdown", outside); };
@@ -116,7 +111,7 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
     const depth = Number(panel?.dataset.templateDepth ?? 0);
     if (event.key === "Escape" || event.key === "ArrowLeft") {
       event.preventDefault();
-      if (depth > 0) collapse(depth); else close();
+      if (depth > 0 || (event.key === "ArrowLeft" && menu.parent)) collapse(depth); else close();
     } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       event.preventDefault();
       const choices = buttons(panel), current = choices.indexOf(document.activeElement as HTMLButtonElement);
@@ -132,18 +127,18 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
     }
   };
 
-  return createPortal(<div ref={host} className="template-menu-host" onKeyDown={keyDown}>
+  return createPortal(<div ref={host} className="template-menu-host" data-menu-owner={menu.parent?.hostId} onKeyDown={keyDown}>
     {!menu.rootHidden && menu.levels.map((level, depth) => {
       const directory = menu.directories[templateKey(level.relativePath)];
-      return <div key={level.relativePath} ref={element => { panels.current[depth] = element; }}
+      return <MenuSurface key={level.relativePath} ref={element => { panels.current[depth] = element; }}
         role="menu" aria-label={depth === 0 ? "新建项目" : level.parent?.name} tabIndex={-1}
         data-template-depth={depth} className="template-menu" style={{ zIndex: 10001 + depth }}>
         <div className="template-menu__body">
           {level.parent ? <>
-            <button type="button" role="menuitem" className="template-menu__action" tabIndex={-1} onClick={() => activate(level.parent!)}>
+            <button type="button" role="menuitem" className="app-menu__item template-menu__action" tabIndex={-1} onClick={() => activate(level.parent!)}>
               <FolderPlus size={16} aria-hidden="true" /><span>创建整个文件夹</span>
             </button>
-            <div className="template-menu__separator" />
+            <div className="app-menu__separator template-menu__separator" />
           </> : null}
           {!menu.rootPath ? <div className="template-menu__message">尚未设置模板文件夹，请在设置 → 常规 → 新建项目中配置。</div>
             : !directory || directory.status === "loading" ? <div className="template-menu__message" role="status">正在读取模板…</div>
@@ -152,12 +147,12 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
           {directory?.status === "ready" ? directory.entries.map(entry => {
             const selection = templateSelectionStatus(menu.selected, entry), isFolder = entry.kind === "directory";
             const expanded = menu.levels[depth + 1]?.relativePath === entry.relativePath;
-            return <div key={entry.relativePath} className={`template-menu__row${expanded ? " is-expanded" : ""}${selection === "included" ? " is-included" : ""}`}>
+            return <div key={entry.relativePath} className={`app-menu__item template-menu__row${expanded ? " is-expanded" : ""}${selection === "included" ? " is-included" : ""}`}>
               <input type="checkbox" role="menuitemcheckbox" tabIndex={-1} aria-label={`选择 ${entry.relativePath}`}
                 checked={selection !== "none"} disabled={selection === "included"} title={selection === "included" ? "已包含在所选文件夹中" : `选择 ${entry.name}`}
                 onChange={() => actions.toggleTemplateItem(menu.id, entry)} />
               <button type="button" role="menuitem" tabIndex={-1} data-template-path={entry.relativePath}
-                className="template-menu__entry" title={entry.relativePath} aria-haspopup={isFolder ? "menu" : undefined} aria-expanded={isFolder ? expanded : undefined}
+                className="app-menu__entry template-menu__entry" title={entry.relativePath} aria-haspopup={isFolder ? "menu" : undefined} aria-expanded={isFolder ? expanded : undefined}
                 onClick={event => isFolder ? expand(depth, entry, event.currentTarget) : activate(entry)}
                 onKeyDown={event => {
                   if (event.nativeEvent.isComposing) return;
@@ -173,12 +168,12 @@ export function TemplateCreationMenu({ menu, actions }: TemplateCreationMenuProp
           }) : null}
         </div>
         {menu.selected.length > 0 ? <div className="template-menu__footer">
-          <button type="button" role="menuitem" className="template-menu__action template-menu__submit"
+          <button type="button" role="menuitem" className="app-menu__item template-menu__action template-menu__submit"
             onClick={() => { restoreFocus(); actions.createSelectedTemplates(menu.id); }}>
             <FolderPlus size={16} aria-hidden="true" /><span>创建所选（{menu.selected.length}）</span>
           </button>
         </div> : null}
-      </div>;
+      </MenuSurface>;
     })}
   </div>, document.body);
 }

@@ -16,6 +16,7 @@ import { openSettingsWindow } from "./settingsWindow";
 import { listenSystemFileDrops } from "./systemDragDrop";
 import { disposeQuietly } from "./workspaceIpc";
 import { useWorkspaceController } from "./useWorkspaceController";
+import { useDocumentMenuTheme } from "./useMenuTheme";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
@@ -71,6 +72,7 @@ function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: s
 
 export function WorkspaceView() {
   const { state, actions } = useWorkspaceController();
+  useDocumentMenuTheme(state.settings.model.theme);
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);

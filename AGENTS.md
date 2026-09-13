@@ -13,6 +13,8 @@
 - 子 Agent 可能长时间运行。委派后默认每 10 分钟检查一次每个工作单元的状态；收到主动结果、明确错误/中止/超时信号、接近主任务截止或用户要求时可立即检查，不要通过几秒或几十秒内的频繁查询推断子 Agent 已停止工作。
 
 ## 当前实现原则
+- 应用内命令菜单复用 `MenuPrimitives.tsx`、`menuInteraction.ts` 与 `workspace.menus.css`，行高统一为 24px；功能 CSS 仅定义布局，覆盖时组合公共类与功能类（如 `.app-menu.open-with-menu`），避免依赖加载顺序。顶部/右键的新建项目和打开方式入口使用 `WorkspaceFeatureMenuTrigger`，共享功能菜单与 controller，以 `MenuParent` 标识跨 portal 的所属菜单。
+- 菜单与文件悬停颜色统一由 `workspaceTheme.ts` 定义、规范化，通过 `useMenuTheme.ts` 应用到文档根节点（含 portal）；独立窗口读取并订阅现有设置。Windows 原生菜单保留系统外观。
 - 优先保证桌面程序主路径可运行、可构建、可测试。
 - 前端工作区优先接真实 Tauri IPC；仅在本地浏览或后端接口缺失时才允许 mock 回退。
 - 本地文件操作优先闭环：浏览、复制、移动、删除、重命名、创建目录。

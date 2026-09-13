@@ -557,7 +557,10 @@
 }
 
 .search-results-tab__result:hover {
-  background: #eef6ff;
+  box-shadow: inset 0 0 0 1px var(--file-hover-border, #91c9f7);
+}
+@media (forced-colors: active) {
+  .search-results-tab__result:hover { outline: 1px solid Highlight; outline-offset: -1px; }
 }
 
 .search-results-tab__row span {

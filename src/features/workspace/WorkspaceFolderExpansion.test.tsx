@@ -44,6 +44,10 @@ export const completion = (async () => {
       await render();
       assert.deepEqual(paths(), [f.parent.path, f.child.path]);
       assert.match(container.querySelector(".information-panel__summary")?.textContent ?? "", /2 项/);
+      await act(async () => {
+        const trigger = [...document.querySelectorAll<HTMLButtonElement>(".context-menu__item")].find(button => button.textContent?.includes("到剪切板"));
+        assert.ok(trigger); trigger.click(); await flushEffects();
+      });
       assert.ok([...document.querySelectorAll(".context-menu__item")].find((button) => button.textContent?.includes("复制文件名")));
       state.search.filterText = "sibling";
       await render();

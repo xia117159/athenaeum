@@ -14,7 +14,7 @@ export const completion = (async () => {
   const file: CreationTemplateEntry = { name: "new.cpp", relativePath: "new.cpp", path: "C:\\Templates\\new.cpp", kind: "file" };
   const folder: CreationTemplateEntry = { name: "Word", relativePath: "Word", path: "C:\\Templates\\Word", kind: "directory" };
   const child: CreationTemplateEntry = { name: "report.docx", relativePath: "Word/report.docx", path: "C:\\Templates\\Word\\report.docx", kind: "file" };
-  const initial: TemplateMenuState = { id: "portal", rootPath: "C:\\Templates", settingsRoot: "C:\\Templates",
+  const initial: TemplateMenuState = { id: "portal", rootHidden: true, rootPath: "C:\\Templates", settingsRoot: "C:\\Templates",
     target: { panelId: "panel-1", tabId: f.tabId, rootPath: f.path, selectionRevision: 0 },
     levels: [{ relativePath: "", anchor: { x: 400, y: 200 } }],
     directories: { "": { status: "ready", entries: [folder, file] }, word: { status: "ready", entries: [child] } }, selected: [] };
@@ -23,7 +23,7 @@ export const completion = (async () => {
     const [menu, setMenu] = useState(initial), [visible, setVisible] = useState(true); latest = menu;
     const close = () => { closed++; setVisible(false); };
     const actions: TemplateCreationMenuProps["actions"] = {
-      openTemplateMenu() {}, closeTemplateMenu: close,
+      openTemplateMenu(_panel, _tab, anchor, parent) { setMenu(menu => ({ ...menu, rootHidden: false, parent, levels: [{ relativePath: "", anchor }] })); }, closeTemplateMenu: close,
       toggleTemplateItem(_id, entry) { setMenu(menu => ({ ...menu, selected: toggleTemplateSelection(menu.selected, entry) })); },
       activateTemplateItem() {},
       expandTemplateDirectory(_id, depth, entry, anchor) { setMenu(menu => ({ ...menu,
@@ -33,8 +33,8 @@ export const completion = (async () => {
     };
     return visible ? <>
       <WorkspaceContextMenuPopover contextMenu={{ panelId: "panel-1", tabId: f.tabId, x: 10, y: 10, scope: "panel", mode: "custom" }}
-        viewMode="details" tab={tab} actions={actions as never} layoutMode="single" panelIds={["panel-1"]} templateMenuOpen onClose={close} />
-      <TemplateCreationMenu menu={menu} actions={actions} />
+        viewMode="details" tab={tab} actions={actions as never} layoutMode="single" panelIds={["panel-1"]} templateMenuOpen={!menu.rootHidden} onClose={close} />
+      {!menu.rootHidden ? <TemplateCreationMenu menu={menu} actions={actions} /> : null}
     </> : null;
   }
   const root = ReactDOM.createRoot(document.getElementById("root")!);
@@ -46,6 +46,7 @@ export const completion = (async () => {
   };
   try {
     await tick(() => root.render(<Fixture />));
+    await tick(() => document.querySelector<HTMLButtonElement>('[data-template-menu-trigger]')!.click());
     await tick(() => document.querySelector<HTMLInputElement>('[aria-label="选择 new.cpp"]')!.click());
     const chevron = document.querySelector('[data-template-path="Word"] svg:last-child path')!;
     assert.ok(chevron instanceof dom.window.SVGElement);

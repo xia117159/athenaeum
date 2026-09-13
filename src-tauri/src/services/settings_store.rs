@@ -428,6 +428,9 @@ fn normalize_theme(mut theme: UiTheme) -> UiTheme {
         normalize_hex_color(&theme.drop_highlight_border, &defaults.drop_highlight_border);
     theme.size_bar_low = normalize_hex_color(&theme.size_bar_low, &defaults.size_bar_low);
     theme.size_bar_high = normalize_hex_color(&theme.size_bar_high, &defaults.size_bar_high);
+    theme.menu_hover_background = normalize_hex_color(&theme.menu_hover_background, &defaults.menu_hover_background);
+    theme.menu_hover_text = normalize_hex_color(&theme.menu_hover_text, &defaults.menu_hover_text);
+    theme.file_hover_border = normalize_hex_color(&theme.file_hover_border, &defaults.file_hover_border);
     theme.tab_min_width = normalize_tab_min_width(theme.tab_min_width);
     theme
 }
@@ -869,6 +872,29 @@ mod tests {
             store.theme.drop_highlight_border,
             defaults.drop_highlight_border
         );
+    }
+
+    #[test]
+    fn menu_hover_theme_defaults_normalization_and_round_trip() {
+        let old: UiTheme = serde_json::from_value(serde_json::json!({ "panelFocusAccent": "#0f6cbd" })).unwrap();
+        let defaults = serde_json::to_value(&old).unwrap();
+        assert_eq!(defaults["menuHoverBackground"], "#e5f1fb");
+        assert_eq!(defaults["menuHoverText"], "#1f1f1f");
+        assert_eq!(defaults["fileHoverBorder"], "#91c9f7");
+        let temp = TestDir::new("menu-hover-theme");
+        let file_path = temp.path.join("settings.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        for key in ["menuHoverBackground", "menuHoverText", "fileHoverBorder"] {
+            for (value, expected) in [(" #ABCDEF80 ", "#abcdef80"), ("invalid", defaults[key].as_str().unwrap())] {
+                let mut input = defaults.clone();
+                input[key] = value.into();
+                store.set_theme(serde_json::from_value(input).unwrap());
+                store.persist().unwrap();
+                let theme = serde_json::to_value(SettingsStore::load_from(file_path.clone()).unwrap().theme).unwrap();
+                assert_eq!(theme[key], expected);
+            }
+        }
     }
 
     #[test]

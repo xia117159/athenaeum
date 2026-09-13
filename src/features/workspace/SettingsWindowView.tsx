@@ -618,6 +618,9 @@ export function SettingsWindowView() {
         onUpdateSizeBarColor={(endpoint, color) => updateDraftModel((model) => ({ ...model, theme: {
           ...model.theme, [endpoint]: normalizeThemeAccentColor(color, DEFAULT_THEME[endpoint])
         } }))}
+        onUpdateHoverColor={(key, color) => updateDraftModel(model => ({ ...model, theme: {
+          ...model.theme, [key]: normalizeThemeAccentColor(color, DEFAULT_THEME[key])
+        } }))}
         onUpdateDetailsRowHeight={(value) =>
           updateDraftModel((model) => ({
             ...model,

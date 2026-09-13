@@ -11,6 +11,7 @@ import { templateKey, templateSelectionStatus } from "./templateSelection";
 import { isTerminalOperationTask } from "./workspaceRefreshPlanner";
 import { getErrorMessage } from "./workspaceControllerUtils";
 import { openSettingsWindow } from "./settingsWindow";
+import { sameMenuParent, type MenuParent } from "./workspaceMenuState";
 
 interface Options {
   state: WorkspaceState; dispatch: Dispatch<WorkspaceAction>; gateway: WorkspaceGateway; enabled: boolean;
@@ -36,32 +37,32 @@ export function useTemplateCreationController({ state, dispatch, gateway, enable
         error: getErrorMessage(error, "无法读取模板文件夹") } });
     }
   });
-  const openCaptured = useEffectEvent((target: TemplateTarget | undefined, anchor: TemplateAnchor) => {
+  const openCaptured = useEffectEvent((target: TemplateTarget | undefined, anchor: TemplateAnchor, parent?: MenuParent) => {
     if (!enabled || state.status !== "ready" || state.batchRename || !target) return;
     if (!templateTargetMatches(state, target)) { notify("info", "目标目录已改变，请重新打开新建项目菜单。"); return; }
     if (submission.current || state.templateCreation) { notify("info", "模板创建仍在进行，可在操作任务中查看进度。"); return; }
     const id = crypto.randomUUID(), settingsRoot = state.settings.model.templateRoot ?? "";
     menuId.current = id;
-    dispatch({ type: "templateMenuOpened", payload: { id, target, settingsRoot, rootPath: settingsRoot.trim(),
+    dispatch({ type: "templateMenuOpened", payload: { id, target, parent, settingsRoot, rootPath: settingsRoot.trim(),
       levels: [{ relativePath: "", anchor }], directories: {}, selected: [] } });
     if (settingsRoot.trim()) void load(id, settingsRoot.trim(), "");
   });
-  const open = useEffectEvent((panelId: PanelId, tabId: string, anchor: TemplateAnchor) => {
+  const open = useEffectEvent((panelId: PanelId, tabId: string, anchor: TemplateAnchor, parent?: MenuParent) => {
     if (state.panels[panelId].tabs.find(tab => tab.id === tabId)?.pendingNavigationRequestId !== undefined) {
       notify("info", "正在切换目录，请稍后再打开新建项目菜单。"); return;
     }
     const menu = state.templateMenu;
-    if (menu?.rootHidden && menu.target.panelId === panelId && menu.target.tabId === tabId && templateTargetMatches(state, menu.target)) {
+    if (menu?.rootHidden && sameMenuParent(menu.parent, parent) && menu.target.panelId === panelId && menu.target.tabId === tabId && templateTargetMatches(state, menu.target)) {
       dispatch({ type: "templateMenuOpened", payload: { ...menu, rootHidden: false, levels: [{ relativePath: "", anchor }] } });
       return;
     }
-    openCaptured(captureTemplateTarget(state, panelId, tabId), anchor);
+    openCaptured(captureTemplateTarget(state, panelId, tabId), anchor, parent);
   });
   const close = useEffectEvent((id: string) => {
     if (menuId.current !== id) return;
     menuId.current = undefined;
     dispatch({ type: "templateMenuClosed", payload: { id } });
-    dispatch({ type: "contextMenuSet", payload: undefined });
+    dispatch({ type: "workspaceMenusClosed" });
   });
   const expand = useEffectEvent((id: string, depth: number, entry: CreationTemplateEntry, anchor: TemplateAnchor) => {
     const menu = state.templateMenu;
@@ -145,7 +146,7 @@ export function useTemplateCreationController({ state, dispatch, gateway, enable
     toggleTemplateItem: (id: string, entry: CreationTemplateEntry) => dispatch({ type: "templateSelectionToggled", payload: { id, entry } }),
     activateTemplateItem: activate,
     createSelectedTemplates: (id: string) => { const menu = state.templateMenu; if (menu?.id === id) void submit(id, menu.selected); },
-    refreshTemplateMenu: (id: string) => { const menu = state.templateMenu; if (menu?.id === id) openCaptured(menu.target, menu.levels[0].anchor); },
+    refreshTemplateMenu: (id: string) => { const menu = state.templateMenu; if (menu?.id === id) openCaptured(menu.target, menu.levels[0].anchor, menu.parent); },
     openTemplateSettings: (id: string) => { close(id); void openSettingsWindow(undefined, "templates").catch(error => notify("danger", getErrorMessage(error, "无法打开新建项目设置"))); }
   } };
 }

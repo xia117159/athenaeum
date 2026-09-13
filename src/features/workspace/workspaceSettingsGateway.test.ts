@@ -56,6 +56,9 @@ function createSettingsSnapshot(overrides: Partial<BackendSettingsSnapshot> = {}
       dropHighlightBorder: "#0f6cbd",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 96
     },
     layout: {
@@ -142,6 +145,9 @@ export const workspaceSettingsGatewayTests = (async () => {
           dropHighlightBorder: "#336699",
           sizeBarLow: "#dceaf7",
           sizeBarHigh: "#3979b7",
+          menuHoverBackground: "#e5f1fb",
+          menuHoverText: "#1f1f1f",
+          fileHoverBorder: "#91c9f7",
           tabMinWidth: 132
         }
       }) as T;
@@ -155,6 +161,9 @@ export const workspaceSettingsGatewayTests = (async () => {
         dropHighlightBorder: "#336699",
         sizeBarLow: "#dceaf7",
         sizeBarHigh: "#3979b7",
+        menuHoverBackground: "#e5f1fb",
+        menuHoverText: "#1f1f1f",
+        fileHoverBorder: "#91c9f7",
         tabMinWidth: 132
       },
       { invoke, runtimeHost }
@@ -171,6 +180,9 @@ export const workspaceSettingsGatewayTests = (async () => {
             dropHighlightBorder: "#336699",
             sizeBarLow: "#dceaf7",
             sizeBarHigh: "#3979b7",
+            menuHoverBackground: "#e5f1fb",
+            menuHoverText: "#1f1f1f",
+            fileHoverBorder: "#91c9f7",
             tabMinWidth: 132
           }
         }
@@ -190,6 +202,9 @@ export const workspaceSettingsGatewayTests = (async () => {
           dropHighlightBorder: "#336699",
           sizeBarLow: "#dceaf7",
           sizeBarHigh: "#3979b7",
+          menuHoverBackground: "#e5f1fb",
+          menuHoverText: "#1f1f1f",
+          fileHoverBorder: "#91c9f7",
           tabMinWidth: 4096
         }
       }) as T;
@@ -246,6 +261,9 @@ export const workspaceSettingsGatewayTests = (async () => {
         dropHighlightBorder: "#336699",
         sizeBarLow: "#dceaf7",
         sizeBarHigh: "#3979b7",
+        menuHoverBackground: "#e5f1fb",
+        menuHoverText: "#1f1f1f",
+        fileHoverBorder: "#91c9f7",
         tabMinWidth: 4096
       }
     };
@@ -294,6 +312,9 @@ export const workspaceSettingsGatewayTests = (async () => {
               dropHighlightBorder: "#336699",
               sizeBarLow: "#dceaf7",
               sizeBarHigh: "#3979b7",
+              menuHoverBackground: "#e5f1fb",
+              menuHoverText: "#1f1f1f",
+              fileHoverBorder: "#91c9f7",
               tabMinWidth: 4096
             }
           }
@@ -357,6 +378,9 @@ export const workspaceSettingsGatewayTests = (async () => {
                 dropHighlightBorder: "#0f6cbd",
                 sizeBarLow: "#dceaf7",
                 sizeBarHigh: "#3979b7",
+                menuHoverBackground: "#e5f1fb",
+                menuHoverText: "#1f1f1f",
+                fileHoverBorder: "#91c9f7",
                 tabMinWidth: 4096
               }
             }) as unknown as T

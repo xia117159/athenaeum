@@ -26,6 +26,7 @@ import {
   toRemoteProfileUpsertRequest
 } from "./workspaceBackendDtos";
 import { hasTauriRuntime, invokeRequired, invokeWithBrowserFallback, type WorkspaceInvoke } from "./workspaceIpc";
+import { normalizeTheme } from "./workspaceTheme";
 import {
   mapFavoriteCollections,
   mapNavigationItems,
@@ -186,6 +187,12 @@ export async function markWorkspaceEntryMetadataDeleted(paths: string[], runtime
 }
 
 export type WorkspaceSettingsProjection = ReturnType<typeof mapSettingsSnapshotToWorkspaceSettings>;
+
+export async function getWorkspaceTheme(runtime: WorkspaceSettingsRuntime = {}) {
+  const snapshot = await invokeRequired<BackendSettingsSnapshot>("get_settings_snapshot", {},
+    async () => createBrowserSettingsSnapshot(), runtime.invoke, runtime.runtimeHost);
+  return normalizeTheme(snapshot.theme);
+}
 
 export async function listenWorkspaceSettingsChanged(
   handler: (payload: WorkspaceSettingsProjection) => void,

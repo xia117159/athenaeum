@@ -32,6 +32,9 @@ assertTest("DEFAULT_THEME includes configurable drag highlight colors", () => {
     dropHighlightBorder: "#0f6cbd",
     sizeBarLow: "#dceaf7",
     sizeBarHigh: "#3979b7",
+    menuHoverBackground: "#e5f1fb",
+    menuHoverText: "#1f1f1f",
+    fileHoverBorder: "#91c9f7",
     tabMinWidth: 96
   });
 });
@@ -112,6 +115,9 @@ assertTest("mapSettingsModel normalizes configurable drag highlight colors", () 
       dropHighlightBorder: "not-a-color",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 96
     },
     layout: {
@@ -174,6 +180,9 @@ assertTest("normalizeSettingsModel normalizes configurable drag highlight colors
       dropHighlightBorder: "#ABC12399",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 96
     }
   });
@@ -392,6 +401,9 @@ assertTest("mapWorkspaceBootstrap builds panel shells, tree roots, and remote en
         dropHighlightBorder: "#0f6cbd",
         sizeBarLow: "#dceaf7",
         sizeBarHigh: "#3979b7",
+        menuHoverBackground: "#e5f1fb",
+        menuHoverText: "#1f1f1f",
+        fileHoverBorder: "#91c9f7",
         tabMinWidth: 128
       },
       layout: {
@@ -471,6 +483,9 @@ assertTest("mapWorkspaceBootstrap preserves configured drag move shortcut bindin
         dropHighlightBorder: "#0f6cbd",
         sizeBarLow: "#dceaf7",
         sizeBarHigh: "#3979b7",
+        menuHoverBackground: "#e5f1fb",
+        menuHoverText: "#1f1f1f",
+        fileHoverBorder: "#91c9f7",
         tabMinWidth: 96
       },
       layout: {
@@ -543,6 +558,9 @@ assertTest("mapWorkspaceBootstrap gives panels independent snapshot and entry re
         dropHighlightBorder: "#0f6cbd",
         sizeBarLow: "#dceaf7",
         sizeBarHigh: "#3979b7",
+        menuHoverBackground: "#e5f1fb",
+        menuHoverText: "#1f1f1f",
+        fileHoverBorder: "#91c9f7",
         tabMinWidth: 96
       },
       layout: {
@@ -616,7 +634,7 @@ assertTest("mergeShortcutDefaults does not carry forward navigate-parent from st
       hideProtectedOperatingSystemFiles: true
     },
     contextMenu: { defaultMenu: "native" },
-    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", sizeBarLow: "#dceaf7", sizeBarHigh: "#3979b7", tabMinWidth: 96 }
+    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", sizeBarLow: "#dceaf7", sizeBarHigh: "#3979b7", menuHoverBackground: "#e5f1fb", menuHoverText: "#1f1f1f", fileHoverBorder: "#91c9f7", tabMinWidth: 96 }
   });
   assert.equal(model.shortcuts.some((s) => s.id === "navigate-parent"), false);
 });
@@ -636,7 +654,7 @@ assertTest("mergeShortcutDefaults does not carry forward shortcuts not in the de
     tooltipHoverDelayMs: 350,
     metadataRetentionHours: null,
     contextMenu: { defaultMenu: "native" },
-    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", sizeBarLow: "#dceaf7", sizeBarHigh: "#3979b7", tabMinWidth: 96 },
+    theme: { panelFocusAccent: "#0f6cbd", activeTabBackground: "#ffffff", dropHighlightFill: "#0f6cbd", dropHighlightBorder: "#0f6cbd", sizeBarLow: "#dceaf7", sizeBarHigh: "#3979b7", menuHoverBackground: "#e5f1fb", menuHoverText: "#1f1f1f", fileHoverBorder: "#91c9f7", tabMinWidth: 96 },
     layout: { layoutMode: "single", panelProportions: [1], sidebarWidth: 280, showTree: true, showSearch: false },
     remoteProfiles: []
   });
@@ -660,6 +678,9 @@ assertTest("mapFavoriteCollections converts settings snapshot collections into b
       dropHighlightBorder: "#0f6cbd",
       sizeBarLow: "#dceaf7",
       sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 96
     },
     layout: {

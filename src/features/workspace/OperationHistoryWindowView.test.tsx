@@ -7,6 +7,8 @@ import { OperationHistoryWindowView } from "./OperationHistoryWindowView";
 import type { OperationHistoryReadEnvironment } from "./useOperationHistoryReadState";
 import type { WorkspaceGateway } from "./workspaceGateway";
 import { createTestGateway, installDomEnvironment } from "./workspaceControllerTestHarness";
+import { DEFAULT_THEME } from "./workspaceTheme";
+import type { ThemeSettings } from "./types";
 
 function task(taskId: string, status: OperationTaskSnapshot["status"], sequence: number): OperationTaskSnapshot {
   const now = `2026-01-0${sequence}T00:00:00Z`;
@@ -34,6 +36,12 @@ export const completion = (async () => {
   globalThis.Event = dom.window.Event;
   const container = document.getElementById("root")!;
   const root = ReactDOM.createRoot(container);
+  let themeListener: ((theme: ThemeSettings) => void) | undefined;
+  let themeDisposed = false;
+  const themeSource = {
+    load: async () => ({ ...DEFAULT_THEME, menuHoverBackground: "#123456", menuHoverText: "#abcdef" }),
+    subscribe: async (listener: (theme: ThemeSettings) => void) => { themeListener = listener; return () => { themeDisposed = true; }; }
+  };
   let stored = JSON.stringify(createEmptyOperationHistoryReadState("test-epoch"));
   const readEnvironment: OperationHistoryReadEnvironment = {
     storage: {
@@ -81,11 +89,15 @@ export const completion = (async () => {
 
   try {
     await act(async () => {
-      root.render(<OperationHistoryWindowView gateway={gateway} readEnvironment={readEnvironment} />);
+      root.render(<OperationHistoryWindowView gateway={gateway} readEnvironment={readEnvironment} {...{ themeSource }} />);
       await new Promise((resolve) => setTimeout(resolve, 0));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>("[role=tab]"));
+    assert.equal(document.documentElement.style.getPropertyValue("--menu-hover-background"), "#123456");
+    assert.equal(document.documentElement.style.getPropertyValue("--menu-hover-text"), "#abcdef");
+    await act(async () => themeListener?.({ ...DEFAULT_THEME, menuHoverBackground: "#654321" }));
+    assert.equal(document.documentElement.style.getPropertyValue("--menu-hover-background"), "#654321", "already open history window receives settings updates");
     assert.equal(tabs.length, 5);
     assert.equal(container.querySelectorAll("[role=tabpanel]").length, 1);
     assert.equal(tabs[0].querySelector(".status-badge"), null);
@@ -213,6 +225,8 @@ export const completion = (async () => {
     assert.equal(document.activeElement === clearButton, true);
   } finally {
     await act(async () => root.unmount());
+    assert.equal(themeDisposed, true);
+    assert.equal(document.documentElement.style.getPropertyValue("--menu-hover-background"), "");
     dom.window.close();
   }
   console.log("ok - operation history native view provides tabs, unread badges, keyboard navigation, and confirmed clearing");

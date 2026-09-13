@@ -1,6 +1,6 @@
 [package]
 name = "simplefilemanager"
-version = "0.0.1"
+version = "0.0.2"
 description = "Athenaeum Windows file manager built with Tauri v2"
 authors = ["OpenAI Codex"]
 edition = "2021"

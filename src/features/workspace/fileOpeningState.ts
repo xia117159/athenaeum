@@ -3,8 +3,11 @@ import type { EntryViewModel, PanelId, WorkspaceState } from "./types";
 import type { WorkspaceAction } from "./workspaceReducer";
 import { getFolderListingRows } from "./folderExpansion";
 import { matchingFileAssociations } from "./fileAssociations";
+import { menuParentIsActive, type MenuAnchor, type MenuParent } from "./workspaceMenuState";
 
 export interface OpenWithMenuState {
+  parent?: MenuParent;
+  anchor?: MenuAnchor;
   requestId: string;
   panelId: PanelId;
   tabId: string;
@@ -25,8 +28,8 @@ export interface PendingFileOpen {
   cancelling: boolean;
 }
 export type FileOpeningAction =
-  | {type:"openWithRequested";payload:{requestId:string}}
-  | {type:"openWithClosed"}
+  | {type:"openWithRequested";payload:{requestId:string;parent?:MenuParent;anchor?:MenuAnchor}}
+  | {type:"openWithClosed";payload?:{keepParent?:boolean}}
   | {type:"openWithSelectionChanged";payload:number}
   | {type:"openWithProgramsReceived";payload:{requestId:string;programs:AssociationProgramInfo[];error?:string}}
   | {type:"fileOpenStarted";payload:{requestId:string;path:string}}
@@ -59,6 +62,8 @@ function rulesKey(state: WorkspaceState) {
 }
 
 export function createOpenWithMenu(state: WorkspaceState, requestId: string): OpenWithMenuState | undefined {
+  const tab = currentTab(state, state.activePanelId);
+  if (state.status !== "ready" || state.batchRename || tab.inlineEdit || tab.pendingNavigationRequestId !== undefined) return;
   const entry = currentListingEntry(state);
   if (!entry || entry.kind !== "file") return undefined;
   return {
@@ -75,7 +80,8 @@ export function reconcileOpenWithMenu(state: WorkspaceState): WorkspaceState {
   if (!menu) return state;
   const tab = currentTab(state, state.activePanelId);
   const entry = currentListingEntry(state);
-  const valid = menu.panelId === state.activePanelId && menu.tabId === tab.id
+  const valid = !state.batchRename && !tab.inlineEdit && tab.pendingNavigationRequestId === undefined
+    && menuParentIsActive(state, menu.parent) && menu.panelId === state.activePanelId && menu.tabId === tab.id
     && menu.selectionKey === selectionKey(state, state.activePanelId) && menu.rulesKey === rulesKey(state)
     && entry?.kind === "file" && entry.id === menu.entryId && entry.path === menu.path;
   return valid ? state : { ...state, openWithMenu: undefined };
@@ -88,9 +94,18 @@ export function reduceFileOpening(state: WorkspaceState, action: WorkspaceAction
   const opens = state.fileOpens ?? [];
   switch (action.type) {
     case "openWithRequested":
-      return { ...state, contextMenu: undefined, openWithMenu: createOpenWithMenu(state, action.payload.requestId) };
+      if (!menuParentIsActive(state, action.payload.parent)) return state;
+      {
+        const next = createOpenWithMenu(state, action.payload.requestId);
+        if (!next) return state;
+        return { ...state, contextMenu: action.payload.parent ? state.contextMenu : undefined,
+          menuBar: action.payload.parent ? state.menuBar : undefined,
+          templateMenu: action.payload.parent && state.templateMenu ? { ...state.templateMenu, rootHidden: true } : undefined,
+          openWithMenu: { ...next, parent: action.payload.parent, anchor: action.payload.anchor } };
+      }
     case "openWithClosed":
-      return menu ? { ...state, openWithMenu: undefined } : state;
+      return menu ? { ...state, openWithMenu: undefined,
+        ...(action.payload?.keepParent ? {} : { menuBar: undefined, contextMenu: undefined, templateMenu: undefined }) } : state;
     case "openWithSelectionChanged":
       return menu ? { ...state, openWithMenu: { ...menu,
         selectedIndex: ((action.payload % (menu.ruleIds.length + 1)) + menu.ruleIds.length + 1) % (menu.ruleIds.length + 1)

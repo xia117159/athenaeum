@@ -1,3 +1,4 @@
+import { MenuSurface } from "./MenuPrimitives";
 import type { RefObject } from "react";
 
 type ColumnMenuColumn<T extends string> = {
@@ -30,7 +31,7 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
   const isColumnVisible = (column: C) => visibility?.[column.id] ?? column.visible ?? true;
 
   return (
-    <div
+    <MenuSurface
       ref={menuRef}
       className="column-header-menu"
       role="menu"
@@ -44,7 +45,7 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
         <button
           key={column.id}
           type="button"
-          className="column-header-menu__item"
+          className="app-menu__item column-header-menu__item"
           data-column-menu-id={column.id}
           role="menuitemcheckbox"
           aria-checked={isColumnVisible(column)}
@@ -56,15 +57,15 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
           <span>{getColumnLabel(column)}</span>
         </button>
       ))}
-      <div className="column-header-menu__separator" role="separator" />
-      <button type="button" className="column-header-menu__item" role="menuitem" onClick={onShowAll}>
+      <div className="app-menu__separator column-header-menu__separator" role="separator" />
+      <button type="button" className="app-menu__item column-header-menu__item" role="menuitem" onClick={onShowAll}>
         <span className="column-header-menu__check" aria-hidden="true" />
         <span>{"\u663e\u793a\u6240\u6709\u5217"}</span>
       </button>
-      <button type="button" className="column-header-menu__item" role="menuitem" onClick={onAutoFit}>
+      <button type="button" className="app-menu__item column-header-menu__item" role="menuitem" onClick={onAutoFit}>
         <span className="column-header-menu__check" aria-hidden="true" />
         <span>{"\u7acb\u5373\u81ea\u52a8\u8c03\u6574\u5217\u5bbd"}</span>
       </button>
-    </div>
+    </MenuSurface>
   );
 }

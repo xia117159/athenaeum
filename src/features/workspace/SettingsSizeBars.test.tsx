@@ -31,6 +31,23 @@ export const completion = (async () => {
     await act(async () => { control.value = value; control.dispatchEvent(new dom.window.Event("input", { bubbles: true })); await flushEffects(); });
   };
   try {
+    await assertTest("menu and listing hover colors use the appearance draft, Confirm and Cancel", async () => {
+      await render("hover-confirm");
+      for (const [id, key] of [["menu-hover-background", "menuHoverBackground"], ["menu-hover-text", "menuHoverText"], ["file-hover-border", "fileHoverBorder"]]) {
+        const control = container.querySelector<HTMLButtonElement>(`[data-setting-id="${id}"]`); assert.ok(control);
+        await click(control); await input(`${id}-hex`, "#ABCDEF80");
+        assert.notEqual(Reflect.get(state.settings.model.theme, key), "#abcdef80");
+      }
+      assert.equal(saved.length, 0);
+      await click(button("确定"));
+      for (const key of ["menuHoverBackground", "menuHoverText", "fileHoverBorder"]) assert.equal(Reflect.get(saved[0].theme, key), "#abcdef80");
+      saved.length = 0; await render("hover-cancel");
+      await click(container.querySelector<HTMLButtonElement>('[data-setting-id="menu-hover-background"]')!);
+      await input("menu-hover-background-hex", "#ffffff00"); await click(button("取消"));
+      assert.equal(saved.length, 0);
+      await render("hover-reopen");
+      assert.match(container.querySelector<HTMLButtonElement>('[data-setting-id="menu-hover-background"]')?.title ?? "", /^#e5f1fb/);
+    });
     await assertTest("appearance exposes two size-bar endpoints with opacity; Confirm persists the draft only", async () => {
       await render("confirm");
       const low = container.querySelector<HTMLButtonElement>('[data-setting-id="size-bar-low"]'); assert.ok(low);

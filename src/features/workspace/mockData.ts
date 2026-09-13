@@ -1,3 +1,4 @@
+import { DEFAULT_THEME } from "./workspaceTheme";
 import type {
   BookmarkItem,
   DirectoryNode,
@@ -21,7 +22,7 @@ import {
   DEFAULT_METADATA_RETENTION_HOURS,
   DEFAULT_TOOLTIP_HOVER_DELAY_MS
 } from "./workspaceFileListDefaults";
-import { DEFAULT_SHORTCUTS } from "./workspaceMappers";
+import { DEFAULT_SHORTCUTS } from "./shortcutCatalog";
 
 type CatalogDirectory = {
   path: string;
@@ -951,15 +952,7 @@ function createSettingsModel(): SettingsModel {
     contextMenu: {
       defaultMenu: "native"
     },
-    theme: {
-      panelFocusAccent: "#0f6cbd",
-      activeTabBackground: "#ffffff",
-      dropHighlightFill: "#0f6cbd",
-      dropHighlightBorder: "#0f6cbd",
-      sizeBarLow: "#dceaf7",
-      sizeBarHigh: "#3979b7",
-      tabMinWidth: 96
-    }
+    theme: { ...DEFAULT_THEME }
   };
 }
 

@@ -1,3 +1,4 @@
+import { DEFAULT_SHORTCUT_BINDING_LABELS } from "./shortcutCatalog";
 import type { SettingsModel } from "./types";
 
 type ModifierState = {
@@ -11,44 +12,6 @@ const MODIFIER_ORDER = ["ctrl", "cmd", "meta", "alt", "shift"];
 const MODIFIER_KEYS = new Set(["control", "ctrl", "cmd", "meta", "alt", "shift"]);
 const STORAGE_MODIFIER_ORDER = ["Ctrl", "Alt", "Shift", "Meta"];
 const RESERVED_KEY_TOKENS = new Set(["unidentified", "dead", "process"]);
-
-const DEFAULT_SHORTCUT_BINDING_LABELS = new Map([
-  ["focus-next-panel", "Tab"],
-  ["open-search", "Ctrl+F"],
-  ["new-tab", "Ctrl+T"],
-  ["close-tab", "Ctrl+W"],
-  ["copy", "Ctrl+C"],
-  ["cut", "Ctrl+X"],
-  ["paste", "Ctrl+V"],
-  ["undo", "Ctrl+Z"],
-  ["create-folder", "Ctrl+Shift+N"],
-  ["delete", "Delete"],
-  ["rename", "F2"],
-  ["batch-rename", "Ctrl+M"],
-  ["refresh", "F5"],
-  ["navigate-up", "Alt+Up"],
-  ["navigate-forward", "Alt+Right"],
-  ["drag-move", "Shift"],
-  ["context-menu-toggle", "Shift"],
-  ["select-first", "Home"],
-  ["select-last", "End"],
-  ["select-previous", "Up"],
-  ["select-next", "Down"],
-  ["select-previous-page", "PageUp"],
-  ["select-next-page", "PageDown"],
-  ["select-previous-column", "Left"],
-  ["select-next-column", "Right"],
-  ["extend-previous", "Shift+Up"],
-  ["extend-next", "Shift+Down"],
-  ["extend-first", "Shift+Home"],
-  ["extend-last", "Shift+End"],
-  ["select-all", "Ctrl+A"],
-  ["clear-selection", "Escape"],
-  ["open-entry", "Enter"],
-  ["open-with", "Ctrl+Alt+O"],
-  ["copy-name", "Alt+Shift+N"],
-  ["copy-path", "Alt+Shift+P"]
-]);
 
 export const DEFAULT_SHORTCUT_BINDINGS = new Map(
   Array.from(DEFAULT_SHORTCUT_BINDING_LABELS, ([actionId, binding]) => [actionId, normalizeShortcutBinding(binding)])

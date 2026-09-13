@@ -233,6 +233,9 @@ export interface UiTheme {
   dropHighlightBorder: string;
   sizeBarLow: string;
   sizeBarHigh: string;
+  menuHoverBackground: string;
+  menuHoverText: string;
+  fileHoverBorder: string;
   tabMinWidth: number;
 }
 

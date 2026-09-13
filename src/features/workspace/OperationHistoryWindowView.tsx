@@ -1,3 +1,5 @@
+import { MenuSurface } from "./MenuPrimitives";
+import { useWindowMenuTheme, type WindowThemeSource } from "./useMenuTheme";
 import { AlertTriangle, ChevronDown, History, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { OperationClearScope } from "../../app/types";
@@ -32,9 +34,11 @@ export function getOperationClearScopeForTab(tab: OperationHistoryTab) {
 export type OperationHistoryWindowViewProps = {
   gateway?: WorkspaceGateway;
   readEnvironment?: OperationHistoryReadEnvironment;
+  themeSource?: WindowThemeSource;
 };
 
-export function OperationHistoryWindowView({ gateway, readEnvironment }: OperationHistoryWindowViewProps = {}) {
+export function OperationHistoryWindowView({ gateway, readEnvironment, themeSource }: OperationHistoryWindowViewProps = {}) {
+  useWindowMenuTheme(themeSource);
   const controller = useOperationHistoryController(gateway);
   const tabs = useMemo(() => projectOperationHistoryTabs(controller.operations), [controller.operations]);
   const idsByTab = useMemo(() => getOperationHistoryIds(tabs), [tabs]);
@@ -201,16 +205,16 @@ export function OperationHistoryWindowView({ gateway, readEnvironment }: Operati
               <Trash2 size={14} aria-hidden="true" /><span>{"\u6e05\u7406"}</span><ChevronDown size={12} aria-hidden="true" />
             </button>
             {clearMenuOpen ? (
-              <div ref={clearMenuRef} className="operation-history-window__clear-menu" role="menu" onKeyDown={handleMenuKeyDown}>
-                <button ref={(node) => { clearItemRefs.current[0] = node; }} type="button" role="menuitem"
+              <MenuSurface ref={clearMenuRef} className="operation-history-window__clear-menu" role="menu" onKeyDown={handleMenuKeyDown}>
+                <button ref={(node) => { clearItemRefs.current[0] = node; }} type="button" role="menuitem" className="app-menu__item"
                   disabled={!canClearCurrent || mutationDisabled} onClick={() => currentScope && requestClear(currentScope, 0)}>
                   {"\u6e05\u7406\u5f53\u524d Tab"}
                 </button>
-                <button ref={(node) => { clearItemRefs.current[1] = node; }} type="button" role="menuitem"
+                <button ref={(node) => { clearItemRefs.current[1] = node; }} type="button" role="menuitem" className="app-menu__item"
                   disabled={!canClearAll || mutationDisabled} onClick={() => requestClear("all", 1)}>
                   {"\u6e05\u7406\u6240\u6709 Tab"}
                 </button>
-              </div>
+              </MenuSurface>
             ) : null}
           </div>
         </div>

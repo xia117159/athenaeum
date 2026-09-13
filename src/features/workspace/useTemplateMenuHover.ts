@@ -1,15 +1,11 @@
 import { useEffect, useEffectEvent, useRef, type RefObject } from "react";
 import type { CreationTemplateEntry } from "../../app/templates";
-import type { TemplateMenuState, TemplateTarget } from "./templateCreationState";
+import type { TemplateMenuState } from "./templateCreationState";
 import { templateKey } from "./templateSelection";
+import { findMenuTrigger, isParentMenuSibling } from "./menuInteraction";
 
 const OPEN_DELAY_MS = 200;
 const LEAVE_DELAY_MS = 80;
-
-export function findTemplateMenuTrigger(target: TemplateTarget): HTMLButtonElement | undefined {
-  return [...document.querySelectorAll<HTMLButtonElement>("[data-template-menu-trigger]")].find(button =>
-    button.dataset.templatePanel === target.panelId && button.dataset.templateTab === target.tabId);
-}
 
 interface Options {
   menu: TemplateMenuState;
@@ -31,10 +27,9 @@ export function useTemplateMenuHover({ menu, host, onExpand, onCollapse, onLeave
   };
   const hover = useEffectEvent((target: EventTarget | null) => {
     const element = target instanceof window.Element ? target : null;
-    const trigger = findTemplateMenuTrigger(menu.target);
+    const trigger = findMenuTrigger(menu.parent);
     if (element && trigger?.contains(element)) { cancel(); return; }
-    const sibling = element?.closest(".context-menu__item");
-    if (trigger && sibling?.closest(".context-menu") === trigger.closest(".context-menu")) {
+    if (isParentMenuSibling(element, menu.parent)) {
       cancel(); leave(); return;
     }
     const panel = element?.closest<HTMLElement>("[data-template-depth]");
@@ -56,18 +51,23 @@ export function useTemplateMenuHover({ menu, host, onExpand, onCollapse, onLeave
     const out = (event: MouseEvent) => {
       const next = event.relatedTarget;
       // Moving within the chain is handled once by mouseover, including immediate branch changes.
-      if (next instanceof Node && (host.current?.contains(next) || findTemplateMenuTrigger(menu.target)?.contains(next))) return;
+      if (next instanceof Node && (host.current?.contains(next) || findMenuTrigger(menu.parent)?.contains(next))) return;
       hover(next);
     };
     const parentKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof Node && findTemplateMenuTrigger(menu.target)?.contains(event.target)) cancel();
+      if (event.target instanceof Node && findMenuTrigger(menu.parent)?.contains(event.target)) cancel();
+    };
+    const parentFocus = (event: FocusEvent) => {
+      if (isParentMenuSibling(event.target, menu.parent)) { cancel(); leave(); }
     };
     window.addEventListener("mouseover", over);
     window.addEventListener("mouseout", out);
     window.addEventListener("keydown", parentKeyDown, true);
+    window.addEventListener("focusin", parentFocus);
     return () => {
       window.removeEventListener("mouseover", over); window.removeEventListener("mouseout", out);
       window.removeEventListener("keydown", parentKeyDown, true); cancel();
+      window.removeEventListener("focusin", parentFocus);
     };
   }, [menu.id, menu.rootHidden]);
   return cancel;

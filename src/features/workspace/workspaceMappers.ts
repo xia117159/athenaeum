@@ -1,3 +1,6 @@
+import { normalizeTheme } from "./workspaceTheme";
+export { DEFAULT_THEME, normalizeTabMinWidth, normalizeThemeAccentColor } from "./workspaceTheme";
+import { DEFAULT_SHORTCUTS, localizeShortcutAction, localizeShortcutDescription } from "./shortcutCatalog";
 import type {
   DirectoryListing as BackendDirectoryListing,
   EntryViewModel as BackendEntryViewModel,
@@ -113,258 +116,9 @@ export function normalizeColumns(
   return normalized.length > 0 ? normalized : cloneColumns();
 }
 
-export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
-  {
-    id: "focus-next-panel",
-    action: "切换到下一个面板",
-    scope: "workspace",
-    binding: "Tab",
-    description: "按顺序切换可见面板焦点。"
-  },
-  {
-    id: "open-search",
-    action: "打开搜索面板",
-    scope: "workspace",
-    binding: "Ctrl+F",
-    description: "打开停靠式搜索面板。"
-  },
-  {
-    id: "copy",
-    action: "复制",
-    scope: "listing",
-    binding: "Ctrl+C",
-    description: "复制当前选中项。"
-  },
-  {
-    id: "copy-name",
-    action: "复制名称",
-    scope: "listing",
-    binding: "Alt+Shift+N",
-    description: "复制当前选中项的名称到系统剪贴板。"
-  },
-  {
-    id: "copy-path",
-    action: "复制路径",
-    scope: "listing",
-    binding: "Alt+Shift+P",
-    description: "复制当前选中项的完整路径到系统剪贴板。"
-  },
-  {
-    id: "paste",
-    action: "粘贴",
-    scope: "listing",
-    binding: "Ctrl+V",
-    description: "将剪贴板内容粘贴到当前目录。"
-  },
-  {
-    id: "cut",
-    action: "剪切",
-    scope: "listing",
-    binding: "Ctrl+X",
-    description: "剪切当前选中项。"
-  },
-  {
-    id: "drag-move",
-    action: "拖放时移动",
-    scope: "listing",
-    binding: "Shift",
-    description: "拖放文件或文件夹时执行移动而不是复制。"
-  },
-  {
-    id: "context-menu-toggle",
-    action: "右键菜单切换",
-    scope: "context-menu",
-    binding: "Shift",
-    description: "右键时临时切换 Windows 系统菜单与软件自定义菜单。"
-  },
-  {
-    id: "create-folder",
-    action: "新建文件夹",
-    scope: "listing",
-    binding: "Ctrl+Shift+N",
-    description: "在当前目录中新建文件夹。"
-  },
-  {
-    id: "delete",
-    action: "删除",
-    scope: "listing",
-    binding: "Delete",
-    description: "删除当前选中项。"
-  },
-  {
-    id: "rename",
-    action: "重命名",
-    scope: "listing",
-    binding: "F2",
-    description: "重命名当前选中项。"
-  },
-  {
-    id: "refresh",
-    action: "刷新",
-    scope: "panel",
-    binding: "F5",
-    description: "刷新当前面板。"
-  },
-  {
-    id: "navigate-up",
-    action: "上一级",
-    scope: "panel",
-    binding: "Alt+Up",
-    description: "打开当前文件夹的上一级。"
-  },
-  {
-    id: "navigate-forward",
-    action: "回到下一级",
-    scope: "panel",
-    binding: "Alt+Right",
-    description: "回到历史中的下一级文件夹。"
-  },
-  {
-    id: "new-tab",
-    action: "新建标签页",
-    scope: "panel",
-    binding: "Ctrl+T",
-    description: "在当前面板中新建标签页。"
-  },
-  {
-    id: "close-tab",
-    action: "关闭标签页",
-    scope: "panel",
-    binding: "Ctrl+W",
-    description: "当存在多个标签页时关闭当前标签页。"
-  },
-  {
-    id: "select-previous",
-    action: "上一项",
-    scope: "listing",
-    binding: "Up",
-    description: "在列表中单选上一项。"
-  },
-  {
-    id: "select-next",
-    action: "下一项",
-    scope: "listing",
-    binding: "Down",
-    description: "在列表中单选下一项。"
-  },
-  {
-    id: "select-first",
-    action: "第一项",
-    scope: "listing",
-    binding: "Home",
-    description: "单选列表第一项。"
-  },
-  {
-    id: "select-last",
-    action: "最后一项",
-    scope: "listing",
-    binding: "End",
-    description: "单选列表最后一项。"
-  },
-  {
-    id: "select-previous-page",
-    action: "上一页",
-    scope: "listing",
-    binding: "PageUp",
-    description: "在列表中向上翻页单选。"
-  },
-  {
-    id: "select-next-page",
-    action: "下一页",
-    scope: "listing",
-    binding: "PageDown",
-    description: "在列表中向下翻页单选。"
-  },
-  {
-    id: "select-previous-column",
-    action: "上一列",
-    scope: "listing",
-    binding: "Left",
-    description: "在图标/平铺/内容视图中单选左一列。"
-  },
-  {
-    id: "select-next-column",
-    action: "下一列",
-    scope: "listing",
-    binding: "Right",
-    description: "在图标/平铺/内容视图中单选右一列。"
-  },
-  {
-    id: "extend-previous",
-    action: "扩展到上一项",
-    scope: "listing",
-    binding: "Shift+Up",
-    description: "以当前选中项为起点，多选到上一项。"
-  },
-  {
-    id: "extend-next",
-    action: "扩展到下一项",
-    scope: "listing",
-    binding: "Shift+Down",
-    description: "以当前选中项为起点，多选到下一项。"
-  },
-  {
-    id: "extend-first",
-    action: "扩展到第一项",
-    scope: "listing",
-    binding: "Shift+Home",
-    description: "以当前选中项为起点，多选到列表顶。"
-  },
-  {
-    id: "extend-last",
-    action: "扩展到最后一项",
-    scope: "listing",
-    binding: "Shift+End",
-    description: "以当前选中项为起点，多选到列表底。"
-  },
-  {
-    id: "select-all",
-    action: "全选",
-    scope: "listing",
-    binding: "Ctrl+A",
-    description: "选中当前列表中的全部项。"
-  },
-  {
-    id: "clear-selection",
-    action: "清除选择",
-    scope: "listing",
-    binding: "Escape",
-    description: "清除列表中的多选，恢复为无选中。"
-  },
-  {
-    id: "open-entry",
-    action: "打开",
-    scope: "listing",
-    binding: "Enter",
-    description: "打开当前选中的文件夹或文件。"
-  },
-  {
-    id: "open-with",
-    action: "打开方式",
-    scope: "listing",
-    binding: "Ctrl+Alt+O",
-    description: "选择当前文件匹配的自定义关联，或打开关联设置。"
-  },
-  {
-    id: "batch-rename",
-    action: "批量重命名",
-    scope: "listing",
-    binding: "Ctrl+M",
-    description: "预览并批量重命名选中的本地项目，也适用于单个项目。"
-  }
-];
-
+export { DEFAULT_SHORTCUTS } from "./shortcutCatalog";
 export const DEFAULT_DETAILS_ROW_HEIGHT = 24;
 export const DEFAULT_SIZE_BAR_MODE: SizeBarMode = "folder-total";
-export const DEFAULT_THEME: SettingsModel["theme"] = {
-  panelFocusAccent: "#0f6cbd",
-  activeTabBackground: "#ffffff",
-  dropHighlightFill: "#0f6cbd",
-  dropHighlightBorder: "#0f6cbd",
-  sizeBarLow: "#dceaf7",
-  sizeBarHigh: "#3979b7",
-  tabMinWidth: 96
-};
 export const DEFAULT_CONTEXT_MENU_SETTINGS: SettingsModel["contextMenu"] = {
   defaultMenu: "native"
 };
@@ -420,21 +174,6 @@ export function normalizeMetadataRetentionHours(value?: number | null) {
   return Math.max(0, Math.round(value));
 }
 
-export function normalizeTabMinWidth(value?: number | null) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_THEME.tabMinWidth;
-  }
-
-  return Math.max(1, Math.round(value));
-}
-
-export function normalizeThemeAccentColor(value?: string | null, fallback = DEFAULT_THEME.panelFocusAccent) {
-  if (!value || !/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value.trim())) {
-    return fallback;
-  }
-
-  return value.trim().toLowerCase();
-}
 
 export function normalizeContextMenuDefault(value?: string | null): SettingsModel["contextMenu"]["defaultMenu"] {
   return value === "custom" ? "custom" : "native";
@@ -608,76 +347,6 @@ function createLocationSubtitle(kind: "local" | "ftp" | "sftp", profile?: Backen
     return `${kind.toUpperCase()} · ${profile.host}:${profile.port}`;
   }
   return kind === "local" ? "本地文件系统" : `${kind.toUpperCase()} 位置`;
-}
-
-function localizeShortcutAction(action: string) {
-  const dictionary: Record<string, string> = {
-    Copy: "复制",
-    copy: "复制",
-    Cut: "剪切",
-    cut: "剪切",
-    Paste: "粘贴",
-    paste: "粘贴",
-    Delete: "删除",
-    delete: "删除",
-    Rename: "重命名",
-    rename: "重命名",
-    Refresh: "刷新",
-    refresh: "刷新",
-    "Next panel": "切换到下一个面板",
-    "focus-next-panel": "切换到下一个面板",
-    "Search drawer": "打开搜索面板",
-    "open-search": "打开搜索面板",
-    "New tab": "新建标签页",
-    "new-tab": "新建标签页",
-    "Close tab": "关闭标签页",
-    "close-tab": "关闭标签页",
-    "Navigate up": "上一级",
-    "navigate-up": "上一级",
-    "Navigate forward": "回到下一级",
-    "navigate-forward": "回到下一级",
-    "Drag move": "拖放时移动",
-    "drag-move": "拖放时移动",
-    "Context menu toggle": "右键菜单切换",
-    "context-menu-toggle": "右键菜单切换",
-    "create-folder": "新建文件夹"
-  };
-  return dictionary[action] ?? action;
-}
-
-function localizeShortcutDescription(action: string) {
-  const dictionary: Record<string, string> = {
-    Copy: "复制当前选中项。",
-    copy: "复制当前选中项。",
-    Cut: "剪切当前选中项。",
-    cut: "剪切当前选中项。",
-    Paste: "将剪贴板内容粘贴到当前目录。",
-    paste: "将剪贴板内容粘贴到当前目录。",
-    Delete: "删除当前选中项。",
-    delete: "删除当前选中项。",
-    Rename: "重命名当前选中项。",
-    rename: "重命名当前选中项。",
-    Refresh: "刷新当前面板。",
-    refresh: "刷新当前面板。",
-    "Next panel": "按顺序切换可见面板焦点。",
-    "focus-next-panel": "按顺序切换可见面板焦点。",
-    "Search drawer": "打开停靠式搜索面板。",
-    "open-search": "打开停靠式搜索面板。",
-    "New tab": "在当前面板中新建标签页。",
-    "new-tab": "在当前面板中新建标签页。",
-    "Close tab": "关闭当前活动标签页。",
-    "close-tab": "关闭当前活动标签页。",
-    "Navigate up": "打开当前文件夹的上一级。",
-    "navigate-up": "打开当前文件夹的上一级。",
-    "Navigate forward": "回到历史中的下一级文件夹。",
-    "navigate-forward": "回到历史中的下一级文件夹。",
-    "Drag move": "拖放文件或文件夹时执行移动而不是复制。",
-    "drag-move": "拖放文件或文件夹时执行移动而不是复制。",
-    "Context menu toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
-    "context-menu-toggle": "右键时临时切换 Windows 系统菜单与软件自定义菜单。",
-    "create-folder": "在当前目录中新建文件夹。"
-  };
-  return dictionary[action] ?? action;
 }
 
 function createRemoteUriFromBackend(
@@ -857,7 +526,8 @@ function mergeShortcutDefaults(shortcuts: SettingsModel["shortcuts"]) {
   const byId = new Map(shortcuts.map((shortcut) => [shortcut.id, shortcut]));
   return DEFAULT_SHORTCUTS.map((shortcut) => ({
     ...shortcut,
-    ...(byId.get(shortcut.id) ?? {})
+    ...(byId.get(shortcut.id) ?? {}),
+    action: shortcut.action, description: shortcut.description
   }));
 }
 
@@ -902,15 +572,7 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settings.contextMenu?.defaultMenu)
     },
-    theme: {
-      panelFocusAccent: normalizeThemeAccentColor(settings.theme?.panelFocusAccent),
-      activeTabBackground: normalizeThemeAccentColor(settings.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
-      dropHighlightFill: normalizeThemeAccentColor(settings.theme?.dropHighlightFill),
-      dropHighlightBorder: normalizeThemeAccentColor(settings.theme?.dropHighlightBorder),
-      sizeBarLow: normalizeThemeAccentColor(settings.theme?.sizeBarLow, DEFAULT_THEME.sizeBarLow),
-      sizeBarHigh: normalizeThemeAccentColor(settings.theme?.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
-      tabMinWidth: normalizeTabMinWidth(settings.theme?.tabMinWidth)
-    }
+    theme: normalizeTheme(settings.theme)
   };
 }
 
@@ -945,15 +607,7 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(settingsModel.contextMenu?.defaultMenu)
     },
-    theme: {
-      panelFocusAccent: normalizeThemeAccentColor(settingsModel.theme?.panelFocusAccent),
-      activeTabBackground: normalizeThemeAccentColor(settingsModel.theme?.activeTabBackground, DEFAULT_THEME.activeTabBackground),
-      dropHighlightFill: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightFill),
-      dropHighlightBorder: normalizeThemeAccentColor(settingsModel.theme?.dropHighlightBorder),
-      sizeBarLow: normalizeThemeAccentColor(settingsModel.theme?.sizeBarLow, DEFAULT_THEME.sizeBarLow),
-      sizeBarHigh: normalizeThemeAccentColor(settingsModel.theme?.sizeBarHigh, DEFAULT_THEME.sizeBarHigh),
-      tabMinWidth: normalizeTabMinWidth(settingsModel.theme?.tabMinWidth)
-    }
+    theme: normalizeTheme(settingsModel.theme)
   };
 }
 

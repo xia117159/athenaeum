@@ -12,8 +12,10 @@ import type { CreationTemplateEntry, CreationTemplateListing } from "../../app/t
 export const completion = (async () => {
   const dom = installDomEnvironment();
   const style = document.createElement("style");
-  style.textContent = ["workspace.context-menu.css", "templates.css"]
-    .map(file => fs.readFileSync(path.join(process.cwd(), "src/features/workspace", file), "utf8")).join("\n");
+  style.textContent = ["workspace.context-menu.css", "templates.css", "workspace.menus.css"]
+    .map(file => fs.readFileSync(path.join(process.cwd(), "src/features/workspace", file), "utf8")).join("\n")
+    // jsdom does not resolve var() in background colors; browser checks cover configured values.
+    .replaceAll("var(--menu-hover-background, #e5f1fb)", "#e5f1fb");
   document.head.append(style);
   const { createRoot } = require("react-dom/client") as typeof import("react-dom/client");
   const f = expansionFixture(); f.bootstrap.settingsModel.templateRoot = "C:\\Templates";
@@ -129,7 +131,7 @@ export const completion = (async () => {
     await move(document.body); await pause();
     assert.notEqual(parentBackground(), highlight, "leaving the entire menu clears the pointer highlight without discarding focus");
     assert.ok(document.activeElement === button("新建项目"));
-    await key(button("新建项目"), "Tab");
+    await key(button("新建项目"), "F3");
     assert.equal(parentBackground(), highlight, "keyboard navigation restores the visible focus indication");
     await move(button("新建文件"));
     assert.notEqual(parentBackground(), highlight, "returning to the mouse removes the old keyboard fill");
