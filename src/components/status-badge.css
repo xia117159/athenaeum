@@ -1,0 +1,18 @@
+.status-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--status-badge-size, 16px);
+  height: var(--status-badge-size, 16px);
+  padding: 0 calc(var(--status-badge-size, 16px) * 0.25);
+  border-radius: calc(var(--status-badge-size, 16px) / 2);
+  background: var(--status-badge-background, #5c5c5c);
+  color: var(--status-badge-color, #ffffff);
+  font-size: max(9px, calc(var(--status-badge-size, 16px) * 0.56));
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+}

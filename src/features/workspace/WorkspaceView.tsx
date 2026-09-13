@@ -1,9 +1,13 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2 } from "lucide-react";
 import { ResizableSplit } from "./ResizableSplit";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
+import { OpenWithMenu } from "./OpenWithMenu";
+import { BatchRenameDialog } from "./BatchRenameDialog";
+import { TemplateCreationMenu } from "./TemplateCreationMenu";
+import { WorkspaceFeedback } from "./WorkspaceFeedback";
 import { WorkspaceInformationPanel } from "./WorkspaceInformationPanel";
 import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
 import { WorkspacePanelChrome } from "./WorkspacePanelChrome";
@@ -12,10 +16,15 @@ import { openSettingsWindow } from "./settingsWindow";
 import { listenSystemFileDrops } from "./systemDragDrop";
 import { disposeQuietly } from "./workspaceIpc";
 import { useWorkspaceController } from "./useWorkspaceController";
+import { useDocumentMenuTheme } from "./useMenuTheme";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
-import { filterDirectoryNodesByFileVisibility, filterEntriesByFileVisibility } from "./workspaceVisibility";
+import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
+import { getFolderListingRows, supportsFolderExpansion } from "./folderExpansion";
+import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
+import { DirectorySizeControl } from "./DirectorySizeControl";
+import { ReconnectPanel } from "./ReconnectPanel";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -52,18 +61,6 @@ function getUniqueRecentPaths(history: string[], currentPath: string) {
   return result;
 }
 
-function filterEntries(entries: EntryViewModel[], filterText: string) {
-  const normalized = filterText.trim().toLowerCase();
-  if (!normalized) {
-    return entries;
-  }
-
-  return entries.filter((entry) => {
-    const searchable = [entry.name, entry.path, entry.extension, entry.description, entry.tags.join(" ")].join(" ").toLowerCase();
-    return searchable.includes(normalized);
-  });
-}
-
 function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: string[]) {
   if (selectedEntryIds.length === 0) {
     return [];
@@ -75,14 +72,15 @@ function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: s
 
 export function WorkspaceView() {
   const { state, actions } = useWorkspaceController();
+  useDocumentMenuTheme(state.settings.model.theme);
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  const activeEntries = isActiveNavigationTab
-    ? []
-    : filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility);
-  const selectedEntries = isActiveNavigationTab ? [] : getSelectedEntriesForTab(activeEntries, activeTab.selectedEntryIds);
-  const filteredActiveEntries = isActiveNavigationTab ? [] : filterEntries(activeEntries, state.search.filterText);
+  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
+  const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
+  const contextTab = state.contextMenu
+    ? state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId) : undefined;
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -246,7 +244,10 @@ export function WorkspaceView() {
   const canGoForward = canUseDirectoryCommands && activeTab.historyIndex < activeTab.history.length - 1;
   return (
     <div
+      data-workspace-root
+      tabIndex={-1}
       className={`workspace-shell${state.status === "loading" ? " workspace-shell--loading" : ""}`}
+      style={{ "--size-bar-low": state.settings.model.theme.sizeBarLow, "--size-bar-high": state.settings.model.theme.sizeBarHigh } as CSSProperties}
       onDragEnter={handleExternalFileDrag}
       onDragOver={handleExternalFileDrag}
       onDrop={handleExternalFileDrag}
@@ -315,6 +316,18 @@ export function WorkspaceView() {
           <span className="workspace-toolbar__separator" aria-hidden="true" />
           <button type="button" className="toolbar-button toolbar-button--icon" title="搜索" aria-label="搜索" onClick={() => actions.toggleSearch(true)}>
             <Search size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`toolbar-button toolbar-button--icon${state.settings.model.colorFilterEnabled !== false ? " is-active" : ""}`}
+            title={state.settings.model.colorFilterEnabled !== false ? "关闭颜色过滤器" : "启用颜色过滤器"}
+            aria-label={state.settings.model.colorFilterEnabled !== false ? "关闭颜色过滤器" : "启用颜色过滤器"}
+            aria-pressed={state.settings.model.colorFilterEnabled !== false}
+            aria-busy={state.colorFilterTogglePending || undefined}
+            disabled={state.colorFilterTogglePending}
+            onClick={() => void actions.toggleColorFilter(state.settings.model.colorFilterEnabled === false)}
+          >
+            <Palette size={16} aria-hidden="true" />
           </button>
         </div>
 
@@ -414,37 +427,26 @@ export function WorkspaceView() {
             state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)?.viewMode ??
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
-          tab={state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId)}
+          tab={contextTab}
+          visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
+            state.contextMenu.panelId === state.activePanelId ? state.search.filterText : "",
+            state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry) : []}
           clipboard={state.clipboard}
           actions={actions}
           layoutMode={state.layoutMode}
           panelIds={getVisiblePanelIds(state.layoutMode)}
+          templateMenuOpen={Boolean(state.templateMenu && !state.templateMenu.rootHidden)}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
 
-      {state.notifications.length > 0 ? (
-        <div className="workspace-notification-stack" role="region" aria-label="通知">
-          {state.notifications.map((notification) => (
-            <div
-              key={notification.id}
-              className={`workspace-notification workspace-notification--${notification.intent}`}
-              role={notification.intent === "danger" ? "alert" : "status"}
-            >
-              <span>{notification.message}</span>
-              <button
-                type="button"
-                className="workspace-notification__close"
-                title="关闭通知"
-                aria-label="关闭通知"
-                onClick={() => actions.dismissNotification(notification.id)}
-              >
-                <X size={12} strokeWidth={2} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {state.openWithMenu ? <OpenWithMenu menu={state.openWithMenu} rules={state.settings.model.fileAssociations ?? []}
+        onSelect={actions.selectOpenWith} onConfirm={actions.confirmOpenWith} onClose={actions.closeOpenWith} /> : null}
+      {state.templateMenu ? <TemplateCreationMenu key={state.templateMenu.id} menu={state.templateMenu} actions={actions} /> : null}
+      {state.batchRename ? <BatchRenameDialog dialog={state.batchRename} onChange={actions.changeBatchRename}
+        onConfirm={actions.confirmBatchRename} onClose={actions.closeBatchRename} onHelp={actions.openBatchRenameHelp} /> : null}
+      <WorkspaceFeedback notifications={state.notifications} fileOpens={state.fileOpens ?? []}
+        onCancelOpen={actions.cancelFileOpen} onDismiss={actions.dismissNotification} />
 
       {state.status === "loading" ? (
         <div className="workspace-loading">
@@ -524,9 +526,6 @@ function WorkspaceRightContent({
       onUpdateFilter={(value) => actions.updateSearchFilter(value)}
       onSelectHistory={(index) => actions.selectSearchHistory(index)}
       onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
-      onCancelTask={actions.cancelOperation}
-      onUndoLatest={actions.undoLatestOperation}
-      onUndoRecord={actions.undoOperation}
     />
   );
 
@@ -606,8 +605,13 @@ function PanelLayout({
       activeTabBackground={state.settings.model.theme.activeTabBackground}
       dropHighlightFill={state.settings.model.theme.dropHighlightFill}
       dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
+      sizeBarMode={state.settings.model.sizeBarMode}
+      sizeBarLow={state.settings.model.theme.sizeBarLow}
+      sizeBarHigh={state.settings.model.theme.sizeBarHigh}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       fileVisibility={state.fileVisibility}
+      colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
+      folderExpansionEnabled={state.settings.model.folderExpansionEnabled === true}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
       keyboardNavToken={state.keyboardNavToken}
@@ -725,8 +729,13 @@ function PanelSurface({
   activeTabBackground,
   dropHighlightFill,
   dropHighlightBorder,
+  sizeBarMode,
+  sizeBarLow,
+  sizeBarHigh,
   tabMinWidth,
   fileVisibility,
+  colorFilterEnabled,
+  folderExpansionEnabled,
   syncScrollEnabled,
   navigation,
   keyboardNavToken,
@@ -748,8 +757,13 @@ function PanelSurface({
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarMode: WorkspaceState["settings"]["model"]["sizeBarMode"];
+  sizeBarLow: string;
+  sizeBarHigh: string;
   tabMinWidth: number;
   fileVisibility: WorkspaceState["fileVisibility"];
+  colorFilterEnabled: boolean;
+  folderExpansionEnabled: boolean;
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
   keyboardNavToken?: symbol;
@@ -759,13 +773,12 @@ function PanelSurface({
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
   const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(directoryContextTab.snapshot.entries, directoryContextTab.selectedEntryIds)
+    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
     : [];
-  const visibleEntries = isNavigationTab(activeTab) ? [] : filterEntriesByFileVisibility(activeTab.snapshot.entries, fileVisibility);
-  const entries = isNavigationTab(activeTab) ? [] : isFocused ? filterEntries(visibleEntries, filterText) : visibleEntries;
+  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled, sizeBarMode);
+  const entries = rows.map((row) => row.entry);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
-
   // Memoize selection callbacks to prevent useEffect re-registration in FileListing
   const handleSelectMultiple = useCallback(
     (entryIds: string[]) => {
@@ -852,9 +865,16 @@ function PanelSurface({
           />
         ) : (
           <WorkspaceFileListingShell
+            colorFilterEnabled={colorFilterEnabled}
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}
+            folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
+            sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
+              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind}
+              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}
+            onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
+            onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}
             columns={activeTab.columns ?? columns}
             sort={activeTab.sort}
             currentPath={activeTab.snapshot.location.path}
@@ -887,6 +907,8 @@ function PanelSurface({
               actions.openEntry(panel.id, entry);
             }}
             detailsRowHeight={detailsRowHeight}
+            sizeBarLow={sizeBarLow}
+            sizeBarHigh={sizeBarHigh}
             tooltipHoverDelayMs={tooltipHoverDelayMs}
             onOpenContextMenu={(payload) => actions.openContextMenu(payload)}
             onOpenNativeContextMenu={(payload) => actions.openNativeContextMenu(payload)}
@@ -905,17 +927,5 @@ function PanelSurface({
         )}
       </div>
     </section>
-  );
-}
-
-function ReconnectPanel({ tab, onReconnect }: { tab: TabState; onReconnect: () => void }) {
-  return (
-    <div className="reconnect-panel">
-      <button type="button" className="toolbar-button reconnect-panel__button" onClick={onReconnect}>
-        重新连接
-      </button>
-      <span title={tab.reconnect?.path ?? tab.snapshot.location.path}>{tab.reconnect?.path ?? tab.snapshot.location.path}</span>
-      {tab.reconnect?.message ? <small>{tab.reconnect.message}</small> : null}
-    </div>
   );
 }

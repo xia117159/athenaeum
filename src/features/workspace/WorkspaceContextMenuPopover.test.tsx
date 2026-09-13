@@ -67,6 +67,7 @@ function createActions(overrides: Record<string, unknown> = {}) {
     pasteIntoPanel() {},
     createFolder() {},
     createFile() {},
+    openTemplateMenu() {},
     openNewTab() {},
     navigateToPath() {},
     refreshPanel() {},
@@ -114,7 +115,7 @@ const directoryTab = {
     location: {
       path: "D:\\Projects",
       label: "Projects",
-      kind: "folder"
+      kind: "local"
     }
   }
 };
@@ -170,6 +171,14 @@ export const completion = (async () => {
       assert.equal(menu.style.left, "532px");
       assert.equal(menu.style.top, "272px");
       assert.equal(menu.style.zIndex, "10000");
+      await act(async () => {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: 620 });
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: 460 });
+        window.dispatchEvent(new dom.window.Event("resize")); await flushEffects();
+      });
+      assert.equal(menu.style.left, "352px"); assert.equal(menu.style.top, "132px", "open menus reclamp when the window shrinks");
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
     });
 
     await assertTest("WorkspaceContextMenuPopover renders Explorer-style panel commands with nested menus", async () => {
@@ -193,16 +202,17 @@ export const completion = (async () => {
           ".context-menu > .context-menu__item span:last-child, .context-menu > .context-menu__submenu > .context-menu__item span:last-child"
         )
       ).map((item) => item.textContent?.trim());
-      assert.deepEqual(topLabels.slice(0, 5), ["新建文件", "新建文件夹", "视图", "排序方式", "粘贴"]);
+      assert.deepEqual(topLabels.slice(0, 6), ["新建文件", "新建文件夹", "新建项目", "视图", "排序方式", "粘贴"]);
 
-      const submenus = Array.from(document.body.querySelectorAll(".context-menu__submenu"));
-      const submenuLabels = (index: number) =>
-        Array.from(submenus[index].querySelectorAll(".context-menu__submenu-items .context-menu__item span:last-child")).map((item) =>
-          item.textContent?.trim()
-        );
-
-      assert.deepEqual(submenuLabels(0), ["超大图标", "大图标", "中等图标", "小图标", "列表", "详细信息列表", "平铺", "内容"]);
-      assert.deepEqual(submenuLabels(1), ["名称", "修改日期", "类型", "大小", "递增", "递减"]);
+      const openSubmenu = async (label: string) => act(async () => {
+        const trigger = [...document.querySelectorAll<HTMLButtonElement>(".context-menu > button")].find(button => button.textContent?.includes(label));
+        assert.ok(trigger); trigger.click(); await flushEffects();
+      });
+      const submenuLabels = () => [...document.querySelectorAll(".context-menu__submenu-items .context-menu__item span:last-child")].map(item => item.textContent?.trim());
+      await openSubmenu("视图");
+      assert.deepEqual(submenuLabels(), ["超大图标", "大图标", "中等图标", "小图标", "列表", "详细信息列表", "平铺", "内容"]);
+      await openSubmenu("排序方式");
+      assert.deepEqual(submenuLabels(), ["名称", "修改日期", "类型", "大小", "递增", "递减"]);
 
       const pasteButton = Array.from(document.body.querySelectorAll(".context-menu > .context-menu__item")).find((item) =>
         item.textContent?.includes("粘贴")
@@ -210,6 +220,30 @@ export const completion = (async () => {
       assert.equal(pasteButton?.disabled, true);
       assert.equal(topLabels.includes("刷新"), true);
       assert.equal(topLabels.includes("新建标签页"), true);
+    });
+
+    await assertTest("template entrance keeps the parent menu open during cross-level checking and disables remote targets", async () => {
+      const calls: unknown[][] = []; let closed = 0;
+      const render = async (kind: string) => act(async () => {
+        root.render(<WorkspaceContextMenuPopover contextMenu={{ ...contextMenu, scope: "panel" }} viewMode="details"
+          tab={{ ...directoryTab, snapshot: { ...directoryTab.snapshot, location: { ...directoryTab.snapshot.location, kind } } } as never}
+          actions={createActions({ openTemplateMenu: (...args: unknown[]) => calls.push(args) }) as never}
+          layoutMode="single" panelIds={["panel-1"]} onClose={() => { closed++; }} />);
+        await flushEffects();
+      });
+      await render("local");
+      const find = () => [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.trim() === "新建项目")!;
+      assert.ok(find()); assert.equal(find().disabled, false);
+      await act(async () => { find().click(); await flushEffects(); });
+      assert.deepEqual(calls[0].slice(0, 2), ["panel-1", "panel-1-tab-1"]);
+      assert.equal(closed, 0);
+      const portal = document.createElement("div"); portal.className = "template-menu-host";
+      portal.dataset.menuOwner = (calls[0][3] as { hostId: string }).hostId;
+      const checkbox = document.createElement("input"); portal.append(checkbox); document.body.append(portal);
+      checkbox.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      assert.equal(closed, 0, "checkbox clicks inside the cascade must keep the parent open");
+      portal.remove();
+      await render("remote"); assert.equal(find().disabled, true); assert.match(find().title, /本地/);
     });
 
     await assertTest("WorkspaceContextMenuPopover enables paste when clipboard has entries and routes sort choices", async () => {
@@ -245,6 +279,10 @@ export const completion = (async () => {
       pasteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       assert.equal(pasteCalls, 1);
 
+      await act(async () => {
+        [...document.querySelectorAll<HTMLButtonElement>(".context-menu > button")].find(button => button.textContent?.includes("排序方式"))!.click();
+        await flushEffects();
+      });
       const sizeButton = Array.from(document.body.querySelectorAll(".context-menu__submenu-items .context-menu__item")).find((item) =>
         item.textContent?.includes("大小")
       ) as HTMLButtonElement | undefined;

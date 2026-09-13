@@ -12,6 +12,7 @@ import {
 } from "./settingsWindow";
 import { COMMENT_WINDOW_LABEL } from "./commentWindow";
 import { ABOUT_WINDOW_LABEL } from "./aboutWindow";
+import type { SettingsNavigationRequest, SettingsNavigationRuntime } from "./settingsNavigation";
 
 function assertTest(name: string, fn: () => Promise<void> | void) {
   return Promise.resolve()
@@ -84,6 +85,31 @@ function createAdapter({
 }
 
 export const completion = (async () => {
+  await assertTest("settings deep links queue before creation and target an existing window", async () => {
+    let pending: SettingsNavigationRequest | null = null;
+    const emitted: SettingsNavigationRequest[] = [];
+    const navigation: SettingsNavigationRuntime = {
+      read: () => pending, write: value => { pending = value; },
+      emit: async value => { emitted.push(value); }, listen: async () => () => {}
+    };
+    const options: SettingsWindowOptions[] = [];
+    const created = createAdapter({ createdOptions: options });
+    await openSettingsWindow({ ...created.adapter, navigation }, "file-associations");
+    assert.equal(new URL(options[0].url, "http://localhost").searchParams.get("section"), "file-associations");
+    assert.equal(navigation.read()?.section, "file-associations");
+    const existing = createAdapter({ existing: createWindowHandle([]) });
+    await openSettingsWindow({ ...existing.adapter, navigation }, "shortcuts");
+    assert.equal(emitted.at(-1)?.section, "shortcuts");
+    assert.equal(navigation.read()?.id, emitted.at(-1)?.id);
+    await assert.rejects(openSettingsWindow({ ...existing.adapter,
+      navigation: { ...navigation, emit: async () => { throw new Error("cannot navigate"); } }
+    }, "file-associations"), /cannot navigate/);
+    assert.equal(navigation.read(), null, "failed navigation must not leave a stale pending request");
+    const browser = createAdapter({ tauri: false });
+    await openSettingsWindow(browser.adapter, "file-associations");
+    assert.equal(new URL(browser.browserOpens[0].url, "http://localhost").searchParams.get("section"), "file-associations");
+  });
+
   await assertTest("openSettingsWindow focuses an existing settings window", async () => {
     const existingEvents: string[] = [];
     const existing = createWindowHandle(existingEvents);
@@ -174,12 +200,14 @@ export const completion = (async () => {
     assert.equal(settingsWindowSource.includes("navigationColumns: model.navigationColumns.map"), true);
     assert.equal(settingsWindowSource.includes("!hasSameJsonShape(pm.navigationColumns, dm.navigationColumns)"), true);
 
-    const remoteUpsertsIndex = settingsWindowSource.indexOf("await applyRemoteProfileUpserts()");
-    const settingsModelIndex = settingsWindowSource.indexOf("await actions.applySettingsModel");
-    const remoteDeletionsIndex = settingsWindowSource.indexOf("await applyRemoteProfileDeletions()");
-    assert.equal(remoteUpsertsIndex > -1, true);
-    assert.equal(settingsModelIndex > remoteUpsertsIndex, true);
-    assert.equal(remoteDeletionsIndex > settingsModelIndex, true);
+    assert.equal(settingsWindowSource.includes("runSettingsApplyPlan(steps)"), true);
+    assert.equal(settingsWindowSource.includes('label: "常规设置"'), true);
+    assert.equal(settingsWindowSource.includes('label: "颜色规则"'), true);
+    assert.equal(settingsWindowSource.includes("setColorRulesBaseRevision(committedRulesRevision)"), true);
+    assert.equal(settingsWindowSource.includes("formatSettingsApplyFailure(error)"), true);
+    assert.equal(settingsWindowSource.includes("colorRulesRawDraftDirty"), true);
+    assert.equal(settingsWindowSource.includes("hasColorRuleDraftChanges"), true);
+    assert.equal(settingsWindowSource.includes("onColorRulesDraftDirtyChange={setColorRulesRawDraftDirty}"), true);
   });
 
   await assertTest("Tauri capability allows the settings child window", () => {

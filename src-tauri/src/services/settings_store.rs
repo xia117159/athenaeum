@@ -3,13 +3,15 @@ use std::{collections::{HashMap, HashSet}, fs, path::PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::domain::models::{
-    ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign, ShortcutBinding, UiLayout,
-    UiTheme,
+    ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign, FileVisibilitySettings,
+    ShortcutBinding, UiLayout, UiTheme,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStore {
+    #[serde(default)]
+    pub template_root: String,
     pub layout: UiLayout,
     #[serde(default = "default_detail_columns")]
     pub detail_columns: Vec<DetailColumnDefinition>,
@@ -17,10 +19,16 @@ pub struct SettingsStore {
     pub navigation_columns: Vec<DetailColumnDefinition>,
     #[serde(default = "default_details_row_height")]
     pub details_row_height: u16,
+    #[serde(default = "default_size_bar_mode")]
+    pub size_bar_mode: String,
+    #[serde(default)]
+    pub folder_expansion_enabled: bool,
     #[serde(default = "default_tooltip_hover_delay_ms")]
     pub tooltip_hover_delay_ms: u32,
     #[serde(default = "default_metadata_retention_hours")]
     pub metadata_retention_hours: Option<u64>,
+    #[serde(default)]
+    pub file_visibility: FileVisibilitySettings,
     #[serde(default)]
     pub context_menu: ContextMenuSettings,
     #[serde(default)]
@@ -32,12 +40,16 @@ pub struct SettingsStore {
 impl Default for SettingsStore {
     fn default() -> Self {
         Self {
+            template_root: String::new(),
             layout: UiLayout::fallback(),
             detail_columns: default_detail_columns(),
             navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
+            size_bar_mode: default_size_bar_mode(),
+            folder_expansion_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
+            file_visibility: FileVisibilitySettings::default(),
             context_menu: ContextMenuSettings::default(),
             theme: UiTheme::default(),
             file_path: None,
@@ -65,6 +77,7 @@ impl SettingsStore {
         store.detail_columns = normalize_detail_columns(store.detail_columns);
         store.navigation_columns = normalize_navigation_columns(store.navigation_columns);
         store.details_row_height = normalize_details_row_height(store.details_row_height);
+        store.size_bar_mode = normalize_size_bar_mode(store.size_bar_mode);
         store.tooltip_hover_delay_ms =
             normalize_tooltip_hover_delay_ms(store.tooltip_hover_delay_ms);
         store.metadata_retention_hours =
@@ -115,12 +128,24 @@ impl SettingsStore {
         self.details_row_height = normalize_details_row_height(details_row_height);
     }
 
+    pub fn set_size_bar_mode(&mut self, value: String) {
+        self.size_bar_mode = normalize_size_bar_mode(value);
+    }
+
+    pub fn set_folder_expansion_enabled(&mut self, enabled: bool) {
+        self.folder_expansion_enabled = enabled;
+    }
+
     pub fn set_tooltip_hover_delay_ms(&mut self, value: u32) {
         self.tooltip_hover_delay_ms = normalize_tooltip_hover_delay_ms(value);
     }
 
     pub fn set_metadata_retention_hours(&mut self, value: Option<u64>) {
         self.metadata_retention_hours = normalize_metadata_retention_hours(value);
+    }
+
+    pub fn set_file_visibility(&mut self, value: FileVisibilitySettings) {
+        self.file_visibility = value;
     }
 
     pub fn set_context_menu(&mut self, context_menu: ContextMenuSettings) {
@@ -355,6 +380,10 @@ fn normalize_details_row_height(details_row_height: u16) -> u16 {
     details_row_height.clamp(12, 72)
 }
 
+fn normalize_size_bar_mode(value: String) -> String {
+    if value == "folder-max" { value } else { default_size_bar_mode() }
+}
+
 fn normalize_tooltip_hover_delay_ms(value: u32) -> u32 {
     value.min(5000)
 }
@@ -397,12 +426,21 @@ fn normalize_theme(mut theme: UiTheme) -> UiTheme {
         normalize_hex_color(&theme.drop_highlight_fill, &defaults.drop_highlight_fill);
     theme.drop_highlight_border =
         normalize_hex_color(&theme.drop_highlight_border, &defaults.drop_highlight_border);
+    theme.size_bar_low = normalize_hex_color(&theme.size_bar_low, &defaults.size_bar_low);
+    theme.size_bar_high = normalize_hex_color(&theme.size_bar_high, &defaults.size_bar_high);
+    theme.menu_hover_background = normalize_hex_color(&theme.menu_hover_background, &defaults.menu_hover_background);
+    theme.menu_hover_text = normalize_hex_color(&theme.menu_hover_text, &defaults.menu_hover_text);
+    theme.file_hover_border = normalize_hex_color(&theme.file_hover_border, &defaults.file_hover_border);
     theme.tab_min_width = normalize_tab_min_width(theme.tab_min_width);
     theme
 }
 
 fn default_details_row_height() -> u16 {
     24
+}
+
+fn default_size_bar_mode() -> String {
+    "folder-total".into()
 }
 
 fn default_tooltip_hover_delay_ms() -> u32 {
@@ -420,7 +458,7 @@ mod tests {
     use super::{validate_shortcuts, SettingsStore};
     use crate::domain::models::{
         ContextMenuDefaultMenu, ContextMenuSettings, DetailColumnDefinition, DetailColumnTextAlign,
-        PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme,
+        FileVisibilitySettings, PanelLayoutMode, ShortcutBinding, UiLayout, UiTheme,
     };
 
     struct TestDir {
@@ -499,6 +537,33 @@ mod tests {
     }
 
     #[test]
+    fn folder_expansion_setting_defaults_and_persists() {
+        let temp = TestDir::new("folder-expansion");
+        let file_path = temp.path.join("settings.json");
+        let mut legacy = serde_json::to_value(SettingsStore::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("folderExpansionEnabled");
+        let defaulted: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(defaulted).unwrap()["folderExpansionEnabled"],
+            false
+        );
+        for enabled in [true, false] {
+            legacy["folderExpansionEnabled"] = serde_json::json!(enabled);
+            let mut store: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+            store.attach_path(file_path.clone());
+            store.persist().unwrap();
+            let loaded = SettingsStore::load_from(file_path.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(loaded).unwrap()["folderExpansionEnabled"],
+                enabled
+            );
+        }
+    }
+
+    #[test]
     fn details_row_height_allows_dense_twelve_pixel_rows() {
         let mut store = SettingsStore::load_default();
         store.set_details_row_height(4);
@@ -518,6 +583,59 @@ mod tests {
         let reloaded = SettingsStore::load_from(file_path).expect("failed to reload settings");
         assert_eq!(reloaded.tooltip_hover_delay_ms, 5000);
         assert_eq!(reloaded.metadata_retention_hours, None);
+    }
+
+    #[test]
+    fn persist_round_trip_preserves_global_file_visibility() {
+        let temp = TestDir::new("file-visibility");
+        let file_path = temp.path.join("layout.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_file_visibility(FileVisibilitySettings {
+            show_hidden: true,
+            show_system: true,
+            hide_protected_operating_system_files: false,
+        });
+        store.persist().expect("persist settings");
+
+        let reloaded = SettingsStore::load_from(file_path.clone()).expect("reload settings");
+        reloaded.persist().expect("persist reloaded settings");
+        let round_trip = SettingsStore::load_from(file_path).expect("reload persisted settings");
+
+        assert!(round_trip.file_visibility.show_hidden);
+        assert!(round_trip.file_visibility.show_system);
+        assert!(
+            !round_trip
+                .file_visibility
+                .hide_protected_operating_system_files
+        );
+    }
+
+    #[test]
+    fn legacy_settings_default_to_hidden_and_system_files_not_shown() {
+        let temp = TestDir::new("legacy-file-visibility");
+        let file_path = temp.path.join("layout.toml");
+        let mut serialized = serde_json::to_value(SettingsStore::load_default())
+            .expect("serialize default settings");
+        serialized
+            .as_object_mut()
+            .expect("settings object")
+            .remove("fileVisibility");
+        fs::write(
+            &file_path,
+            serde_json::to_vec_pretty(&serialized).expect("serialize legacy settings"),
+        )
+        .expect("seed legacy settings");
+
+        let reloaded = SettingsStore::load_from(file_path).expect("reload legacy settings");
+
+        assert!(!reloaded.file_visibility.show_hidden);
+        assert!(!reloaded.file_visibility.show_system);
+        assert!(
+            reloaded
+                .file_visibility
+                .hide_protected_operating_system_files
+        );
     }
 
     #[test]
@@ -691,6 +809,7 @@ mod tests {
             drop_highlight_fill: "#1f9d5566".into(),
             drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
+            ..UiTheme::default()
         });
         store.persist().expect("failed to persist settings");
 
@@ -703,6 +822,35 @@ mod tests {
     }
 
     #[test]
+    fn size_bar_mode_defaults_and_round_trips() {
+        let mut store = SettingsStore::load_default();
+        assert_eq!(store.size_bar_mode, "folder-total");
+        store.set_size_bar_mode("folder-max".into());
+        assert_eq!(store.size_bar_mode, "folder-max");
+        store.set_size_bar_mode("invalid".into());
+        assert_eq!(store.size_bar_mode, "folder-total");
+    }
+
+    #[test]
+    fn size_bar_theme_defaults_normalization_and_round_trip() {
+        let old: UiTheme = serde_json::from_value(serde_json::json!({ "panelFocusAccent": "#0f6cbd" })).unwrap();
+        let defaults = serde_json::to_value(&old).unwrap();
+        assert_eq!(defaults["sizeBarLow"], "#dceaf7");
+        assert_eq!(defaults["sizeBarHigh"], "#3979b7");
+        let temp = TestDir::new("size-bar-theme");
+        let file_path = temp.path.join("settings.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        store.set_theme(serde_json::from_value(serde_json::json!({
+            "panelFocusAccent": "#0f6cbd", "sizeBarLow": " #ABCDEF80 ", "sizeBarHigh": "invalid"
+        })).unwrap());
+        store.persist().unwrap();
+        let theme = serde_json::to_value(SettingsStore::load_from(file_path).unwrap().theme).unwrap();
+        assert_eq!(theme["sizeBarLow"], "#abcdef80");
+        assert_eq!(theme["sizeBarHigh"], "#3979b7");
+    }
+
+    #[test]
     fn theme_normalizes_invalid_drop_highlight_colors_to_defaults() {
         let mut store = SettingsStore::load_default();
         store.set_theme(UiTheme {
@@ -711,6 +859,7 @@ mod tests {
             drop_highlight_fill: "not-a-color".into(),
             drop_highlight_border: "#ZZZZZZ".into(),
             tab_min_width: 96,
+            ..UiTheme::default()
         });
 
         let defaults = UiTheme::default();
@@ -723,6 +872,29 @@ mod tests {
             store.theme.drop_highlight_border,
             defaults.drop_highlight_border
         );
+    }
+
+    #[test]
+    fn menu_hover_theme_defaults_normalization_and_round_trip() {
+        let old: UiTheme = serde_json::from_value(serde_json::json!({ "panelFocusAccent": "#0f6cbd" })).unwrap();
+        let defaults = serde_json::to_value(&old).unwrap();
+        assert_eq!(defaults["menuHoverBackground"], "#e5f1fb");
+        assert_eq!(defaults["menuHoverText"], "#1f1f1f");
+        assert_eq!(defaults["fileHoverBorder"], "#91c9f7");
+        let temp = TestDir::new("menu-hover-theme");
+        let file_path = temp.path.join("settings.toml");
+        let mut store = SettingsStore::load_default();
+        store.attach_path(file_path.clone());
+        for key in ["menuHoverBackground", "menuHoverText", "fileHoverBorder"] {
+            for (value, expected) in [(" #ABCDEF80 ", "#abcdef80"), ("invalid", defaults[key].as_str().unwrap())] {
+                let mut input = defaults.clone();
+                input[key] = value.into();
+                store.set_theme(serde_json::from_value(input).unwrap());
+                store.persist().unwrap();
+                let theme = serde_json::to_value(SettingsStore::load_from(file_path.clone()).unwrap().theme).unwrap();
+                assert_eq!(theme[key], expected);
+            }
+        }
     }
 
     #[test]

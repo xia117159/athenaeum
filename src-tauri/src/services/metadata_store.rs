@@ -7,11 +7,13 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
-    Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag, HotlistEntry,
-    NavigationItem, NavigationItemUpsertRequest, NavigationTargetStatus, RemoteProfile,
-    SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+    Bookmark, ColorRule, ContextMenuSettings, DetailColumnDefinition, EntryTag,
+    FileVisibilitySettings, FileAssociationRule, HotlistEntry, NavigationItem, NavigationItemUpsertRequest,
+    NavigationTargetStatus, RemoteProfile, SettingsSnapshot, ShortcutBinding, TagDefinition,
+    UiLayout, UiTheme,
 };
 use crate::services::windows_shell;
+use crate::services::{atomic_file, color_filter::migration as color_migration};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -23,9 +25,10 @@ pub struct EntryComment {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct MetadataStore {
+    pub file_associations: Vec<FileAssociationRule>,
     pub bookmarks: Vec<Bookmark>,
     pub hotlist: Vec<HotlistEntry>,
     #[serde(default)]
@@ -34,11 +37,70 @@ pub struct MetadataStore {
     pub entry_tags: Vec<EntryTag>,
     #[serde(default)]
     pub entry_comments: Vec<EntryComment>,
+    #[serde(default = "default_color_filter_enabled")]
+    pub color_filter_enabled: bool,
+    #[serde(
+        default = "default_revision",
+        deserialize_with = "color_migration::deserialize_revision"
+    )]
+    pub color_filter_revision: String,
+    #[serde(
+        default = "default_revision",
+        deserialize_with = "color_migration::deserialize_revision"
+    )]
+    pub color_rules_revision: String,
+    #[serde(default = "default_color_rule_schema_version")]
+    pub color_rule_schema_version: u32,
+    #[serde(
+        default,
+        deserialize_with = "color_migration::deserialize_rules",
+        serialize_with = "color_migration::serialize_rules"
+    )]
     pub color_rules: Vec<ColorRule>,
     pub shortcuts: Vec<ShortcutBinding>,
     pub remote_profiles: Vec<RemoteProfile>,
     #[serde(skip)]
     file_path: Option<PathBuf>,
+    #[serde(skip)]
+    color_rules_migration_dirty: bool,
+    #[serde(skip)]
+    color_filter_recovery_diagnostics: Vec<String>,
+}
+
+fn default_color_filter_enabled() -> bool {
+    true
+}
+
+fn default_revision() -> String {
+    "0".into()
+}
+
+fn default_color_rule_schema_version() -> u32 {
+    2
+}
+
+impl Default for MetadataStore {
+    fn default() -> Self {
+        Self {
+            file_associations: Vec::new(),
+            bookmarks: Vec::new(),
+            hotlist: Vec::new(),
+            navigation_items: Vec::new(),
+            tag_definitions: Vec::new(),
+            entry_tags: Vec::new(),
+            entry_comments: Vec::new(),
+            color_filter_enabled: true,
+            color_filter_revision: default_revision(),
+            color_rules_revision: default_revision(),
+            color_rule_schema_version: default_color_rule_schema_version(),
+            color_rules: Vec::new(),
+            shortcuts: Vec::new(),
+            remote_profiles: Vec::new(),
+            file_path: None,
+            color_rules_migration_dirty: false,
+            color_filter_recovery_diagnostics: Vec::new(),
+        }
+    }
 }
 
 impl MetadataStore {
@@ -55,8 +117,33 @@ impl MetadataStore {
         }
 
         let content = fs::read_to_string(&file_path).context("failed to read metadata store")?;
-        let mut store: Self =
+        let raw: serde_json::Value =
             serde_json::from_str(&content).context("failed to parse metadata store")?;
+        let raw_color_rules = raw.get("colorRules").cloned();
+        let schema_is_current = raw
+            .get("colorRuleSchemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            == Some(2);
+        let revision_diagnostics = ["colorFilterRevision", "colorRulesRevision"]
+            .into_iter()
+            .filter(|key| {
+                raw.get(*key).is_some_and(|value| {
+                    !color_migration::revision_value_was_canonical(Some(value))
+                })
+            })
+            .map(|key| format!("Invalid persisted {key} was reset to 0"))
+            .collect::<Vec<_>>();
+        let mut store: Self =
+            serde_json::from_value(raw).context("failed to parse metadata store")?;
+        let normalized_color_rules = serde_json::to_value(&store)
+            .context("failed to compare normalized metadata")?
+            .get("colorRules")
+            .cloned();
+        store.color_rules_migration_dirty = !schema_is_current
+            || !revision_diagnostics.is_empty()
+            || raw_color_rules != normalized_color_rules
+            || color_migration::rules_need_migration(&store.color_rules);
+        store.color_filter_recovery_diagnostics = revision_diagnostics;
         store.cleanup_expired_entry_metadata(Utc::now);
         store.file_path = Some(file_path);
         Ok(store)
@@ -66,26 +153,59 @@ impl MetadataStore {
         self.file_path = Some(file_path);
     }
 
-    pub fn persist(&self) -> Result<()> {
+    pub fn persist(&mut self) -> Result<()> {
         let mut snapshot = self.clone();
+        if snapshot.color_rules_migration_dirty {
+            snapshot.increment_color_revisions(true)?;
+        }
         snapshot.cleanup_expired_entry_metadata(Utc::now);
+        snapshot.color_rule_schema_version = default_color_rule_schema_version();
+        color_migration::canonicalize_rules(&mut snapshot.color_rules);
+        snapshot.color_rules_migration_dirty = false;
         let file_path = self
             .file_path
             .as_ref()
             .context("metadata store path not initialized")?;
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).context("failed to create metadata directory")?;
-        }
-
-        let temp_path = file_path.with_extension("json.tmp");
         let content =
             serde_json::to_vec_pretty(&snapshot).context("failed to serialize metadata store")?;
-        fs::write(&temp_path, content).context("failed to write metadata store temp file")?;
-        if file_path.exists() {
-            fs::remove_file(file_path).context("failed to replace metadata store file")?;
-        }
-        fs::rename(&temp_path, file_path).context("failed to commit metadata store file")?;
+        atomic_file::write_atomically(file_path, &content)?;
+        *self = snapshot;
         Ok(())
+    }
+
+    pub fn color_rules_migration_dirty(&self) -> bool {
+        self.color_rules_migration_dirty
+    }
+
+    pub fn color_filter_recovery_diagnostics(&self) -> &[String] {
+        &self.color_filter_recovery_diagnostics
+    }
+
+    pub fn take_color_filter_recovery_diagnostics(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.color_filter_recovery_diagnostics)
+    }
+
+    pub fn push_color_filter_recovery_diagnostic(&mut self, diagnostic: String) {
+        if !self.color_filter_recovery_diagnostics.contains(&diagnostic) {
+            self.color_filter_recovery_diagnostics.push(diagnostic);
+        }
+    }
+
+    pub fn increment_color_revisions(&mut self, rules_changed: bool) -> Result<()> {
+        color_migration::increment_revision(&mut self.color_filter_revision)?;
+        if rules_changed {
+            color_migration::increment_revision(&mut self.color_rules_revision)?;
+        }
+        Ok(())
+    }
+
+    pub fn color_filter_snapshot(&self) -> crate::domain::color_filter::ColorFilterConfigSnapshot {
+        crate::domain::color_filter::ColorFilterConfigSnapshot {
+            enabled: self.color_filter_enabled,
+            rules: self.color_rules.clone(),
+            revision: self.color_filter_revision.clone(),
+            rules_revision: self.color_rules_revision.clone(),
+        }
     }
 
     pub fn to_settings_snapshot(
@@ -94,28 +214,42 @@ impl MetadataStore {
         columns: Vec<DetailColumnDefinition>,
         navigation_columns: Vec<DetailColumnDefinition>,
         details_row_height: u16,
+        size_bar_mode: String,
+        folder_expansion_enabled: bool,
         tooltip_hover_delay_ms: u32,
         metadata_retention_hours: Option<u64>,
+        file_visibility: FileVisibilitySettings,
         context_menu: ContextMenuSettings,
         theme: UiTheme,
+        template_root: String,
     ) -> SettingsSnapshot {
         // Hydrate passwords from credential store BEFORE redacting credential_target
         let hydrated_profiles =
             crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
 
         SettingsSnapshot {
+            template_root,
+            file_associations: self.file_associations.clone(),
             bookmarks: self.bookmarks.clone(),
             hotlist: self.hotlist.clone(),
             navigation_items: self.navigation_items.clone(),
             tag_definitions: self.tag_definitions.clone(),
             entry_tags: self.entry_tags.clone(),
-            color_rules: self.color_rules.clone(),
+            color_filter: crate::domain::color_filter::ColorFilterConfigSnapshot {
+                enabled: self.color_filter_enabled,
+                rules: self.color_rules.clone(),
+                revision: self.color_filter_revision.clone(),
+                rules_revision: self.color_rules_revision.clone(),
+            },
             shortcuts: self.shortcuts.clone(),
             columns,
             navigation_columns,
             details_row_height,
+            size_bar_mode,
+            folder_expansion_enabled,
             tooltip_hover_delay_ms,
             metadata_retention_hours,
+            file_visibility,
             context_menu,
             theme,
             layout,
@@ -297,28 +431,6 @@ impl MetadataStore {
                 .cmp(&right.sort_order)
                 .then(left.display_name.cmp(&right.display_name))
         });
-    }
-
-    pub fn upsert_color_rule(&mut self, rule: ColorRule) {
-        upsert_by_id(&mut self.color_rules, rule, |item| &item.id);
-        self.color_rules.sort_by(|left, right| {
-            left.priority
-                .cmp(&right.priority)
-                .then(left.name.cmp(&right.name))
-        });
-    }
-
-    pub fn set_color_rules(&mut self, rules: Vec<ColorRule>) {
-        self.color_rules = rules;
-        self.color_rules.sort_by(|left, right| {
-            left.priority
-                .cmp(&right.priority)
-                .then(left.name.cmp(&right.name))
-        });
-    }
-
-    pub fn delete_color_rule(&mut self, id: &str) {
-        self.color_rules.retain(|item| item.id != id);
     }
 
     pub fn upsert_tag_definition(&mut self, definition: TagDefinition) {
@@ -557,9 +669,9 @@ mod tests {
 
     use super::MetadataStore;
     use crate::domain::models::{
-        Bookmark, ContextMenuSettings, EntryTag, LocationKind, NavigationItemUpsertRequest,
-        NavigationTargetKind, NavigationTargetStatus, RemoteAuthKind, RemoteProfile, TagDefinition,
-        UiLayout, UiTheme,
+        Bookmark, ContextMenuSettings, EntryTag, FileVisibilitySettings, LocationKind,
+        NavigationItemUpsertRequest, NavigationTargetKind, NavigationTargetStatus, RemoteAuthKind,
+        RemoteProfile, TagDefinition, UiLayout, UiTheme,
     };
 
     struct TestDir {
@@ -620,10 +732,14 @@ mod tests {
             Vec::new(),
             Vec::new(),
             36,
+            "folder-total".into(),
+            false,
             200,
             Some(720),
+            FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
+            String::new(),
         );
         assert_eq!(snapshot.bookmarks.len(), 1);
         assert_eq!(snapshot.bookmarks[0].name, "Docs");
@@ -653,10 +769,14 @@ mod tests {
             Vec::new(),
             Vec::new(),
             36,
+            "folder-total".into(),
+            false,
             200,
             Some(720),
+            FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
+            String::new(),
         );
 
         assert!(reloaded.navigation_items.is_empty());

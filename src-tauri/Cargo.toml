@@ -1,6 +1,6 @@
 [package]
 name = "simplefilemanager"
-version = "0.0.1"
+version = "0.0.2"
 description = "Athenaeum Windows file manager built with Tauri v2"
 authors = ["OpenAI Codex"]
 edition = "2021"
@@ -20,7 +20,11 @@ base64 = "0.22.1"
 chrono = { version = "0.4.43", features = ["serde"] }
 dirs = "6.0.0"
 encoding_rs = "0.8.35"
+jiff = "0.2.31"
 regex = "1.12.3"
+regex-automata = "0.4.14"
+pest = "2.8.3"
+pest_derive = "2.8.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
@@ -35,6 +39,7 @@ windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_Globalization",
   "Win32_Security",
   "Win32_Security_Credentials",
   "Win32_Storage_FileSystem",
@@ -50,9 +55,15 @@ windows = { version = "0.61.3", features = [
 gix = { version = "0.85.0", features = ["status"] }
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
 windows = { version = "0.61.3", features = [
+  "Wdk_Foundation",
+  "Wdk_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_SystemServices",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_Globalization",
   "Win32_Security",
   "Win32_Security_Credentials",
   "Win32_Storage_FileSystem",
@@ -65,3 +76,6 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Ole",
   "Win32_System_Threading"
 ] }
+
+[profile.dev.package.regex-automata]
+opt-level = 3

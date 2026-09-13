@@ -4,14 +4,15 @@ use tauri::{Emitter, State};
 
 use crate::{
     domain::models::{
-        CreateDirectoryRequest, CreateFileRequest, FileOperationRequest,
-        OperationConflictResolution, OperationHistoryListSnapshot, OperationIntent,
-        OperationResult, OperationTaskListSnapshot, OperationTaskSnapshot, RenameRequest,
+        CreateDirectoryRequest, CreateFileRequest, FileOperationRequest, OperationClearOutcome,
+        OperationClearRequest, OperationClearStatus, OperationConflictResolution,
+        OperationHistoryListSnapshot, OperationIntent, OperationResult, OperationTaskListSnapshot,
+        OperationTaskSnapshot, RenameRequest,
     },
     services::{
         fs_service,
         operation_service::{
-            execute_conflict_resolution, execute_operation_task, execute_undo_task,
+            execute_conflict_resolution, execute_operation_task, execute_workspace_undo,
         },
         AppState,
     },
@@ -25,7 +26,7 @@ fn app_data_dir(state: &AppState) -> Option<std::path::PathBuf> {
         .clone()
 }
 
-fn emit_operation_result(
+pub(super) fn emit_operation_result(
     app: &tauri::AppHandle,
     result: &crate::services::operation_service::OperationServiceResult,
 ) {
@@ -270,6 +271,30 @@ pub fn list_operation_history(
 }
 
 #[tauri::command]
+pub fn clear_operation_records(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    request: OperationClearRequest,
+) -> Result<OperationClearOutcome, String> {
+    let trash_root = app_data_dir(state.inner()).map(|path| path.join("operation-trash"));
+    let outcome = {
+        let mut operations = state
+            .operations
+            .lock()
+            .expect("operation store lock poisoned");
+        operations
+            .clear_records(request, trash_root.as_deref())
+            .map_err(|error| error.to_string())?
+    };
+    if matches!(outcome.status, OperationClearStatus::Cleared)
+        && (!outcome.removed_task_ids.is_empty() || !outcome.removed_record_ids.is_empty())
+    {
+        let _ = app.emit("operation_records_cleared", &outcome);
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
 pub fn undo_latest_operation(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -288,16 +313,8 @@ pub fn undo_latest_operation(
     emit_operation_result(&app, &result);
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
-        let undo_result = execute_undo_task(execution);
-        let finished = {
-            let mut operations = app_state
-                .operations
-                .lock()
-                .expect("operation store lock poisoned");
-            operations.finish_undo_operation(undo_result)
-        };
-        if let Ok(finished) = finished {
-            emit_operation_result(&app_for_thread, &finished);
+        if let Err(error) = execute_workspace_undo(&app_state, execution, &|result| emit_operation_result(&app_for_thread, result)) {
+            eprintln!("undo worker failed: {error:#}");
         }
     });
     Ok(result.snapshot)
@@ -323,16 +340,8 @@ pub fn undo_operation(
     emit_operation_result(&app, &result);
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
-        let undo_result = execute_undo_task(execution);
-        let finished = {
-            let mut operations = app_state
-                .operations
-                .lock()
-                .expect("operation store lock poisoned");
-            operations.finish_undo_operation(undo_result)
-        };
-        if let Ok(finished) = finished {
-            emit_operation_result(&app_for_thread, &finished);
+        if let Err(error) = execute_workspace_undo(&app_state, execution, &|result| emit_operation_result(&app_for_thread, result)) {
+            eprintln!("undo worker failed: {error:#}");
         }
     });
     Ok(result.snapshot)

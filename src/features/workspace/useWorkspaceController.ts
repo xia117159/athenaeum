@@ -2,6 +2,7 @@ import { startTransition, useEffect, useEffectEvent, useMemo, useReducer, useRef
 import { createMockWorkspaceBootstrap, getParentLocationPath, normalizeLocationPath } from "./mockData";
 import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGateway";
 import { openCommentWindow } from "./commentWindow";
+import { openOperationHistoryWindow } from "./operationHistoryWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
 import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
@@ -11,8 +12,19 @@ import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
-import { sortEntries } from "./fileListingPresentation";
-import { filterEntriesByFileVisibility } from "./workspaceVisibility";
+import { getFolderListingRows, getTabEntries } from "./folderExpansion";
+import { useFolderExpansionController } from "./useFolderExpansionController";
+import { useDirectorySizeController } from "./useDirectorySizeController";
+import { useFileOpeningController } from "./useFileOpeningController";
+import { useBatchRenameController } from "./useBatchRenameController";
+import { useTemplateCreationController } from "./useTemplateCreationController";
+import { captureRenameTarget } from "./renameTarget";
+import { captureTemplateTarget } from "./templateCreationState";
+import { currentListingEntry } from "./fileOpeningState";
+import { supportsDirectorySizes } from "./directorySizes";
+import { getTopLevelPaths } from "./workspacePathRelations";
+import { subscribeOperationEvents } from "./operationSubscriptions";
+import { useColorFilterController } from "./useColorFilterController";
 import { createWatchRootsManager, type WatchRootsManager } from "./workspaceWatchRootsManager";
 import { confirmAndTrustRemoteHostKey } from "./workspaceRemoteTrust";
 import { fuzzyMatchRemoteProfile, renormalizeRemotePath } from "./workspaceBootstrapSession";
@@ -87,18 +99,18 @@ import type {
 } from "./types";
 import { THIS_PC_PATH } from "./types";
 import type { GitFileStatus } from "./types";
-
 export { planNotificationDismissals } from "./workspaceControllerUtils";
-
 const defaultWorkspaceGateway = createWorkspaceGateway();
-
-export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway) {
+export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defaultWorkspaceGateway, options: { role?: "workspace" | "settings" } = {}) {
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () => ({
     ...createWorkspaceState(createMockWorkspaceBootstrap("mock")),
     status: "loading" as const
   }));
+  useFolderExpansionController({ state, dispatch, workspaceGateway });
+  useDirectorySizeController({ state, dispatch, workspaceGateway, enabled: options.role !== "settings" });
   const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
+  const userNavigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
   // navigationRequestsRef (an in-flight token cleared on completion), this is
   // never deleted, so late-arriving async side-results (e.g. git status) can
@@ -150,6 +162,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+  const fileOpening = useFileOpeningController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification });
 
   /**
    * Broadcasts a completed git status result to all waiting consumers (tabs
@@ -331,14 +345,19 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       theme: !hasSameJsonShape(current.theme, next.theme),
       contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
       fileListModel:
+        current.templateRoot !== next.templateRoot ||
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
+        !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+        current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+        current.sizeBarMode !== next.sizeBarMode ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
     };
   };
 
   const persistedSettingsChanged = (current: SettingsModel, next: SettingsModel) =>
+    current.templateRoot !== next.templateRoot ||
     !hasSameJsonShape(current.shortcuts, next.shortcuts) ||
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
@@ -346,13 +365,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.contextMenu, next.contextMenu) ||
     !hasSameJsonShape(current.columns, next.columns) ||
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
+    !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+    current.folderExpansionEnabled !== next.folderExpansionEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
   const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab)
-    ? propertiesWorkspaceTab.selectedEntryIds.join("|")
+    ? getSelectedEntries(state, state.activePanelId).map((entry) => entry.id).join("|")
     : "";
   const propertiesEffectKey = [
     state.status,
@@ -366,12 +387,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   useEffect(() => {
     let disposed = false;
-
     void workspaceGateway
       .loadBootstrap()
       .then((bootstrap) => {
         if (!disposed) {
           dispatch({ type: "bootstrapLoaded", payload: bootstrap });
+          bootstrap.startupDiagnostics.forEach((diagnostic) => pushNotification("warning", diagnostic));
         }
       })
       .catch((error) => {
@@ -429,7 +450,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    const selectedEntries = activeTab.snapshot.entries.filter((entry) => activeTab.selectedEntryIds.includes(entry.id));
+    const selectedEntries = getSelectedEntries(state, state.activePanelId);
     if (selectedEntries.length > 1) {
       dispatch({
         type: "propertiesSummaryReady",
@@ -525,17 +546,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     if (state.source !== "tauri") {
       return;
     }
-    if (skipNextSettingsPersistenceRef.current.colorRules) {
-      skipNextSettingsPersistenceRef.current.colorRules = false;
-      return;
-    }
-    void workspaceGateway.saveColorRules(state.settings.model.colorRules);
-  }, [state.settings.model.colorRules, state.source]);
-
-  useEffect(() => {
-    if (state.source !== "tauri") {
-      return;
-    }
     if (skipNextSettingsPersistenceRef.current.detailsRowHeight) {
       skipNextSettingsPersistenceRef.current.detailsRowHeight = false;
       return;
@@ -566,7 +576,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void workspaceGateway.saveSettingsModel(state.settings.model);
   }, [
     state.settings.model.columns,
+    state.settings.model.templateRoot,
     state.settings.model.navigationColumns,
+    state.settings.model.fileVisibility,
+    state.settings.model.folderExpansionEnabled,
+    state.settings.model.sizeBarMode,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
     state.settings.model.metadataRetentionHours,
@@ -760,8 +774,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         return;
       }
       const requestKey = `${panelId}:${tabId}`;
+      const userNavigation = options.activatePanel !== false;
+      if (!userNavigation && userNavigationRequestsRef.current.has(requestKey)) return;
       const requestId = nextNavigationRequestIdRef.current + 1;
       nextNavigationRequestIdRef.current = requestId;
+      if (userNavigation) {
+        userNavigationRequestsRef.current.set(requestKey, requestId);
+        dispatch({ type: "templateTargetNavigationStarted", payload: { panelId, tabId, requestId } });
+      }
       navigationRequestsRef.current.set(requestKey, requestId);
       latestNavigationIdRef.current.set(requestKey, requestId);
       if (isRemotePath(path)) {
@@ -800,6 +820,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         const latestRequestId = navigationRequestsRef.current.get(requestKey);
         const tabStillCurrent =
           latestRequestId === requestId && state.panels[panelId].tabs.some((tab) => tab.id === tabId);
+        if (tabStillCurrent && targetTab && pathsEqual(targetTab.snapshot.location.path, path)) {
+          dispatch({ type: "folderExpansionRefreshFailed", payload: { panelId, tabId, rootSnapshot: targetTab.snapshot, errorMessage: message } });
+        }
 
         // Profile-not-found retry: fuzzy match + renormalize path
         if (tabStillCurrent && isRemotePath(path) && isProfileNotFound) {
@@ -887,6 +910,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
         pushNotification("danger", message);
       } finally {
+        if (userNavigationRequestsRef.current.get(requestKey) === requestId) userNavigationRequestsRef.current.delete(requestKey);
+        if (userNavigation) dispatch({ type: "templateTargetNavigationFinished", payload: { panelId, tabId, requestId } });
         if (navigationRequestsRef.current.get(requestKey) === requestId) {
           navigationRequestsRef.current.delete(requestKey);
         }
@@ -911,6 +936,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshNavigationTargets();
       return;
     }
+    if (supportsDirectorySizes(activeTab)) dispatch({ type: "directorySizeRequested", payload: {
+      panelId, tabId: activeTab.id, rootPath: activeTab.snapshot.location.path, intent: "refresh"
+    } });
     await commitNavigation(panelId, activeTab.snapshot.location.path, false, {
       tabId: activeTab.id,
       activatePanel: false,
@@ -963,10 +991,30 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           tabId: target.tabId,
           activatePanel: false,
           historyIndex: target.historyIndex,
-          selectionReplacements
+          selectionReplacements: selectionReplacements.filter(replacement => (!replacement.panelId || replacement.panelId === target.panelId)
+            && (!replacement.tabId || replacement.tabId === target.tabId))
         })
       )
     );
+  });
+
+  const refreshVisibleColorEntries = useEffectEvent(async () => {
+    const targets = getVisiblePanelIds(state.layoutMode)
+      .map((panelId) => ({ panelId, tab: getActiveTab(state.panels[panelId]) }))
+      .filter(({ tab }) => isDirectoryTab(tab) && tab.snapshot.location.kind !== "virtual");
+    await Promise.all(
+      targets.map(({ panelId, tab }) =>
+        commitNavigation(panelId, tab.snapshot.location.path, false, {
+          tabId: tab.id,
+          activatePanel: false,
+          historyIndex: tab.historyIndex
+        })
+      )
+    );
+  });
+
+  const { toggleColorFilter, replaceColorRules, validateColorRule } = useColorFilterController({
+    state, dispatch, workspaceGateway, refreshVisibleEntries: refreshVisibleColorEntries, pushNotification
   });
 
   const refreshVisiblePanelsForPaths = useEffectEvent(async (paths: string[]) => {
@@ -1078,35 +1126,17 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     void watchRootsManagerRef.current.update(roots);
   });
 
-  // 只在关键状态变化时触发更新
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.status]);
-
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.layoutMode, state.activePanelId]);
-
+  // Expansion/visibility changes can change watch roots without changing the tab id.
+  // The manager deduplicates identical roots before any backend call.
   useEffect(() => {
     if (state.status === "ready") {
       updateWatchRoots();
     }
   }, [
-    state.panels["panel-1"]?.activeTabId,
-    state.panels["panel-2"]?.activeTabId,
-    state.panels["panel-3"]?.activeTabId,
-    state.panels["panel-4"]?.activeTabId
+    state.status, state.panels, state.layoutMode, state.activePanelId,
+    state.navigation.items, state.fileVisibility, state.search.filterText,
+    state.settings.model.folderExpansionEnabled
   ]);
-
-  useEffect(() => {
-    if (state.status === "ready") {
-      updateWatchRoots();
-    }
-  }, [state.navigation.items]);
 
   useEffect(() => {
     let disposed = false;
@@ -1241,6 +1271,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     const alreadyRefreshed = refreshedOperationTasksRef.current.has(task.taskId);
     const pendingInlineRefreshPaths = consumePendingInlineRefreshPaths(task.taskId);
+    batchRename.prepareSelectionRestore(task);
+    templateCreation.prepareCompletion(task);
     const pendingSelectionReplacements = consumePendingInlineSelectionReplacements(task.taskId);
     if (alreadyRefreshed && pendingInlineRefreshPaths.length === 0 && pendingSelectionReplacements.length === 0) {
       return;
@@ -1255,12 +1287,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshPanelsForPaths(refreshPaths, pendingSelectionReplacements);
     }
 
-    if (task.status === "failed") {
-      pushNotification("danger", task.message ?? "File operation failed");
-    } else if (task.status === "partialSucceeded") {
-      pushNotification("warning", task.message ?? "File operation completed with errors");
-    }
     await markDeletedMetadataForOperationTask(task);
+    templateCreation.finishCompletion(task);
   });
 
   const projectOperationResult = useEffectEvent(async (task: OperationTaskSnapshot | void) => {
@@ -1330,26 +1358,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const unlistenFns: Array<() => void> = [];
 
     void (async () => {
-      const [unlistenTasks, unlistenHistory] = await Promise.all([
-        workspaceGateway.listenOperationTasks((event) => {
+      const unlistenOperations = await subscribeOperationEvents(workspaceGateway, {
+        task: (event) => {
           if (!disposed) {
             void projectOperationTask(event.snapshot);
           }
-        }),
-        workspaceGateway.listenOperationHistory((event) => {
+        },
+        history: (event) => {
           if (!disposed) {
             dispatch({ type: "operationHistoryEventReceived", payload: event });
           }
-        })
-      ]);
+        },
+        cleared: (event) => {
+          if (!disposed) dispatch({ type: "operationRecordsCleared", payload: event });
+        }
+      });
 
       if (disposed) {
-        disposeQuietly(unlistenTasks);
-        disposeQuietly(unlistenHistory);
+        disposeQuietly(unlistenOperations);
         return;
       }
 
-      unlistenFns.push(unlistenTasks, unlistenHistory);
+      unlistenFns.push(unlistenOperations);
 
       const [taskSnapshot, historySnapshot] = await Promise.all([
         workspaceGateway.listOperationTasks(),
@@ -1374,7 +1404,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         disposeQuietly(unlisten);
       }
     };
-  }, [projectOperationTask, pushNotification, state.source, state.status, workspaceGateway]);
+  }, [state.source, state.status, workspaceGateway]);
 
   useEffect(() => {
     if (state.status !== "ready" || state.source !== "tauri") {
@@ -1570,7 +1600,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const dropEntries = useEffectEvent(async (paths: string[], destination: string, operation: "copy" | "move") => {
-    const normalizedPaths = Array.from(new Set(paths.map((path) => normalizeLocationPath(path)).filter(Boolean)));
+    const normalizedPaths = getTopLevelPaths(paths);
     const normalizedDestination = normalizeLocationPath(destination);
 
     if (normalizedPaths.length === 0) {
@@ -1786,7 +1816,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    const selectedPaths = selection.map((entry) => entry.path);
+    const selectedPaths = getTopLevelPaths(selection.map((entry) => entry.path));
     dispatch({ type: "clipboardSet", payload: { mode, paths: selectedPaths } });
     if (isLocalFileClipboard(selectedPaths)) {
       void workspaceGateway.setSystemFileClipboard(selectedPaths, mode).catch((error) => {
@@ -1833,7 +1863,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const startSystemFileDrag = useEffectEvent((paths: string[]) => {
-    const localPaths = paths.filter((path) => !isRemotePath(path));
+    const localPaths = getTopLevelPaths(paths.filter((path) => !isRemotePath(path)));
     if (localPaths.length === 0) {
       return;
     }
@@ -1878,8 +1908,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     const destination = activeTab.snapshot.location.path;
-    const operablePaths =
-      clipboard.mode === "cut" ? clipboard.paths.filter((path) => !hasSameParentPath(path, destination)) : clipboard.paths;
+    const sourcePaths = getTopLevelPaths(clipboard.paths);
+    const operablePaths = clipboard.mode === "cut" ? sourcePaths.filter((path) => !hasSameParentPath(path, destination)) : sourcePaths;
     if (operablePaths.some((path) => isSameOrDescendantPath(path, destination))) {
       pushNotification("warning", "Cannot paste an item into itself or one of its child folders.");
       return;
@@ -1929,7 +1959,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     const tab = findTab(state, panelId, tabId);
     const entry =
       isDirectoryTab(tab)
-        ? tab.snapshot.entries.find((item) => pathsEqual(item.path, path)) ?? findEntryByPath(state, path)
+        ? getTabEntries(tab).find((item) => pathsEqual(item.path, path)) ?? findEntryByPath(state, path)
         : findEntryByPath(state, path);
 
     try {
@@ -2151,13 +2181,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
     if (item.targetKind === "file") {
-      try {
-        await workspaceGateway.openPathWithSystemDefault(item.path);
-        await markNavigationItemOpened(item.id);
-        pushNotification("success", "已使用系统默认方式打开。");
-      } catch (error) {
-        pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-      }
+      if (await fileOpening.openFile(item.path)) await markNavigationItemOpened(item.id);
       return;
     }
     pushNotification("warning", "该导航目标暂不支持打开。");
@@ -2183,11 +2207,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       return;
     }
 
-    try {
-      await workspaceGateway.openPathWithSystemDefault(entry.path);
-    } catch (error) {
-      pushNotification("danger", getErrorMessage(error, "Unable to open with the system default app."));
-    }
+    await fileOpening.openFile(entry.path);
   });
 
   const openNavigationNativeContextMenu = useEffectEvent(async (itemIds: string[], clientX: number, clientY: number, screenX: number, screenY: number) => {
@@ -2304,7 +2324,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
     try {
       const task = await workspaceGateway.deleteEntries(
-        selection.map((entry) => entry.path),
+        getTopLevelPaths(selection.map((entry) => entry.path)),
         {
           source: "toolbar",
           panelId,
@@ -2324,7 +2344,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   });
 
-  const renameSelection = useEffectEvent((panelId: PanelId) => {
+  const batchRename = useBatchRenameController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification, projectTask: projectOperationTask });
+  const templateCreation = useTemplateCreationController({ state, dispatch, gateway: workspaceGateway,
+    enabled: options.role !== "settings", notify: pushNotification, projectTask: projectOperationTask, rename: batchRename.rename });
+  const renameSelection = useEffectEvent((panelId: PanelId, source: "toolbar" | "shortcut" | "contextMenu" = "toolbar") => {
+    if (state.contextMenu?.renameTarget) { batchRename.rename(state.contextMenu.renameTarget); return; }
+    if (state.contextMenu?.mode === "system-fallback") return;
     if (isNavigationTab(getActiveTab(state.panels[panelId]))) {
       const selectedId = state.navigation.selectedItemIds[0];
       const selectedItem = state.navigation.items.find((item) => item.id === selectedId);
@@ -2339,40 +2365,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       }
       return;
     }
-    const activeTab = getActiveDirectoryTab(state, panelId);
-    if (!activeTab) {
-      pushNotification("warning", "当前标签页不支持重命名文件。");
-      return;
-    }
-    const selection = getSelectedEntries(state, panelId);
-    if (selection.length !== 1) {
-      pushNotification("warning", "请选择一个项目进行重命名。");
-      return;
-    }
-
-    const [entry] = selection;
-    dispatch({
-      type: "inlineEditStarted",
-      payload: {
-        panelId,
-        tabId: activeTab.id,
-        edit: {
-          mode: "rename",
-          value: entry.name,
-          kind: entry.kind,
-          parentPath: entry.parentPath,
-          entryId: entry.id,
-          originalName: entry.name,
-          originalPath: entry.path
-        }
-      }
-    });
+    batchRename.rename(captureRenameTarget(state, panelId, source));
   });
 
-  const createFolder = useEffectEvent((panelId: PanelId) => {
+  const createEntry = useEffectEvent((panelId: PanelId, kind: "folder" | "file") => {
     const activeTab = getActiveDirectoryTab(state, panelId);
     if (!activeTab) {
-      pushNotification("warning", "当前标签页不能新建文件夹。");
+      pushNotification("warning", `当前标签页不能新建${kind === "folder" ? "文件夹" : "文件"}。`);
       return;
     }
     dispatch({
@@ -2381,35 +2380,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         panelId,
         tabId: activeTab.id,
         edit: {
-          mode: "create-folder",
-          value: "新文件夹",
-          kind: "folder",
+          mode: kind === "folder" ? "create-folder" : "create-file",
+          value: kind === "folder" ? "新文件夹" : "新文件",
+          kind,
           parentPath: activeTab.snapshot.location.path
         }
       }
     });
   });
-
-  const createFile = useEffectEvent((panelId: PanelId) => {
-    const activeTab = getActiveDirectoryTab(state, panelId);
-    if (!activeTab) {
-      pushNotification("warning", "当前标签页不能新建文件。");
-      return;
-    }
-    dispatch({
-      type: "inlineEditStarted",
-      payload: {
-        panelId,
-        tabId: activeTab.id,
-        edit: {
-          mode: "create-file",
-          value: "新文件",
-          kind: "file",
-          parentPath: activeTab.snapshot.location.path
-        }
-      }
-    });
-  });
+  const createFolder = useEffectEvent((panelId: PanelId) => createEntry(panelId, "folder"));
+  const createFile = useEffectEvent((panelId: PanelId) => createEntry(panelId, "file"));
 
   const updateInlineEdit = useEffectEvent((panelId: PanelId, tabId: string, value: string) => {
     dispatch({ type: "inlineEditChanged", payload: { panelId, tabId, value } });
@@ -2629,6 +2609,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   };
 
   const openNativeContextMenu = useEffectEvent(async (request: NativeContextMenuRequest) => {
+    if (state.batchRename) return;
+    const renameTarget = captureRenameTarget(state, request.panelId, "contextMenu", request.tabId, request.paths);
+    const templateTarget = captureTemplateTarget(state, request.panelId, request.tabId);
     dispatch({ type: "contextMenuSet", payload: undefined });
     const target = request.target ?? "selection";
     const fallbackScope = target === "background" ? "panel" : "selection";
@@ -2641,6 +2624,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           panelId: request.panelId,
           tabId: request.tabId,
           mode: "system-fallback",
+          ...(renameTarget ? { renameTarget } : {}),
           scope: fallbackScope
         }
       });
@@ -2674,7 +2658,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         opened = false;
       }
       if (action) {
-        runNativeBackgroundContextMenuAction(action, request.panelId, request.tabId);
+        if (action.type === "createTemplate") templateCreation.openCaptured(templateTarget, { x: request.clientX, y: request.clientY });
+        else runNativeBackgroundContextMenuAction(action, request.panelId, request.tabId);
         return;
       }
       if (!opened) {
@@ -2694,6 +2679,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     let result: import("./types").NativeSelectionContextMenuResult = { opened: false };
     try {
       result = await workspaceGateway.showNativeContextMenu(request.paths, request.screenX, request.screenY, {
+        allowRename: Boolean(renameTarget),
+        rename: getShortcutBinding(state.settings.model.shortcuts, request.paths.length > 1 ? "batch-rename" : "rename"),
         copyName: getShortcutBinding(state.settings.model.shortcuts, "copy-name"),
         copyFullPath: getShortcutBinding(state.settings.model.shortcuts, "copy-path")
       });
@@ -2706,9 +2693,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
 
     if (result.action) {
-      const entries = getSelectedEntries(state, request.panelId);
+      const entries = renameTarget?.entries ?? [];
       let clipboardText = "";
       switch (result.action.type) {
+        case "rename":
+          batchRename.rename(renameTarget);
+          return;
         case "copyName":
           clipboardText = entries.map((e) => e.name).join("\n");
           break;
@@ -2771,12 +2761,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     };
 
     const handleWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
+      if (event.defaultPrevented || options.role === "settings") {
         return;
       }
+      if (state.batchRename) { event.preventDefault(); return; }
+      if (state.openWithMenu) { event.preventDefault(); return; }
+      if (state.menuBar || state.contextMenu || state.templateMenu) { event.preventDefault(); return; }
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+      if (shortcutMatches(shortcuts, "batch-rename", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
+        event.preventDefault();
+        if (!event.repeat && !state.contextMenu) batchRename.rename(captureRenameTarget(state, state.activePanelId, "shortcut"), true);
+        return;
+      }
+
+      if (shortcutMatches(shortcuts, "open-with", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
+        event.preventDefault();
+        if (!event.repeat) fileOpening.requestOpenWith();
+        return;
+      }
 
       if (shortcutMatches(shortcuts, "undo", eventBinding) && !editable) {
         event.preventDefault();
@@ -2853,7 +2859,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
       if (shortcutMatches(shortcuts, "rename", eventBinding) && !editable) {
         event.preventDefault();
-        void renameSelection(state.activePanelId);
+        if (!event.repeat && !event.isComposing) renameSelection(state.activePanelId, "shortcut");
         return;
       }
 
@@ -2921,24 +2927,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (isNavigationTab(activeTab)) {
           return;
         }
-        // 复算激活标签页显示顺序：可见性过滤 + 搜索过滤（与主区域焦点面板显示一致）+ 排序，
-        // 确保键盘移动与列表视觉顺序一致（不要直接用 snapshot.entries 原始顺序）。
-        const orderedEntryIds = sortEntries(
-          filterEntriesByFileVisibility(activeTab.snapshot.entries, state.fileVisibility).filter(
-            (entry) => {
-              const filterText = state.search.filterText.trim().toLowerCase();
-              if (!filterText) {
-                return true;
-              }
-              return [entry.name, entry.path, entry.extension, entry.description, entry.tags.join(" ")]
-                .join(" ")
-                .toLowerCase()
-                .includes(filterText);
-            }
-          ),
-          activeTab.sort,
-          activeTab.snapshot.location.path
-        ).map((entry) => entry.id);
+        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+          state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+        const orderedEntryIds = visibleEntries.map((entry) => entry.id);
 
         if (matchedListShortcut === "select-all") {
           dispatch({ type: "allEntriesSelected", payload: { panelId: activePanel.id, tabId: activeTab.id } });
@@ -2949,9 +2940,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           return;
         }
         if (matchedListShortcut === "open-entry") {
-          const selectedIds = activeTab.selectedEntryIds;
-          const targetId = selectedIds[selectedIds.length - 1] ?? orderedEntryIds[0];
-          const targetEntry = activeTab.snapshot.entries.find((entry) => entry.id === targetId);
+          const targetEntry = currentListingEntry(state);
           if (targetEntry) {
             if (targetEntry.driveInfo && !targetEntry.driveInfo.enterable) {
               return;
@@ -2959,9 +2948,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
             if (targetEntry.kind === "folder") {
               void commitNavigation(activePanel.id, targetEntry.path);
             } else {
-              void workspaceGateway.openPathWithSystemDefault(targetEntry.path).catch((error) => {
-                pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-              });
+              void fileOpening.openFile(targetEntry.path);
             }
           }
           return;
@@ -3048,11 +3035,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     refreshPanel,
     renameSelection,
     state,
-    undoLatestOperation
+    undoLatestOperation,
+    options.role, fileOpening.requestOpenWith, fileOpening.openFile
   ]);
 
   const actions = useMemo(
     () => ({
+      ...fileOpening.actions,
+      ...batchRename.actions,
+      ...templateCreation.actions,
+      chooseTemplateRoot: () => workspaceGateway.templates.chooseRoot(),
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3119,6 +3111,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       navigateHistory: (panelId: PanelId, delta: -1 | 1) => navigateHistoryByDelta(panelId, delta),
       navigateUp: (panelId: PanelId) => navigateUpKeepingForwardHistory(panelId),
       toggleTreeNode: (panelId: PanelId, tabId: string, path: string, expand: boolean) => void loadTreeChildren(panelId, tabId, path, expand),
+      toggleFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
+        dispatch({ type: "folderExpansionToggled", payload: { panelId, tabId, path } }),
+      retryFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
+        dispatch({ type: "folderExpansionRetryRequested", payload: { panelId, tabId, path } }),
+      requestDirectorySizes: (panelId: PanelId, tabId: string, intent: "calculate" | "cancel") => {
+        const tab = findTab(state, panelId, tabId);
+        if (tab && supportsDirectorySizes(tab)) dispatch({ type: "directorySizeRequested", payload: { panelId, tabId, rootPath: tab.snapshot.location.path, intent } });
+      },
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),
@@ -3152,13 +3152,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
           void commitNavigation(panelId, entry.path);
           return;
         }
-        void (async () => {
-          try {
-            await workspaceGateway.openPathWithSystemDefault(entry.path);
-          } catch (error) {
-            pushNotification("danger", getErrorMessage(error, "无法使用系统默认方式打开。"));
-          }
-        })();
+        void fileOpening.openFile(entry.path);
       },
       dropEntries: (paths: string[], destination: string, operation: "copy" | "move") =>
         dropEntries(paths, destination, operation),
@@ -3213,7 +3207,9 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "informationPanelExpandedSet", payload: expanded }),
       selectInformationPanelTab: (tab: WorkspaceState["informationPanel"]["activeTab"]) =>
         dispatch({ type: "informationPanelTabChanged", payload: tab }),
-      openOperationHistory: () => dispatch({ type: "informationPanelHistoryRequested" }),
+      openOperationHistory: () => void openOperationHistoryWindow().catch((error) => {
+        pushNotification("danger", getErrorMessage(error, "\u65e0\u6cd5\u6253\u5f00\u64cd\u4f5c\u5386\u53f2\u7a97\u53e3"));
+      }),
       openSearchPanel: (tab?: WorkspaceState["search"]["activeTab"]) =>
         dispatch({ type: "searchPanelRequested", payload: tab }),
       toggleSearch: (open?: boolean) => dispatch({ type: "searchToggled", payload: open }),
@@ -3228,10 +3224,11 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       stopSearch: () => void stopSearch(),
       setSettingsSection: (section: SettingsSection) => dispatch({ type: "settingsSectionSet", payload: section }),
       applySettingsModel: (model: SettingsModel, section?: SettingsSection) => applySettingsModel(model, section),
+      toggleColorFilter: (enabled: boolean) => toggleColorFilter(enabled),
+      replaceColorRules: (rules: SettingsModel["colorRules"], baseRulesRevision: string, force = false) => replaceColorRules(rules, baseRulesRevision, force),
+      validateColorRule: (expression: string) => validateColorRule(expression),
       updateShortcutBinding: (id: string, binding: string) =>
         dispatch({ type: "shortcutBindingUpdated", payload: { id, binding } }),
-      updateColorRule: (id: string, color: string) =>
-        dispatch({ type: "colorRuleUpdated", payload: { id, color } }),
       updateTagRule: (id: string, quickFilter: string) =>
         dispatch({ type: "tagRuleUpdated", payload: { id, quickFilter } }),
       updatePanelFocusAccent: (color: string) =>
@@ -3271,7 +3268,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       setMetadataRetentionHours: (value: number | null) => dispatch({ type: "metadataRetentionHoursSet", payload: { value } }),
       setContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) =>
         dispatch({ type: "contextMenuDefaultSet", payload: { value } }),
-      setOperationTasksOpen: (open: boolean) => dispatch({ type: "operationTasksOpenSet", payload: open }),
       cancelOperation: (taskId: string) => void cancelOperation(taskId),
       undoLatestOperation: () => void undoLatestOperation(),
       undoOperation: (recordId: string) => void undoOperation(recordId),
@@ -3307,6 +3303,10 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       showNotification: (intent: WorkspaceState["notifications"][number]["intent"], message: string) =>
         pushNotification(intent, message),
       closeContextMenu: () => dispatch({ type: "contextMenuSet", payload: undefined }),
+      setMenuBar: (id?: string) => dispatch({ type: "workspaceMenuBarSet", payload: id ? { id, sessionId: crypto.randomUUID() } : undefined }),
+      closeMenus: () => dispatch({ type: "workspaceMenusClosed" }),
+      chooseAssociationProgram: () => workspaceGateway.chooseAssociationProgram(),
+      inspectAssociationPrograms: (paths: string[]) => workspaceGateway.inspectAssociationPrograms(paths),
       dismissNotification: (id: string) => dispatch({ type: "notificationDismissed", payload: { id } })
     }),
     [
@@ -3358,7 +3358,8 @@ startSystemFileDrag: (paths: string[]) => startSystemFileDrag(paths),
       testRemoteProfile,
       undoLatestOperation,
       undoOperation,
-      workspaceGateway
+      workspaceGateway,
+      fileOpening.actions, fileOpening.openFile, batchRename.actions, templateCreation.actions
     ]
   );
 

@@ -3,11 +3,20 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub use super::color_filter::{ColorFilterConfigSnapshot, ColorRule};
+pub use super::operation_clear::{
+    OperationClearOutcome, OperationClearRequest, OperationClearScope, OperationClearStatus,
+};
+
+mod file_associations;
 mod remote;
 mod settings;
+mod templates;
 
+pub use file_associations::*;
 pub use remote::*;
 pub use settings::*;
+pub use templates::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -60,8 +69,19 @@ pub enum EntryKind {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryDecoration {
-    pub color_hex: Option<String>,
+    pub foreground_color_hex: Option<String>,
+    pub background_color_hex: Option<String>,
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct EntryAttributeAvailability {
+    pub hidden: bool,
+    pub system: bool,
+    pub protected_system: bool,
+    pub read_only: bool,
+    pub symlink: bool,
+    pub archive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -83,6 +103,8 @@ pub struct EntryViewModel {
     pub location: LocationDescriptor,
     pub decoration: EntryDecoration,
     pub comment: Option<String>,
+    #[serde(skip)]
+    pub(crate) attribute_availability: EntryAttributeAvailability,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -92,6 +114,8 @@ pub struct DirectoryListing {
     pub entries: Vec<EntryViewModel>,
     pub parent: Option<String>,
     pub can_go_up: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -397,36 +421,6 @@ pub struct EntryTag {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum ColorRuleTarget {
-    Any,
-    File,
-    Directory,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum ColorRuleMode {
-    Extension,
-    NameContains,
-    PathContains,
-    Hidden,
-    ReadOnly,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ColorRule {
-    pub id: String,
-    pub name: String,
-    pub target: ColorRuleTarget,
-    pub mode: ColorRuleMode,
-    pub pattern: Option<String>,
-    pub color_hex: String,
-    pub priority: u32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UiLayout {
@@ -449,43 +443,7 @@ impl UiLayout {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct UiTheme {
-    pub panel_focus_accent: String,
-    #[serde(default = "default_active_tab_background")]
-    pub active_tab_background: String,
-    #[serde(default = "default_drop_highlight_color")]
-    pub drop_highlight_fill: String,
-    #[serde(default = "default_drop_highlight_color")]
-    pub drop_highlight_border: String,
-    #[serde(default = "default_tab_min_width")]
-    pub tab_min_width: u32,
-}
-
-impl Default for UiTheme {
-    fn default() -> Self {
-        Self {
-            panel_focus_accent: "#0f6cbd".into(),
-            active_tab_background: default_active_tab_background(),
-            drop_highlight_fill: default_drop_highlight_color(),
-            drop_highlight_border: default_drop_highlight_color(),
-            tab_min_width: default_tab_min_width(),
-        }
-    }
-}
-
-fn default_active_tab_background() -> String {
-    "#ffffff".into()
-}
-
-fn default_drop_highlight_color() -> String {
-    "#0f6cbd".into()
-}
-
-fn default_tab_min_width() -> u32 {
-    96
-}
+pub use super::ui_theme::UiTheme;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -556,6 +514,7 @@ pub struct NativeBackgroundContextMenuOptions {
 pub enum NativeBackgroundContextMenuAction {
     CreateFile,
     CreateFolder,
+    CreateTemplate,
     SetViewMode {
         #[serde(rename = "viewMode")]
         view_mode: NativeBackgroundContextMenuViewMode,
@@ -581,6 +540,7 @@ pub struct NativeBackgroundContextMenuResult {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NativeSelectionContextMenuAction {
+    Rename,
     CopyName,
     CopyFullPath,
     CopyParentPath,
@@ -591,6 +551,10 @@ pub enum NativeSelectionContextMenuAction {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeSelectionContextMenuShortcuts {
+    #[serde(default)]
+    pub allow_rename: bool,
+    #[serde(default)]
+    pub rename: String,
     #[serde(default)]
     pub copy_name: String,
     #[serde(default)]
@@ -992,6 +956,8 @@ pub enum OperationHistoryStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationHistoryRecord {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_items: Vec<TemplateRecoveryItem>,
     pub record_id: String,
     pub task_id: String,
     pub kind: OperationIntentKind,
@@ -1034,6 +1000,7 @@ pub struct WorkspaceBootstrap {
     pub initial_path: String,
     pub initial_listing: DirectoryListing,
     pub settings: SettingsSnapshot,
+    pub startup_diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1154,6 +1121,7 @@ mod tests {
             drop_highlight_fill: "#1f9d5566".into(),
             drop_highlight_border: "#b91c1c40".into(),
             tab_min_width: 132,
+            ..UiTheme::default()
         };
 
         let value = serde_json::to_value(&theme).expect("theme should serialize");

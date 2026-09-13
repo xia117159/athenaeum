@@ -34,7 +34,7 @@ pub(super) fn encode_remote_url_path(path: &str) -> String {
         .join("/")
 }
 
-fn percent_encode_path_segment(segment: &str) -> String {
+pub(super) fn percent_encode_path_segment(segment: &str) -> String {
     let mut encoded = String::new();
     for byte in segment.as_bytes() {
         match *byte {

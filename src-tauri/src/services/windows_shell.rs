@@ -1,10 +1,13 @@
 mod navigation;
 
+#[cfg(windows)]
+mod context_menu;
 #[cfg(not(windows))]
 use navigation::NavigationOpenValidationError;
-
 #[cfg(windows)]
 mod imp {
+    #[cfg(test)]
+    mod background_template_tests;
     use std::{
         ffi::OsStr,
         os::windows::ffi::OsStrExt,
@@ -62,8 +65,8 @@ mod imp {
             },
             UI::{
                 Shell::{
-                    Common::ITEMIDLIST, DragQueryFileW, FileOperation, IContextMenu,
-                    IFileOperation, IFileOperationProgressSink, IShellFolder, IShellItem,
+                    Common::ITEMIDLIST, DragQueryFileW, FileOperation, IContextMenu, IFileOperation,
+                    IFileOperationProgressSink, IShellFolder, IShellItem,
                     IShellLinkW, ShellLink, SHBindToParent, SHCreateItemFromParsingName,
                     SHDoDragDrop, SHParseDisplayName, ShellExecuteW, CFSTR_PREFERREDDROPEFFECT,
                     CMF_NORMAL, CMINVOKECOMMANDINFO, DROPFILES, FOFX_ADDUNDORECORD,
@@ -79,16 +82,15 @@ mod imp {
         },
     };
 
-    use super::navigation::{
-        has_unsupported_url_scheme, is_remote_path, normalize_local_path, path_display_name,
-        NavigationOpenValidationError,
-    };
+    use super::context_menu::attach as attach_context_menu_subclass;
+    use super::navigation::{has_unsupported_url_scheme, is_remote_path, normalize_local_path, path_display_name, NavigationOpenValidationError};
 
     const CMD_FIRST: u32 = 1;
     const CMD_LAST: u32 = 0x7FFF;
     const BACKGROUND_SHELL_CMD_FIRST: u32 = 1000;
     const BACKGROUND_CMD_CREATE_FILE: u32 = 1;
     const BACKGROUND_CMD_CREATE_FOLDER: u32 = 2;
+    const BACKGROUND_CMD_CREATE_TEMPLATE: u32 = 3;
     const BACKGROUND_CMD_VIEW_EXTRA_LARGE: u32 = 10;
     const BACKGROUND_CMD_VIEW_LARGE: u32 = 11;
     const BACKGROUND_CMD_VIEW_MEDIUM: u32 = 12;
@@ -1149,110 +1151,8 @@ mod imp {
         (fallback_x, fallback_y)
     }
 
-    fn menu_label_with_accelerator(label: &str, accelerator: &str) -> String {
-        if accelerator.is_empty() {
-            label.to_string()
-        } else {
-            format!("{label}\t{accelerator}")
-        }
-    }
-
-    fn append_selection_clipboard_submenu(
-        menu: HMENU,
-        shortcuts: &NativeSelectionContextMenuShortcuts,
-    ) -> Result<()> {
-        create_attached_submenu(menu, "到剪切板", |submenu| {
-            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_NAME, &menu_label_with_accelerator("复制文件名", &shortcuts.copy_name))?;
-            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_FULL_PATH, &menu_label_with_accelerator("复制完整路径", &shortcuts.copy_full_path))?;
-            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_PARENT_PATH, "复制所在文件夹路径")?;
-            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_NAME_NO_EXT, "复制文件名（不含扩展名）")?;
-            append_menu_item(submenu, MENU_ITEM_FLAGS(0), SELECTION_CMD_COPY_EXTENSION, "复制扩展名")
-        })
-    }
-
-    fn custom_selection_action_for_command(
-        command_id: u32,
-    ) -> Option<NativeSelectionContextMenuAction> {
-        match command_id {
-            SELECTION_CMD_COPY_NAME => Some(NativeSelectionContextMenuAction::CopyName),
-            SELECTION_CMD_COPY_FULL_PATH => Some(NativeSelectionContextMenuAction::CopyFullPath),
-            SELECTION_CMD_COPY_PARENT_PATH => Some(NativeSelectionContextMenuAction::CopyParentPath),
-            SELECTION_CMD_COPY_NAME_NO_EXT => Some(NativeSelectionContextMenuAction::CopyNameWithoutExtension),
-            SELECTION_CMD_COPY_EXTENSION => Some(NativeSelectionContextMenuAction::CopyExtension),
-            _ => None,
-        }
-    }
-
-    fn show_context_menu(
-        context_menu: &IContextMenu,
-        hwnd: HWND,
-        x: i32,
-        y: i32,
-        shortcuts: &NativeSelectionContextMenuShortcuts,
-    ) -> Result<NativeSelectionContextMenuResult> {
-        let popup = PopupMenu::create()?;
-        append_selection_clipboard_submenu(popup.handle(), shortcuts)?;
-        append_menu_separator(popup.handle())?;
-        unsafe {
-            context_menu
-                .QueryContextMenu(
-                    popup.handle(),
-                    SELECTION_CUSTOM_TOP_ITEM_COUNT,
-                    SELECTION_SHELL_CMD_FIRST,
-                    CMD_LAST,
-                    CMF_NORMAL,
-                )
-                .ok()
-                .context("failed to populate shell context menu")?;
-        }
-
-        if hwnd.0.is_null() {
-            bail!("failed to resolve window handle");
-        }
-        unsafe {
-            let _ = SetForegroundWindow(hwnd);
-        }
-
-        let (menu_x, menu_y) = resolve_menu_position(x, y);
-        unsafe {
-            SetLastError(ERROR_SUCCESS);
-        }
-        let command_id = unsafe {
-            TrackPopupMenuEx(
-                popup.handle(),
-                TPM_RIGHTBUTTON.0 | TPM_RETURNCMD.0,
-                menu_x,
-                menu_y,
-                hwnd,
-                None,
-            )
-        }
-        .0 as u32;
-        let menu_last_error = unsafe { GetLastError() };
-        unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
-        }
-
-        if command_id == 0 {
-            return Ok(NativeSelectionContextMenuResult {
-                opened: did_native_menu_open(command_id, menu_last_error),
-                action: None,
-            });
-        }
-
-        if let Some(action) = custom_selection_action_for_command(command_id) {
-            return Ok(NativeSelectionContextMenuResult {
-                opened: true,
-                action: Some(action),
-            });
-        }
-
-        let _ = invoke_command(context_menu, hwnd, command_id, SELECTION_SHELL_CMD_FIRST);
-        Ok(NativeSelectionContextMenuResult {
-            opened: true,
-            action: None,
-        })
-    }
+    mod selection_menu;
+    use selection_menu::show_context_menu;
 
     fn menu_text(value: &str) -> Vec<u16> {
         wide_null(OsStr::new(value))
@@ -1458,6 +1358,7 @@ mod imp {
             BACKGROUND_CMD_CREATE_FOLDER,
             "新建文件夹",
         )?;
+        // The template picker needs persistent cross-level selection in the application menu.
         append_background_view_menu(menu, options)?;
         append_background_sort_menu(menu, options)?;
         append_menu_item(
@@ -1475,6 +1376,7 @@ mod imp {
         match command_id {
             BACKGROUND_CMD_CREATE_FILE => Some(NativeBackgroundContextMenuAction::CreateFile),
             BACKGROUND_CMD_CREATE_FOLDER => Some(NativeBackgroundContextMenuAction::CreateFolder),
+            BACKGROUND_CMD_CREATE_TEMPLATE => Some(NativeBackgroundContextMenuAction::CreateTemplate),
             BACKGROUND_CMD_VIEW_EXTRA_LARGE => {
                 Some(NativeBackgroundContextMenuAction::SetViewMode {
                     view_mode: NativeBackgroundContextMenuViewMode::ExtraLargeIcons,
@@ -1555,6 +1457,7 @@ mod imp {
         if hwnd.0.is_null() {
             bail!("failed to resolve window handle");
         }
+        let _menu_subclass = attach_context_menu_subclass(hwnd, context_menu)?;
         unsafe {
             let _ = SetForegroundWindow(hwnd);
         }
@@ -1618,7 +1521,7 @@ mod imp {
                 .context("failed to bind shell selection to context menu")?
         };
 
-        show_context_menu(&context_menu, hwnd, x, y, &shortcuts)
+        show_context_menu(&context_menu, hwnd, x, y, validated_paths.len(), &shortcuts)
     }
 
     fn start_system_file_drag_inner(

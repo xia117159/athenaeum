@@ -144,11 +144,15 @@ export const completion = (async () => {
     } satisfies WorkspaceState["informationPanel"],
     search,
     operations: {
-      tasksOpen: false,
       tasks: [],
       taskSequence: 0,
+      taskSnapshotSequence: 0,
       history: [],
-      historySequence: 0
+      historySequence: 0,
+      historySnapshotSequence: 0,
+      historyRecordSequences: {},
+      taskClearTombstones: {},
+      historyClearTombstones: {}
     } satisfies WorkspaceState["operations"],
     activeEntries: [createEntry("report.txt", "2 KB"), createEntry("src", "--", "folder")],
     selectedEntries: [createEntry("report.txt", "2 KB")],
@@ -183,10 +187,7 @@ export const completion = (async () => {
     },
     onDeleteHistory: (index: number) => {
       deletedHistory.push(index);
-    },
-    onCancelTask: () => undefined,
-    onUndoLatest: () => undefined,
-    onUndoRecord: () => undefined
+    }
   });
 
   try {
@@ -428,7 +429,7 @@ export const completion = (async () => {
 
       await renderWithActiveTab();
       const tabs = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".information-panel__top-tab"));
-      assert.deepEqual(tabs().map((tab) => tab.textContent?.trim()), ["属性", "查找", "操作历史"]);
+      assert.deepEqual(tabs().map((tab) => tab.textContent?.trim()), ["属性", "查找"]);
 
       tabs()[0].focus();
       await act(async () => {
@@ -439,31 +440,30 @@ export const completion = (async () => {
       assert.equal(tabs()[1].getAttribute("aria-selected"), "true");
 
       await act(async () => {
-        tabs()[1].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        tabs()[0].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
         await flushEffects();
       });
-      assert.equal(document.activeElement, tabs()[2]);
-      assert.equal(tabs()[2].getAttribute("aria-selected"), "true");
+      assert.equal(document.activeElement, tabs()[1]);
+      assert.equal(tabs()[1].getAttribute("aria-selected"), "true");
 
       await act(async () => {
-        tabs()[2].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+        tabs()[1].dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
         await flushEffects();
       });
       assert.equal(document.activeElement, tabs()[0]);
       assert.equal(tabs()[0].getAttribute("aria-selected"), "true");
-      assert.deepEqual(selectedInformationTabs.slice(-3), ["search", "history", "properties"]);
+      assert.deepEqual(selectedInformationTabs.slice(-2), ["search", "properties"]);
     });
 
-    await assertTest("WorkspaceInformationPanel opens operation history from the summary button and renders history tab content", async () => {
+    await assertTest("WorkspaceInformationPanel opens operation history without rendering the removed history tab", async () => {
       await act(async () => {
         root.render(
           React.createElement(WorkspaceInformationPanel, {
             ...createPanelProps(searchState, {
               expanded: true,
-              activeTab: "history"
+              activeTab: "properties"
             }),
             operations: {
-              tasksOpen: false,
               tasks: [
                 {
                   taskId: "task-running",
@@ -490,8 +490,13 @@ export const completion = (async () => {
                 }
               ],
               taskSequence: 1,
+              taskSnapshotSequence: 1,
               history: [],
-              historySequence: 0
+              historySequence: 0,
+              historySnapshotSequence: 0,
+              historyRecordSequences: {},
+              taskClearTombstones: {},
+              historyClearTombstones: {}
             }
           })
         );
@@ -507,9 +512,8 @@ export const completion = (async () => {
       });
 
       assert.equal(openedHistory.length > 0, true);
-      assert.ok(container.querySelector(".operation-history-panel"));
-      assert.equal(container.textContent?.includes("进行中"), true);
-      assert.equal(container.textContent?.includes("操作历史"), true);
+      assert.equal(container.querySelector(".operation-history-panel"), null);
+      assert.equal(container.querySelectorAll(".information-panel__top-tab").length, 2);
     });
 
     await assertTest("WorkspaceInformationPanel shows loading and failed properties states without successful fallback rows", async () => {
@@ -797,7 +801,7 @@ export const completion = (async () => {
       assert.equal(css.includes("column-fill: auto;"), true);
       assert.equal(css.includes("break-inside: avoid;"), true);
       assert.equal(propertiesGridBlock.includes("grid-auto-flow"), false);
-      assert.equal(css.includes(".operation-history-panel"), true);
+      assert.equal(css.includes(".operation-history-panel"), false);
       assert.equal(css.includes("max-height: 30px;"), true);
       assert.equal(css.includes("gap: 3px;"), true);
       assert.equal(css.includes("min-height: 20px;"), true);

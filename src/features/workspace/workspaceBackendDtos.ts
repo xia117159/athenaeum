@@ -1,17 +1,18 @@
+import { normalizeTheme as toBackendTheme } from "./workspaceTheme";
+export { normalizeTheme as toBackendTheme } from "./workspaceTheme";
 import type {
-  ColorRule as BackendColorRule,
   RemoteProfile as BackendRemoteProfile,
   RemoteProfileUpsertRequest as BackendRemoteProfileUpsertRequest,
   NavigationItemUpsertRequest as BackendNavigationItemUpsertRequest,
   SettingsModelUpdate as BackendSettingsModelUpdate,
   SettingsSnapshot as BackendSettingsSnapshot,
   ShortcutBinding as BackendShortcutBinding,
-  UiLayout as BackendUiLayout,
-  UiTheme as BackendUiTheme
+  UiLayout as BackendUiLayout
 } from "../../app/types";
 import type { LayoutRatios, NavigationItem, NavigationItemUpsertRequest, PanelLayoutMode, RemoteConnectionProfile, SettingsModel } from "./types";
 import {
   DEFAULT_DETAILS_ROW_HEIGHT,
+  DEFAULT_SIZE_BAR_MODE,
   DEFAULT_METADATA_RETENTION_HOURS,
   DEFAULT_COLUMNS,
   DEFAULT_CONTEXT_MENU_SETTINGS,
@@ -19,14 +20,15 @@ import {
   DEFAULT_TOOLTIP_HOVER_DELAY_MS,
   DEFAULT_THEME,
   normalizeContextMenuDefault,
+  normalizeSizeBarMode,
   normalizeColumns,
   normalizeMetadataRetentionHours,
-  normalizeTabMinWidth,
-  normalizeTooltipHoverDelayMs,
-  normalizeThemeAccentColor
+  normalizeTooltipHoverDelayMs
 } from "./workspaceMappers";
 import { NAVIGATION_COLUMNS, normalizeNavigationColumns } from "./NavigationTabColumns";
 import { normalizeShortcutBindingForStorage } from "./workspaceShortcuts";
+import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import { normalizeAssociationRule } from "./fileAssociations";
 
 export function toBackendLayout(
   layoutMode: PanelLayoutMode,
@@ -51,40 +53,19 @@ export function toBackendShortcut(shortcut: SettingsModel["shortcuts"][number]):
   };
 }
 
-export function toBackendColorRule(rule: SettingsModel["colorRules"][number], index: number): BackendColorRule {
-  const [modeToken, patternToken] = rule.matcher.split(":", 2);
-  const mode = (modeToken || "nameContains") as BackendColorRule["mode"];
-
-  return {
-    id: rule.id,
-    name: rule.label,
-    target: "any",
-    mode,
-    pattern: patternToken ?? null,
-    colorHex: rule.color,
-    priority: index + 1
-  };
-}
-
-export function toBackendTheme(theme: SettingsModel["theme"]): BackendUiTheme {
-  return {
-    panelFocusAccent: normalizeThemeAccentColor(theme.panelFocusAccent),
-    activeTabBackground: normalizeThemeAccentColor(theme.activeTabBackground, DEFAULT_THEME.activeTabBackground),
-    dropHighlightFill: normalizeThemeAccentColor(theme.dropHighlightFill),
-    dropHighlightBorder: normalizeThemeAccentColor(theme.dropHighlightBorder),
-    tabMinWidth: normalizeTabMinWidth(theme.tabMinWidth)
-  };
-}
-
 export function toBackendSettingsModelUpdate(model: SettingsModel): BackendSettingsModelUpdate {
   return {
+    templateRoot: (model.templateRoot ?? "").trim(),
+    fileAssociations: (model.fileAssociations ?? []).map(normalizeAssociationRule),
     shortcuts: model.shortcuts.map(toBackendShortcut),
-    colorRules: model.colorRules.map(toBackendColorRule),
     columns: normalizeColumns(model.columns),
     navigationColumns: normalizeNavigationColumns(model.navigationColumns),
     detailsRowHeight: model.detailsRowHeight,
+    sizeBarMode: normalizeSizeBarMode(model.sizeBarMode),
+    folderExpansionEnabled: model.folderExpansionEnabled === true,
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(model.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(model.metadataRetentionHours),
+    fileVisibility: model.fileVisibility,
     contextMenu: {
       defaultMenu: normalizeContextMenuDefault(model.contextMenu?.defaultMenu)
     },
@@ -139,15 +120,24 @@ export function createBrowserSettingsSnapshot(
     bookmarks: [],
     hotlist: [],
     navigationItems: [],
+    fileAssociations: [],
     tagDefinitions: [],
     entryTags: [],
-    colorRules: [],
+    colorFilter: {
+      enabled: true,
+      rules: [],
+      revision: "0",
+      rulesRevision: "0"
+    },
     shortcuts: [],
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: DEFAULT_DETAILS_ROW_HEIGHT,
+    sizeBarMode: DEFAULT_SIZE_BAR_MODE,
+    folderExpansionEnabled: false,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
+    fileVisibility: DEFAULT_FILE_VISIBILITY,
     contextMenu: DEFAULT_CONTEXT_MENU_SETTINGS,
     theme: toBackendTheme(DEFAULT_THEME),
     layout: toBackendLayout("dual", DEFAULT_LAYOUT_RATIOS),

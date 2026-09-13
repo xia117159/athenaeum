@@ -17,7 +17,6 @@ import type {
 } from "./types";
 import {
   createBrowserSettingsSnapshot,
-  toBackendColorRule,
   toBackendLayout,
   toBackendRemoteProfile,
   toBackendSettingsModelUpdate,
@@ -27,6 +26,7 @@ import {
   toRemoteProfileUpsertRequest
 } from "./workspaceBackendDtos";
 import { hasTauriRuntime, invokeRequired, invokeWithBrowserFallback, type WorkspaceInvoke } from "./workspaceIpc";
+import { normalizeTheme } from "./workspaceTheme";
 import {
   mapFavoriteCollections,
   mapNavigationItems,
@@ -96,23 +96,6 @@ export async function saveWorkspaceShortcuts(
   );
 }
 
-export async function saveWorkspaceColorRules(
-  colorRules: SettingsModel["colorRules"],
-  runtime: WorkspaceSettingsRuntime = {}
-) {
-  for (const [index, rule] of colorRules.entries()) {
-    await invokeWithBrowserFallback<BackendSettingsSnapshot>(
-      "save_color_rule",
-      {
-        rule: toBackendColorRule(rule, index)
-      },
-      async () => createBrowserSettingsSnapshot(),
-      runtime.invoke,
-      runtime.runtimeHost
-    );
-  }
-}
-
 export async function saveWorkspaceDetailsRowHeight(value: number, runtime: WorkspaceSettingsRuntime = {}) {
   await invokeWithBrowserFallback<BackendSettingsSnapshot>(
     "save_details_row_height",
@@ -145,11 +128,14 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
     },
     async () =>
       createBrowserSettingsSnapshot({
+        templateRoot: toBackendSettingsModelUpdate(model).templateRoot,
+        fileAssociations: toBackendSettingsModelUpdate(model).fileAssociations,
         shortcuts: model.shortcuts.map(toBackendShortcut),
-        colorRules: model.colorRules.map(toBackendColorRule),
         columns: model.columns,
         navigationColumns: model.navigationColumns,
         detailsRowHeight: normalizeDetailsRowHeight(model.detailsRowHeight),
+        sizeBarMode: model.sizeBarMode,
+        folderExpansionEnabled: model.folderExpansionEnabled === true,
         tooltipHoverDelayMs: model.tooltipHoverDelayMs,
         metadataRetentionHours: model.metadataRetentionHours,
         contextMenu: model.contextMenu,
@@ -201,6 +187,12 @@ export async function markWorkspaceEntryMetadataDeleted(paths: string[], runtime
 }
 
 export type WorkspaceSettingsProjection = ReturnType<typeof mapSettingsSnapshotToWorkspaceSettings>;
+
+export async function getWorkspaceTheme(runtime: WorkspaceSettingsRuntime = {}) {
+  const snapshot = await invokeRequired<BackendSettingsSnapshot>("get_settings_snapshot", {},
+    async () => createBrowserSettingsSnapshot(), runtime.invoke, runtime.runtimeHost);
+  return normalizeTheme(snapshot.theme);
+}
 
 export async function listenWorkspaceSettingsChanged(
   handler: (payload: WorkspaceSettingsProjection) => void,

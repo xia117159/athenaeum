@@ -396,7 +396,9 @@ export const completion = (async () => {
       assert.equal(tooltip!.textContent?.includes("标签：个人"), true);
       assert.equal(tooltip!.textContent?.includes("第二行"), true);
       assert.match(readWorkspaceCss(), /\.file-listing__tooltip\s*\{[\s\S]*?text-align:\s*left;/);
-      assert.match(readWorkspaceCss(), /\.context-menu\s*\{[\s\S]*?z-index:\s*60;/);
+      const contextLayer = Number(readWorkspaceCss().match(/\.context-menu\s*\{[^}]*z-index:\s*(\d+);/)?.[1]);
+      const tooltipLayer = Number(readWorkspaceCss().match(/\.file-listing__tooltip\s*\{[^}]*z-index:\s*(\d+);/)?.[1]);
+      assert.ok(contextLayer > tooltipLayer, "menus stay above file tooltips");
       assert.match(readWorkspaceCss(), /\.file-listing__tooltip\s*\{[\s\S]*?z-index:\s*59;/);
     });
 

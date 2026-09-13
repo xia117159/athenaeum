@@ -1,3 +1,4 @@
+import { MenuSurface } from "./MenuPrimitives";
 import {
   type DragEvent as ReactDragEvent,
   Fragment,
@@ -732,32 +733,32 @@ export function NavigationTabView({
       </div>
 
       {menu ? (
-        <div ref={menuRef} className="navigation-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => { openDraft(); setMenu(null); }}>
+        <MenuSurface ref={menuRef} className="navigation-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" role="menuitem" className="app-menu__item" onClick={() => { openDraft(); setMenu(null); }}>
             添加导航项
           </button>
-          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItem(panelId, menuPrimarySelected.id); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItem(panelId, menuPrimarySelected.id); setMenu(null); }}>
             打开
           </button>
-          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItemParent(panelId, menuPrimarySelected.id); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) actions.openNavigationItemParent(panelId, menuPrimarySelected.id); setMenu(null); }}>
             打开所在文件夹
           </button>
-          <button type="button" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) openDraft(menuPrimarySelected); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={!menuPrimarySelected} onClick={() => { if (menuPrimarySelected) openDraft(menuPrimarySelected); setMenu(null); }}>
             编辑导航项
           </button>
-          <button type="button" disabled={menuSelectedItemIds.length === 0} onClick={() => { actions.deleteNavigationItems(menuSelectedItemIds); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={menuSelectedItemIds.length === 0} onClick={() => { actions.deleteNavigationItems(menuSelectedItemIds); setMenu(null); }}>
             从导航页移除
           </button>
-          <button type="button" disabled={menuSelectedItems.length === 0} onClick={() => { void navigator.clipboard?.writeText(menuSelectedItems.map((item) => item.path).join("\n")).catch(() => undefined); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={menuSelectedItems.length === 0} onClick={() => { void navigator.clipboard?.writeText(menuSelectedItems.map((item) => item.path).join("\n")).catch(() => undefined); setMenu(null); }}>
             复制路径
           </button>
-          <button type="button" onClick={() => { actions.refreshNavigationTargets(); setMenu(null); }}>
+          <button type="button" role="menuitem" className="app-menu__item" onClick={() => { actions.refreshNavigationTargets(); setMenu(null); }}>
             刷新状态
           </button>
-          <button type="button" disabled={menuSelectedItemIds.length !== 1} onClick={handleWindowsFileOperations}>
+          <button type="button" role="menuitem" className="app-menu__item" disabled={menuSelectedItemIds.length !== 1} onClick={handleWindowsFileOperations}>
             Windows 文件操作...
           </button>
-        </div>
+        </MenuSurface>
       ) : null}
     </div>
   );

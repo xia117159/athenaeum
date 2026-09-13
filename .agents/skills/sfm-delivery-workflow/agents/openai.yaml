@@ -1,0 +1,4 @@
+interface:
+  display_name: "SFM Delivery Workflow"
+  short_description: "Align and deliver complex SFM changes with adaptive SDD and TDD."
+  default_prompt: "Use $sfm-delivery-workflow to align and deliver this non-trivial SimpleFileManager change."

@@ -120,65 +120,9 @@
   font-size: 10px;
 }
 
-.column-header-menu {
-  position: fixed;
-  z-index: 1200;
-  min-width: 188px;
-  padding: 3px 0;
-  border: 1px solid #c8c8c8;
-  border-radius: 2px;
-  background: #ffffff;
-  color: #1f1f1f;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
-  font-family: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  font-size: 12px;
-}
-
-.column-header-menu__item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  align-items: center;
-  width: 100%;
-  min-height: 24px;
-  padding: 0 18px 0 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: default;
-}
-
-.column-header-menu__item:hover,
-.column-header-menu__item:focus-visible {
-  background: #e5f1fb;
-  outline: none;
-}
-
-.column-header-menu__check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  min-width: 24px;
-  color: #1f1f1f;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.column-header-menu__item span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.column-header-menu__separator {
-  height: 1px;
-  margin: 3px 0 3px 24px;
-  background: #e5e5e5;
-}
+.column-header-menu { position: fixed; z-index: 1200; min-width: 188px; }
+.column-header-menu__check { display: inline-flex; flex: 0 0 18px; align-items: center; justify-content: center; }
+.column-header-menu__item span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .file-listing__body {
   display: grid;
@@ -365,12 +309,29 @@ body.is-column-pointer-dragging * {
   background: #ffffff;
 }
 
-.file-row:hover .file-row__grid,
-.file-card:hover,
-.file-list-item:hover,
-.file-content-item:hover {
-  background: #eef6ff;
-  border-color: transparent;
+.file-row.has-color-filter--foreground .file-row__grid,
+.file-card.has-color-filter--foreground,
+.file-list-item.has-color-filter--foreground,
+.file-content-item.has-color-filter--foreground {
+  color: var(--entry-rule-foreground);
+}
+
+/* 有名称背景的条目：配置前景优先于选中/拖放表面的文本覆盖，
+   名称标签背景保持在选中表面之上。 */
+.has-color-filter--foreground .file-card__tile-type,
+.has-color-filter--foreground .file-card__tile-detail,
+.has-color-filter--foreground .file-content-item__main p,
+.has-color-filter--foreground .file-content-item__snippet,
+.has-color-filter--foreground .file-content-item__meta {
+  color: inherit;
+}
+
+.has-color-filter--foreground.is-selected,
+.has-color-filter--foreground.is-selected:hover,
+.has-color-filter--foreground.is-drop-target,
+.has-color-filter--foreground.is-system-drop-target,
+.has-color-filter--foreground.is-inline-editing {
+  color: var(--entry-rule-foreground);
 }
 
 .file-row.is-selected .file-row__grid,
@@ -378,8 +339,12 @@ body.is-column-pointer-dragging * {
 .file-list-item.is-selected,
 .file-content-item.is-selected {
   background: #cfe8ff;
+  color: #1f1f1f;
   border-color: transparent;
+  box-shadow: none;
 }
+
+
 
 .file-row.is-cut .file-row__grid,
 .file-card.is-cut,
@@ -397,9 +362,12 @@ body.is-column-pointer-dragging * {
 .file-content-item.is-drop-target,
 .file-content-item.is-system-drop-target {
   background: color-mix(in srgb, var(--drop-highlight-fill, #0f6cbd) 12%, transparent);
+  color: #1f1f1f;
   border-color: color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--drop-highlight-border, #0f6cbd) 55%, transparent);
 }
+
+
 
 .file-cell {
   min-width: 0;
@@ -421,6 +389,122 @@ body.is-column-pointer-dragging * {
 
 .file-cell--right {
   text-align: right;
+}
+
+/* The size share is a row-height background layer. Text remains above it, with a
+   clipped contrast copy inside the filled portion. */
+.file-cell[data-cell-column-id="size"] {
+  position: relative;
+  padding: 0;
+}
+
+.size-share-value {
+  position: relative;
+  z-index: 0;
+  display: block;
+  min-width: 0;
+  height: 100%;
+  line-height: var(--details-row-height);
+  overflow: hidden;
+}
+
+.size-share-label {
+  position: relative;
+  z-index: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+  padding: 0 2px;
+}
+
+.size-share-track {
+  position: absolute;
+  inset: 2px;
+  height: calc(var(--details-row-height) - 4px);
+  box-sizing: border-box;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.size-share-bar {
+  position: relative;
+  display: block;
+  height: 100%;
+  width: var(--size-share);
+  background: color-mix(in srgb, var(--size-bar-low, #dceaf7), var(--size-bar-high, #3979b7) var(--size-share));
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.size-share-label--fill {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  height: var(--details-row-height);
+  left: 0;
+  display: block;
+  overflow: hidden;
+  color: #1f1f1f;
+  line-height: var(--details-row-height);
+  text-align: right;
+  white-space: nowrap;
+  clip-path: inset(0 calc(100% - var(--size-share)) 0 0);
+}
+
+.size-share-label--fill::after {
+  content: attr(data-label);
+}
+
+.size-share-label--fill-light {
+  color: #ffffff;
+}
+
+.details-column-header__accessory {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 3px;
+}
+
+.details-column-header__cell:has(> .details-column-header__accessory) .details-column-header__button {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.directory-size-control {
+  display: inline-flex;
+  align-items: center;
+  color: #526577;
+}
+
+.directory-size-control > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.directory-size-control > button:hover { background: #e5f1fb; }
+.directory-size-control > button:focus-visible { outline: 1px solid #0f6cbd; outline-offset: -1px; }
+.directory-size-control.is-loading { color: #0f6cbd; }
+.directory-size-control.is-error { color: #b42318; }
+.directory-size-control__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .file-listing__tooltip {
@@ -457,6 +541,71 @@ body.is-column-pointer-dragging * {
 
 .entry-name--compact {
   gap: 6px;
+}
+
+.file-name-tree {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.file-name-tree > .entry-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.file-name-tree__toggle,
+.file-name-tree__spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: min(18px, var(--details-row-height));
+}
+
+.file-name-tree__toggle,
+.file-name-tree__retry {
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.file-name-tree__toggle:hover,
+.file-name-tree__retry:hover {
+  background: #dcecf9;
+}
+
+.file-name-tree__toggle:focus-visible,
+.file-name-tree__retry:focus-visible {
+  outline: 1px solid #0f6cbd;
+  outline-offset: -1px;
+}
+
+.file-name-tree__status {
+  margin-inline-start: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #555;
+  font-size: 11px;
+}
+
+.file-name-tree__status.is-error {
+  color: #a4262c;
+}
+
+.file-name-tree__retry {
+  flex: 0 0 auto;
+  margin-inline-start: 4px;
+  padding-inline: 3px;
+  color: #005a9e;
+  font-size: 11px;
 }
 
 .entry-icon {
@@ -511,6 +660,24 @@ body.is-column-pointer-dragging * {
   white-space: nowrap;
 }
 
+/* 颜色规则的名称标签背景：只涂在名称文本后面，左扩 1 个空格、右扩 3 个空格
+   （padding 扩展背景，负 margin 等量回缩保持文字与相邻条目对齐）。
+   底部额外 1px：内联盒的背景从字冠顶到基线底，字体上行间隙让文字看起来偏下，
+   底部补 1px 使文字在背景区域内垂直居中。
+   多行卡片标题按行克隆背景；不扩展到网格列宽。 */
+.entry-name__label--rule-background {
+  background: var(--entry-rule-background);
+  padding: 0 0.75em 1px 0.25em;
+  margin: 0 -0.75em -1px -0.25em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: inherit;
+}
+
+.entry-name__label--rule-background:hover {
+  background: var(--entry-rule-background);
+}
+
 .inline-edit-input {
   width: min(240px, 100%);
   min-width: 64px;
@@ -549,6 +716,107 @@ body.is-column-pointer-dragging * {
 .file-list-item.is-inline-editing,
 .file-content-item.is-inline-editing {
   background: #cfe8ff;
+  color: #1f1f1f;
+  box-shadow: none;
+}
+
+
+
+/* details 视图中选中/拖放/内联编辑的文本覆盖作用于 .file-row__grid（含 :hover 组合），
+   必须在所有这些覆盖之后、以更高特异性把规则前景写回网格，
+   保证配置前景在选中/拖放（含悬停）下仍生效；置于 forced-colors 块之前。 */
+.file-row.has-color-filter--foreground.is-selected .file-row__grid,
+.file-row.has-color-filter--foreground.is-selected:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-drop-target .file-row__grid,
+.file-row.has-color-filter--foreground.is-drop-target:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-system-drop-target .file-row__grid,
+.file-row.has-color-filter--foreground.is-system-drop-target:hover .file-row__grid,
+.file-row.has-color-filter--foreground.is-inline-editing .file-row__grid,
+.file-row.has-color-filter--foreground.is-inline-editing:hover .file-row__grid {
+  color: var(--entry-rule-foreground);
+}
+
+.file-row:hover .file-row__grid,
+.file-card:hover,
+.file-list-item:hover,
+.file-content-item:hover {
+  box-shadow: inset 0 0 0 1px var(--file-hover-border, #91c9f7);
+}
+
+@media (forced-colors: active) {
+  .size-share-track,
+  .size-share-label--fill {
+    visibility: hidden;
+  }
+
+  .entry-name__label--rule-background {
+    background: Canvas;
+  }
+
+  .file-row.has-color-filter .file-row__grid,
+  .file-card.has-color-filter,
+  .file-list-item.has-color-filter,
+  .file-content-item.has-color-filter {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Canvas;
+    box-shadow: none;
+    outline: none;
+    forced-color-adjust: auto;
+  }
+
+  .file-row.has-color-filter.is-selected .file-row__grid,
+  .file-row.has-color-filter.is-selected:hover .file-row__grid,
+  .file-card.has-color-filter.is-selected,
+  .file-card.has-color-filter.is-selected:hover,
+  .file-list-item.has-color-filter.is-selected,
+  .file-list-item.has-color-filter.is-selected:hover,
+  .file-content-item.has-color-filter.is-selected,
+  .file-content-item.has-color-filter.is-selected:hover {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .file-row.has-color-filter.is-drop-target .file-row__grid,
+  .file-row.has-color-filter.is-system-drop-target .file-row__grid,
+  .file-row.has-color-filter.is-drop-target:hover .file-row__grid,
+  .file-row.has-color-filter.is-system-drop-target:hover .file-row__grid,
+  .file-card.has-color-filter.is-drop-target,
+  .file-card.has-color-filter.is-system-drop-target,
+  .file-card.has-color-filter.is-drop-target:hover,
+  .file-card.has-color-filter.is-system-drop-target:hover,
+  .file-list-item.has-color-filter.is-drop-target,
+  .file-list-item.has-color-filter.is-system-drop-target,
+  .file-list-item.has-color-filter.is-drop-target:hover,
+  .file-list-item.has-color-filter.is-system-drop-target:hover,
+  .file-content-item.has-color-filter.is-drop-target,
+  .file-content-item.has-color-filter.is-system-drop-target,
+  .file-content-item.has-color-filter.is-drop-target:hover,
+  .file-content-item.has-color-filter.is-system-drop-target:hover {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Highlight;
+    box-shadow: none;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .file-row.has-color-filter.is-inline-editing .file-row__grid,
+  .file-row.has-color-filter.is-inline-editing:hover .file-row__grid,
+  .file-card.has-color-filter.is-inline-editing,
+  .file-card.has-color-filter.is-inline-editing:hover,
+  .file-list-item.has-color-filter.is-inline-editing,
+  .file-list-item.has-color-filter.is-inline-editing:hover,
+  .file-content-item.has-color-filter.is-inline-editing,
+  .file-content-item.has-color-filter.is-inline-editing:hover {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    box-shadow: none;
+    outline: none;
+  }
 }
 
 .file-card__hero .entry-icon {
@@ -568,6 +836,7 @@ body.is-column-pointer-dragging * {
   height: 18px;
   padding: 0 6px;
   border-radius: 4px;
+  color: #38516b;
   background: #eef3f8;
   font-size: 11px;
 }
@@ -759,4 +1028,11 @@ body.is-column-pointer-dragging * {
 
 .drive-info__text {
   white-space: nowrap;
+}
+
+@media (forced-colors: active) {
+  .file-row:hover .file-row__grid, .file-card:hover, .file-list-item:hover, .file-content-item:hover {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
 }

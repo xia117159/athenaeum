@@ -4,15 +4,15 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     domain::models::{
-        Bookmark, ColorRule, HotlistEntry, NavigationItemUpsertRequest, SettingsModelUpdate,
-        SettingsSnapshot, ShortcutBinding, TagDefinition, UiLayout, UiTheme,
+        Bookmark, HotlistEntry, NavigationItemUpsertRequest, SettingsModelUpdate, SettingsSnapshot,
+        ShortcutBinding, TagDefinition, UiLayout, UiTheme,
     },
     services::{settings_store::validate_shortcuts, AppState},
 };
 
 fn persist_state(state: &Arc<AppState>) -> Result<(), String> {
     {
-        let metadata = state.metadata.read().expect("metadata lock poisoned");
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
         metadata.persist().map_err(|error| error.to_string())?;
     }
     {
@@ -61,10 +61,14 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         settings.detail_columns,
         settings.navigation_columns,
         settings.details_row_height,
+        settings.size_bar_mode.clone(),
+        settings.folder_expansion_enabled,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
+        settings.file_visibility,
         settings.context_menu,
         settings.theme,
+        settings.template_root,
     ))
 }
 
@@ -195,36 +199,6 @@ pub fn mark_navigation_item_opened(
 }
 
 #[tauri::command]
-pub fn save_color_rule(
-    rule: ColorRule,
-    state: State<'_, Arc<AppState>>,
-    app: AppHandle,
-) -> Result<SettingsSnapshot, String> {
-    state
-        .metadata
-        .write()
-        .expect("metadata lock poisoned")
-        .upsert_color_rule(rule);
-    persist_state(state.inner())?;
-    emit_current_settings_changed(&app, state)
-}
-
-#[tauri::command]
-pub fn delete_color_rule(
-    id: String,
-    state: State<'_, Arc<AppState>>,
-    app: AppHandle,
-) -> Result<SettingsSnapshot, String> {
-    state
-        .metadata
-        .write()
-        .expect("metadata lock poisoned")
-        .delete_color_rule(&id);
-    persist_state(state.inner())?;
-    emit_current_settings_changed(&app, state)
-}
-
-#[tauri::command]
 pub fn save_tag_definition(
     definition: TagDefinition,
     state: State<'_, Arc<AppState>>,
@@ -321,23 +295,12 @@ pub fn save_settings_model(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<SettingsSnapshot, String> {
-    validate_shortcuts(&model.shortcuts).map_err(|error| error.to_string())?;
     {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
-        metadata.set_shortcuts(model.shortcuts);
-        metadata.set_color_rules(model.color_rules);
-    }
-    {
         let mut settings = state.settings.write().expect("settings lock poisoned");
-        settings.set_detail_columns(model.columns);
-        settings.set_navigation_columns(model.navigation_columns);
-        settings.set_details_row_height(model.details_row_height);
-        settings.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);
-        settings.set_metadata_retention_hours(model.metadata_retention_hours);
-        settings.set_context_menu(model.context_menu);
-        settings.set_theme(model.theme);
+        crate::services::settings_model::commit_model(&mut metadata, &mut settings, model)
+            .map_err(|error| format!("{error:#}"))?;
     }
-    persist_state(state.inner())?;
     emit_current_settings_changed(&app, state)
 }
 

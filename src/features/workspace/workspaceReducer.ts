@@ -53,16 +53,40 @@ import {
   NAVIGATION_TAB_ID
 } from "./workspaceTabs";
 import { moveColumn, setColumnVisibility, setColumnWidth } from "./workspaceReducerColumns";
-import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import {
+  createOperationWorkspaceState,
+  reduceOperationWorkspaceState,
+  type OperationStateAction
+} from "./operationState";
+import type { OperationClearOutcome } from "../../app/types";
+import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
+import { compareRevisionTokens } from "./colorFilterEditorModel";
+import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
+import { pathsEqual } from "./workspacePathRelations";
+import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
+import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
+import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
+import { prepareSelectionInteraction } from "./folderSelectionRestore";
+import { reduceTemplates, reconcileTemplates, type TemplateCreationAction } from "./templateCreationState";
+import { reduceWorkspaceMenus, reconcileWorkspaceMenus, type WorkspaceMenuAction } from "./workspaceMenuState";
 
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | WorkspaceMenuAction
+  | TemplateCreationAction
+  | BatchRenameAction
+  | FileOpeningAction
+  | DirectorySizeAction
+  | FolderExpansionAction
   | { type: "bootstrapLoaded"; payload: WorkspaceBootstrap }
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
   | { type: "treeVisibilitySet"; payload: boolean }
+  | { type: "colorFilterTogglePendingSet"; payload: boolean }
+  | { type: "colorFilterSnapshotReceived"; payload: ColorFilterConfigSnapshot }
   | { type: "fileVisibilitySet"; payload: Partial<FileVisibilityState> }
   | { type: "syncScrollSet"; payload: boolean }
   | { type: "panelFocused"; payload: { panelId: PanelId } }
@@ -133,7 +157,6 @@ export type WorkspaceAction =
   | { type: "inlineEditCanceled"; payload: { panelId: PanelId; tabId: string } }
   | { type: "informationPanelExpandedSet"; payload: boolean }
   | { type: "informationPanelTabChanged"; payload: InformationPanelTab }
-  | { type: "informationPanelHistoryRequested" }
   | { type: "searchPanelRequested"; payload?: SearchTabId }
   | { type: "propertiesRequestStarted"; payload: { requestId: string; targetKey: string } }
   | {
@@ -178,7 +201,6 @@ export type WorkspaceAction =
   | { type: "remoteProfilesUpdated"; payload: RemoteConnectionProfile[] }
   | { type: "settingsSectionSet"; payload: SettingsSection }
   | { type: "shortcutBindingUpdated"; payload: { id: string; binding: string } }
-  | { type: "colorRuleUpdated"; payload: { id: string; color: string } }
   | { type: "tagRuleUpdated"; payload: { id: string; quickFilter: string } }
   | { type: "columnVisibilityToggled"; payload: { id: string } }
   | { type: "columnVisibilitySet"; payload: { panelId?: PanelId; tabId?: string; id: ColumnId; visible: boolean } }
@@ -205,11 +227,11 @@ export type WorkspaceAction =
       };
     }
   | { type: "clipboardSet"; payload?: WorkspaceState["clipboard"] }
-  | { type: "operationTasksOpenSet"; payload: boolean }
   | { type: "operationTasksSnapshotLoaded"; payload: { tasks: OperationTaskSnapshot[]; taskSequence: number } }
   | { type: "operationTaskEventReceived"; payload: OperationTaskSnapshot }
   | { type: "operationHistorySnapshotLoaded"; payload: { records: OperationHistoryRecord[]; historySequence: number } }
   | { type: "operationHistoryEventReceived"; payload: { record: OperationHistoryRecord; historySequence: number } }
+  | { type: "operationRecordsCleared"; payload: OperationClearOutcome }
   | { type: "notificationAdded"; payload: WorkspaceState["notifications"][number] }
   | { type: "notificationDismissed"; payload: { id: string } }
   | { type: "contextMenuSet"; payload?: WorkspaceState["contextMenu"] };
@@ -225,10 +247,15 @@ const DEFAULT_SEARCH_PROGRESS: SearchProgressState = {
 
 const MAX_SEARCH_HISTORY_ITEMS = 20;
 
+function updateOperations(state: WorkspaceState, action: OperationStateAction): WorkspaceState {
+  const operations = reduceOperationWorkspaceState(state.operations, action);
+  return operations === state.operations ? state : { ...state, operations };
+}
+
 function cloneInformationPanelState(panel: WorkspaceBootstrap["informationPanel"]): WorkspaceState["informationPanel"] {
   return {
     expanded: panel.expanded,
-    activeTab: panel.activeTab,
+    activeTab: panel.activeTab === "search" ? "search" : "properties",
     properties: {
       ...panel.properties,
       item: panel.properties.item
@@ -291,6 +318,7 @@ function cloneRecoveredTab(tab: TabState, panelId: PanelId): TabState {
   return {
     ...tab,
     id,
+    pendingNavigationRequestId: undefined,
     selectedEntryIds: [...tab.selectedEntryIds],
     expandedNodePaths: [...tab.expandedNodePaths],
     history: [...tab.history],
@@ -345,7 +373,8 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
-    fileVisibility: { ...DEFAULT_FILE_VISIBILITY },
+    colorFilterTogglePending: false,
+    fileVisibility: { ...bootstrap.settingsModel.fileVisibility },
     syncScroll: false,
     panels: normalizedPanels,
     activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
@@ -391,13 +420,7 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       model: normalizeSettingsModel(bootstrap.settingsModel)
     },
     notifications: [],
-    operations: {
-      tasksOpen: false,
-      tasks: [],
-      taskSequence: 0,
-      history: [],
-      historySequence: 0
-    }
+    operations: createOperationWorkspaceState()
   };
 }
 
@@ -448,53 +471,6 @@ function updateTab(panel: PanelState, tabId: string, updater: (tab: TabState) =>
     ...panel,
     tabs
   };
-}
-
-function sortOperationTasks(tasks: OperationTaskSnapshot[]) {
-  return [...tasks].sort((left, right) => {
-    const leftFinished = left.finishedAt ?? "";
-    const rightFinished = right.finishedAt ?? "";
-    const leftTime = leftFinished || left.startedAt || left.createdAt;
-    const rightTime = rightFinished || right.startedAt || right.createdAt;
-    return rightTime.localeCompare(leftTime) || right.sequence - left.sequence;
-  });
-}
-
-function upsertOperationTask(tasks: OperationTaskSnapshot[], incoming: OperationTaskSnapshot) {
-  const current = tasks.find((task) => task.taskId === incoming.taskId);
-  if (current && current.sequence >= incoming.sequence) {
-    return tasks;
-  }
-
-  return sortOperationTasks([...tasks.filter((task) => task.taskId !== incoming.taskId), incoming]);
-}
-
-function sortOperationHistory(records: OperationHistoryRecord[]) {
-  return [...records].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
-function upsertOperationHistoryRecord(records: OperationHistoryRecord[], incoming: OperationHistoryRecord) {
-  return sortOperationHistory([...records.filter((record) => record.recordId !== incoming.recordId), incoming]);
-}
-
-function hasSameOperationTasksSnapshot(current: OperationTaskSnapshot[], incoming: OperationTaskSnapshot[]) {
-  return (
-    current.length === incoming.length &&
-    current.every((task, index) => {
-      const nextTask = incoming[index];
-      return nextTask && task.taskId === nextTask.taskId && task.sequence === nextTask.sequence;
-    })
-  );
-}
-
-function hasSameOperationHistorySnapshot(current: OperationHistoryRecord[], incoming: OperationHistoryRecord[]) {
-  return (
-    current.length === incoming.length &&
-    current.every((record, index) => {
-      const nextRecord = incoming[index];
-      return nextRecord && record.recordId === nextRecord.recordId && record.updatedAt === nextRecord.updatedAt;
-    })
-  );
 }
 
 function hasSameJsonShape(left: unknown, right: unknown) {
@@ -835,47 +811,6 @@ function createSearchHistoryState(
   };
 }
 
-function getEntryPathKey(path: string) {
-  const normalized = normalizeLocationPath(path);
-  return normalized.startsWith("ftp://") || normalized.startsWith("sftp://") ? normalized : normalized.toLowerCase();
-}
-
-function preserveSelectedEntryIds(
-  tab: TabState,
-  snapshot: DirectorySnapshot,
-  replacements: SelectionPathReplacement[] = []
-) {
-  if (tab.selectedEntryIds.length === 0) {
-    return [];
-  }
-
-  const nextEntryIds = new Set(snapshot.entries.map((entry) => entry.id));
-  const nextEntryIdByPath = new Map(snapshot.entries.map((entry) => [getEntryPathKey(entry.path), entry.id]));
-  const previousEntryById = new Map(tab.snapshot.entries.map((entry) => [entry.id, entry]));
-  const replacementByPath = new Map(
-    replacements.map((replacement) => [getEntryPathKey(replacement.fromPath), replacement.toPath] as const)
-  );
-  const preservedIds: string[] = [];
-
-  for (const selectedId of tab.selectedEntryIds) {
-    let nextId: string | undefined;
-    if (nextEntryIds.has(selectedId)) {
-      nextId = selectedId;
-    } else {
-      const previousEntry = previousEntryById.get(selectedId);
-      const previousPath = previousEntry?.path ?? selectedId;
-      const replacementPath = replacementByPath.get(getEntryPathKey(previousPath));
-      nextId = nextEntryIdByPath.get(getEntryPathKey(replacementPath ?? previousPath));
-    }
-
-    if (nextId && !preservedIds.includes(nextId)) {
-      preservedIds.push(nextId);
-    }
-  }
-
-  return preservedIds;
-}
-
 function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
   const normalizedPath = normalizeLocationPath(path);
   if (expanded) {
@@ -1197,7 +1132,7 @@ function getCurrentPropertiesTargetKey(state: WorkspaceState): string | undefine
   if (!isDirectoryTab(tab)) {
     return undefined;
   }
-  const selectedEntries = tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
+  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility, state.search.filterText, state.settings.model.folderExpansionEnabled === true);
   if (selectedEntries.length > 1) {
     return `multi:${selectedEntries.map((entry) => entry.id).join("|")}`;
   }
@@ -1251,6 +1186,41 @@ function updateSettingsModel<T extends keyof WorkspaceState["settings"]["model"]
   };
 }
 
+function colorFilterSnapshotFromModel(model: SettingsModel): ColorFilterConfigSnapshot {
+  return {
+    enabled: model.colorFilterEnabled ?? true,
+    rules: model.colorRules,
+    revision: model.colorFilterRevision ?? "0",
+    rulesRevision: model.colorRulesRevision ?? "0"
+  };
+}
+
+function withAcceptedColorFilterModel(current: SettingsModel, incoming: SettingsModel) {
+  const currentSnapshot = colorFilterSnapshotFromModel(current);
+  const incomingSnapshot = colorFilterSnapshotFromModel(incoming);
+  const revisionOrder = compareRevisionTokens(incomingSnapshot.revision, currentSnapshot.revision);
+  if (revisionOrder < 0) {
+    return {
+      ...incoming,
+      colorRules: current.colorRules,
+      colorFilterEnabled: currentSnapshot.enabled,
+      colorFilterRevision: currentSnapshot.revision,
+      colorRulesRevision: currentSnapshot.rulesRevision
+    };
+  }
+  if (revisionOrder === 0 && !hasSameJsonShape(incomingSnapshot, currentSnapshot)) {
+    devLog("[workspaceReducer] rejected divergent color-filter snapshot at revision", incomingSnapshot.revision);
+    return {
+      ...incoming,
+      colorRules: current.colorRules,
+      colorFilterEnabled: currentSnapshot.enabled,
+      colorFilterRevision: currentSnapshot.revision,
+      colorRulesRevision: currentSnapshot.rulesRevision
+    };
+  }
+  return incoming;
+}
+
 function updateColumnsForSettingsAndTab(
   state: WorkspaceState,
   panelId: PanelId | undefined,
@@ -1276,6 +1246,13 @@ function updateColumnsForSettingsAndTab(
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+  state = prepareSelectionInteraction(state, action);
+  return reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceMenus(state, action)
+    ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
+    ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
+}
+
+function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "bootstrapLoaded":
       return createWorkspaceState(action.payload);
@@ -1310,10 +1287,54 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             treeVisible: action.payload
           };
 
+    case "colorFilterTogglePendingSet":
+      return state.colorFilterTogglePending === action.payload
+        ? state
+        : { ...state, colorFilterTogglePending: action.payload };
+
+    case "colorFilterSnapshotReceived": {
+      const current = colorFilterSnapshotFromModel(state.settings.model);
+      const revisionOrder = compareRevisionTokens(action.payload.revision, current.revision);
+      if (revisionOrder < 0) {
+        return state;
+      }
+      if (revisionOrder === 0) {
+        if (!hasSameJsonShape(action.payload, current)) {
+          devLog("[workspaceReducer] rejected divergent color-filter snapshot at revision", action.payload.revision);
+        }
+        return state;
+      }
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          model: {
+            ...state.settings.model,
+            colorRules: action.payload.rules.map((rule) => ({ ...rule })),
+            colorFilterEnabled: action.payload.enabled,
+            colorFilterRevision: action.payload.revision,
+            colorRulesRevision: action.payload.rulesRevision
+          }
+        }
+      };
+    }
+
     case "fileVisibilitySet":
       {
         const fileVisibility = { ...state.fileVisibility, ...action.payload };
-        return hasSameJsonShape(fileVisibility, state.fileVisibility) ? state : { ...state, fileVisibility };
+        return hasSameJsonShape(fileVisibility, state.fileVisibility)
+          ? state
+          : {
+              ...state,
+              fileVisibility,
+              settings: {
+                ...state.settings,
+                model: {
+                  ...state.settings.model,
+                  fileVisibility
+                }
+              }
+            };
       }
 
     case "syncScrollSet":
@@ -1494,7 +1515,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
         const targetPanel = state.panels[action.payload.targetPanelId];
         const movedTabId = getUniqueTabIdForPanel(sourceTab.id, targetPanel);
-        const movedTab = movedTabId === sourceTab.id ? sourceTab : { ...sourceTab, id: movedTabId };
+        const movedTab = refreshFolderExpansion({ ...sourceTab, id: movedTabId }, sourceTab.snapshot);
         const nextSourceTabs = sourcePanel.tabs.filter((_, index) => index !== sourceIndex);
         const nextSourceActiveTabId =
           sourcePanel.activeTabId === sourceTab.id
@@ -1631,24 +1652,26 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : undefined;
             const fallbackEntry = action.payload.snapshot.entries[0];
             const selectedEntry = anchorEntry ?? fallbackEntry;
+            const refreshedTab = refreshFolderExpansion(tab, action.payload.snapshot, action.payload.selectionReplacements);
 
             return {
-              ...tab,
+              ...refreshedTab,
               title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
               titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
               snapshot: action.payload.snapshot,
+              directorySizes: pathChanged ? undefined : tab.directorySizes,
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,
               historyIndex: nextHistoryIndex,
               selectedEntryIds: pathChanged
                 ? (selectedEntry ? [selectedEntry.id] : [])
-                : preserveSelectedEntryIds(tab, action.payload.snapshot, action.payload.selectionReplacements),
-              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : tab.selectionAnchorId ?? null,
-              selectionCursorId: pathChanged ? null : tab.selectionCursorId ?? null,
+                : refreshedTab.selectedEntryIds,
+              selectionAnchorId: pathChanged ? (selectedEntry?.id ?? null) : refreshedTab.selectionAnchorId,
+              selectionCursorId: pathChanged ? null : refreshedTab.selectionCursorId,
               expandedNodePaths: nextExpandedNodePaths,
               status: "ready",
-              inlineEdit: undefined,
+              inlineEdit: !pathChanged && action.payload.activatePanel === false ? refreshedTab.inlineEdit : undefined,
               search: undefined,
               reconnect: undefined,
               gitStatus: pathChanged ? undefined : tab.gitStatus
@@ -1747,7 +1770,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           isNavigationTab(tab)
             ? tab
             : {
-              ...tab,
+              ...(pathsEqual(tab.snapshot.location.path, action.payload.path) ? tab : {
+                ...clearFolderExpansion(tab), selectedEntryIds: [], selectionAnchorId: null, selectionCursorId: null
+              }),
               title: tab.title || action.payload.path,
               kind: "directory",
               snapshot: {
@@ -1762,6 +1787,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               },
               addressDraft: action.payload.path,
               status: "reconnect-required",
+              directorySizes: pathsEqual(tab.snapshot.location.path, action.payload.path) ? tab.directorySizes : undefined,
               inlineEdit: undefined,
               search: undefined,
               reconnect: {
@@ -1784,6 +1810,32 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             }
         )
       );
+
+    case "directorySizeRequested":
+    case "directorySizeLeaseStarted":
+    case "directorySizeReleased":
+    case "directorySizeSnapshotReceived":
+    case "directorySizeLookupReceived":
+    case "directorySizeFailed":
+    case "directorySizeListingAlignmentFailed":
+    case "directorySizeListingAligned":
+      return invalidatePropertiesIfTargetChanged(updatePanel(state, action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => reduceDirectorySizes(tab, action))));
+
+    case "folderExpansionToggled":
+    case "folderExpansionRetryRequested":
+    case "folderExpansionLoadStarted":
+    case "folderExpansionLoadSucceeded":
+    case "folderExpansionLoadFailed":
+    case "folderExpansionRefreshFailed":
+      return invalidatePropertiesIfTargetChanged(updatePanel(
+        action.type === "folderExpansionToggled" || action.type === "folderExpansionRetryRequested" ? focusPanel(state, action.payload.panelId) : state,
+        action.payload.panelId, (panel) =>
+        updateTab(panel, action.payload.tabId, (tab) => reduceFolderExpansion(
+          tab, action, state.settings.model.folderExpansionEnabled === true, state.fileVisibility,
+          state.activePanelId === action.payload.panelId ? state.search.filterText : ""
+        ))
+      ));
 
     case "entrySelectionChanged":
       return invalidatePropertiesIfTargetChanged(updatePanel(
@@ -1838,13 +1890,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               : {
                   ...tab,
                   selectedEntryIds: selectEntryRange(
-                    tab.snapshot.entries,
+                    getTabEntries(tab),
                     action.payload.fromEntryId,
                     action.payload.toEntryId,
                     action.payload.orderedEntryIds
                   ),
-                  selectionAnchorId: null,
-                  selectionCursorId: null
+                  selectionAnchorId: action.payload.fromEntryId,
+                  selectionCursorId: action.payload.toEntryId
                 }
           )
       ));
@@ -1860,7 +1912,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: tab.snapshot.entries.map((entry) => entry.id),
+                  selectedEntryIds: (supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)
+                    ? getFolderListingRows(tab, state.fileVisibility, state.activePanelId === action.payload.panelId ? state.search.filterText : "").map(({ entry }) => entry)
+                    : tab.snapshot.entries).map((entry) => entry.id),
                   selectionAnchorId: null,
                   selectionCursorId: null
                 }
@@ -1956,7 +2010,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           isNavigationTab(tab)
             ? tab
             : {
-              ...tab,
+              ...(action.payload.viewMode === "details" ? tab : clearFolderExpansion(tab)),
               viewMode: action.payload.viewMode
             }
         )
@@ -2014,30 +2068,19 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "informationPanelTabChanged":
-      if (state.informationPanel.activeTab === action.payload) {
-        return state;
+      {
+        const nextTab = action.payload === "search" ? "search" : "properties";
+        if (state.informationPanel.activeTab === nextTab) {
+          return state;
+        }
+        return {
+          ...state,
+          informationPanel: {
+            ...state.informationPanel,
+            activeTab: nextTab
+          }
+        };
       }
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          activeTab: action.payload
-        }
-      };
-
-    case "informationPanelHistoryRequested":
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasksOpen: true
-        },
-        informationPanel: {
-          ...state.informationPanel,
-          expanded: true,
-          activeTab: "history"
-        }
-      };
 
     case "searchPanelRequested":
       {
@@ -2493,11 +2536,6 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         )
       );
 
-    case "colorRuleUpdated":
-      return updateSettingsModel(state, "colorRules", (colorRules) =>
-        colorRules.map((rule) => (rule.id === action.payload.id ? { ...rule, color: action.payload.color } : rule))
-      );
-
     case "tagRuleUpdated":
       return updateSettingsModel(state, "tagRules", (tagRules) =>
         tagRules.map((rule) =>
@@ -2559,6 +2597,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         defaultMenu: normalizeContextMenuDefault(action.payload.value)
       }));
 
+    case "contextMenuSet":
+      return { ...state, contextMenu: action.payload };
+
     case "themePanelFocusAccentSet":
       {
         const nextColor = normalizeThemeAccentColor(action.payload.color);
@@ -2615,28 +2656,33 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "settingsModelApplied":
       {
-        const model = normalizeSettingsModel(action.payload.model);
+        const model = withAcceptedColorFilterModel(
+          state.settings.model,
+          normalizeSettingsModel(action.payload.model)
+        );
         if (
           hasSameJsonShape(state.settings.model, model) &&
           (action.payload.section === undefined || action.payload.section === state.settings.section)
         ) {
           return state;
         }
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...state,
+          fileVisibility: model.fileVisibility,
+          panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           settings: {
             section: normalizeSettingsSection(action.payload.section ?? state.settings.section),
             model
           }
-        };
+        });
       }
 
     case "settingsSnapshotSynced":
       {
-        const model = normalizeSettingsModel({
+        const model = withAcceptedColorFilterModel(state.settings.model, normalizeSettingsModel({
           ...action.payload.settingsModel,
           tagRules: state.settings.model.tagRules
-        });
+        }));
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));
         if (
@@ -2648,8 +2694,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ) {
           return state;
         }
-        return {
+        return invalidatePropertiesIfTargetChanged({
           ...state,
+          fileVisibility: model.fileVisibility,
+          panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           bookmarks: action.payload.bookmarks,
           hotlist: action.payload.hotlist,
           remoteProfiles: action.payload.remoteProfiles,
@@ -2664,7 +2712,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             ...state.settings,
             model
           }
-        };
+        });
       }
 
     case "clipboardSet":
@@ -2673,93 +2721,20 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         clipboard: action.payload
       };
 
-    case "operationTasksOpenSet":
-      return {
-        ...state,
-        informationPanel: action.payload
-          ? {
-              ...state.informationPanel,
-              expanded: true,
-              activeTab: "history"
-            }
-          : state.informationPanel.activeTab === "history"
-            ? {
-                ...state.informationPanel,
-                expanded: false
-              }
-            : state.informationPanel,
-        operations: {
-          ...state.operations,
-          tasksOpen: action.payload
-        }
-      };
-
     case "operationTasksSnapshotLoaded":
-      if (action.payload.taskSequence < state.operations.taskSequence) {
-        return state;
-      }
-      if (
-        action.payload.taskSequence === state.operations.taskSequence &&
-        hasSameOperationTasksSnapshot(state.operations.tasks, action.payload.tasks)
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasks: sortOperationTasks(action.payload.tasks),
-          taskSequence: action.payload.taskSequence
-        }
-      };
+      return updateOperations(state, { type: "tasksSnapshot", payload: action.payload });
 
     case "operationTaskEventReceived":
-      if (action.payload.sequence <= state.operations.taskSequence) {
-        const current = state.operations.tasks.find((task) => task.taskId === action.payload.taskId);
-        if (current && current.sequence >= action.payload.sequence) {
-          return state;
-        }
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          tasks: upsertOperationTask(state.operations.tasks, action.payload),
-          taskSequence: Math.max(state.operations.taskSequence, action.payload.sequence)
-        }
-      };
+      return updateOperations(state, { type: "taskEvent", payload: action.payload });
 
     case "operationHistorySnapshotLoaded":
-      if (action.payload.historySequence < state.operations.historySequence) {
-        return state;
-      }
-      if (
-        action.payload.historySequence === state.operations.historySequence &&
-        hasSameOperationHistorySnapshot(state.operations.history, action.payload.records)
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          history: sortOperationHistory(action.payload.records),
-          historySequence: action.payload.historySequence
-        }
-      };
+      return updateOperations(state, { type: "historySnapshot", payload: action.payload });
 
     case "operationHistoryEventReceived":
-      if (action.payload.historySequence <= state.operations.historySequence) {
-        return state;
-      }
-      return {
-        ...state,
-        operations: {
-          ...state.operations,
-          history: upsertOperationHistoryRecord(state.operations.history, action.payload.record),
-          historySequence: action.payload.historySequence
-        }
-      };
+      return updateOperations(state, { type: "historyEvent", payload: action.payload });
+
+    case "operationRecordsCleared":
+      return updateOperations(state, { type: "recordsCleared", payload: action.payload });
 
     case "notificationAdded":
       return {
@@ -2773,11 +2748,6 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         notifications: state.notifications.filter((notification) => notification.id !== action.payload.id)
       };
 
-    case "contextMenuSet":
-      return {
-        ...state,
-        contextMenu: action.payload
-      };
 
     default:
       return state;

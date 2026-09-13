@@ -1,14 +1,13 @@
 import { type FormEvent, type KeyboardEvent, useRef } from "react";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { FileSystemIcon } from "./FileSystemIcon";
-import { OperationHistoryPanelContent, OperationSummaryButton } from "./OperationTaskCenter";
+import { OperationSummaryButton } from "./OperationTaskCenter";
 import type { EntryViewModel, InformationPanelTab, ItemPropertyField, WorkspaceState } from "./types";
 
 const SEARCH_TABS = ["名称和位置", "大小", "日期", "标签", "内容", "重复", "排除"] as const;
 const INFORMATION_TABS: Array<{ id: InformationPanelTab; label: string }> = [
   { id: "properties", label: "属性" },
-  { id: "search", label: "查找" },
-  { id: "history", label: "操作历史" }
+  { id: "search", label: "查找" }
 ];
 
 const FIELD_STATE_LABELS: Record<string, string> = {
@@ -506,10 +505,7 @@ export function WorkspaceInformationPanel({
   onUpdateQuery,
   onUpdateFilter,
   onSelectHistory,
-  onDeleteHistory,
-  onCancelTask,
-  onUndoLatest,
-  onUndoRecord
+  onDeleteHistory
 }: {
   informationPanel: WorkspaceState["informationPanel"];
   search: WorkspaceState["search"];
@@ -526,18 +522,15 @@ export function WorkspaceInformationPanel({
   onUpdateFilter: (value: string) => void;
   onSelectHistory: (index: number) => void;
   onDeleteHistory: (index: number) => void;
-  onCancelTask: (taskId: string) => void;
-  onUndoLatest: () => void;
-  onUndoRecord: (recordId: string) => void;
 }) {
   const selectedSummary = summarizeEntrySizes(selectedEntries);
   const folderSummary = summarizeEntrySizes(activeEntries);
   const statusText = search.progress?.statusText ?? (search.loading ? "正在搜索..." : "就绪");
-  const contentId = `information-panel-content-${informationPanel.activeTab}`;
-  const topTabRefs = useRef<Record<InformationPanelTab, HTMLButtonElement | null>>({
+  const activeTab = informationPanel.activeTab;
+  const contentId = `information-panel-content-${activeTab}`;
+  const topTabRefs = useRef<Partial<Record<InformationPanelTab, HTMLButtonElement | null>>>({
     properties: null,
-    search: null,
-    history: null
+    search: null
   });
 
   const focusTopTab = (tab: InformationPanelTab) => {
@@ -556,7 +549,7 @@ export function WorkspaceInformationPanel({
 
     event.preventDefault();
     const currentIndex = Math.max(
-      INFORMATION_TABS.findIndex((tab) => tab.id === informationPanel.activeTab),
+      INFORMATION_TABS.findIndex((tab) => tab.id === activeTab),
       0
     );
     const nextIndex =
@@ -632,10 +625,10 @@ export function WorkspaceInformationPanel({
                 id={`information-panel-tab-${tab.id}`}
                 type="button"
                 role="tab"
-                aria-selected={informationPanel.activeTab === tab.id}
+                aria-selected={activeTab === tab.id}
                 aria-controls={`information-panel-content-${tab.id}`}
-                tabIndex={informationPanel.activeTab === tab.id ? 0 : -1}
-                className={`information-panel__top-tab${informationPanel.activeTab === tab.id ? " is-active" : ""}`}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                className={`information-panel__top-tab${activeTab === tab.id ? " is-active" : ""}`}
                 ref={(node) => {
                   topTabRefs.current[tab.id] = node;
                 }}
@@ -650,15 +643,15 @@ export function WorkspaceInformationPanel({
             id={contentId}
             className="information-panel__content"
             role="tabpanel"
-            aria-labelledby={`information-panel-tab-${informationPanel.activeTab}`}
+            aria-labelledby={`information-panel-tab-${activeTab}`}
           >
-            {informationPanel.activeTab === "properties" ? (
+            {activeTab === "properties" ? (
               <PropertiesPanel
                 properties={informationPanel.properties}
                 activeEntries={activeEntries}
                 selectedEntries={selectedEntries}
               />
-            ) : informationPanel.activeTab === "search" ? (
+            ) : activeTab === "search" ? (
               <SearchPanelContent
                 search={search}
                 onRunSearch={onRunSearch}
@@ -668,14 +661,7 @@ export function WorkspaceInformationPanel({
                 onSelectHistory={onSelectHistory}
                 onDeleteHistory={onDeleteHistory}
               />
-            ) : (
-              <OperationHistoryPanelContent
-                operations={operations}
-                onCancelTask={onCancelTask}
-                onUndoLatest={onUndoLatest}
-                onUndoRecord={onUndoRecord}
-              />
-            )}
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -1,3 +1,5 @@
+import { getLocalizedShortcutAction } from "./shortcutCatalog";
+import type { HoverColorKey } from "./workspaceTheme";
 import {
   useCallback,
   useEffect,
@@ -6,8 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { HexAlphaColorPicker } from "react-colorful";
+import { AppearancePage } from "./SettingsAppearancePage";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
+import { ColorRulesPage } from "./ColorRulesPage";
+import { FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
+import { SettingsFileListPage } from "./SettingsFileListPage";
+import { TemplateSettingsPage } from "./TemplateSettingsPage";
+import type { ColorFilterRule, ColorFilterValidationResult } from "./colorFilterTypes";
 import type { RemoteTestResult } from "../../app/types";
 import type {
   RemoteConnectionProfile,
@@ -29,13 +36,31 @@ export type SettingsSurfaceProps = {
   dirtySections?: ReadonlySet<SettingsSection>;
   onSelectSection: (section: WorkspaceState["settings"]["section"]) => void;
   onUpdateShortcut: (id: string, binding: string) => void;
-  onUpdateColorRule: (id: string, color: string) => void;
+  onUpdateColorRules: (rules: ColorFilterRule[]) => void;
+  onUpdateFileAssociations: FileAssociationsPageProps["onChange"];
+  onUpdateTemplateRoot?: (path: string) => void;
+  onChooseTemplateRoot?: () => Promise<string | null>;
+  onChooseAssociationProgram: FileAssociationsPageProps["onChooseProgram"];
+  onInspectAssociationPrograms: FileAssociationsPageProps["onInspectPrograms"];
+  onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
+  onOpenColorRulesHelp: () => void;
+  onColorRulesValidityChange?: (valid: boolean) => void;
+  onColorRulesDraftDirtyChange?: (dirty: boolean) => void;
+  colorRulesResetToken?: string | number;
+  colorRulesConflict?: boolean;
+  onReloadColorRules?: () => void;
+  onOverwriteColorRules?: () => void;
+  colorRulesValid?: boolean;
   onUpdatePanelFocusAccent: (color: string) => void;
   onUpdateActiveTabBackground: (color: string) => void;
   onUpdateDropHighlightFill: (color: string) => void;
   onUpdateDropHighlightBorder: (color: string) => void;
+  onUpdateSizeBarColor?: (endpoint: "sizeBarLow" | "sizeBarHigh", color: string) => void;
+  onUpdateHoverColor?: (key: HoverColorKey, color: string) => void;
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
+  onUpdateSizeBarMode?: (value: SettingsModel["sizeBarMode"]) => void;
+  onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
   onUpdateTooltipHoverDelay: (value: number) => void;
   onUpdateMetadataRetentionHours: (value: number | null) => void;
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
@@ -66,7 +91,9 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
     sections: [
       { id: "shortcuts", label: "快捷键", description: "键盘操作与工作区命令" },
       { id: "file-list", label: "文件列表", description: "详细信息视图与显示列" },
-      { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" }
+      { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" },
+      { id: "file-associations", label: "自定义文件关联", description: "按文件后缀选择打开程序" },
+      { id: "templates", label: "新建项目", description: "用于创建副本的模板文件夹" }
     ]
   },
   {
@@ -100,16 +127,6 @@ function getShortcutScopeLabel(scope: string) {
     default:
       return scope;
   }
-}
-
-function getLocalizedShortcutAction(shortcut: ShortcutBinding) {
-  const dictionary: Record<string, string> = {
-    "focus-next-panel": "切换到下一个面板", "open-search": "打开搜索面板", "new-tab": "新建标签页", "close-tab": "关闭标签页",
-    copy: "复制", cut: "剪切", paste: "粘贴", undo: "撤销", "create-folder": "新建文件夹", delete: "删除", rename: "重命名",
-    refresh: "刷新", "navigate-up": "上一级", "navigate-forward": "前进", "drag-move": "拖放时移动", "context-menu-toggle": "右键菜单切换",
-    "select-previous": "上一项", "select-next": "下一项", "select-first": "第一项", "select-last": "最后一项", "select-previous-page": "上一页", "select-next-page": "下一页", "select-previous-column": "上一列", "select-next-column": "下一列", "extend-previous": "扩展到上一项", "extend-next": "扩展到下一项", "extend-first": "扩展到第一项", "extend-last": "扩展到最后一项", "select-all": "全选", "clear-selection": "清除选择", "open-entry": "打开", "copy-name": "复制文件名", "copy-path": "复制完整路径"
-  };
-  return dictionary[shortcut.id] ?? dictionary[shortcut.action] ?? shortcut.action;
 }
 
 function createEmptyRemoteProfile(): RemoteConnectionProfile {
@@ -169,13 +186,31 @@ export function SettingsSurface({
   dirtySections = new Set(),
   onSelectSection,
   onUpdateShortcut,
-  onUpdateColorRule,
+  onUpdateColorRules,
+  onUpdateFileAssociations,
+  onUpdateTemplateRoot,
+  onChooseTemplateRoot,
+  onChooseAssociationProgram,
+  onInspectAssociationPrograms,
+  onValidateColorRule,
+  onOpenColorRulesHelp,
+  onColorRulesValidityChange,
+  onColorRulesDraftDirtyChange,
+  colorRulesResetToken = 0,
+  colorRulesConflict = false,
+  onReloadColorRules,
+  onOverwriteColorRules,
+  colorRulesValid = true,
   onUpdatePanelFocusAccent,
   onUpdateActiveTabBackground,
   onUpdateDropHighlightFill,
   onUpdateDropHighlightBorder,
+  onUpdateSizeBarColor,
+  onUpdateHoverColor,
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
+  onUpdateSizeBarMode = () => undefined,
+  onUpdateFolderExpansionEnabled,
   onUpdateTooltipHoverDelay,
   onUpdateMetadataRetentionHours,
   onUpdateContextMenuDefault,
@@ -207,7 +242,7 @@ export function SettingsSurface({
   };
 
   const renderedErrorMessage = shortcutConflictMessage ?? errorMessage;
-  const confirmDisabled = controlsDisabled || Boolean(shortcutConflictMessage);
+  const confirmDisabled = controlsDisabled || Boolean(shortcutConflictMessage) || !colorRulesValid;
 
   return (
     <section className="settings-window" aria-labelledby="settings-window-title" aria-busy={controlsDisabled ? true : undefined}>
@@ -250,8 +285,12 @@ export function SettingsSurface({
               onUpdateShortcut={onUpdateShortcut}
             />
           ) : settings.section === "file-list" ? (
-            <FileListPage
+            <SettingsFileListPage
               detailsRowHeight={settings.model.detailsRowHeight}
+              sizeBarMode={settings.model.sizeBarMode}
+              onUpdateSizeBarMode={onUpdateSizeBarMode}
+              folderExpansionEnabled={settings.model.folderExpansionEnabled === true}
+              onUpdateFolderExpansionEnabled={onUpdateFolderExpansionEnabled}
               tooltipHoverDelayMs={settings.model.tooltipHoverDelayMs}
               metadataRetentionHours={settings.model.metadataRetentionHours}
               disabled={controlsDisabled}
@@ -265,12 +304,24 @@ export function SettingsSurface({
               disabled={controlsDisabled}
               onUpdateContextMenuDefault={onUpdateContextMenuDefault}
             />
+          ) : settings.section === "file-associations" ? (
+            <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
+              onChange={onUpdateFileAssociations} onChooseProgram={onChooseAssociationProgram}
+              onInspectPrograms={onInspectAssociationPrograms} />
+          ) : settings.section === "templates" ? (
+            <TemplateSettingsPage path={settings.model.templateRoot ?? ""} disabled={controlsDisabled}
+              onChange={onUpdateTemplateRoot ?? (() => {})} onChoose={onChooseTemplateRoot ?? (async () => null)} />
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}
               activeTabBackground={settings.model.theme.activeTabBackground}
               dropHighlightFill={settings.model.theme.dropHighlightFill}
               dropHighlightBorder={settings.model.theme.dropHighlightBorder}
+              sizeBarLow={settings.model.theme.sizeBarLow}
+              sizeBarHigh={settings.model.theme.sizeBarHigh}
+              onUpdateSizeBarColor={onUpdateSizeBarColor}
+              hoverTheme={settings.model.theme}
+              onUpdateHoverColor={onUpdateHoverColor}
               tabMinWidth={settings.model.theme.tabMinWidth}
               disabled={controlsDisabled}
               onUpdatePanelFocusAccent={onUpdatePanelFocusAccent}
@@ -280,7 +331,19 @@ export function SettingsSurface({
               onUpdateTabMinWidth={onUpdateTabMinWidth}
             />
           ) : settings.section === "color-rules" ? (
-            <ColorRulesPage colorRules={settings.model.colorRules} disabled={controlsDisabled} onUpdateColorRule={onUpdateColorRule} />
+            <ColorRulesPage
+              colorRules={settings.model.colorRules}
+              disabled={controlsDisabled}
+              conflict={colorRulesConflict}
+              onChange={onUpdateColorRules}
+              onHelp={onOpenColorRulesHelp}
+              onReload={onReloadColorRules}
+              onOverwrite={onOverwriteColorRules}
+              onValidationChange={onColorRulesValidityChange}
+              onDraftDirtyChange={onColorRulesDraftDirtyChange}
+              resetToken={colorRulesResetToken}
+              validateRule={onValidateColorRule}
+            />
           ) : settings.section === "tag-rules" ? (
             <TagRulesPage tagRules={settings.model.tagRules} />
           ) : (
@@ -605,105 +668,6 @@ function ShortcutCaptureInput({
   );
 }
 
-function FileListPage({
-  detailsRowHeight,
-  tooltipHoverDelayMs,
-  metadataRetentionHours,
-  disabled,
-  onUpdateDetailsRowHeight,
-  onUpdateTooltipHoverDelay,
-  onUpdateMetadataRetentionHours
-}: {
-  detailsRowHeight: number;
-  tooltipHoverDelayMs: number;
-  metadataRetentionHours: number | null;
-  disabled: boolean;
-  onUpdateDetailsRowHeight: (value: number) => void;
-  onUpdateTooltipHoverDelay: (value: number) => void;
-  onUpdateMetadataRetentionHours: (value: number | null) => void;
-}) {
-  const retentionNever = metadataRetentionHours === null;
-  return (
-    <div className="settings-page">
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>文件列表</strong>
-            <span>调整详细信息视图密度、悬停提示和注释/标签保留策略。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>行高</strong>
-            <span>范围 12px - 72px</span>
-          </div>
-          <label className="settings-control-inline">
-            <input
-              type="number"
-              min={12}
-              max={72}
-              step={2}
-              value={String(detailsRowHeight)}
-              data-setting-id="details-row-height"
-              onInput={(event) => onUpdateDetailsRowHeight(Number(event.currentTarget.value))}
-              disabled={disabled}
-            />
-            <span>px</span>
-          </label>
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>列表项悬停提示等待时间</strong>
-            <span>范围 0ms - 5000ms，0 表示鼠标移入即显示。</span>
-          </div>
-          <label className="settings-control-inline">
-            <input
-              type="number"
-              min={0}
-              max={5000}
-              step={50}
-              value={String(tooltipHoverDelayMs)}
-              data-setting-id="tooltip-hover-delay"
-              onInput={(event) => onUpdateTooltipHoverDelay(Number(event.currentTarget.value))}
-              disabled={disabled}
-            />
-            <span>ms</span>
-          </label>
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>注释/标签保留时间</strong>
-            <span>单位小时，0 表示随文件一起删除。</span>
-          </div>
-          <div className="settings-retention-control">
-            <label className="settings-control-inline">
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={retentionNever ? "" : String(metadataRetentionHours)}
-                data-setting-id="metadata-retention-hours"
-                onInput={(event) => onUpdateMetadataRetentionHours(Number(event.currentTarget.value))}
-                disabled={disabled || retentionNever}
-              />
-              <span>小时</span>
-            </label>
-            <label className="settings-check-inline">
-              <input
-                type="checkbox"
-                checked={retentionNever}
-                data-setting-id="metadata-retention-never"
-                onChange={(event) => onUpdateMetadataRetentionHours(event.currentTarget.checked ? null : 720)}
-                disabled={disabled}
-              />
-              <span>永不删除</span>
-            </label>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
 
 function MenuMousePage({
   defaultMenu,
@@ -748,375 +712,6 @@ function MenuMousePage({
               软件自定义
             </button>
           </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-const HEX_BASE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
-
-function normalizeRenderableThemeColor(value: string, fallback: string) {
-  const trimmed = value.trim();
-  if (HEX_COLOR_PATTERN.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-  return fallback;
-}
-
-function clampOpacityPercent(value: number) {
-  if (!Number.isFinite(value)) {
-    return 100;
-  }
-  return Math.min(100, Math.max(0, Math.round(value)));
-}
-
-function getThemeColorBase(value: string, fallback: string) {
-  return normalizeRenderableThemeColor(value, fallback).slice(0, 7);
-}
-
-function getThemeColorOpacityPercent(value: string, fallback: string) {
-  const normalized = normalizeRenderableThemeColor(value, fallback);
-  if (normalized.length !== 9) {
-    return 100;
-  }
-  return clampOpacityPercent((Number.parseInt(normalized.slice(7, 9), 16) / 255) * 100);
-}
-
-function formatThemeColor(baseColor: string, opacityPercent: number) {
-  const normalizedBase = HEX_BASE_COLOR_PATTERN.test(baseColor.trim()) ? baseColor.trim().toLowerCase() : "#0f6cbd";
-  const alpha = Math.round((clampOpacityPercent(opacityPercent) / 100) * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `${normalizedBase}${alpha}`;
-}
-
-function ThemeColorControl({
-  value,
-  fallback,
-  settingId,
-  disabled,
-  isOpen,
-  onOpenChange,
-  onUpdate
-}: {
-  value: string;
-  fallback: string;
-  settingId: string;
-  disabled: boolean;
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-  onUpdate: (color: string) => void;
-}) {
-  const normalizedColor = normalizeRenderableThemeColor(value, fallback);
-  const colorBase = getThemeColorBase(value, fallback);
-  const opacity = getThemeColorOpacityPercent(value, fallback);
-  const [hexDraft, setHexDraft] = useState(normalizedColor);
-  const controlRef = useRef<HTMLDivElement | null>(null);
-  const panelId = `${settingId}-color-panel`;
-
-  useEffect(() => {
-    setHexDraft(normalizedColor);
-  }, [normalizedColor]);
-
-  useEffect(() => {
-    if (disabled && isOpen) {
-      onOpenChange(false);
-    }
-  }, [disabled, isOpen, onOpenChange]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return undefined;
-    }
-
-    const handleDocumentMouseDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (target instanceof Node && controlRef.current?.contains(target)) {
-        return;
-      }
-      onOpenChange(false);
-    };
-
-    const handleDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onOpenChange(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleDocumentMouseDown);
-    document.addEventListener("keydown", handleDocumentKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleDocumentMouseDown);
-      document.removeEventListener("keydown", handleDocumentKeyDown);
-    };
-  }, [isOpen, onOpenChange]);
-
-  const handlePickerChange = (color: string) => {
-    if (disabled) {
-      return;
-    }
-    onUpdate(normalizeRenderableThemeColor(color, fallback));
-  };
-
-  const handleHexInput = (nextValue: string) => {
-    setHexDraft(nextValue);
-    const trimmed = nextValue.trim();
-    if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) {
-      onUpdate(trimmed.toLowerCase());
-      return;
-    }
-    if (HEX_BASE_COLOR_PATTERN.test(trimmed)) {
-      onUpdate(formatThemeColor(trimmed, opacity));
-    }
-  };
-
-  const handleHexBlur = () => {
-    if (!HEX_COLOR_PATTERN.test(hexDraft.trim()) && !HEX_BASE_COLOR_PATTERN.test(hexDraft.trim())) {
-      setHexDraft(normalizedColor);
-    }
-  };
-
-  return (
-    <div className={isOpen ? "theme-color-control is-open" : "theme-color-control"} ref={controlRef}>
-      <button
-        type="button"
-        className="theme-color-control__trigger"
-        data-setting-id={settingId}
-        aria-haspopup="dialog"
-        aria-expanded={isOpen}
-        aria-controls={isOpen ? panelId : undefined}
-        title={normalizedColor}
-        onClick={() => {
-          if (!disabled) {
-            onOpenChange(!isOpen);
-          }
-        }}
-        disabled={disabled}
-      >
-        <span className="theme-color-control__swatch-frame" aria-hidden="true">
-          <span className="theme-color-control__swatch" style={{ backgroundColor: normalizedColor }} />
-        </span>
-        <span className="theme-color-control__value">{normalizedColor}</span>
-      </button>
-      {isOpen ? (
-        <div className="theme-color-control__panel" id={panelId} role="dialog" aria-label="Color picker">
-          <HexAlphaColorPicker
-            color={normalizedColor}
-            onChange={handlePickerChange}
-            className="theme-color-control__picker"
-          />
-          <div className="theme-color-control__fields">
-            <label>
-              <span>HEX</span>
-              <input
-                type="text"
-                value={hexDraft}
-                data-setting-id={`${settingId}-hex`}
-                spellCheck={false}
-                onInput={(event) => handleHexInput(event.currentTarget.value)}
-                onBlur={handleHexBlur}
-              />
-            </label>
-            <label>
-              <span>Alpha</span>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={String(opacity)}
-                data-setting-id={`${settingId}-opacity`}
-                onInput={(event) => onUpdate(formatThemeColor(colorBase, Number(event.currentTarget.value)))}
-              />
-            </label>
-            <span className="theme-color-control__panel-value">{normalizedColor}</span>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function AppearancePage({
-  panelFocusAccent,
-  activeTabBackground,
-  dropHighlightFill,
-  dropHighlightBorder,
-  tabMinWidth,
-  disabled,
-  onUpdatePanelFocusAccent,
-  onUpdateActiveTabBackground,
-  onUpdateDropHighlightFill,
-  onUpdateDropHighlightBorder,
-  onUpdateTabMinWidth
-}: {
-  panelFocusAccent: string;
-  activeTabBackground: string;
-  dropHighlightFill: string;
-  dropHighlightBorder: string;
-  tabMinWidth: number;
-  disabled: boolean;
-  onUpdatePanelFocusAccent: (color: string) => void;
-  onUpdateActiveTabBackground: (color: string) => void;
-  onUpdateDropHighlightFill: (color: string) => void;
-  onUpdateDropHighlightBorder: (color: string) => void;
-  onUpdateTabMinWidth: (value: number) => void;
-}) {
-  const [openThemeColorId, setOpenThemeColorId] = useState<string | null>(null);
-  const setThemeColorOpen = useCallback((settingId: string, open: boolean) => {
-    setOpenThemeColorId(open ? settingId : null);
-  }, []);
-
-  return (
-    <div className="settings-page">
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>面板</strong>
-            <span>控制当前焦点面板的强调色。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>焦点强调色</strong>
-            <span>用于活动面板顶部强调线。</span>
-          </div>
-          <ThemeColorControl
-            value={panelFocusAccent}
-            fallback="#0f6cbd"
-            settingId="panel-focus-accent"
-            disabled={disabled}
-            isOpen={openThemeColorId === "panel-focus-accent"}
-            onOpenChange={(open) => setThemeColorOpen("panel-focus-accent", open)}
-            onUpdate={onUpdatePanelFocusAccent}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>活动选项卡背景色</strong>
-            <span>与焦点强调色配对，用于当前焦点面板的活动选项卡背景。</span>
-          </div>
-          <ThemeColorControl
-            value={activeTabBackground}
-            fallback="#ffffff"
-            settingId="active-tab-background"
-            disabled={disabled}
-            isOpen={openThemeColorId === "active-tab-background"}
-            onOpenChange={(open) => setThemeColorOpen("active-tab-background", open)}
-            onUpdate={onUpdateActiveTabBackground}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>拖拽填充色</strong>
-            <span>用于列表、文件夹行和标签页的拖拽高亮底色。</span>
-          </div>
-          <ThemeColorControl
-            value={dropHighlightFill}
-            fallback="#0f6cbd"
-            settingId="drop-highlight-fill"
-            disabled={disabled}
-            isOpen={openThemeColorId === "drop-highlight-fill"}
-            onOpenChange={(open) => setThemeColorOpen("drop-highlight-fill", open)}
-            onUpdate={onUpdateDropHighlightFill}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>拖拽描边色</strong>
-            <span>用于拖拽目标边框和强调线。</span>
-          </div>
-          <ThemeColorControl
-            value={dropHighlightBorder}
-            fallback="#0f6cbd"
-            settingId="drop-highlight-border"
-            disabled={disabled}
-            isOpen={openThemeColorId === "drop-highlight-border"}
-            onOpenChange={(open) => setThemeColorOpen("drop-highlight-border", open)}
-            onUpdate={onUpdateDropHighlightBorder}
-          />
-        </div>
-      </section>
-
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>标签页</strong>
-            <span>控制标签页最小宽度。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>最小宽度</strong>
-            <span>最低 1px</span>
-          </div>
-          <label className="settings-control-inline">
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={String(tabMinWidth)}
-              data-setting-id="tab-min-width"
-              onInput={(event) => onUpdateTabMinWidth(Number(event.currentTarget.value))}
-              disabled={disabled}
-            />
-            <span>px</span>
-          </label>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ColorRulesPage({
-  colorRules,
-  disabled,
-  onUpdateColorRule
-}: {
-  colorRules: SettingsModel["colorRules"];
-  disabled: boolean;
-  onUpdateColorRule: (id: string, color: string) => void;
-}) {
-  return (
-    <div className="settings-page">
-      <section className="settings-group settings-group--table">
-        <header className="settings-group__header">
-          <div>
-            <strong>规则列表</strong>
-            <span>预览扩展名、属性和标签颜色。</span>
-          </div>
-        </header>
-        <div className="settings-table-scroll">
-          <table className="settings-table settings-table--rules">
-            <thead>
-              <tr>
-                <th>规则</th>
-                <th>匹配</th>
-                <th>颜色</th>
-                <th>预览</th>
-              </tr>
-            </thead>
-            <tbody>
-              {colorRules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>{rule.label}</td>
-                  <td>{rule.matcher}</td>
-                  <td>
-                    <input
-                      type="color"
-                      value={rule.color}
-                      data-color-rule-id={rule.id}
-                      onInput={(event) => onUpdateColorRule(rule.id, event.currentTarget.value)}
-                      disabled={disabled}
-                    />
-                  </td>
-                  <td>{rule.previewText}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </section>
     </div>

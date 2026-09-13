@@ -1,0 +1,19 @@
+.batch-rename-help { display: flex; flex-direction: column; width: 100vw; height: 100vh; overflow: hidden; background: white; color: #202020; font: 13px/1.55 "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+.batch-rename-help > header { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex: none; padding: 12px 18px; border-bottom: 1px solid #d4d4d4; background: #f7f7f7; }
+.batch-rename-help h1 { font-size: 17px; font-weight: 600; margin: 0; }
+.batch-rename-help > header label { display: flex; align-items: center; gap: 6px; width: min(320px, 45vw); padding: 0 7px; background: white; border: 1px solid #aaa; }
+.batch-rename-help input { width: 100%; min-width: 0; height: 28px; border: 0; outline: none; font: inherit; }
+.batch-rename-help > header label:focus-within { outline: 2px solid #0f6cbd; outline-offset: -1px; }
+.batch-rename-help article { overflow: auto; padding: 0 18px 24px; }
+.batch-rename-help section { margin: 16px 0 24px; }
+.batch-rename-help h2 { margin: 0 0 7px; font-size: 15px; font-weight: 600; }
+.batch-rename-help h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.batch-rename-help p { margin: 6px 0 9px; }
+.batch-rename-help .batch-rename-help__intro { margin: 14px 0; color: #666; }
+.batch-rename-help table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.batch-rename-help td { padding: 6px 8px; border: 1px solid #dedede; vertical-align: top; overflow-wrap: anywhere; }
+.batch-rename-help td:first-child { width: 39%; background: #f6f6f6; }
+.batch-rename-help code { color: #075b97; font: 12px/1.55 Consolas, "Microsoft YaHei UI", monospace; overflow-wrap: anywhere; }
+.batch-rename-help .batch-rename-help__function { margin: 10px 0 20px; }
+.batch-rename-help__error { color: #a4262c; }
+@media (max-width: 660px) { .batch-rename-help > header { flex-wrap: wrap; gap: 8px; padding: 9px 12px; } .batch-rename-help > header label { width: 100%; } .batch-rename-help article { padding: 0 12px 20px; } }

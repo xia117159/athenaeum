@@ -176,6 +176,20 @@ assertTest("workspaceReducer initializes Windows file visibility and sync scroll
   assert.equal(state.syncScroll, false);
 });
 
+assertTest("workspaceReducer initializes global file visibility from persisted settings", () => {
+  const bootstrap = createMockWorkspaceBootstrap();
+  const persistedVisibility = {
+    showHidden: true,
+    showSystem: true,
+    hideProtectedOperatingSystemFiles: false
+  };
+  bootstrap.settingsModel.fileVisibility = persistedVisibility;
+
+  const state = createWorkspaceState(bootstrap);
+
+  assert.deepEqual(state.fileVisibility, persistedVisibility);
+});
+
 assertTest("workspaceReducer updates file visibility switches independently", () => {
   const state = createState();
 
@@ -197,6 +211,7 @@ assertTest("workspaceReducer updates file visibility switches independently", ()
     showSystem: true,
     hideProtectedOperatingSystemFiles: false
   });
+  assert.deepEqual(showProtected.settings.model.fileVisibility, showProtected.fileVisibility);
 });
 
 assertTest("workspaceReducer opens the search panel on the requested search tab", () => {
@@ -1242,7 +1257,7 @@ assertTest("createWorkspaceState initializes the docked information panel search
     ...createMockWorkspaceBootstrap(),
     informationPanel: {
       expanded: true,
-      activeTab: "history" as const,
+      activeTab: "properties" as const,
       properties: {
         status: "idle" as const
       }
@@ -1251,7 +1266,7 @@ assertTest("createWorkspaceState initializes the docked information panel search
   const state = createWorkspaceState(bootstrap);
 
   assert.equal(state.informationPanel.expanded, true);
-  assert.equal(state.informationPanel.activeTab, "history");
+  assert.equal(state.informationPanel.activeTab, "properties");
   assert.equal(state.informationPanel.properties.status, "idle");
   assert.equal(state.search.loading, false);
   assert.equal(state.search.filterText, "");
@@ -1316,7 +1331,7 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
   });
 });
 
-assertTest("workspaceReducer routes search and history entry points through informationPanel", () => {
+assertTest("workspaceReducer routes search entry points through informationPanel", () => {
   const state = createState();
   const searchOpened = workspaceReducer(state, {
     type: "searchToggled",
@@ -1330,17 +1345,11 @@ assertTest("workspaceReducer routes search and history entry points through info
     type: "searchFilterChanged",
     payload: "report"
   } as WorkspaceAction);
-  const historyOpened = workspaceReducer(filtered, {
-    type: "informationPanelHistoryRequested"
-  } as WorkspaceAction);
-
   assert.equal(searchOpened.informationPanel.expanded, true);
   assert.equal(searchOpened.informationPanel.activeTab, "search");
   assert.equal(collapsed.informationPanel.expanded, false);
   assert.equal(filtered.informationPanel.expanded, false);
   assert.equal(filtered.informationPanel.activeTab, "search");
-  assert.equal(historyOpened.informationPanel.expanded, true);
-  assert.equal(historyOpened.informationPanel.activeTab, "history");
 });
 
 assertTest("workspaceReducer ignores stale properties responses by request id and target key", () => {
@@ -2030,6 +2039,11 @@ assertTest("workspaceReducer replaces synced columns but preserves local-only ta
       settingsModel: {
         ...backendDefaults,
         detailsRowHeight: 44,
+        fileVisibility: {
+          showHidden: true,
+          showSystem: false,
+          hideProtectedOperatingSystemFiles: true
+        },
         theme: {
           ...backendDefaults.theme,
           tabMinWidth: 132
@@ -2040,6 +2054,7 @@ assertTest("workspaceReducer replaces synced columns but preserves local-only ta
 
   assert.equal(nextState.bookmarks[0].label, "Synced");
   assert.equal(nextState.settings.model.detailsRowHeight, 44);
+  assert.equal(nextState.fileVisibility.showHidden, true);
   assert.equal(nextState.settings.model.theme.tabMinWidth, 132);
   assert.equal(nextState.settings.model.columns.find((column) => column.id === "location")?.visible, false);
   assert.equal(nextState.settings.model.tagRules.find((rule) => rule.id === "tag-latest")?.quickFilter, "本地筛选");

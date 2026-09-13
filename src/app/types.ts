@@ -1,3 +1,16 @@
+import type { ColorFilterConfigSnapshot, ColorFilterRule } from "../features/workspace/colorFilterTypes";
+import type { FileAssociationRule } from "./fileAssociations";
+
+export type {
+  ColorFilterConfigSnapshot,
+  ColorFilterRule,
+  ColorFilterRuleInput,
+  ColorFilterValidationResult,
+  ReplaceColorRulesRequest,
+  ReplaceColorRulesResult,
+  RevisionToken
+} from "../features/workspace/colorFilterTypes";
+
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type LocationKind = "local" | "ftp" | "sftp";
 export type EntryKind = "file" | "directory";
@@ -9,7 +22,8 @@ export interface LocationDescriptor {
 }
 
 export interface EntryDecoration {
-  colorHex?: string | null;
+  foregroundColorHex?: string | null;
+  backgroundColorHex?: string | null;
   tags: string[];
 }
 
@@ -37,6 +51,7 @@ export interface DirectoryListing {
   entries: EntryViewModel[];
   parent?: string | null;
   canGoUp: boolean;
+  sizeFingerprint?: string | null;
 }
 
 export type ItemPropertyField =
@@ -203,16 +218,6 @@ export interface EntryTag {
   expiresAt?: string | null;
 }
 
-export interface ColorRule {
-  id: string;
-  name: string;
-  target: "any" | "file" | "directory";
-  mode: "extension" | "nameContains" | "pathContains" | "hidden" | "readOnly";
-  pattern?: string | null;
-  colorHex: string;
-  priority: number;
-}
-
 export interface UiLayout {
   layoutMode: PanelLayoutMode;
   panelProportions: number[];
@@ -226,11 +231,22 @@ export interface UiTheme {
   activeTabBackground: string;
   dropHighlightFill: string;
   dropHighlightBorder: string;
+  sizeBarLow: string;
+  sizeBarHigh: string;
+  menuHoverBackground: string;
+  menuHoverText: string;
+  fileHoverBorder: string;
   tabMinWidth: number;
 }
 
 export interface ContextMenuSettings {
   defaultMenu: "native" | "custom";
+}
+
+export interface FileVisibilitySettings {
+  showHidden: boolean;
+  showSystem: boolean;
+  hideProtectedOperatingSystemFiles: boolean;
 }
 
 export interface DetailColumnDefinition {
@@ -328,18 +344,23 @@ export interface RemoteTrustHostKeyRequest {
 }
 
 export interface SettingsSnapshot {
+  templateRoot?: string;
+  fileAssociations?: FileAssociationRule[];
   bookmarks: Bookmark[];
   hotlist: HotlistEntry[];
   navigationItems?: NavigationItem[];
   tagDefinitions: TagDefinition[];
   entryTags: EntryTag[];
-  colorRules: ColorRule[];
+  colorFilter: ColorFilterConfigSnapshot;
   shortcuts: ShortcutBinding[];
   columns?: DetailColumnDefinition[];
   navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode?: "folder-total" | "folder-max";
+  folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
+  fileVisibility?: FileVisibilitySettings;
   contextMenu?: ContextMenuSettings;
   theme?: UiTheme;
   layout: UiLayout;
@@ -347,13 +368,17 @@ export interface SettingsSnapshot {
 }
 
 export interface SettingsModelUpdate {
+  templateRoot?: string;
+  fileAssociations?: FileAssociationRule[];
   shortcuts: ShortcutBinding[];
-  colorRules: ColorRule[];
   columns: DetailColumnDefinition[];
   navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode: "folder-total" | "folder-max";
+  folderExpansionEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
+  fileVisibility: FileVisibilitySettings;
   contextMenu: ContextMenuSettings;
   theme: UiTheme;
 }
@@ -363,6 +388,7 @@ export interface WorkspaceBootstrap {
   initialPath: string;
   initialListing: DirectoryListing;
   settings: SettingsSnapshot;
+  startupDiagnostics?: string[];
 }
 
 export interface SearchQuery {
@@ -538,6 +564,7 @@ export type OperationHistoryStatus =
   | "pendingConfirmation";
 
 export interface OperationHistoryRecord {
+  recoveryItems?: { originalPath: string; recoveryPath: string }[];
   recordId: string;
   taskId: string;
   kind: OperationIntentKind;
@@ -559,6 +586,27 @@ export interface OperationHistoryListSnapshot {
 export interface OperationHistoryEventEnvelope {
   record: OperationHistoryRecord;
   historySequence: number;
+}
+
+export type OperationClearScope = "problems" | "completed" | "history" | "all";
+
+export interface OperationClearRequest {
+  scope: OperationClearScope;
+  confirmUndoLoss: boolean;
+  recoveryConfirmation?: string;
+}
+
+export interface OperationClearOutcome {
+  status: "confirmationRequired" | "cleared";
+  eligibleUndoableCount: number;
+  eligibleRecoveryCount: number;
+  recoveryConfirmation?: string;
+  removedTaskIds: string[];
+  removedRecordIds: string[];
+  taskClearWatermark: number;
+  historyClearWatermark: number;
+  protectedRecordIds: string[];
+  cleanupWarnings: string[];
 }
 
 export interface TabState {
@@ -618,7 +666,7 @@ export interface WorkspaceState {
   bookmarks: Bookmark[];
   hotlist: HotlistEntry[];
   tagDefinitions: TagDefinition[];
-  colorRules: ColorRule[];
+  colorRules: ColorFilterRule[];
   shortcuts: ShortcutBinding[];
   remoteProfiles: RemoteProfile[];
   tree: Record<string, TreeNode[]>;

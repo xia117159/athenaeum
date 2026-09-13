@@ -9,7 +9,6 @@ import {
 } from "../app/mockData";
 import type {
   Bookmark,
-  ColorRule,
   DirectoryListing,
   HotlistEntry,
   RemoteProfile,
@@ -77,16 +76,6 @@ export async function saveShortcuts(shortcuts: ShortcutBinding[]): Promise<Setti
 
 export async function saveUiLayout(layout: UiLayout): Promise<SettingsSnapshot> {
   return invokeWithFallback("save_ui_layout", { layout }, () => ({ ...createMockSettings(), layout }));
-}
-
-export async function saveColorRule(rule: ColorRule): Promise<SettingsSnapshot> {
-  return invokeWithFallback("save_color_rule", { rule }, () => {
-    const snapshot = createMockSettings();
-    return {
-      ...snapshot,
-      colorRules: [...snapshot.colorRules.filter((item) => item.id !== rule.id), rule]
-    };
-  });
 }
 
 export async function listRemoteProfiles(): Promise<RemoteProfile[]> {

@@ -13,6 +13,7 @@ import type {
   WorkspaceWatchRootsRequest
 } from "./types";
 import type { WorkspaceGateway } from "./workspaceGateway";
+import { createTemplateGateway } from "./templateCreationGateway";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -77,6 +78,8 @@ export function createTestGateway(
     resolveNavigationTargets?: WorkspaceGateway["resolveNavigationTargets"];
     listOperationTasks?: WorkspaceGateway["listOperationTasks"];
     listenOperationTasks?: WorkspaceGateway["listenOperationTasks"];
+    listenOperationRecordsCleared?: WorkspaceGateway["listenOperationRecordsCleared"];
+    clearOperationRecords?: WorkspaceGateway["clearOperationRecords"];
     readSystemFileClipboard?: WorkspaceGateway["readSystemFileClipboard"];
     copyEntries?: WorkspaceGateway["copyEntries"];
     moveEntries?: WorkspaceGateway["moveEntries"];
@@ -109,6 +112,8 @@ export function createTestGateway(
   });
 
   return {
+    batchRename: createBatchRenameGateway({ runtimeHost: null }),
+    templates: createTemplateGateway({ runtimeHost: null }),
     async loadBootstrap() {
       onLoadBootstrap();
       return overrides.loadBootstrap ? overrides.loadBootstrap() : createMockWorkspaceBootstrap("tauri");
@@ -173,7 +178,30 @@ return { statuses: {}, isGitRepo: false };
     async saveSession() {},
     async saveLayout() {},
     async saveShortcuts() {},
-    async saveColorRules() {},
+    async getColorFilterSnapshot() {
+      return { enabled: true, rules: [], revision: "0", rulesRevision: "0" };
+    },
+    async setColorFilterEnabled(enabled: boolean) {
+      return {
+        snapshot: { enabled, rules: [], revision: "1", rulesRevision: "0" },
+        warnings: []
+      };
+    },
+    async replaceColorRules(request) {
+      return {
+        status: "applied" as const,
+        snapshot: {
+          enabled: true,
+          rules: request.rules.map((rule, index) => ({ ...rule, priority: index + 1 })),
+          revision: "1",
+          rulesRevision: "1"
+        },
+        warnings: []
+      };
+    },
+    async validateColorRule() {
+      return { valid: true, message: null, span: null };
+    },
     async saveDetailsRowHeight(value: number) {
       interactions.savedDetailsRowHeights.push(value);
     },
@@ -205,6 +233,15 @@ return { statuses: {}, isGitRepo: false };
       return () => undefined;
     },
     async listenOperationHistory() {
+      return () => undefined;
+    },
+    async listenColorFilterChanged() {
+      return () => undefined;
+    },
+    async listenOperationRecordsCleared(handler) {
+      if (overrides.listenOperationRecordsCleared) {
+        return overrides.listenOperationRecordsCleared(handler);
+      }
       return () => undefined;
     },
     async listenSettingsChanged() {
@@ -309,6 +346,21 @@ return { statuses: {}, isGitRepo: false };
     async undoOperation(recordId) {
       return { ...createOperationTask(`undo-${recordId}`), kind: "undo" };
     },
+    async clearOperationRecords(request) {
+      if (overrides.clearOperationRecords) {
+        return overrides.clearOperationRecords(request);
+      }
+      return {
+        status: "cleared",
+        eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
+        removedTaskIds: [],
+        removedRecordIds: [],
+        taskClearWatermark: 0,
+        historyClearWatermark: 0,
+        protectedRecordIds: [],
+        cleanupWarnings: []
+      };
+    },
     async setSystemFileClipboard(paths, mode) {
       interactions.systemClipboardWrites?.push({ paths: [...paths], mode });
     },
@@ -390,7 +442,16 @@ return { statuses: {}, isGitRepo: false };
     },
     async openPathWithSystemDefault(path) {
       interactions.systemOpens?.push(path);
-    }
+    },
+    async openFile(request) {
+      interactions.systemOpens?.push(request.target.path);
+      return {status:"opened",localPath:request.target.path,associationId:request.associationId ?? null};
+    },
+    async cancelFileOpen() { return true; },
+    async inspectAssociationPrograms(paths) {
+      return paths.map(path => ({path,displayName:path.split(/[\\/]/).pop() || path,exists:true}));
+    },
+    async chooseAssociationProgram() { return null; }
   };
 }
 
@@ -474,3 +535,4 @@ export function createEntry(parentPath: string, name: string, kind: EntryViewMod
     description: name
   };
 }
+import { createBatchRenameGateway } from "./batchRenameGateway";

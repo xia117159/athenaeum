@@ -1,0 +1,211 @@
+{
+  "extensions": [
+    {
+      "input": "*.md; .JSON ; txt;;MD",
+      "expected": [
+        "md",
+        "json",
+        "txt"
+      ]
+    },
+    {
+      "input": " cpp ;*.TxT; .tar.gz ",
+      "expected": [
+        "cpp",
+        "txt",
+        "tar.gz"
+      ]
+    },
+    {
+      "input": "; ;",
+      "expected": []
+    },
+    {
+      "input": "*.文档",
+      "expected": [
+        "文档"
+      ]
+    },
+    {
+      "input": "*",
+      "expected": null
+    },
+    {
+      "input": "*.",
+      "expected": null
+    },
+    {
+      "input": "foo/bar",
+      "expected": null
+    },
+    {
+      "input": "?.txt",
+      "expected": null
+    },
+    {
+      "input": "txt:exe",
+      "expected": null
+    },
+    {
+      "input": "md > exe",
+      "expected": null
+    },
+    {
+      "input": "md txt",
+      "expected": null
+    },
+    {
+      "input": "..md",
+      "expected": null
+    }
+  ],
+  "matching": [
+    {
+      "patterns": "*.md;.json;txt",
+      "path": "D:\\folder\\READme.MD",
+      "expected": true
+    },
+    {
+      "patterns": "*.md;.json;txt",
+      "path": "/folder/config.JsOn",
+      "expected": true
+    },
+    {
+      "patterns": "tar.gz",
+      "path": "/backup/a.TAR.GZ",
+      "expected": true
+    },
+    {
+      "patterns": "txt",
+      "path": "C:\\file.atxt",
+      "expected": false
+    },
+    {
+      "patterns": "txt",
+      "path": "C:\\file.txt.bak",
+      "expected": false
+    },
+    {
+      "patterns": "txt",
+      "path": "C:\\txt",
+      "expected": false
+    },
+    {
+      "patterns": "; ;",
+      "path": "C:\\file.txt",
+      "expected": false
+    },
+    {
+      "patterns": "*.文档",
+      "path": "C:\\文件.文档",
+      "expected": true
+    },
+    {
+      "patterns": "?.txt",
+      "path": "C:\\a.txt",
+      "expected": false
+    }
+  ],
+  "arguments": [
+    {
+      "template": "",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "--new-window {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "--new-window",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "\"{file}\" \"\"",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "C:\\文 档\\说明 file.md",
+        ""
+      ]
+    },
+    {
+      "template": "--title \"我的 文档\" --file={file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "--title",
+        "我的 文档",
+        "--file=C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "--title \\\"quoted\\\" {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "--title",
+        "\"quoted\"",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "\"C:\\tools\\\\\" {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "C:\\tools\\",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "\"a\"\"b\" {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "a\"b",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "before{file}after {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "beforeC:\\文 档\\说明 file.mdafter",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "'two words' {file}",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "'two",
+        "words'",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "--flag",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "--flag",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "\"\"",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": [
+        "",
+        "C:\\文 档\\说明 file.md"
+      ]
+    },
+    {
+      "template": "\"unfinished",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": null
+    },
+    {
+      "template": "bad\u0000argument",
+      "file": "C:\\文 档\\说明 file.md",
+      "expected": null
+    }
+  ]
+}

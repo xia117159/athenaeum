@@ -113,6 +113,11 @@ assertTest("drop target highlights use configurable theme variables", () => {
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "background", fillMix);
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "border-color", borderMix);
   assertDeclaration(getCssBlock(".file-row.is-drop-target .file-row__grid"), "box-shadow", `inset 0 0 0 1px ${borderMix}`);
+  // Hover/selection/edit combinations are exercised with real CSS in fileHoverAppearance.test.ts.
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected .file-row__grid"), "background", "Highlight");
+  assertDeclaration(getCssBlock(".file-row.has-color-filter.is-selected:hover .file-row__grid"), "color", "HighlightText");
+  assertDeclaration(getCssBlock(".file-card.has-color-filter.is-inline-editing:hover"), "background", "Highlight");
+  assertDeclaration(getCssBlock(".file-list-item.has-color-filter.is-drop-target:hover"), "outline", "2px solid Highlight");
   assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "background", fillMix);
   assertDeclaration(getCssBlock(".tab-strip__tab.is-entry-drop-target"), "border-color", borderMix);
 });
@@ -139,16 +144,9 @@ assertTest("workspace top chrome separates command and address rows without the 
   assert.equal(workspaceViewSource.includes("secondMinSizePx={222}"), true);
   assertDeclaration(getCssBlock(".address-bar"), "width", "100%");
   assert.equal(css.includes(".workspace-error"), false);
+  assert.equal(workspaceViewSource.includes("aria-busy={state.colorFilterTogglePending || undefined}"), true);
 });
 
-assertTest("workspace view menu reuses shared view and sort submenus", () => {
-  assert.equal(workspaceMenuSource.includes("WorkspaceViewMenuItems"), true);
-  assert.equal(workspaceMenuSource.includes("WorkspaceSortMenuItems"), true);
-  assert.equal(workspaceMenuSource.includes('label: "视图"'), true);
-  assert.equal(workspaceMenuSource.includes('label: "排序方式"'), true);
-  assertDeclaration(getCssBlock(".menu-dropdown__submenu"), "position", "relative");
-  assertDeclaration(getCssBlock(".menu-dropdown__submenu-items"), "position", "absolute");
-});
 
 assertTest("workspace view does not render inline notification labels below the address bar", () => {
   assert.equal(workspaceViewSource.includes("NotificationTray"), false);

@@ -3,11 +3,13 @@ import { cloneColumns } from "./workspaceMappers";
 import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import {
   getLocationPathSeparator,
-  getPathComparisonKey,
   isRemotePath,
   pathsEqual
 } from "./workspaceRefreshPlanner";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
+import { getPathComparisonKey, isSameOrDescendantPath } from "./workspacePathRelations";
+import { getExpandedFolderPaths, getTabEntries, getTabSelectedEntries } from "./folderExpansion";
+export { isSameOrDescendantPath } from "./workspacePathRelations";
 import type {
   ColumnDefinition,
   DirectoryNode,
@@ -171,7 +173,8 @@ export function getSelectedEntries(state: WorkspaceState, panelId: PanelId) {
   if (!isDirectoryTab(tab)) {
     return [];
   }
-  return tab.snapshot.entries.filter((entry) => tab.selectedEntryIds.includes(entry.id));
+  return getTabSelectedEntries(tab, state.fileVisibility, state.activePanelId === panelId ? state.search.filterText : "",
+    state.settings.model.folderExpansionEnabled === true);
 }
 
 export function createSelectionKey(entries: EntryViewModel[]) {
@@ -236,7 +239,7 @@ export function findEntryByPath(state: WorkspaceState, path: string) {
       if (!isDirectoryTab(tab)) {
         continue;
       }
-      const entry = tab.snapshot.entries.find((item) => pathsEqual(item.path, path));
+      const entry = getTabEntries(tab).find((item) => pathsEqual(item.path, path));
       if (entry) {
         return entry;
       }
@@ -257,8 +260,8 @@ export function getTabsForPaths(state: WorkspaceState, paths: string[]) {
     panel.tabs
       .filter(isDirectoryTab)
       .filter((tab) => {
-        const tabPath = normalizeLocationPath(tab.snapshot.location.path);
-        return normalizedPaths.some((path) => pathsEqual(tabPath, path) || isSameOrDescendantPath(path, tabPath));
+        const directoryPaths = [tab.snapshot.location.path, ...getExpandedFolderPaths(tab)];
+        return directoryPaths.some((tabPath) => normalizedPaths.some((path) => isSameOrDescendantPath(path, tabPath)));
       })
       .map((tab) => ({
         panelId: panel.id,
@@ -330,16 +333,6 @@ export function findDirectoryTabForNavigationFolder(state: WorkspaceState, navig
   }
 
   return undefined;
-}
-
-export function isSameOrDescendantPath(source: string, destination: string) {
-  const normalizedSource = normalizeLocationPath(source);
-  const normalizedDestination = normalizeLocationPath(destination);
-  const separator = isRemotePath(normalizedSource) || isRemotePath(normalizedDestination) ? "/" : "\\";
-  const sourceKey = getPathComparisonKey(normalizedSource);
-  const destinationKey = getPathComparisonKey(normalizedDestination);
-  const prefix = sourceKey.endsWith(separator) ? sourceKey : `${sourceKey}${separator}`;
-  return destinationKey === sourceKey || destinationKey.startsWith(prefix);
 }
 
 export function isLocalFileClipboard(paths: string[]) {

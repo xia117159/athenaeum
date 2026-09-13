@@ -33,6 +33,7 @@ export function DetailsColumnHeader<T extends string, C extends DetailsHeaderCol
   dataAttributeName,
   getColumnLabel = (column) => column.label,
   renderLabel,
+  renderAccessory,
   onContextMenu,
   onHeaderPointerDown,
   onHeaderClick,
@@ -51,6 +52,7 @@ export function DetailsColumnHeader<T extends string, C extends DetailsHeaderCol
   dataAttributeName?: string;
   getColumnLabel?: (column: C) => string;
   renderLabel?: (column: C) => ReactNode;
+  renderAccessory?: (column: C) => ReactNode;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   onHeaderPointerDown?: (event: ReactPointerEvent<HTMLElement>, column: C) => void;
   onHeaderClick: (event: ReactMouseEvent<HTMLElement>, column: C) => void;
@@ -70,6 +72,7 @@ export function DetailsColumnHeader<T extends string, C extends DetailsHeaderCol
         const indicator = sort?.columnId === column.id ? getDetailsSortIndicator(sort.direction) : "";
         const customData = dataAttributeName ? { [dataAttributeName]: column.id } : {};
         const alignClassName = column.align ? ` file-cell--${column.align}` : "";
+        const accessory = renderAccessory?.(column);
         return (
           <div
             key={column.id}
@@ -86,6 +89,9 @@ export function DetailsColumnHeader<T extends string, C extends DetailsHeaderCol
               <span className="details-column-header__label">{renderLabel ? renderLabel(column) : getColumnLabel(column)}</span>
               <span className={`details-column-header__indicator ${indicatorClassName}`}>{indicator}</span>
             </button>
+            {accessory ? <span className="details-column-header__accessory" onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}>{accessory}</span> : null}
             <span
               className={`details-column-header__resizer ${resizerClassName}`}
               role="separator"

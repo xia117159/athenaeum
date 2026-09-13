@@ -1,0 +1,66 @@
+/* Feature layout combines the shared and feature classes, independent of bundle order. */
+.app-menu {
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  padding: 3px;
+  overflow: auto;
+  border: 1px solid #c8c8c8;
+  border-radius: 2px;
+  background: #fff;
+  color: #1f1f1f;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 16%);
+  font: 12px/1.4 "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  outline: none;
+  overscroll-behavior: contain;
+}
+.app-menu__item, .app-menu__entry {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+  outline: none;
+  flex-shrink: 0;
+}
+.app-menu__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.app-menu__check { display: inline-flex; flex: 0 0 18px; align-items: center; justify-content: center; color: inherit; }
+.app-menu__item > svg { flex: none; }
+.app-menu__item:disabled, .app-menu__item[aria-disabled="true"] { color: #8a8a8a; }
+.app-menu__separator { height: 1px; margin: 3px 0 3px 24px; background: #e5e5e5; }
+.app-menu__submenu-trigger { position: relative; padding-right: 26px; }
+.app-menu__submenu-trigger::after { content: "›"; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: inherit; font-size: 16px; }
+.app-menu[data-input-mode="pointer"] .app-menu__item:hover:not(:disabled):not([aria-disabled="true"]),
+.app-menu[data-input-mode="keyboard"] .app-menu__item:focus:not(:disabled):not([aria-disabled="true"]),
+.app-menu[data-input-mode="keyboard"] .app-menu__item:focus-within:not(:disabled):not([aria-disabled="true"]),
+.app-menu .app-menu__item.is-selected,
+.menu-button.app-menu__item:hover, .menu-button.app-menu__item.is-open {
+  background: var(--menu-hover-background, #e5f1fb);
+  color: var(--menu-hover-text, #1f1f1f);
+}
+.app-menu__item > span, .app-menu__item::after { color: inherit; }
+.menu-button.app-menu__item { width: auto; padding: 0 7px; border-radius: 0; }
+@media (forced-colors: active) {
+  .app-menu { border-color: CanvasText; background: Canvas; color: CanvasText; }
+  .app-menu[data-input-mode="pointer"] .app-menu__item:hover:not(:disabled),
+  .app-menu[data-input-mode="keyboard"] .app-menu__item:focus:not(:disabled),
+  .app-menu[data-input-mode="keyboard"] .app-menu__item:focus-within:not(:disabled),
+  .app-menu .app-menu__item.is-selected, .menu-button.app-menu__item.is-open {
+    background: Highlight; color: HighlightText; forced-color-adjust: none;
+  }
+  .app-menu__item:disabled { color: GrayText; }
+}

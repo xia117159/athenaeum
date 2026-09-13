@@ -58,7 +58,12 @@ export const completion = (async () => {
 
   const gateway = createTestGateway(() => {
     bootstrapCalls += 1;
-  }, interactions);
+  }, interactions, {
+    loadBootstrap: () => ({
+      ...createMockWorkspaceBootstrap("tauri"),
+      startupDiagnostics: ["Invalid persisted colorRulesRevision was reset to 0"]
+    })
+  });
 
   function Harness() {
     latestController = useWorkspaceController(gateway);
@@ -89,6 +94,12 @@ export const completion = (async () => {
 
       assert.equal(bootstrapCalls, 1);
       assert.equal(latestController?.state.layoutMode, "quad");
+      assert.equal(
+        latestController?.state.notifications.some((item) =>
+          item.intent === "warning" && item.message.includes("colorRulesRevision")
+        ),
+        true
+      );
 
       await act(async () => {
         latestController?.actions.setLayoutMode("dual");
@@ -3278,6 +3289,7 @@ export const completion = (async () => {
       };
       let taskController: ReturnType<typeof useWorkspaceController> | undefined;
       let taskListener: Parameters<WorkspaceGateway["listenOperationTasks"]>[0] | undefined;
+      let clearListener: Parameters<WorkspaceGateway["listenOperationRecordsCleared"]>[0] | undefined;
       let currentTask: OperationTaskSnapshot;
       const taskPath = "sftp://deploy@edge-01/releases";
       const taskNow = "2026-06-10T08:00:00Z";
@@ -3325,6 +3337,10 @@ export const completion = (async () => {
         listOperationTasks: async () => ({ tasks: [currentTask], taskSequence: currentTask.sequence }),
         listenOperationTasks: async (handler) => {
           taskListener = handler;
+          return () => undefined;
+        },
+        listenOperationRecordsCleared: async (handler) => {
+          clearListener = handler;
           return () => undefined;
         }
       });
@@ -3384,6 +3400,68 @@ export const completion = (async () => {
           () => taskInteractions.resolvedPaths.includes(taskPath),
           "background inline rename completion did not refresh the source directory"
         );
+
+        const failedTask: OperationTaskSnapshot = {
+          ...baseTask,
+          taskId: "failed-background-task",
+          requestId: "request-failed-background-task",
+          status: "failed",
+          finishedAt: "2026-06-10T08:00:02Z",
+          message: "Expected operation failure",
+          cancelable: false,
+          sequence: 3,
+          updatedAt: "2026-06-10T08:00:02Z"
+        };
+        await act(async () => {
+          taskListener?.({
+            taskId: failedTask.taskId,
+            sequence: failedTask.sequence,
+            updatedAt: failedTask.updatedAt,
+            snapshot: failedTask
+          });
+          await flushEffects();
+        });
+        assert.equal(
+          taskController?.state.notifications.some((notification) => notification.message === failedTask.message),
+          false
+        );
+        const partialTask: OperationTaskSnapshot = {
+          ...failedTask,
+          taskId: "partial-background-task",
+          requestId: "request-partial-background-task",
+          status: "partialSucceeded",
+          message: "Expected partial operation failure",
+          sequence: 4
+        };
+        await act(async () => {
+          taskListener?.({
+            taskId: partialTask.taskId,
+            sequence: partialTask.sequence,
+            updatedAt: partialTask.updatedAt,
+            snapshot: partialTask
+          });
+          await flushEffects();
+        });
+        assert.equal(
+          taskController?.state.notifications.some((notification) => notification.message === partialTask.message),
+          false
+        );
+        assert.equal(taskController?.state.operations.tasks.length, 3);
+        await act(async () => {
+          clearListener?.({
+            status: "cleared",
+            eligibleUndoableCount: 0, eligibleRecoveryCount: 0,
+            removedTaskIds: [currentTask.taskId, failedTask.taskId, partialTask.taskId],
+            removedRecordIds: [],
+            taskClearWatermark: 5,
+            historyClearWatermark: 0,
+            protectedRecordIds: [],
+            cleanupWarnings: []
+          });
+          await flushEffects();
+        });
+        assert.equal(taskController?.state.operations.tasks.length, 0);
+        assert.equal(taskController?.state.operations.taskClearTombstones[failedTask.taskId], 5);
       } finally {
         await act(async () => {
           taskRoot.unmount();
@@ -4313,6 +4391,19 @@ export const completion = (async () => {
       await waitFor(() => interactions.savedSettingsModels.length === 1, "context menu default was not persisted");
       assert.equal(interactions.savedSettingsModels[0].contextMenu.defaultMenu, "custom");
       assert.equal(latestController?.state.settings.model.contextMenu.defaultMenu, "custom");
+    });
+
+    await assertTest("useWorkspaceController persists global file visibility changes through the workspace gateway", async () => {
+      interactions.savedSettingsModels.length = 0;
+
+      await act(async () => {
+        latestController?.actions.setFileVisibility({ showHidden: true });
+        await flushEffects();
+      });
+
+      await waitFor(() => interactions.savedSettingsModels.length === 1, "file visibility was not persisted");
+      assert.equal(interactions.savedSettingsModels[0].fileVisibility.showHidden, true);
+      assert.equal(latestController?.state.fileVisibility.showHidden, true);
     });
   } finally {
     await act(async () => {

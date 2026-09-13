@@ -32,6 +32,7 @@ import {
 import { cancelWorkspaceSearch, runWorkspaceSearch } from "./workspaceSearch";
 import {
   cancelWorkspaceOperation,
+  clearWorkspaceOperationRecords,
   copyWorkspaceEntries,
   createWorkspaceDirectory,
   createWorkspaceFile,
@@ -39,6 +40,7 @@ import {
   listWorkspaceOperationHistory,
   listWorkspaceOperationTasks,
   listenWorkspaceOperationHistory,
+  listenWorkspaceOperationRecordsCleared,
   listenWorkspaceOperationTasks,
   moveWorkspaceEntries,
   renameWorkspaceEntry,
@@ -52,7 +54,6 @@ import {
   deleteWorkspaceNavigationItem,
   markWorkspaceNavigationItemOpened,
   saveWorkspaceBookmark,
-  saveWorkspaceColorRules,
   saveWorkspaceDetailsRowHeight,
   saveWorkspaceHotlist,
   saveWorkspaceNavigationItem,
@@ -85,12 +86,34 @@ import {
   mapWorkspaceBootstrap
 } from "./workspaceMappers";
 import {
+  getColorFilterSnapshot,
+  listenColorFilterChanged,
+  replaceColorFilterRules,
+  setColorFilterEnabled,
+  validateColorFilterRule
+} from "./colorFilterGateway";
+import type {
+  ColorFilterConfigSnapshot,
+  ColorFilterMutationResult,
+  ColorFilterValidationResult,
+  ReplaceColorRulesRequest,
+  ReplaceColorRulesResult
+} from "./colorFilterTypes";
+import {
   getWorkspaceItemProperties
 } from "./workspacePropertiesGateway";
+import { createDirectorySizesGateway } from "./directorySizeGateway";
+import type { DirectorySizesGateway } from "./directorySizeTypes";
+import type { FileOpenProgress, FileOpenRequest, FileOpenResult, AssociationProgramInfo } from "../../app/fileAssociations";
+import { openWorkspaceFile, cancelWorkspaceFileOpen, inspectAssociationPrograms, chooseAssociationProgram } from "./fileOpeningGateway";
+import { createBatchRenameGateway, type BatchRenameGateway } from "./batchRenameGateway";
+import { createTemplateGateway, type TemplateGateway } from "./templateCreationGateway";
 import type {
   RemoteHostKeyInfo as BackendRemoteHostKeyInfo,
   OperationHistoryEventEnvelope,
   OperationHistoryListSnapshot,
+  OperationClearOutcome,
+  OperationClearRequest,
   OperationIntent,
   OperationTaskEventEnvelope,
   OperationTaskListSnapshot,
@@ -124,6 +147,9 @@ import type {
 } from "./types";
 
 export interface WorkspaceGateway {
+  batchRename: BatchRenameGateway;
+  templates: TemplateGateway;
+  directorySizes?: DirectorySizesGateway;
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
   listDriveRoots(): Promise<import("../../app/types").DriveRoot[]>;
@@ -139,7 +165,10 @@ export interface WorkspaceGateway {
   saveSession(state: WorkspaceState): Promise<void>;
   saveLayout(layoutMode: PanelLayoutMode, layoutRatios: LayoutRatios, treeVisible: boolean): Promise<void>;
   saveShortcuts(shortcuts: SettingsModel["shortcuts"]): Promise<void>;
-  saveColorRules(colorRules: SettingsModel["colorRules"]): Promise<void>;
+  getColorFilterSnapshot(): Promise<ColorFilterConfigSnapshot>;
+  setColorFilterEnabled(enabled: boolean): Promise<ColorFilterMutationResult>;
+  replaceColorRules(request: ReplaceColorRulesRequest): Promise<ReplaceColorRulesResult>;
+  validateColorRule(expression: string): Promise<ColorFilterValidationResult>;
   saveDetailsRowHeight(value: number): Promise<void>;
   saveTheme(theme: SettingsModel["theme"]): Promise<void>;
   saveSettingsModel(model: SettingsModel): Promise<void>;
@@ -157,6 +186,10 @@ export interface WorkspaceGateway {
   markNavigationItemOpened(id: string): Promise<{ navigationItems: NavigationItem[] }>;
   resolveNavigationTargets(paths: string[]): Promise<NavigationTargetInfo[]>;
   openPathWithSystemDefault(path: string): Promise<void>;
+  openFile(request: FileOpenRequest, onProgress: (progress: FileOpenProgress) => void): Promise<FileOpenResult>;
+  cancelFileOpen(requestId: string): Promise<boolean>;
+  inspectAssociationPrograms(paths: string[]): Promise<AssociationProgramInfo[]>;
+  chooseAssociationProgram(): Promise<string | null>;
   saveRemoteProfile(profile: RemoteConnectionProfile, password?: string): Promise<{ remoteProfiles: RemoteConnectionProfile[] }>;
   deleteRemoteProfile(id: string): Promise<{ remoteProfiles: RemoteConnectionProfile[] }>;
   testRemoteProfile(profile: RemoteConnectionProfile, password?: string): Promise<BackendRemoteTestResult>;
@@ -166,7 +199,9 @@ export interface WorkspaceGateway {
   listOperationHistory(): Promise<OperationHistoryListSnapshot>;
   listenOperationTasks(handler: (event: OperationTaskEventEnvelope) => void): Promise<() => void>;
   listenOperationHistory(handler: (event: OperationHistoryEventEnvelope) => void): Promise<() => void>;
+  listenOperationRecordsCleared(handler: (event: OperationClearOutcome) => void): Promise<() => void>;
   listenSettingsChanged(handler: (event: WorkspaceSettingsProjection) => void): Promise<() => void>;
+  listenColorFilterChanged(handler: (snapshot: ColorFilterConfigSnapshot) => void): Promise<() => void>;
   listenEntryMetadataChanged(handler: (paths: string[]) => void): Promise<() => void>;
   setWatchRoots(request: WorkspaceWatchRootsRequest): Promise<void>;
   listenFileSystemChanges(handler: (event: WorkspaceFsChangedEvent) => void): Promise<() => void>;
@@ -202,6 +237,7 @@ export interface WorkspaceGateway {
   cancelOperation(taskId: string): Promise<OperationTaskSnapshot>;
   undoLatestOperation(requestId?: string): Promise<OperationTaskSnapshot>;
   undoOperation(recordId: string, requestId?: string): Promise<OperationTaskSnapshot>;
+  clearOperationRecords(request: OperationClearRequest): Promise<OperationClearOutcome>;
   setSystemFileClipboard(paths: string[], mode: SystemFileClipboard["mode"]): Promise<void>;
   readSystemFileClipboard(): Promise<SystemFileClipboard | null>;
   startSystemFileDrag(paths: string[]): Promise<SystemFileClipboard["mode"] | null>;
@@ -234,6 +270,9 @@ export function createWorkspaceGateway(): WorkspaceGateway {
   let currentWatchRootsKey = "";
 
   return {
+    batchRename: createBatchRenameGateway(),
+    templates: createTemplateGateway(),
+    directorySizes: createDirectorySizesGateway(),
     async loadBootstrap() {
       if (!hasTauriRuntime()) {
         return createMockWorkspaceBootstrap("mock");
@@ -329,9 +368,22 @@ return { statuses: {}, isGitRepo: false };
       await saveWorkspaceShortcuts(shortcuts);
     },
 
-    async saveColorRules(colorRules) {
-      await saveWorkspaceColorRules(colorRules);
+    async getColorFilterSnapshot() {
+      return getColorFilterSnapshot();
     },
+
+    async setColorFilterEnabled(enabled) {
+      return setColorFilterEnabled(enabled);
+    },
+
+    async replaceColorRules(request) {
+      return replaceColorFilterRules(request);
+    },
+
+    async validateColorRule(expression) {
+      return validateColorFilterRule(expression);
+    },
+
 
     async saveDetailsRowHeight(value) {
       await saveWorkspaceDetailsRowHeight(value);
@@ -400,6 +452,10 @@ return { statuses: {}, isGitRepo: false };
     async openPathWithSystemDefault(path) {
       await openWorkspacePathWithSystemDefault(path);
     },
+    openFile: openWorkspaceFile,
+    cancelFileOpen: cancelWorkspaceFileOpen,
+    inspectAssociationPrograms,
+    chooseAssociationProgram,
 
     async saveRemoteProfile(profile, password) {
       return saveWorkspaceRemoteProfile(profile, password);
@@ -437,8 +493,15 @@ return { statuses: {}, isGitRepo: false };
       return listenWorkspaceOperationHistory(handler);
     },
 
+    async listenOperationRecordsCleared(handler) {
+      return listenWorkspaceOperationRecordsCleared(handler);
+    },
+
     async listenSettingsChanged(handler) {
       return listenWorkspaceSettingsChanged(handler);
+    },
+    async listenColorFilterChanged(handler) {
+      return listenColorFilterChanged(handler);
     },
     async listenEntryMetadataChanged(handler) {
       return listenWorkspaceEntryMetadataChanged(handler);
@@ -494,6 +557,10 @@ return { statuses: {}, isGitRepo: false };
 
     async undoOperation(recordId, requestId) {
       return undoWorkspaceOperation(recordId, requestId);
+    },
+
+    async clearOperationRecords(request) {
+      return clearWorkspaceOperationRecords(request);
     },
 
     async setSystemFileClipboard(paths, mode) {

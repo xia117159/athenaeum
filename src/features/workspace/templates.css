@@ -1,0 +1,22 @@
+.template-settings { display: grid; align-content: start; gap: 10px; min-width: 0; font-size: 12px; }
+.template-settings > label { font-weight: 600; }
+.template-settings__path { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.template-settings__path input { flex: 1; min-width: 0; height: 30px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface, #fff); }
+.template-settings__path input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.template-settings__path button { flex: 0 0 100px; min-height: 30px; }
+.template-settings p { margin: 0; color: var(--text-muted); line-height: 1.6; }
+.template-settings .template-settings__error { color: #b42318; }
+
+.app-menu.template-menu { position: fixed; display: flex; flex-direction: column; min-width: min(180px, calc(100vw - 16px)); max-height: min(540px, calc(100vh - 16px)); padding: 0; overflow: hidden; }
+.template-menu__body { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 3px; }
+.template-menu__footer { flex: none; padding: 3px; border-top: 1px solid #e5e5e5; }
+.template-menu__row.app-menu__item { padding: 0; gap: 0; }
+.template-menu__row > input { flex: none; width: 14px; height: 14px; margin: 0 5px 0 7px; accent-color: var(--accent, #0078d4); cursor: default; }
+.app-menu__entry.template-menu__entry { flex: 1; padding: 0 6px 0 2px; }
+.template-menu__entry > span:not(.entry-icon), .template-menu__action > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-menu__entry > .entry-icon { flex: none; width: 16px; height: 16px; }
+.template-menu__entry > svg, .template-menu__action > svg { flex: none; }
+.template-menu__row.is-included { color: #666; }
+.template-menu__submit { font-weight: 600; }
+.template-menu__message { padding: 10px 8px; color: var(--text-muted, #626262); overflow-wrap: anywhere; white-space: normal; }
+.template-menu__error { color: #b42318; }

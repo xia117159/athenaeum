@@ -3,7 +3,6 @@ import {
   createBrowserSettingsSnapshot,
   toNavigationItemUpsertRequest,
   toBackendTheme,
-  toBackendColorRule,
   toBackendLayout,
   toBackendSettingsModelUpdate,
   toBackendShortcut,
@@ -61,44 +60,6 @@ assertTest("toBackendShortcut persists stable shortcut ids and accelerator bindi
   });
 });
 
-assertTest("toBackendColorRule maps matcher tokens to backend mode and pattern", () => {
-  assert.deepEqual(
-    toBackendColorRule(
-      {
-        id: "rule-rs",
-        label: "Rust",
-        matcher: "extension:rs",
-        color: "#ff6600",
-        previewText: "Rust files"
-      },
-      2
-    ),
-    {
-      id: "rule-rs",
-      name: "Rust",
-      target: "any",
-      mode: "extension",
-      pattern: "rs",
-      colorHex: "#ff6600",
-      priority: 3
-    }
-  );
-
-  assert.deepEqual(
-    toBackendColorRule(
-      {
-        id: "rule-hidden",
-        label: "Hidden",
-        matcher: "hidden",
-        color: "#888888",
-        previewText: "Hidden entries"
-      },
-      0
-    ).pattern,
-    null
-  );
-});
-
 assertTest("toBackendTheme persists normalized theme values", () => {
   assert.deepEqual(
     toBackendTheme({
@@ -106,6 +67,11 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       activeTabBackground: "#FFFFFF80",
       dropHighlightFill: "#ABCDEFAA",
       dropHighlightBorder: "not-a-color",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }),
     {
@@ -113,6 +79,11 @@ assertTest("toBackendTheme persists normalized theme values", () => {
       activeTabBackground: "#ffffff80",
       dropHighlightFill: "#abcdefaa",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   );
@@ -132,18 +103,28 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     colorRules: [
       {
         id: "rule-hidden",
-        label: "Hidden",
-        matcher: "hidden",
-        color: "#777777",
-        previewText: "Hidden"
+        name: "Hidden",
+        enabled: true,
+        target: "any",
+        expression: "Attributes HAS Hidden",
+        caseSensitive: false,
+        foregroundColorHex: "#777777",
+        backgroundColorHex: null,
+        priority: 1
       }
     ],
     tagRules: [],
     columns: [],
     navigationColumns: [],
     detailsRowHeight: 46,
+    sizeBarMode: "folder-max",
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
+    fileVisibility: {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    },
     contextMenu: {
       defaultMenu: "custom"
     },
@@ -152,28 +133,31 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       activeTabBackground: "invalid",
       dropHighlightFill: "#ABCDEF",
       dropHighlightBorder: "invalid",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   };
 
   assert.deepEqual(toBackendSettingsModelUpdate(model), {
+    fileAssociations: [],
+    templateRoot: "",
     shortcuts: [{ id: "navigate-forward", action: "navigate-forward", accelerator: "Alt+Right", scope: "panel" }],
-    colorRules: [
-      {
-        id: "rule-hidden",
-        name: "Hidden",
-        target: "any",
-        mode: "hidden",
-        pattern: null,
-        colorHex: "#777777",
-        priority: 1
-      }
-    ],
     columns: DEFAULT_COLUMNS,
     navigationColumns: NAVIGATION_COLUMNS,
     detailsRowHeight: 46,
+    sizeBarMode: "folder-max",
+    folderExpansionEnabled: false,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
+    fileVisibility: {
+      showHidden: true,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: false
+    },
     contextMenu: {
       defaultMenu: "custom"
     },
@@ -182,6 +166,11 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
       activeTabBackground: "#ffffff",
       dropHighlightFill: "#abcdef",
       dropHighlightBorder: "#0f6cbd",
+      sizeBarLow: "#dceaf7",
+      sizeBarHigh: "#3979b7",
+      menuHoverBackground: "#e5f1fb",
+      menuHoverText: "#1f1f1f",
+      fileHoverBorder: "#91c9f7",
       tabMinWidth: 4096
     }
   });
@@ -231,6 +220,11 @@ assertTest("createBrowserSettingsSnapshot provides a complete settings fallback 
   assert.equal(snapshot.bookmarks.length, 1);
   assert.equal(snapshot.hotlist.length, 0);
   assert.equal(snapshot.detailsRowHeight, 24);
+  assert.deepEqual(snapshot.fileVisibility, {
+    showHidden: false,
+    showSystem: false,
+    hideProtectedOperatingSystemFiles: true
+  });
   assert.deepEqual(snapshot.navigationColumns, NAVIGATION_COLUMNS);
   assert.equal(snapshot.layout.layoutMode, "dual");
   assert.equal(snapshot.theme!.panelFocusAccent, "#0f6cbd");

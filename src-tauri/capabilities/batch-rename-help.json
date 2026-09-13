@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "batch-rename-help",
+  "description": "Read the function catalog in the batch rename help window",
+  "windows": ["batch-rename-help"],
+  "permissions": ["allow-get-batch-rename-functions"]
+}

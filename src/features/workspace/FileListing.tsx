@@ -1,26 +1,27 @@
 import {
   type CSSProperties,
+  type ReactNode,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
-import {
-  clearEntryDrag,
-  hasEntryDragPayload,
-  readEntryDragPayload
-} from "./entryDrag";
+import { clearEntryDrag, hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { DetailsListBase } from "./DetailsListBase";
 import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
+import { FolderExpansionNameCell, FOLDER_INDENT_PX, FOLDER_TOGGLE_PX, releaseFolderExpansionControlFocus } from "./FolderExpansionNameCell";
+import type { FolderListingRow } from "./folderExpansion";
 import { FileSystemIcon } from "./FileSystemIcon";
 import { WORKSPACE_VIEW_MODE_MENU_ITEMS } from "./workspaceSharedMenus";
 import { modifiersMatchShortcutBinding } from "./workspaceShortcuts";
 import { devLog, devWarn } from "./devLog";
 import {
+  createInlineCreateEntry,
   getColumnHeaderMinWidth,
   getColumnPixelWidth,
   getDetailsCellText,
@@ -33,6 +34,7 @@ import {
   ICON_VIEW_MODES,
   type ListingEntry,
   renderDetailsCell,
+  renderDriveInfo,
   renderNameCell,
   renderTagStack,
   sortEntries
@@ -53,6 +55,7 @@ import type {
   TabViewMode
 } from "./types";
 import { formatDriveSize } from "./workspaceDirectoryGateway";
+import { getFileColorRowAttributes, getFileColorLabelAttributes } from "./fileColorStyle";
 
 type DropOperation = "copy" | "move";
 
@@ -292,6 +295,10 @@ export function FileListingShell({
   panelId,
   tabId,
   entries,
+  folderRows,
+  sizeHeaderAccessory,
+  onToggleFolderExpansion,
+  onRetryFolderExpansion,
   columns,
   sort,
   currentPath,
@@ -308,6 +315,8 @@ export function FileListingShell({
   onClearSelection,
   onOpen,
   detailsRowHeight,
+  sizeBarLow,
+  sizeBarHigh,
   tooltipHoverDelayMs = 200,
   onOpenContextMenu,
   onOpenNativeContextMenu,
@@ -327,11 +336,16 @@ export function FileListingShell({
   onInlineEditCommit,
   onInlineEditCancel,
   gitStatus,
-  selectionCursorId
+  selectionCursorId,
+  colorFilterEnabled = true
 }: {
   panelId: PanelId;
   tabId: string;
   entries: EntryViewModel[];
+  folderRows?: FolderListingRow[];
+  sizeHeaderAccessory?: ReactNode;
+  onToggleFolderExpansion?: (path: string) => void;
+  onRetryFolderExpansion?: (path: string) => void;
   columns: ColumnDefinition[];
   sort: SortState;
   currentPath: string;
@@ -348,6 +362,8 @@ export function FileListingShell({
   onClearSelection?: () => void;
   onOpen: (entry: EntryViewModel) => void;
   detailsRowHeight: number;
+  sizeBarLow?: string;
+  sizeBarHigh?: string;
   tooltipHoverDelayMs?: number;
   onOpenContextMenu: (payload: ContextMenuState) => void;
   onOpenNativeContextMenu: (payload: NativeContextMenuRequest) => void;
@@ -368,30 +384,18 @@ export function FileListingShell({
   onInlineEditCancel: () => void;
   gitStatus?: Record<string, GitFileStatus>;
   selectionCursorId?: string | null;
+  colorFilterEnabled?: boolean;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
-  const inlineCreateEntry: ListingEntry | undefined =
-    inlineEdit?.mode === "create-folder" || inlineEdit?.mode === "create-file"
-      ? {
-          id: inlineEdit.mode === "create-folder" ? "__inline-create-folder__" : "__inline-create-file__",
-          name: inlineEdit.value,
-          kind: inlineEdit.kind,
-          path: `${inlineEdit.parentPath}${inlineEdit.mode === "create-folder" ? "__inline_create_folder__" : "__inline_create_file__"}`,
-          parentPath: inlineEdit.parentPath,
-          sizeLabel: "--",
-          modifiedLabel: "",
-          extension: inlineEdit.mode === "create-file" && inlineEdit.value.includes(".") ? `.${inlineEdit.value.split(".").pop()}` : "",
-          attributes: inlineEdit.kind === "folder" ? ["D"] : ["A"],
-          accentColor: "#0f6cbd",
-          tags: [],
-          comment: "",
-          description: inlineEdit.mode === "create-folder" ? "New folder" : "New file",
-          inlineCreate: true
-        }
-      : undefined;
-  const sortedEntries: ListingEntry[] = inlineCreateEntry
-    ? [inlineCreateEntry, ...sortEntries(entries, sort, currentPath)]
-    : sortEntries(entries, sort, currentPath);
+  const inlineCreateEntry = createInlineCreateEntry(inlineEdit);
+  const hasSizeAccessory = viewMode === "details" && Boolean(sizeHeaderAccessory);
+  const headerMinWidth = (column: ColumnDefinition) => getColumnHeaderMinWidth(column, hasSizeAccessory);
+  const headerPixelWidth = (column: ColumnDefinition) => getColumnPixelWidth(column, hasSizeAccessory);
+  const treeRows = viewMode === "details" ? folderRows : undefined;
+  const rowsById = new Map(treeRows?.map((row) => [row.entry.id, row]));
+  const orderedEntries = treeRows ? treeRows.map((row) => row.entry) : sortEntries(entries, sort, currentPath);
+  const sortedEntries: ListingEntry[] = inlineCreateEntry ? [inlineCreateEntry, ...orderedEntries] : orderedEntries;
+  const treeNameAllowance = treeRows?.reduce((max, row) => Math.max(max, row.depth * FOLDER_INDENT_PX + FOLDER_TOGGLE_PX), 0) ?? 0;
 
   const prevKeyboardNavTokenRef = useRef<symbol | undefined>(undefined);
 
@@ -411,6 +415,7 @@ export function FileListingShell({
     if (!element || !scrollContainer) {
       return;
     }
+    releaseFolderExpansionControlFocus(scrollContainer);
     // 手动计算滚动位置以考虑 sticky header 的遮挡
     const containerRect = scrollContainer.getBoundingClientRect();
     const elementRect = element.getBoundingClientRect();
@@ -426,7 +431,9 @@ export function FileListingShell({
       scrollContainer.scrollTop += elementBottom - (containerRect.height - marginBottom);
     }
   }, [keyboardNavToken, selectedEntryIds]);
-  const selectedPaths = entries.filter((entry) => selectedEntryIds.includes(entry.id)).map((entry) => entry.path);
+  // 选择命中用 Set：点击选择的重绘路径避免 O(n) 数组扫描（V2 选择延迟修复）。
+  const selectedIdSet = useMemo(() => new Set(selectedEntryIds), [selectedEntryIds]);
+  const selectedPaths = entries.filter((entry) => selectedIdSet.has(entry.id)).map((entry) => entry.path);
   const cutPathSet = new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dropOperation, setDropOperation] = useState<DropOperation>("move");
@@ -479,7 +486,7 @@ export function FileListingShell({
   // 一个 window 监听器导致“多面板下 Ctrl+A 对所有面板同时生效”的 BUG。
 
   const visibleOrderedEntryIds = sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id);
-  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns);
+  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns, hasSizeAccessory);
   const gridStyle = {
     gridTemplateColumns: detailsGridMetrics.gridTemplateColumns,
     width: `${detailsGridMetrics.width}px`
@@ -514,14 +521,14 @@ export function FileListingShell({
   };
 
   const getDragPaths = (entry: EntryViewModel) => {
-    if (selectedEntryIds.includes(entry.id) && selectedPaths.length > 0) {
+    if (selectedIdSet.has(entry.id) && selectedPaths.length > 0) {
       return Array.from(new Set(selectedPaths));
     }
     return [entry.path];
   };
 
   const getContextMenuPaths = (entry: EntryViewModel) => {
-    if (selectedEntryIds.includes(entry.id) && selectedPaths.length > 0) {
+    if (selectedIdSet.has(entry.id) && selectedPaths.length > 0) {
       return Array.from(new Set(selectedPaths));
     }
     return [entry.path];
@@ -594,8 +601,19 @@ export function FileListingShell({
     />
   );
 
-  const renderEntryNameContent = (entry: ListingEntry) =>
-    isInlineEditingEntry(entry) ? renderInlineEditInput() : <span>{entry.name}</span>;
+  // 名称标签：规则背景只涂在这个元素后面（宽度=名称内容渲染宽度），
+  // 选中/拖放背景只作用于周围行/卡片表面，标签配色保持在表面之上。
+  const renderEntryNameContent = (entry: ListingEntry) => {
+    if (isInlineEditingEntry(entry)) {
+      return renderInlineEditInput();
+    }
+    const label = getFileColorLabelAttributes(entry, colorFilterEnabled);
+    return (
+      <span className={label.className || undefined} style={label.style}>
+        {entry.name}
+      </span>
+    );
+  };
 
   const {
     entryTooltip,
@@ -636,7 +654,7 @@ export function FileListingShell({
     event.preventDefault();
     event.stopPropagation();
     hideEntryTooltip();
-    if (!selectedEntryIds.includes(entry.id)) {
+    if (!selectedIdSet.has(entry.id)) {
       onSelect(entry, false);
     }
     onOpenContextMenu({
@@ -661,8 +679,8 @@ export function FileListingShell({
     hideEntryTooltip();
 
     cleanupEntryPointerDragRef.current?.();
-    const previewEntries = selectedEntryIds.includes(entry.id)
-      ? sortedEntries.filter((candidate) => !candidate.inlineCreate && selectedEntryIds.includes(candidate.id))
+    const previewEntries = selectedIdSet.has(entry.id)
+      ? sortedEntries.filter((candidate) => !candidate.inlineCreate && selectedIdSet.has(candidate.id))
       : [entry];
     const previewEntry = previewEntries.find((candidate) => candidate.id === entry.id) ?? previewEntries[0] ?? entry;
     const pointerDrag: ActiveEntryPointerDrag = {
@@ -855,6 +873,9 @@ export function FileListingShell({
 
         lastClickedEntryIdRef.current = entry.id;
         onSelect(entry, event.ctrlKey || event.metaKey);
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && viewMode === "details" && folderRows !== undefined && entry.kind === "folder" && !entry.driveInfo) {
+          onToggleFolderExpansion?.(entry.path);
+        }
       },
       onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (suppressNextEntryClickRef.current === entry.id) {
@@ -874,7 +895,7 @@ export function FileListingShell({
         event.preventDefault();
         event.stopPropagation();
         const requestedMenu = getRequestedContextMenu(event);
-        if (!selectedEntryIds.includes(entry.id)) {
+        if (!selectedIdSet.has(entry.id)) {
           onSelect(entry, false);
         }
         if (requestedMenu === "custom") {
@@ -974,30 +995,21 @@ export function FileListingShell({
     };
   };
 
-  const renderDriveInfo = (di: NonNullable<EntryViewModel["driveInfo"]>) => {
-    if (di.totalBytes == null) return null;
-    const pct = Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100));
-    return (
-      <div className="drive-info">
-        <div className="drive-usage-bar"><div className={`drive-usage-bar__fill${pct >= 90 ? " drive-usage-bar__fill--critical" : ""}`} style={{ width: `${pct}%` }} /></div>
-        <span className="drive-info__text">可用: {formatDriveSize(di.availableBytes)} / 总计: {formatDriveSize(di.totalBytes)}</span>
-      </div>
-    );
-  };
 
   const renderEmptyState = () => <div className="file-listing__empty">当前目录为空</div>;
 
   const renderDetailsRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={`entry-${entry.id}`}
-          className={`file-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-row${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           id={`entry-${entry.id}`}
           data-panel-id={panelId}
           data-entry-path={entry.path}
@@ -1016,7 +1028,10 @@ export function FileListingShell({
                 data-cell-column-id={column.id}
                 onContextMenu={column.id === "comment" ? (event) => openCommentContextMenu(event, entry) : undefined}
               >
-                {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+                <FolderExpansionNameCell row={column.id === "name" ? rowsById.get(entry.id) : undefined}
+                  onToggle={onToggleFolderExpansion} onRetry={onRetryFolderExpansion}>
+                  {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path), sizeBarLow, sizeBarHigh)}
+                </FolderExpansionNameCell>
               </div>
             ))}
           </div>
@@ -1027,16 +1042,17 @@ export function FileListingShell({
 
   const renderIconCards = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-card file-card--icon${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-card file-card--icon${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1066,16 +1082,17 @@ export function FileListingShell({
 
   const renderListRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-list-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-list-item${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1093,18 +1110,19 @@ export function FileListingShell({
   const renderTileCards = () => {
     const tileIcon = inlineIconSpec;
     return sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
       const di = entry.driveInfo;
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       const drivePct = di?.totalBytes != null ? Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100)) : null;
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-card file-card--tile${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-card file-card--tile${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1143,16 +1161,17 @@ export function FileListingShell({
 
   const renderContentRows = () =>
     sortedEntries.map((entry) => {
-      const isSelected = selectedEntryIds.includes(entry.id);
+      const isSelected = selectedIdSet.has(entry.id);
       const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
       const isEditing = isInlineEditingEntry(entry);
       const isCut = isCutEntry(entry);
+      const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
           key={entry.id}
           id={`entry-${entry.id}`}
-          className={`file-content-item${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
-          style={{ "--row-accent": entry.accentColor } as CSSProperties}
+          className={`file-content-item${color.classNameSuffix}${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}${isEditing ? " is-inline-editing" : ""}${isCut ? " is-cut" : ""}`}
+          style={color.style}
           data-panel-id={panelId}
           data-entry-path={entry.path}
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
@@ -1487,8 +1506,9 @@ export function FileListingShell({
             sort={sort}
             gap={4}
             getColumnLabel={getLocalizedColumnLabel}
-            getColumnMinWidth={getColumnHeaderMinWidth}
-            getColumnPixelWidth={getColumnPixelWidth}
+            getColumnMinWidth={headerMinWidth}
+            getColumnPixelWidth={headerPixelWidth}
+            renderHeaderAccessory={(column) => column.id === "size" ? sizeHeaderAccessory : null}
             onSort={onSort}
             onResizeColumn={onResizeColumn}
             onMoveColumn={onMoveColumn}
@@ -1504,8 +1524,8 @@ export function FileListingShell({
                   cellDataAttribute: "data-cell-column-id",
                   getHeaderText: getLocalizedColumnLabel,
                   getCellText: (entry, candidate) => getDetailsCellText(entry, candidate.id, currentPath),
-                  getMinWidth: getColumnHeaderMinWidth,
-                  getIconAllowance: (candidate) => (candidate.id === "name" ? 22 : 0)
+                  getMinWidth: headerMinWidth,
+                  getIconAllowance: (candidate) => (candidate.id === "name" ? 22 + treeNameAllowance : 0)
                 })
               )
             }

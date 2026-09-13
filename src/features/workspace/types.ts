@@ -4,6 +4,11 @@ import type {
   OperationPathRef,
   OperationTaskSnapshot
 } from "../../app/types";
+import type { ColorFilterRule, RevisionToken } from "./colorFilterTypes";
+import type { FileAssociationRule } from "../../app/fileAssociations";
+import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
+import type { BatchRenameDialogState, RenameTarget } from "./batchRenameState";
+import type { TemplateMenuState, TemplateCreationPending } from "./templateCreationState";
 
 export type DataSource = "mock" | "tauri";
 
@@ -11,9 +16,11 @@ export const THIS_PC_PATH = "此电脑";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
 export type SettingsSection =
+  | "templates"
   | "shortcuts"
   | "file-list"
   | "menu-mouse"
+  | "file-associations"
   | "appearance"
   | "color-rules"
   | "tag-rules"
@@ -44,6 +51,7 @@ export type EntryFocusMove =
   | { kind: "absolute"; position: "first" | "last" }
   | { kind: "page"; direction: "up" | "down"; pageSize: number };
 export type ContextMenuDefault = "native" | "custom";
+export type SizeBarMode = "folder-total" | "folder-max";
 export type RemoteAuthKind = "password" | "keyFile" | "anonymous";
 export type SortDirection = "asc" | "desc";
 export type RemoteConnectionState = "unknown" | "connecting" | "connected" | "error";
@@ -94,6 +102,7 @@ export interface EntryViewModel {
   parentPath: string;
   sizeBytes?: number | null;
   sizeLabel: string;
+  sizeDisplay?: import("./directorySizeTypes").EntrySizeDisplay;
   createdLabel?: string;
   modifiedLabel: string;
   accessedLabel?: string;
@@ -103,6 +112,8 @@ export interface EntryViewModel {
   isSystem?: boolean;
   isProtectedOperatingSystem?: boolean;
   accentColor: string;
+  foregroundColorHex?: string | null;
+  backgroundColorHex?: string | null;
   tags: string[];
   comment?: string;
   description: string;
@@ -119,9 +130,24 @@ export interface DirectorySnapshot {
   location: LocationDescriptor;
   breadcrumbs: BreadcrumbItem[];
   entries: EntryViewModel[];
+  sizeFingerprint?: string | null;
+  sizeIdentityReliable?: boolean;
+}
+
+export interface FolderExpansionBranch {
+  path: string;
+  entries: EntryViewModel[];
+  status: "idle" | "loading" | "ready" | "error";
+  sizeFingerprint?: string | null;
+  sizeIdentityReliable?: boolean;
+  requestId?: number;
+  errorMessage?: string;
+  selectionReplacements?: SelectionPathReplacement[];
 }
 
 export interface SelectionPathReplacement {
+  panelId?: PanelId;
+  tabId?: string;
   fromPath: string;
   toPath: string;
 }
@@ -169,14 +195,6 @@ export interface ShortcutBinding {
   scope: ShortcutScope;
   binding: string;
   description: string;
-}
-
-export interface ColorRule {
-  id: string;
-  label: string;
-  matcher: string;
-  color: string;
-  previewText: string;
 }
 
 export interface TagRule {
@@ -266,13 +284,7 @@ export interface NavigationState {
   gitStatusLoadingDirs: string[];
 }
 
-export interface ThemeSettings {
-  panelFocusAccent: string;
-  activeTabBackground: string;
-  dropHighlightFill: string;
-  dropHighlightBorder: string;
-  tabMinWidth: number;
-}
+export type ThemeSettings = import("../../app/types").UiTheme;
 
 export interface ContextMenuSettings {
   defaultMenu: ContextMenuDefault;
@@ -284,14 +296,22 @@ export interface SortState {
 }
 
 export interface SettingsModel {
+  templateRoot?: string;
   shortcuts: ShortcutBinding[];
-  colorRules: ColorRule[];
+  fileAssociations?: FileAssociationRule[];
+  colorRules: ColorFilterRule[];
+  colorFilterEnabled?: boolean;
+  colorFilterRevision?: RevisionToken;
+  colorRulesRevision?: RevisionToken;
   tagRules: TagRule[];
   columns: ColumnDefinition[];
   navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
+  sizeBarMode: SizeBarMode;
+  folderExpansionEnabled?: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
+  fileVisibility: FileVisibilityState;
   contextMenu: ContextMenuSettings;
   theme: ThemeSettings;
 }
@@ -327,6 +347,7 @@ export interface NotificationItem {
 }
 
 export interface ContextMenuState {
+  renameTarget?: RenameTarget;
   x: number;
   y: number;
   panelId: PanelId;
@@ -351,14 +372,18 @@ export type {
 };
 
 export interface OperationWorkspaceState {
-  tasksOpen: boolean;
   tasks: OperationTaskSnapshot[];
   taskSequence: number;
+  taskSnapshotSequence: number;
   history: OperationHistoryRecord[];
   historySequence: number;
+  historySnapshotSequence: number;
+  historyRecordSequences: Record<string, number>;
+  taskClearTombstones: Record<string, number>;
+  historyClearTombstones: Record<string, number>;
 }
 
-export type InformationPanelTab = "properties" | "search" | "history";
+export type InformationPanelTab = "properties" | "search";
 
 export type ItemPropertyField =
   | "name"
@@ -471,6 +496,7 @@ export interface NativeContextMenuRequest {
 export type NativeBackgroundContextMenuAction =
   | { type: "createFile" }
   | { type: "createFolder" }
+  | { type: "createTemplate" }
   | { type: "setViewMode"; viewMode: TabViewMode }
   | { type: "setSort"; columnId?: ColumnId; direction?: SortDirection }
   | { type: "paste" };
@@ -487,6 +513,7 @@ export interface NativeBackgroundContextMenuResult {
 }
 
 export type NativeSelectionContextMenuAction =
+  | { type: "rename" }
   | { type: "copyName" }
   | { type: "copyFullPath" }
   | { type: "copyParentPath" }
@@ -494,6 +521,8 @@ export type NativeSelectionContextMenuAction =
   | { type: "copyExtension" };
 
 export interface NativeSelectionContextMenuShortcuts {
+  allowRename?: boolean;
+  rename?: string;
   copyName: string;
   copyFullPath: string;
 }
@@ -587,6 +616,12 @@ export interface TabState {
   history: string[];
   historyIndex: number;
   selectedEntryIds: string[];
+  /** Transient interaction revision and selection to apply after operation-driven refreshes. */
+  selectionRevision?: number;
+  selectionRestore?: { rootPath: string; paths: string[] };
+  /** Transient navigation intent; retained after completion to reject late menu results. */
+  navigationRevision?: number;
+  pendingNavigationRequestId?: number;
   /**
    * Shift 区间选中的锚点条目 id。仅在按下 Shift 进行区间多选时确立，
    * 纯方向键/点击/进入新目录会复位为 null。仅内存态（不参与会话持久化）。
@@ -601,6 +636,9 @@ export interface TabState {
    */
   selectionCursorId?: string | null;
   expandedNodePaths: string[];
+  /** Transient details-list branches; independent of the navigation tree and session. */
+  folderExpansion?: Record<string, FolderExpansionBranch>;
+  directorySizes?: import("./directorySizeTypes").DirectorySizeTabState;
   viewMode: TabViewMode;
   sort: SortState;
   columns: ColumnDefinition[];
@@ -634,6 +672,7 @@ export interface LayoutRatios {
 
 export interface WorkspaceBootstrap {
   source: DataSource;
+  startupDiagnostics: string[];
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
   treeVisible: boolean;
@@ -654,6 +693,7 @@ export interface WorkspaceState {
   layoutMode: PanelLayoutMode;
   layoutRatios: LayoutRatios;
   treeVisible: boolean;
+  colorFilterTogglePending: boolean;
   fileVisibility: FileVisibilityState;
   syncScroll: boolean;
   panels: Record<PanelId, PanelState>;
@@ -669,6 +709,12 @@ export interface WorkspaceState {
   clipboard?: ClipboardState;
   notifications: NotificationItem[];
   contextMenu?: ContextMenuState;
+  menuBar?: import("./workspaceMenuState").WorkspaceMenuBarState;
+  openWithMenu?: OpenWithMenuState;
+  batchRename?: BatchRenameDialogState;
+  templateMenu?: TemplateMenuState;
+  templateCreation?: TemplateCreationPending;
+  fileOpens?: PendingFileOpen[];
   operations: OperationWorkspaceState;
   keyboardNavToken?: symbol;
 }

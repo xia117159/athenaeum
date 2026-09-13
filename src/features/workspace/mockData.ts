@@ -1,3 +1,4 @@
+import { DEFAULT_THEME } from "./workspaceTheme";
 import type {
   BookmarkItem,
   DirectoryNode,
@@ -13,6 +14,7 @@ import type {
   TabState,
   WorkspaceBootstrap
 } from "./types";
+import { createMockColorFilterSnapshot } from "./colorFilterMockData";
 import { THIS_PC_PATH } from "./types";
 import {
   cloneColumns,
@@ -20,7 +22,7 @@ import {
   DEFAULT_METADATA_RETENTION_HOURS,
   DEFAULT_TOOLTIP_HOVER_DELAY_MS
 } from "./workspaceFileListDefaults";
-import { DEFAULT_SHORTCUTS } from "./workspaceMappers";
+import { DEFAULT_SHORTCUTS } from "./shortcutCatalog";
 
 type CatalogDirectory = {
   path: string;
@@ -108,13 +110,21 @@ function createFileEntry(
   options: Partial<
     Pick<
       EntryViewModel,
-      "sizeBytes" | "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "tags" | "description" | "contentText"
+      "sizeBytes" | "sizeLabel" | "modifiedLabel" | "attributes" | "accentColor" | "foregroundColorHex" |
+      "backgroundColorHex" | "tags" | "description" | "contentText"
     >
   > = {}
 ): EntryViewModel {
   const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
   const sizeLabel = options.sizeLabel ?? "24 KB";
   const attributes = options.attributes ?? ["A"];
+  const foregroundColorHex = options.foregroundColorHex ?? (
+    name.toLocaleLowerCase().endsWith(".zip")
+      ? "#2266a8"
+      : attributes.includes("S")
+        ? "#8d4a42"
+        : null
+  );
   return {
     id: `${parentPath}:${name}`,
     name,
@@ -127,6 +137,8 @@ function createFileEntry(
     extension,
     attributes, isHidden: attributes.includes("H"), isSystem: attributes.includes("S"), isProtectedOperatingSystem: attributes.includes("H") && attributes.includes("S"),
     accentColor: options.accentColor ?? "#29659f",
+    foregroundColorHex,
+    backgroundColorHex: options.backgroundColorHex ?? null,
     tags: options.tags ?? [],
     description: options.description ?? "用于前端渲染的模拟文件。",
     contentText: options.contentText
@@ -894,26 +906,16 @@ export function createTabState(
 }
 
 function createSettingsModel(): SettingsModel {
+  const colorFilter = createMockColorFilterSnapshot();
   return {
     // 复用 `DEFAULT_SHORTCUTS`（与设置界面的可配置快捷键默认表同源），
     // 避免在此处维护一份重复的快捷键清单导致与本任务的列表导航新增项漂移。
     shortcuts: DEFAULT_SHORTCUTS.map((shortcut) => ({ ...shortcut })),
-    colorRules: [
-      {
-        id: "rule-release",
-        label: "发布产物",
-        matcher: "*.zip | tag:Release",
-        color: "#2266a8",
-        previewText: "在高密度列表中突出显示发布包。"
-      },
-      {
-        id: "rule-system",
-        label: "系统文件",
-        matcher: "attribute:H,S",
-        color: "#8d4a42",
-        previewText: "高亮危险文件或系统托管文件。"
-      }
-    ],
+    colorRules: colorFilter.rules.map((rule) => ({ ...rule })),
+    fileAssociations: [],
+    colorFilterEnabled: colorFilter.enabled,
+    colorFilterRevision: colorFilter.revision,
+    colorRulesRevision: colorFilter.rulesRevision,
     tagRules: [
       {
         id: "tag-latest",
@@ -938,19 +940,19 @@ function createSettingsModel(): SettingsModel {
       { id: "tags", label: "标签", visible: true, width: "1.1fr", align: "left" },
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
-    navigationColumns: [], detailsRowHeight: 24,
+    navigationColumns: [], detailsRowHeight: 24, sizeBarMode: "folder-total",
+    folderExpansionEnabled: false,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
+    fileVisibility: {
+      showHidden: false,
+      showSystem: false,
+      hideProtectedOperatingSystemFiles: true
+    },
     contextMenu: {
       defaultMenu: "native"
     },
-    theme: {
-      panelFocusAccent: "#0f6cbd",
-      activeTabBackground: "#ffffff",
-      dropHighlightFill: "#0f6cbd",
-      dropHighlightBorder: "#0f6cbd",
-      tabMinWidth: 96
-    }
+    theme: { ...DEFAULT_THEME }
   };
 }
 
@@ -1015,6 +1017,7 @@ function createHotlist(): BookmarkItem[] {
 export function createMockWorkspaceBootstrap(source: WorkspaceBootstrap["source"] = "mock"): WorkspaceBootstrap {
   return {
     source,
+    startupDiagnostics: [],
     layoutMode: "quad",
     layoutRatios: {
       primary: 0.52,

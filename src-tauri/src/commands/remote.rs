@@ -4,13 +4,60 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     domain::models::{
-        EntryViewModel, OperationResult, RemoteCreateDirectoryRequest, RemoteDirectoryRequest,
+        DirectoryListing, EntryViewModel, OperationResult, RemoteCreateDirectoryRequest, RemoteDirectoryRequest,
         RemoteFileOperationRequest, RemoteHostKeyInfo, RemoteProfile, RemoteProfileUpsertRequest,
         RemoteRenameRequest, RemoteTestResult, RemoteTransferOperation, RemoteTransferRequest,
         RemoteTrustHostKeyRequest,
     },
-    services::{remote_service, AppState},
+    services::{
+        color_filter::{compile_rules, AttributeFacts, CompiledColorRules, EntryFacts},
+        remote_service, AppState,
+    },
 };
+
+fn apply_remote_color_rules(entries: &mut [EntryViewModel], compiled: &CompiledColorRules) {
+    for entry in entries {
+        let availability = &entry.attribute_availability;
+        let style = compiled.style_for(&EntryFacts {
+            name: entry.name.clone(),
+            path: entry.path.clone(),
+            extension: match entry.kind {
+                crate::domain::models::EntryKind::Directory => None,
+                crate::domain::models::EntryKind::File => Some(
+                    entry
+                        .extension
+                        .as_ref()
+                        .map_or_else(String::new, |extension| {
+                            if extension.starts_with('.') {
+                                extension.clone()
+                            } else {
+                                format!(".{extension}")
+                            }
+                        }),
+                ),
+            },
+            kind: entry.kind.clone(),
+            size: entry.size,
+            created_at: entry.created_at,
+            modified_at: entry.modified_at,
+            accessed_at: entry.accessed_at,
+            attributes: AttributeFacts {
+                hidden: availability.hidden.then_some(entry.is_hidden),
+                system: availability.system.then_some(entry.is_system),
+                protected_system: availability
+                    .protected_system
+                    .then_some(entry.is_protected_operating_system),
+                read_only: availability.read_only.then_some(entry.is_read_only),
+                symlink: availability.symlink.then_some(entry.is_symlink),
+                archive: availability.archive.then_some(false),
+            },
+        });
+        if let Some(style) = style {
+            entry.decoration.foreground_color_hex = style.foreground_color_hex;
+            entry.decoration.background_color_hex = style.background_color_hex;
+        }
+    }
+}
 
 fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
     let metadata = state
@@ -28,10 +75,14 @@ fn emit_settings_changed(app: &AppHandle, state: &Arc<AppState>) {
         settings.detail_columns,
         settings.navigation_columns,
         settings.details_row_height,
+        settings.size_bar_mode.clone(),
+        settings.folder_expansion_enabled,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
+        settings.file_visibility,
         settings.context_menu,
         settings.theme,
+        settings.template_root,
     );
     let _ = app.emit("settings_changed", snapshot);
 }
@@ -44,6 +95,16 @@ where
     tauri::async_runtime::spawn_blocking(operation)
         .await
         .map_err(|error| format!("remote operation task failed: {error}"))?
+}
+
+async fn run_remote_mutation<T, F>(state: &Arc<AppState>, profile_ids: &[String], operation: F) -> Result<T, String>
+where T: Send + 'static, F: FnOnce() -> Result<T, String> + Send + 'static {
+    for id in profile_ids { state.directory_sizes.invalidate_profile(id); }
+    let result = run_remote_blocking(operation).await;
+    // Partial failures can still have modified remote entries. A calculation
+    // started during the operation must also lose exactness at its end.
+    for id in profile_ids { state.directory_sizes.invalidate_profile(id); }
+    result
 }
 
 #[tauri::command]
@@ -65,32 +126,20 @@ pub fn save_remote_profile(
     state: State<'_, Arc<AppState>>,
     app: AppHandle,
 ) -> Result<Vec<RemoteProfile>, String> {
-    let existing_credential_target = {
-        state
-            .metadata
-            .read()
-            .expect("metadata lock poisoned")
-            .remote_profiles
-            .iter()
-            .find(|profile| profile.id == request.profile.id)
-            .and_then(|profile| profile.credential_target.clone())
-    };
-    let profile =
-        remote_service::prepare_profile_for_save(request, existing_credential_target.as_deref())
-            .map_err(|error| error.to_string())?;
+    let profile_id = request.profile.id.trim().to_string();
+    let update = state.directory_sizes.profile_update(&profile_id);
     {
-        state
-            .metadata
-            .write()
-            .expect("metadata lock poisoned")
-            .upsert_remote_profile(profile);
+        // Serialize credentials + configuration publication, including concurrent
+        // saves. The size-store lock is never held during Credential Manager I/O.
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        let existing_credential_target = metadata.remote_profiles.iter().find(|profile| profile.id == profile_id)
+            .and_then(|profile| profile.credential_target.clone());
+        let profile = remote_service::prepare_profile_for_save(request, existing_credential_target.as_deref())
+            .map_err(|error| error.to_string())?;
+        metadata.upsert_remote_profile(profile);
+        metadata.persist().map_err(|error| error.to_string())?;
     }
-    state
-        .metadata
-        .read()
-        .expect("metadata lock poisoned")
-        .persist()
-        .map_err(|error| error.to_string())?;
+    drop(update);
     emit_settings_changed(&app, state.inner());
     list_remote_profiles(state)
 }
@@ -102,18 +151,12 @@ pub fn delete_remote_profile(
     app: AppHandle,
 ) -> Result<Vec<RemoteProfile>, String> {
     let removed_profile = {
-        state
-            .metadata
-            .write()
-            .expect("metadata lock poisoned")
-            .delete_remote_profile(&id)
+        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
+        let removed = metadata.delete_remote_profile(&id);
+        state.directory_sizes.invalidate_profile(&id);
+        metadata.persist().map_err(|error| error.to_string())?;
+        removed
     };
-    state
-        .metadata
-        .read()
-        .expect("metadata lock poisoned")
-        .persist()
-        .map_err(|error| error.to_string())?;
 
     if let Some(profile) = removed_profile.as_ref() {
         remote_service::cleanup_profile_after_delete(profile);
@@ -167,7 +210,8 @@ pub async fn trust_remote_host_key(
     state: State<'_, Arc<AppState>>,
 ) -> Result<RemoteHostKeyInfo, String> {
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
-    run_remote_blocking(move || {
+    let _update = state.directory_sizes.profile_update(&profile.id);
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         remote_service::trust_host_key(&profile, &request).map_err(|error| error.to_string())
     })
     .await
@@ -177,26 +221,28 @@ pub async fn trust_remote_host_key(
 pub async fn list_remote_directory(
     request: RemoteDirectoryRequest,
     state: State<'_, Arc<AppState>>,
-) -> Result<Vec<EntryViewModel>, String> {
+) -> Result<DirectoryListing, String> {
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
     let metadata = {
         let mut metadata = state.metadata.write().expect("metadata lock poisoned");
         metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
         metadata.clone()
     };
+    let compiled_color_rules = compile_rules(&metadata.color_rules, chrono::Utc::now());
     let password = request.password;
     let path = request.path;
     let profile_for_listing = profile.clone();
-    let mut entries = run_remote_blocking(move || {
-        remote_service::list_directory(&profile_for_listing, password.as_deref(), path.as_deref())
+    let mut listing = run_remote_blocking(move || {
+        remote_service::list_directory_snapshot(&profile_for_listing, password.as_deref(), path.as_deref())
             .map_err(|error| error.to_string())
     })
     .await?;
-    for entry in &mut entries {
+    apply_remote_color_rules(&mut listing.entries, &compiled_color_rules);
+    for entry in &mut listing.entries {
         let key = remote_entry_uri(&profile, &entry.path);
         entry.comment = metadata.comment_for_path(&key);
     }
-    Ok(entries)
+    Ok(listing)
 }
 
 #[tauri::command]
@@ -208,7 +254,7 @@ pub async fn create_remote_directory(
     let password = request.password;
     let parent = request.parent;
     let name = request.name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let created =
             remote_service::create_directory(&profile, password.as_deref(), &parent, &name)
                 .map_err(|error| error.to_string())?;
@@ -228,7 +274,7 @@ pub async fn create_remote_file(
     let password = request.password;
     let parent = request.parent;
     let name = request.name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let created = remote_service::create_file(&profile, password.as_deref(), &parent, &name)
             .map_err(|error| error.to_string())?;
         Ok(OperationResult {
@@ -246,7 +292,7 @@ pub async fn delete_remote_entries(
     let profile = remote_profile_by_id(&state, &request.profile_id)?;
     let password = request.password;
     let sources = request.sources;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let deleted = remote_service::delete_entries(&profile, password.as_deref(), &sources)
             .map_err(|error| error.to_string())?;
         Ok(OperationResult {
@@ -265,7 +311,7 @@ pub async fn rename_remote_entry(
     let password = request.password;
     let source = request.source;
     let new_name = request.new_name;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let renamed =
             remote_service::rename_entry(&profile, password.as_deref(), &source, &new_name)
                 .map_err(|error| error.to_string())?;
@@ -287,7 +333,7 @@ pub async fn upload_remote_files(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote upload".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let uploaded =
             remote_service::upload_files(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -331,7 +377,7 @@ pub async fn copy_remote_entries(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote copy".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let copied =
             remote_service::copy_entries(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -353,7 +399,7 @@ pub async fn move_remote_entries(
     let destination = request
         .destination
         .ok_or_else(|| "destination is required for remote move".to_string())?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[profile.id.clone()], move || {
         let moved =
             remote_service::move_entries(&profile, password.as_deref(), &sources, &destination)
                 .map_err(|error| error.to_string())?;
@@ -371,7 +417,7 @@ pub async fn transfer_remote_entries(
 ) -> Result<OperationResult, String> {
     let source_profile = remote_profile_by_id(&state, &request.source_profile_id)?;
     let destination_profile = remote_profile_by_id(&state, &request.destination_profile_id)?;
-    run_remote_blocking(move || {
+    run_remote_mutation(state.inner(), &[source_profile.id.clone(), destination_profile.id.clone()], move || {
         let transferred = match request.operation {
             RemoteTransferOperation::Copy => remote_service::transfer_entries(
                 &source_profile,
@@ -478,8 +524,43 @@ pub fn hydrate_remote_profiles(profiles: Vec<RemoteProfile>) -> Vec<RemoteProfil
 
 #[cfg(test)]
 mod tests {
-    use super::{remote_entry_uri, run_remote_blocking};
-    use crate::domain::models::{LocationKind, RemoteAuthKind, RemoteProfile};
+    use super::{apply_remote_color_rules, remote_entry_uri, run_remote_blocking};
+    use crate::domain::{
+        color_filter::{ColorRule, ColorRuleTarget},
+        models::{
+            EntryAttributeAvailability, EntryDecoration, EntryKind, EntryViewModel,
+            LocationDescriptor, LocationKind, RemoteAuthKind, RemoteProfile,
+        },
+    };
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn remote_size_mutations_invalidate_before_and_after_even_a_partial_failure() {
+        use crate::{domain::directory_sizes::*, services::{AppState, metadata_store::MetadataStore, settings_store::SettingsStore}};
+        use std::sync::Arc;
+        let state = Arc::new(AppState::new(MetadataStore::load_default(), SettingsStore::load_default()));
+        state.directory_sizes.open_owner("main");
+        let profile = RemoteProfile { id: "size-profile".into(), name: "Sizes".into(), protocol: LocationKind::Sftp,
+            host: "example.invalid".into(), port: 22, username: "user".into(), root_path: "/".into(),
+            auth_kind: RemoteAuthKind::Password, private_key_path: None, passive_mode: true, ignore_host_key: false,
+            connect_timeout_secs: 10, command_timeout_secs: 20, credential_target: None, password: None };
+        let request = SubscribeDirectorySizesRequest { consumer_id: "size-test".into(), refresh: false,
+            target: DirectorySizeTarget::Remote { profile_id: profile.id.clone(), path: "/".into() } };
+        let token = state.directory_sizes.owner_token("main").unwrap();
+        let before = state.directory_sizes.subscribe(token.clone(), request.clone(), Some(profile.clone())).unwrap();
+        let inner = state.clone(); let inner_request = request.clone(); let inner_profile = profile.clone(); let inner_token = token.clone();
+        let during = Arc::new(std::sync::atomic::AtomicU64::new(0)); let observed = during.clone();
+        let result = tauri::async_runtime::block_on(super::run_remote_mutation(&state, &[profile.id.clone()], move || {
+            let snapshot = inner.directory_sizes.subscribe(inner_token, inner_request, Some(inner_profile)).unwrap();
+            observed.store(snapshot.generation, std::sync::atomic::Ordering::SeqCst);
+            Err::<(), _>("partially failed".to_string())
+        }));
+        assert!(result.is_err());
+        let during = during.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(during > before.generation, "invalidate before the remote mutation begins");
+        let after = state.directory_sizes.subscribe(token, request, Some(profile)).unwrap();
+        assert!(after.generation > during, "a calculation started during an operation also becomes stale");
+    }
 
     #[test]
     fn remote_blocking_runner_executes_work_on_background_thread() {
@@ -516,5 +597,163 @@ mod tests {
             remote_entry_uri(&profile, "/Releases/Report.TXT"),
             "sftp://DeployUser@edge-01.internal/Releases/Report.TXT"
         );
+    }
+
+    #[test]
+    fn remote_coloring_preserves_unknown_sftp_permission_facts() {
+        let mut entries = vec![EntryViewModel {
+            path: "/report.txt".into(),
+            name: "report.txt".into(),
+            extension: Some("txt".into()),
+            kind: EntryKind::File,
+            size: Some(32),
+            created_at: None,
+            modified_at: None,
+            accessed_at: None,
+            is_hidden: false,
+            is_system: false,
+            is_protected_operating_system: false,
+            is_read_only: false,
+            is_symlink: false,
+            location: LocationDescriptor {
+                kind: LocationKind::Sftp,
+                path: "/report.txt".into(),
+                connection_id: Some("remote-1".into()),
+            },
+            decoration: EntryDecoration::default(),
+            comment: None,
+            attribute_availability: EntryAttributeAvailability {
+                hidden: true,
+                ..Default::default()
+            },
+        }];
+        let rules = vec![ColorRule {
+            schema_version: 2,
+            id: "unknown-readonly".into(),
+            name: "Unknown readonly".into(),
+            enabled: true,
+            target: ColorRuleTarget::Any,
+            expression: "Attributes NOT HAS ReadOnly".into(),
+            case_sensitive: false,
+            foreground_color_hex: Some("#ffffff".into()),
+            background_color_hex: Some("#a4262c".into()),
+            priority: 1,
+            migration_diagnostic: None,
+            migration_source: None,
+        }];
+
+        let compiled = crate::services::color_filter::compile_rules(
+            &rules,
+            Utc.with_ymd_and_hms(2026, 9, 7, 8, 0, 0).unwrap(),
+        );
+        apply_remote_color_rules(&mut entries, &compiled);
+
+        assert_eq!(entries[0].decoration.foreground_color_hex, None);
+        assert_eq!(entries[0].decoration.background_color_hex, None);
+    }
+
+    #[test]
+    fn remote_coloring_uses_the_compiled_request_clock() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 7, 8, 0, 0).unwrap();
+        let mut entries = vec![EntryViewModel {
+            path: "/report.txt".into(),
+            name: "report.txt".into(),
+            extension: Some("txt".into()),
+            kind: EntryKind::File,
+            size: Some(32),
+            created_at: None,
+            modified_at: Some(now - chrono::Duration::hours(23)),
+            accessed_at: None,
+            is_hidden: false,
+            is_system: false,
+            is_protected_operating_system: false,
+            is_read_only: false,
+            is_symlink: false,
+            location: LocationDescriptor {
+                kind: LocationKind::Sftp,
+                path: "/report.txt".into(),
+                connection_id: Some("remote-1".into()),
+            },
+            decoration: EntryDecoration::default(),
+            comment: None,
+            attribute_availability: EntryAttributeAvailability {
+                hidden: true,
+                ..Default::default()
+            },
+        }];
+        let rules = vec![ColorRule {
+            schema_version: 2,
+            id: "age".into(),
+            name: "Age".into(),
+            enabled: true,
+            target: ColorRuleTarget::Any,
+            expression: "Age >= 1d".into(),
+            case_sensitive: false,
+            foreground_color_hex: Some("#ffffff".into()),
+            background_color_hex: None,
+            priority: 1,
+            migration_diagnostic: None,
+            migration_source: None,
+        }];
+        let compiled = crate::services::color_filter::compile_rules(&rules, now);
+
+        apply_remote_color_rules(&mut entries, &compiled);
+
+        assert_eq!(entries[0].decoration.foreground_color_hex, None);
+    }
+
+    #[test]
+    fn remote_extensionless_files_match_the_known_empty_extension() {
+        for name in ["README", ".gitignore", "name."] {
+            let mut entries = vec![EntryViewModel {
+                path: format!("/{name}"),
+                name: name.into(),
+                extension: None,
+                kind: EntryKind::File,
+                size: Some(1),
+                created_at: None,
+                modified_at: None,
+                accessed_at: None,
+                is_hidden: name.starts_with('.'),
+                is_system: false,
+                is_protected_operating_system: false,
+                is_read_only: false,
+                is_symlink: false,
+                location: LocationDescriptor {
+                    kind: LocationKind::Sftp,
+                    path: format!("/{name}"),
+                    connection_id: Some("remote-1".into()),
+                },
+                decoration: EntryDecoration::default(),
+                comment: None,
+                attribute_availability: EntryAttributeAvailability {
+                    hidden: true,
+                    ..Default::default()
+                },
+            }];
+            let rules = vec![ColorRule {
+                schema_version: 2,
+                id: "no-extension".into(),
+                name: "No extension".into(),
+                enabled: true,
+                target: ColorRuleTarget::File,
+                expression: "Extension == \"\"".into(),
+                case_sensitive: false,
+                foreground_color_hex: Some("#123456".into()),
+                background_color_hex: None,
+                priority: 1,
+                migration_diagnostic: None,
+                migration_source: None,
+            }];
+            let compiled = crate::services::color_filter::compile_rules(&rules, Utc::now());
+
+            apply_remote_color_rules(&mut entries, &compiled);
+
+            assert_eq!(
+                entries[0].decoration.foreground_color_hex.as_deref(),
+                Some("#123456"),
+                "{name} should expose a known empty extension"
+            );
+        }
     }
 }

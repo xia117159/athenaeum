@@ -1,15 +1,28 @@
-pub mod fs_service;
+pub mod atomic_file;
+pub mod templates;
+pub(crate) mod file_identity;
+pub mod batch_rename;
+pub mod color_filter;
 pub mod drive_service;
+pub mod directory_size;
 pub mod file_watcher;
+pub mod file_associations;
+pub mod file_opening;
+pub mod fs_service;
 pub mod git_status_service;
 pub mod icon_service;
 pub mod metadata_store;
 pub mod migration;
+mod native_menu_contract;
 pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
 pub mod settings_store;
+pub mod settings_model;
+pub mod webview_recovery;
 pub mod windows_shell;
+#[cfg(windows)]
+pub(crate) mod windows_sta;
 
 use std::{
     collections::HashMap,
@@ -37,6 +50,10 @@ pub struct AppState {
     pub system_icon_cache: Mutex<HashMap<String, SystemIconBitmap>>,
     pub operations: Mutex<OperationStore>,
     pub file_watcher: FileWatchService,
+    pub directory_sizes: directory_size::DirectorySizeService,
+    pub file_open_jobs: file_opening::registry::FileOpenJobs,
+    pub association_programs: file_associations::programs::ProgramInfoCache,
+    pub batch_rename: batch_rename::sessions::BatchRenameSessions,
 }
 
 impl AppState {
@@ -49,6 +66,10 @@ impl AppState {
             system_icon_cache: Mutex::new(HashMap::new()),
             operations: Mutex::new(OperationStore::default()),
             file_watcher: FileWatchService::default(),
+            directory_sizes: directory_size::DirectorySizeService::default(),
+            file_open_jobs: file_opening::registry::FileOpenJobs::default(),
+            association_programs: file_associations::programs::ProgramInfoCache::default(),
+            batch_rename: batch_rename::sessions::BatchRenameSessions::default(),
         }
     }
 
@@ -71,8 +92,19 @@ impl AppState {
         let operation_journal_path = data_dir.join("operation-journal.json");
 
         let mut metadata = MetadataStore::load_from(metadata_path.clone())?;
+        for diagnostic in metadata.color_filter_recovery_diagnostics() {
+            eprintln!("warning: {diagnostic}");
+        }
         metadata.attach_path(metadata_path);
-        if migration::migrate_legacy_credentials(&mut metadata)? {
+        let credentials_migrated = migration::migrate_legacy_credentials(&mut metadata)?;
+        if metadata.color_rules_migration_dirty() {
+            if let Err(error) = commit_color_rule_startup_migration(&mut metadata) {
+                if credentials_migrated {
+                    return Err(error.context("failed to persist metadata migrations"));
+                }
+                eprintln!("warning: color rule migration could not be persisted and will be retried: {error:#}");
+            }
+        } else if credentials_migrated {
             metadata.persist()?;
         }
         *self.metadata.write().expect("metadata lock poisoned") = metadata;
@@ -103,4 +135,19 @@ impl AppState {
             flag.store(cancelled, Ordering::SeqCst);
         }
     }
+}
+
+pub(crate) fn commit_color_rule_startup_migration(metadata: &mut MetadataStore) -> Result<bool> {
+    if !metadata.color_rules_migration_dirty() {
+        return Ok(false);
+    }
+    let mut staged = metadata.clone();
+    if let Err(error) = staged.persist() {
+        metadata.push_color_filter_recovery_diagnostic(format!(
+            "Color rule migration could not be persisted and will be retried: {error:#}"
+        ));
+        return Err(error);
+    }
+    *metadata = staged;
+    Ok(true)
 }

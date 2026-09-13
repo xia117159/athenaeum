@@ -1,6 +1,17 @@
+mod clear;
+#[cfg(all(test, windows))]
+mod clear_windows_tests;
 mod journal;
+#[cfg(test)]
+mod journal_integration_tests;
 mod local_fs_ops;
-
+mod undo_action;
+mod undo_dispatch;
+pub(crate) use undo_dispatch::execute_workspace_undo;
+pub mod batch;
+#[cfg(windows)]
+pub mod templates;
+use self::undo_action::apply_undo_action;
 use std::{
     collections::HashMap,
     fs,
@@ -27,9 +38,13 @@ use crate::{
     services::fs_service,
 };
 
+use self::clear::restore_trash_paths;
 use self::journal::{
-    corrupt_journal_path, normalize_reloaded_journal, OperationJournalDisk, UndoAction, UndoPayload,
+    corrupt_journal_path, normalize_reloaded_journal, persist_journal_disk, recover_journal_path,
+    OperationJournalDisk, UndoAction, UndoPayload,
 };
+#[cfg(test)]
+use self::journal::{persist_journal_disk_with_failure, JournalPersistStep};
 use self::local_fs_ops::{
     check_cancelled, copy_recursively_exact, ensure_not_descendant, entry_kind_snapshot,
     merge_directory_exact, move_entry_exact, remove_path, trash_destination,
@@ -61,6 +76,7 @@ pub(crate) struct OperationUndoExecution {
     task_id: String,
     record_id: String,
     payload: UndoPayload,
+    already_started: bool,
 }
 
 pub(crate) struct OperationUndoExecutionResult {
@@ -88,7 +104,10 @@ pub struct OperationStore {
     pending_conflicts: HashMap<String, PendingConflict>,
     undo_payloads: HashMap<String, UndoPayload>,
     task_cancellations: HashMap<String, Arc<AtomicBool>>,
+    in_flight_undo_paths: HashMap<String, Vec<PathBuf>>,
     file_path: Option<PathBuf>,
+    #[cfg(test)]
+    journal_persist_failure_for_test: Option<JournalPersistStep>,
 }
 
 pub(crate) struct ExecutionResult {
@@ -103,14 +122,21 @@ pub(crate) struct ExecutionResult {
 
 impl OperationStore {
     pub fn load_from(file_path: PathBuf) -> Result<Self> {
-        if !file_path.exists() {
+        let mut store = Self::load_journal(file_path)?;
+        store.recover_batch_logs()?;
+        Ok(store)
+    }
+
+    fn load_journal(file_path: PathBuf) -> Result<Self> {
+        let read_path = recover_journal_path(&file_path)?;
+        if !read_path.exists() {
             return Ok(Self {
                 file_path: Some(file_path),
                 ..Self::default()
             });
         }
 
-        let content = match fs::read_to_string(&file_path) {
+        let content = match fs::read_to_string(&read_path) {
             Ok(content) => content,
             Err(_) => {
                 return Ok(Self {
@@ -122,7 +148,7 @@ impl OperationStore {
         let disk: OperationJournalDisk = match serde_json::from_str(&content) {
             Ok(disk) => disk,
             Err(_) => {
-                let _ = fs::rename(&file_path, corrupt_journal_path(&file_path));
+                let _ = fs::rename(&read_path, corrupt_journal_path(&file_path));
                 return Ok(Self {
                     file_path: Some(file_path),
                     ..Self::default()
@@ -130,6 +156,10 @@ impl OperationStore {
             }
         };
         let (history, undo_payloads) = normalize_reloaded_journal(disk.history, disk.undo_payloads);
+        let backup_path = journal::journal_backup_path(&file_path);
+        if read_path == file_path && backup_path.exists() {
+            let _ = fs::remove_file(backup_path);
+        }
         Ok(Self {
             history_sequence: disk.history_sequence.max(history.len() as u64),
             history,
@@ -139,40 +169,29 @@ impl OperationStore {
         })
     }
 
-    pub fn persist_journal(&self) -> Result<()> {
+    fn persist_journal_disk(&mut self, disk: &OperationJournalDisk) -> Result<()> {
+        #[cfg(test)]
+        if let Some(failure) = self.journal_persist_failure_for_test.take() {
+            let file_path = self
+                .file_path
+                .as_deref()
+                .context("operation journal path not initialized")?;
+            return persist_journal_disk_with_failure(file_path, disk, failure);
+        }
         let file_path = self
             .file_path
-            .as_ref()
+            .as_deref()
             .context("operation journal path not initialized")?;
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).context("failed to create operation journal directory")?;
-        }
+        persist_journal_disk(file_path, disk)
+    }
 
+    pub fn persist_journal(&mut self) -> Result<()> {
         let disk = OperationJournalDisk {
             history: self.history.clone(),
             history_sequence: self.history_sequence,
             undo_payloads: self.undo_payloads.clone(),
         };
-        let temp_path = file_path.with_extension(format!("json.tmp-{}", Uuid::new_v4()));
-        let backup_path = file_path.with_extension(format!("json.bak-{}", Uuid::new_v4()));
-        let content =
-            serde_json::to_vec_pretty(&disk).context("failed to serialize operation journal")?;
-        fs::write(&temp_path, content).context("failed to write operation journal temp file")?;
-        if file_path.exists() {
-            fs::rename(file_path, &backup_path)
-                .context("failed to stage existing operation journal")?;
-        }
-        if let Err(error) = fs::rename(&temp_path, file_path) {
-            if backup_path.exists() {
-                let _ = fs::rename(&backup_path, file_path);
-            }
-            let _ = fs::remove_file(&temp_path);
-            return Err(error).context("failed to commit operation journal");
-        }
-        if backup_path.exists() {
-            let _ = fs::remove_file(backup_path);
-        }
-        Ok(())
+        self.persist_journal_disk(&disk)
     }
 
     pub fn list_tasks(&self) -> OperationTaskListSnapshot {
@@ -488,7 +507,7 @@ impl OperationStore {
     pub fn cancel_task(&mut self, task_id: &str) -> Option<OperationServiceResult> {
         let task_index = self.tasks.iter().position(|task| task.task_id == task_id)?;
         let mut task = self.tasks[task_index].clone();
-        if matches!(
+        if !task.cancelable || matches!(
             task.status,
             OperationTaskStatus::Succeeded
                 | OperationTaskStatus::Failed
@@ -508,7 +527,7 @@ impl OperationStore {
         }
         self.pending_conflicts
             .retain(|_, pending| pending.conflict.task_id != task_id);
-        if matches!(task.status, OperationTaskStatus::Running) {
+        if matches!(task.status, OperationTaskStatus::Running | OperationTaskStatus::Cancelling) {
             task.status = OperationTaskStatus::Cancelling;
             task.cancelable = false;
             task.message = Some("Cancelling operation.".into());
@@ -582,6 +601,15 @@ impl OperationStore {
         record_id: String,
         request_id: String,
     ) -> Result<(OperationServiceResult, OperationUndoExecution)> {
+        if self.undo_payloads.get(&record_id).is_some_and(|payload| payload.templates().is_some()) {
+            #[cfg(windows)]
+            return self.prepare_template_undo(record_id, request_id);
+            #[cfg(not(windows))]
+            bail!("模板副本撤销目前仅支持 Windows");
+        }
+        if self.undo_payloads.get(&record_id).is_some_and(|payload| payload.batch().is_some()) {
+            return self.prepare_batch_undo(record_id, request_id);
+        }
         let record_index = self
             .history
             .iter()
@@ -631,6 +659,8 @@ impl OperationStore {
         self.history[record_index].status = OperationHistoryStatus::Undoing;
         self.history[record_index].undo_task_id = Some(task_id.clone());
         let history_events = vec![self.commit_history_index(record_index)];
+        self.in_flight_undo_paths
+            .insert(task_id.clone(), restore_trash_paths(&payload));
 
         Ok((
             OperationServiceResult {
@@ -643,11 +673,22 @@ impl OperationStore {
                 task_id,
                 record_id,
                 payload,
+                already_started: false,
             },
         ))
     }
 
     pub fn finish_undo_operation(
+        &mut self,
+        result: OperationUndoExecutionResult,
+    ) -> Result<OperationServiceResult> {
+        let task_id = result.task_id.clone();
+        let outcome = self.finish_undo_operation_inner(result);
+        self.in_flight_undo_paths.remove(&task_id);
+        outcome
+    }
+
+    fn finish_undo_operation_inner(
         &mut self,
         result: OperationUndoExecutionResult,
     ) -> Result<OperationServiceResult> {
@@ -735,6 +776,7 @@ impl OperationStore {
         let record_id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let record = OperationHistoryRecord {
+            recovery_items: Vec::new(),
             record_id: record_id.clone(),
             task_id: task.task_id.clone(),
             kind: task.kind.clone(),
@@ -1510,80 +1552,6 @@ fn create_conflict_request(
     }
 }
 
-fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryResult> {
-    match action {
-        UndoAction::DeleteCreated { path } => {
-            remove_path(path)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: path.to_string_lossy().into_owned(),
-                }),
-                destination: None,
-                kind: OperationEntryResultKind::Deleted,
-                error: None,
-            })
-        }
-        UndoAction::RecreateDirectory { path } => {
-            fs::create_dir_all(path)
-                .with_context(|| format!("failed to recreate directory {}", path.display()))?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: None,
-                destination: Some(OperationPathRef::Local {
-                    path: path.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Created,
-                error: None,
-            })
-        }
-        UndoAction::MoveBack { from, to } => {
-            if to.exists() {
-                bail!(
-                    "cannot restore {}, destination already exists",
-                    to.display()
-                );
-            }
-            let cancellation = AtomicBool::new(false);
-            move_entry_exact(from, to, &cancellation)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: from.to_string_lossy().into_owned(),
-                }),
-                destination: Some(OperationPathRef::Local {
-                    path: to.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Moved,
-                error: None,
-            })
-        }
-        UndoAction::RestoreTrash {
-            trash_path,
-            original_path,
-        } => {
-            if original_path.exists() {
-                bail!(
-                    "cannot restore {}, destination already exists",
-                    original_path.display()
-                );
-            }
-            let cancellation = AtomicBool::new(false);
-            move_entry_exact(trash_path, original_path, &cancellation)?;
-            Ok(OperationEntryResult {
-                entry_result_id: Uuid::new_v4().to_string(),
-                source: Some(OperationPathRef::Local {
-                    path: trash_path.to_string_lossy().into_owned(),
-                }),
-                destination: Some(OperationPathRef::Local {
-                    path: original_path.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Moved,
-                error: None,
-            })
-        }
-    }
-}
 
 fn cancelled_execution(
     intent: &OperationIntent,
@@ -1848,39 +1816,6 @@ mod tests {
             .expect("finish undo operation");
 
         assert_eq!(finished.snapshot.status, OperationTaskStatus::Succeeded);
-        assert!(!destination.join("report.txt").exists());
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn operation_journal_persists_history_and_undo_payloads() {
-        let root = unique_temp_path("journal-roundtrip");
-        let source = root.join("source");
-        let destination = root.join("destination");
-        fs::create_dir_all(&source).expect("create source");
-        fs::create_dir_all(&destination).expect("create destination");
-        fs::write(source.join("report.txt"), "hello").expect("write source");
-        let journal_path = root.join("operation-journal.json");
-
-        let mut store =
-            OperationStore::load_from(journal_path.clone()).expect("load empty journal");
-        let result = store.start_operation(
-            copy_intent(&source.join("report.txt"), &destination),
-            Some(root.clone()),
-        );
-
-        assert_eq!(result.snapshot.status, OperationTaskStatus::Succeeded);
-        assert!(journal_path.exists());
-        assert_eq!(store.list_history().records.len(), 1);
-
-        let mut reloaded = OperationStore::load_from(journal_path).expect("reload journal");
-        assert_eq!(reloaded.list_history().records.len(), 1);
-
-        let undo = reloaded
-            .undo_latest("request-undo-after-reload".into())
-            .expect("undo after reload");
-        assert_eq!(undo.snapshot.status, OperationTaskStatus::Succeeded);
         assert!(!destination.join("report.txt").exists());
 
         let _ = fs::remove_dir_all(root);

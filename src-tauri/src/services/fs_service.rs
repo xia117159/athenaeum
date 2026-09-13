@@ -7,14 +7,19 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::domain::models::{
-    ColorRule, ColorRuleMode, ColorRuleTarget, DirectoryListing, DirectorySizeAvailability,
-    DirectorySizeState, DriveInfo, EntryDecoration, EntryKind, EntryViewModel, ItemProperties,
+    ColorRule, DirectoryListing, DirectorySizeAvailability, DirectorySizeState, DriveInfo,
+    EntryAttributeAvailability, EntryDecoration, EntryKind, EntryViewModel, ItemProperties,
     ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability,
     ItemPropertyFieldState, LocationDescriptor, TreeNode,
 };
+use crate::services::color_filter::{
+    compile_rules, AttributeFacts, ColorStyle, CompiledColorRules, EntryFacts,
+};
+use crate::services::directory_size::{local::local_metadata_kind, metadata::{ListingFingerprint, MetadataKind}};
 
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x20;
 
 fn metadata_modified_at(metadata: &fs::Metadata) -> Option<DateTime<Utc>> {
     metadata.modified().ok().map(DateTime::<Utc>::from)
@@ -45,16 +50,20 @@ fn has_windows_file_attribute(metadata: Option<&fs::Metadata>, attribute: u32) -
 }
 
 fn is_hidden(path: &Path, metadata: Option<&fs::Metadata>) -> bool {
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.starts_with('.'))
-        .unwrap_or(false)
+    #[cfg(windows)]
     {
-        return true;
+        let _ = path;
+        has_windows_hidden_attribute(metadata)
     }
 
-    has_windows_hidden_attribute(metadata)
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.starts_with('.'))
+            .unwrap_or(false)
+    }
 }
 
 fn has_windows_hidden_attribute(metadata: Option<&fs::Metadata>) -> bool {
@@ -70,7 +79,7 @@ fn is_protected_operating_system(metadata: Option<&fs::Metadata>) -> bool {
 }
 
 fn is_symlink(metadata: &fs::Metadata) -> bool {
-    metadata.file_type().is_symlink()
+    local_metadata_kind(metadata) == MetadataKind::Link
 }
 
 fn extension_with_dot(path: &Path) -> Option<String> {
@@ -92,74 +101,71 @@ fn unavailable(
     }
 }
 
-fn apply_color_rules(path: &Path, metadata: &fs::Metadata, rules: &[ColorRule]) -> Option<String> {
+fn apply_color_rules(
+    path: &Path,
+    metadata: &fs::Metadata,
+    rules: &CompiledColorRules,
+) -> Option<ColorStyle> {
     let is_dir = metadata.is_dir();
-    let hidden = is_hidden(path, Some(metadata));
-    let read_only = metadata.permissions().readonly();
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_lowercase();
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_lowercase();
-    let full_path = path.to_string_lossy().to_lowercase();
-
-    let mut ordered_rules = rules.iter().collect::<Vec<_>>();
-    ordered_rules.sort_by_key(|rule| rule.priority);
-
-    for rule in ordered_rules {
-        let target_matches = matches!(rule.target, ColorRuleTarget::Any)
-            || (matches!(rule.target, ColorRuleTarget::Directory) && is_dir)
-            || (matches!(rule.target, ColorRuleTarget::File) && !is_dir);
-
-        if !target_matches {
-            continue;
-        }
-
-        let matched = match rule.mode {
-            ColorRuleMode::Extension => rule
-                .pattern
-                .as_ref()
-                .map(|pattern| extension == pattern.trim_start_matches('.').to_lowercase())
-                .unwrap_or(false),
-            ColorRuleMode::NameContains => rule
-                .pattern
-                .as_ref()
-                .map(|pattern| name.contains(&pattern.to_lowercase()))
-                .unwrap_or(false),
-            ColorRuleMode::PathContains => rule
-                .pattern
-                .as_ref()
-                .map(|pattern| full_path.contains(&pattern.to_lowercase()))
-                .unwrap_or(false),
-            ColorRuleMode::Hidden => hidden,
-            ColorRuleMode::ReadOnly => read_only,
-        };
-
-        if matched {
-            return Some(rule.color_hex.clone());
-        }
-    }
-
-    None
+    let platform_specific = if cfg!(windows) {
+        (
+            Some(is_system(Some(metadata))),
+            Some(is_protected_operating_system(Some(metadata))),
+            Some(has_windows_file_attribute(
+                Some(metadata),
+                FILE_ATTRIBUTE_ARCHIVE,
+            )),
+        )
+    } else {
+        (None, None, None)
+    };
+    rules.style_for(&EntryFacts {
+        name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .into(),
+        path: path.to_string_lossy().into_owned(),
+        extension: (!is_dir).then(|| extension_with_dot(path).unwrap_or_default()),
+        kind: if is_dir {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
+        },
+        size: (!is_dir).then_some(metadata.len()),
+        created_at: metadata_created_at(metadata),
+        modified_at: metadata_modified_at(metadata),
+        accessed_at: metadata_accessed_at(metadata),
+        attributes: AttributeFacts {
+            hidden: Some(is_hidden(path, Some(metadata))),
+            system: platform_specific.0,
+            protected_system: platform_specific.1,
+            read_only: Some(metadata.permissions().readonly()),
+            symlink: Some(is_symlink(metadata)),
+            archive: platform_specific.2,
+        },
+    })
 }
 
 fn entry_from_path(
     path: PathBuf,
-    color_rules: &[ColorRule],
+    color_rules: &CompiledColorRules,
     tag_names: Vec<String>,
     comment: Option<String>,
+    size_fingerprint: &mut ListingFingerprint,
 ) -> Result<EntryViewModel> {
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("failed to get metadata for {}", path.display()))?;
     let is_dir = metadata.is_dir();
+    let size_kind = local_metadata_kind(&metadata);
+    size_fingerprint.add(path.file_name().and_then(|name| name.to_str()).unwrap_or_default(), size_kind);
     let hidden = is_hidden(&path, Some(&metadata));
     let system = is_system(Some(&metadata));
     let read_only = metadata.permissions().readonly();
+    let color_style = apply_color_rules(&path, &metadata, color_rules);
+    let (foreground_color_hex, background_color_hex) = color_style
+        .map(|style| (style.foreground_color_hex, style.background_color_hex))
+        .unwrap_or((None, None));
 
     Ok(EntryViewModel {
         path: path.to_string_lossy().into_owned(),
@@ -177,7 +183,7 @@ fn entry_from_path(
         } else {
             EntryKind::File
         },
-        size: (!is_dir).then_some(metadata.len()),
+        size: if let MetadataKind::File(bytes) = size_kind { Some(bytes) } else { None },
         created_at: metadata_created_at(&metadata),
         modified_at: metadata_modified_at(&metadata),
         accessed_at: metadata_accessed_at(&metadata),
@@ -188,10 +194,19 @@ fn entry_from_path(
         is_symlink: is_symlink(&metadata),
         location: LocationDescriptor::local(path.to_string_lossy().into_owned()),
         decoration: EntryDecoration {
-            color_hex: apply_color_rules(&path, &metadata, color_rules),
+            foreground_color_hex,
+            background_color_hex,
             tags: tag_names,
         },
         comment,
+        attribute_availability: EntryAttributeAvailability {
+            hidden: true,
+            system: cfg!(windows),
+            protected_system: cfg!(windows),
+            read_only: true,
+            symlink: true,
+            archive: cfg!(windows),
+        },
     })
 }
 
@@ -255,6 +270,7 @@ pub fn list_directory<F>(
 where
     F: Fn(&str) -> (Vec<String>, Option<String>),
 {
+    let compiled_color_rules = compile_rules(color_rules, Utc::now());
     let canonical = if path.exists() {
         path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     } else {
@@ -262,13 +278,20 @@ where
     };
 
     let mut entries = Vec::new();
+    let mut size_fingerprint = ListingFingerprint::default();
     for entry in fs::read_dir(&canonical)
         .with_context(|| format!("failed to read directory {}", canonical.display()))?
     {
         let entry = entry.context("failed to read directory entry")?;
         let entry_path = entry.path();
         let (tags, comment) = metadata_for_path(&entry_path.to_string_lossy());
-        entries.push(entry_from_path(entry_path, color_rules, tags, comment)?);
+        entries.push(entry_from_path(
+            entry_path,
+            &compiled_color_rules,
+            tags,
+            comment,
+            &mut size_fingerprint,
+        )?);
     }
 
     entries.sort_by(|left, right| match (&left.kind, &right.kind) {
@@ -284,6 +307,7 @@ where
             .parent()
             .map(|parent| parent.to_string_lossy().into_owned()),
         can_go_up: canonical.parent().is_some(),
+        size_fingerprint: size_fingerprint.finish(),
     })
 }
 
@@ -650,11 +674,13 @@ mod tests {
         is_protected_operating_system, is_system, list_directory, move_entry, readable_drive_infos,
         rename_entry, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM,
     };
+    use crate::domain::color_filter::ColorRuleTarget;
     use crate::domain::models::{
-        ColorRule, ColorRuleMode, ColorRuleTarget, DirectorySizeAvailability, DriveInfo, EntryKind,
-        ItemPropertiesRequest, ItemPropertiesTarget, ItemPropertyField,
-        ItemPropertyFieldAvailability,
+        ColorRule, DirectorySizeAvailability, DriveInfo, EntryKind, ItemPropertiesRequest,
+        ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability,
     };
+    use crate::services::color_filter::compile_rules;
+    use chrono::Utc;
 
     fn unique_temp_path(label: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -689,13 +715,18 @@ mod tests {
     #[test]
     fn applies_extension_rule() {
         let rule = ColorRule {
+            schema_version: 2,
             id: "rule-1".into(),
             name: "Rust".into(),
+            enabled: true,
             target: ColorRuleTarget::File,
-            mode: ColorRuleMode::Extension,
-            pattern: Some("rs".into()),
-            color_hex: "#ff6600".into(),
+            expression: "Extension == \".rs\"".into(),
+            case_sensitive: false,
+            foreground_color_hex: Some("#ff6600".into()),
+            background_color_hex: None,
             priority: 1,
+            migration_diagnostic: None,
+            migration_source: None,
         };
 
         let path = std::path::Path::new("main.rs");
@@ -706,9 +737,15 @@ mod tests {
             let _ = fs::remove_file(temp);
             metadata
         });
-        let color = apply_color_rules(path, &metadata, &[rule]);
+        let compiled = compile_rules(&[rule], Utc::now());
+        let color = apply_color_rules(path, &metadata, &compiled);
 
-        assert_eq!(color.as_deref(), Some("#ff6600"));
+        assert_eq!(
+            color
+                .and_then(|style| style.foreground_color_hex)
+                .as_deref(),
+            Some("#ff6600")
+        );
     }
 
     #[test]
@@ -753,7 +790,7 @@ mod tests {
 
         set_windows_file_attributes(&file, FILE_ATTRIBUTE_SYSTEM);
         let metadata = fs::symlink_metadata(&file).expect("read system metadata");
-        assert!(is_hidden(&file, Some(&metadata)));
+        assert!(!is_hidden(&file, Some(&metadata)));
         assert!(is_system(Some(&metadata)));
         assert!(!is_protected_operating_system(Some(&metadata)));
 
@@ -762,6 +799,25 @@ mod tests {
         assert!(is_protected_operating_system(Some(&metadata)));
 
         set_windows_file_attributes(&file, FILE_ATTRIBUTE_NORMAL);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_dot_prefixed_directory_is_visible_without_hidden_attribute() {
+        let root = unique_temp_path("dot-directory");
+        let dot_directory = root.join(".temp");
+        fs::create_dir_all(&dot_directory).expect("create dot directory");
+
+        let listing = list_directory(&root, &[], |_| (Vec::new(), None)).expect("list directory");
+        let entry = listing
+            .entries
+            .iter()
+            .find(|entry| entry.name == ".temp")
+            .expect("dot directory entry");
+
+        assert!(!entry.is_hidden);
+
         let _ = fs::remove_dir_all(root);
     }
 

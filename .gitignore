@@ -35,4 +35,8 @@ Thumbs.db
 .claude/
 .codex/
 .temp
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/sfm-delivery-workflow/
+!.agents/skills/sfm-delivery-workflow/**

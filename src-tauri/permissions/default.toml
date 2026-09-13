@@ -1,8 +1,20 @@
 [default]
 description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
+  "allow-list-creation-templates",
+  "allow-create-template-items",
+  "allow-choose-template-root",
+  "allow-create-batch-rename-session",
+  "allow-preview-batch-rename",
+  "allow-invalidate-batch-rename-preview",
+  "allow-apply-batch-rename",
+  "allow-close-batch-rename-session",
+  "allow-get-batch-rename-functions",
   "allow-initialize-workspace",
   "allow-list-directory",
+  "allow-subscribe-directory-sizes",
+  "allow-release-directory-sizes",
+  "allow-lookup-directory-sizes",
   "allow-set-workspace-watch-roots",
   "allow-get-item-properties",
   "allow-get-tree-children",
@@ -27,8 +39,9 @@ permissions = [
   "allow-delete-bookmark",
   "allow-save-hotlist-entry",
   "allow-delete-hotlist-entry",
-  "allow-save-color-rule",
-  "allow-delete-color-rule",
+  "allow-set-color-filter-enabled",
+  "allow-replace-color-rules",
+  "allow-validate-color-filter-rule",
   "allow-save-tag-definition",
   "allow-delete-tag-definition",
   "allow-save-shortcuts",
@@ -46,6 +59,10 @@ permissions = [
   "allow-mark-navigation-item-opened",
   "allow-resolve-navigation-targets",
   "allow-open-path-with-system-default",
+  "allow-open-file",
+  "allow-cancel-file-open",
+  "allow-inspect-association-programs",
+  "allow-choose-association-program",
   "allow-set-system-file-clipboard",
   "allow-read-system-file-clipboard",
   "allow-get-windows-drag-drop-environment",
@@ -74,9 +91,74 @@ permissions = [
 ]
 
 [[permission]]
+identifier = "allow-list-creation-templates"
+description = "List one folder in the configured creation template library."
+commands.allow = ["list_creation_templates"]
+
+[[permission]]
+identifier = "allow-create-template-items"
+description = "Create local items from the configured templates without overwriting existing files."
+commands.allow = ["create_template_items"]
+
+[[permission]]
+identifier = "allow-choose-template-root"
+description = "Choose a template folder using the native Windows folder dialog."
+commands.allow = ["choose_template_root"]
+
+[[permission]]
+identifier = "allow-create-batch-rename-session"
+description = "Create a local batch rename editing session."
+commands.allow = ["create_batch_rename_session"]
+
+[[permission]]
+identifier = "allow-preview-batch-rename"
+description = "Preview names using the server expression registry."
+commands.allow = ["preview_batch_rename"]
+
+[[permission]]
+identifier = "allow-invalidate-batch-rename-preview"
+description = "Invalidate an obsolete preview revision without starting another worker."
+commands.allow = ["invalidate_batch_rename_preview"]
+
+[[permission]]
+identifier = "allow-apply-batch-rename"
+description = "Apply a validated batch rename preview."
+commands.allow = ["apply_batch_rename"]
+
+[[permission]]
+identifier = "allow-close-batch-rename-session"
+description = "Release a batch rename editing session."
+commands.allow = ["close_batch_rename_session"]
+
+[[permission]]
+identifier = "allow-get-batch-rename-functions"
+description = "Read the rename function help catalog."
+commands.allow = ["get_batch_rename_functions"]
+
+[[permission]]
 identifier = "allow-initialize-workspace"
 description = "Allows loading the initial workspace bootstrap from the local machine."
 commands.allow = ["initialize_workspace"]
+
+[[permission]]
+identifier = "allow-open-file"
+description = "Allows opening a local file or one downloaded remote file with saved associations."
+commands.allow = ["open_file"]
+
+[[permission]]
+identifier = "allow-cancel-file-open"
+description = "Allows cancelling only the invoking window's pending file open."
+commands.allow = ["cancel_file_open"]
+
+[[permission]]
+identifier = "allow-inspect-association-programs"
+description = "Allows reading executable names and availability for file associations."
+commands.allow = ["inspect_association_programs"]
+
+[[permission]]
+identifier = "allow-choose-association-program"
+description = "Allows choosing an executable with the native Windows file dialog."
+commands.allow = ["choose_association_program"]
 
 [[permission]]
 identifier = "allow-list-directory"
@@ -87,6 +169,21 @@ commands.allow = ["list_directory"]
 identifier = "allow-set-workspace-watch-roots"
 description = "Allows replacing the visible local directories watched for live refresh events."
 commands.allow = ["set_workspace_watch_roots"]
+
+[[permission]]
+identifier = "allow-subscribe-directory-sizes"
+description = "Allows window-owned bounded background directory size statistics."
+commands.allow = ["subscribe_directory_sizes"]
+
+[[permission]]
+identifier = "allow-release-directory-sizes"
+description = "Allows releasing the invoking window's directory size subscription."
+commands.allow = ["release_directory_sizes"]
+
+[[permission]]
+identifier = "allow-lookup-directory-sizes"
+description = "Allows bounded generation-fenced directory size lookups."
+commands.allow = ["lookup_directory_sizes"]
 
 [[permission]]
 identifier = "allow-get-item-properties"
@@ -159,6 +256,11 @@ description = "Allows listing file operation history."
 commands.allow = ["list_operation_history"]
 
 [[permission]]
+identifier = "allow-clear-operation-records"
+description = "Allows clearing terminal operation tasks and eligible operation history."
+commands.allow = ["clear_operation_records"]
+
+[[permission]]
 identifier = "allow-undo-latest-operation"
 description = "Allows undoing the latest undoable file operation."
 commands.allow = ["undo_latest_operation"]
@@ -204,14 +306,19 @@ description = "Allows deleting directory hotlist entries."
 commands.allow = ["delete_hotlist_entry"]
 
 [[permission]]
-identifier = "allow-save-color-rule"
-description = "Allows saving color rules."
-commands.allow = ["save_color_rule"]
+identifier = "allow-set-color-filter-enabled"
+description = "Allows changing the global color filter state."
+commands.allow = ["set_color_filter_enabled"]
 
 [[permission]]
-identifier = "allow-delete-color-rule"
-description = "Allows deleting color rules."
-commands.allow = ["delete_color_rule"]
+identifier = "allow-replace-color-rules"
+description = "Allows replacing color rules with revision checks."
+commands.allow = ["replace_color_rules"]
+
+[[permission]]
+identifier = "allow-validate-color-filter-rule"
+description = "Allows validating color filter expressions."
+commands.allow = ["validate_color_filter_rule"]
 
 [[permission]]
 identifier = "allow-save-tag-definition"
