@@ -34,6 +34,7 @@ export function WorkspaceContextMenuPopover({
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState(() => ({ x: contextMenu.x, y: contextMenu.y }));
+  const [inputMode, setInputMode] = useState<"pointer" | "keyboard">("pointer");
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -59,6 +60,7 @@ export function WorkspaceContextMenuPopover({
     }, 0);
 
     const handlePointerDown = (event: PointerEvent) => {
+      setInputMode("pointer");
       if (!armed || !(event.target instanceof Node)) {
         return;
       }
@@ -69,16 +71,20 @@ export function WorkspaceContextMenuPopover({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!["Shift", "Control", "Alt", "Meta"].includes(event.key)) setInputMode("keyboard");
       if (event.key === "Escape") {
         onClose();
       }
     };
+    const handlePointerMove = () => setInputMode("pointer");
 
     window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
@@ -420,7 +426,7 @@ export function WorkspaceContextMenuPopover({
   };
 
   const menu = (
-    <div ref={menuRef} className="context-menu" style={menuStyle}>
+    <div ref={menuRef} className="context-menu" data-input-mode={inputMode} style={menuStyle}>
       <div className="context-menu__header">
         <strong>
           {contextMenu.scope === "tab"

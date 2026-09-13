@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import React, { act } from "react";
 import { TemplateCreationMenu } from "./TemplateCreationMenu";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
@@ -9,6 +11,10 @@ import type { CreationTemplateEntry, CreationTemplateListing } from "../../app/t
 
 export const completion = (async () => {
   const dom = installDomEnvironment();
+  const style = document.createElement("style");
+  style.textContent = ["workspace.context-menu.css", "templates.css"]
+    .map(file => fs.readFileSync(path.join(process.cwd(), "src/features/workspace", file), "utf8")).join("\n");
+  document.head.append(style);
   const { createRoot } = require("react-dom/client") as typeof import("react-dom/client");
   const f = expansionFixture(); f.bootstrap.settingsModel.templateRoot = "C:\\Templates";
   const entry = (relativePath: string, kind: CreationTemplateEntry["kind"] = "file"): CreationTemplateEntry => ({
@@ -18,11 +24,12 @@ export const completion = (async () => {
   const directories: Record<string, CreationTemplateEntry[]> = {
     "": [word, ppt, file], Word: [nested, child], PPT: [entry("PPT/slides.pptx")], "Word/Specs": [entry("Word/Specs/spec.docx")]
   };
-  let rootReads = 0, holdNested = false, releaseNested: ((listing: CreationTemplateListing) => void) | undefined;
+  let rootReads = 0, pptReads = 0, holdNested = false, releaseNested: ((listing: CreationTemplateListing) => void) | undefined;
   const listing = (path: string) => ({ rootPath: "C:\\Templates", relativePath: path, entries: directories[path] });
   const gateway = createTestGateway(() => {}, expansionInteractions(), { loadBootstrap: () => f.bootstrap });
   gateway.templates.list = async (_root, path = "") => {
     if (!path) rootReads++;
+    if (path === ppt.relativePath) pptReads++;
     if (path === nested.relativePath && holdNested) return new Promise(resolve => { releaseNested = resolve; });
     return listing(path);
   };
@@ -45,6 +52,7 @@ export const completion = (async () => {
   const move = async (target: Element) => tick(() => {
     pointer.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: target }));
     target.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: pointer }));
+    target.dispatchEvent(new dom.window.MouseEvent("pointermove", { bubbles: true }));
     pointer = target;
   });
   const buttons = () => [...document.querySelectorAll<HTMLButtonElement>("button")];
@@ -63,23 +71,42 @@ export const completion = (async () => {
     const sessionId = controller.state.templateMenu!.id;
     const initialReads = rootReads;
     assert.equal(depth(), 1);
+    const rowHeight = window.getComputedStyle(button("新建文件")).minHeight;
+    assert.equal(window.getComputedStyle(template(file.relativePath)).minHeight, rowHeight, "template entries match the context menu row density");
     await tick(() => checkbox(file.relativePath).click());
     assert.equal(button("创建所选（1）").disabled, false);
+    assert.equal(window.getComputedStyle(button("创建所选（1）")).minHeight, rowHeight, "template actions use the same row density");
+    for (const label of ["视图", "排序方式"]) {
+      await move(template(word.relativePath)); // Queue a child expansion before switching to a sibling menu.
+      await move(button(label).querySelector("span:last-child")!);
+      assert.equal(depth(), 0, "entering a sibling context-menu item closes the template cascade without waiting");
+      assert.equal(button("新建项目").getAttribute("aria-expanded"), "false");
+      assert.equal(controller.state.templateMenu?.id, sessionId);
+      assert.equal(controller.state.templateMenu?.selected.length, 1);
+      await move(button("新建项目")); await pause();
+      assert.equal(depth(), 1, "a cancelled hover expansion cannot reopen a child after returning to the root");
+      assert.equal(checkbox(file.relativePath).checked, true);
+    }
     await move(template(word.relativePath)); await pause(); assert.equal(depth(), 2);
     await move(template(nested.relativePath)); await pause(); assert.equal(depth(), 3);
-    await move(template(child.relativePath)); await pause();
-    assert.equal(depth(), 2, "entering a file closes its sibling folder's child menu");
-    await move(checkbox(file.relativePath)); await pause();
-    assert.equal(depth(), 1, "the checkbox is part of the ordinary row hover target");
+    await move(template(child.relativePath));
+    assert.equal(depth(), 2, "entering a file immediately closes its sibling folder's child menu");
+    await move(checkbox(file.relativePath));
+    assert.equal(depth(), 1, "entering a checkbox immediately closes the old child menu");
     assert.equal(controller.state.templateMenu?.selected.length, 1);
 
+    await move(template(word.relativePath)); await pause();
+    await move(button("创建所选（1）"));
+    assert.equal(depth(), 1, "entering a menu action immediately closes its child branch");
     await move(template(word.relativePath)); await pause();
     await move(document.body); await pause(40); await move(template(child.relativePath)); await pause();
     assert.equal(depth(), 2, "a short crossing outside the portal must not close the menu chain");
     await tick(() => checkbox(child.relativePath).click());
     await tick(() => template(child.relativePath).focus());
-    await move(template(ppt.relativePath).querySelector("svg")!); await pause();
-    assert.equal(depth(), 2); assert.ok(template("PPT/slides.pptx"));
+    const beforePptReads = pptReads;
+    await move(template(ppt.relativePath).querySelector("svg")!);
+    assert.equal(depth(), 2); assert.ok(template("PPT/slides.pptx"), "switching between expanded folders replaces the branch immediately");
+    assert.equal(pptReads, beforePptReads + 1, "one pointer transition requests the replacement directory only once");
     assert.ok(!document.querySelector('[data-template-path="Word/report.docx"]'));
     assert.ok(document.activeElement === template(ppt.relativePath), "replacing a focused child menu returns focus to its new parent item");
     await key(template(ppt.relativePath), "ArrowRight");
@@ -91,11 +118,21 @@ export const completion = (async () => {
     assert.ok(document.activeElement === template(file.relativePath), "hover does not steal focus from an item that remains visible");
 
     await tick(() => template("PPT/slides.pptx").focus());
-    await move(button("新建文件")); await pause();
-    assert.equal(depth(), 0, "leaving the new-item submenu closes it");
+    await move(button("新建文件"));
+    assert.equal(depth(), 0, "entering an ordinary sibling item also closes the cascade immediately");
     assert.ok(document.querySelector(".context-menu"), "the containing context menu stays open");
     assert.equal(button("新建项目").getAttribute("aria-expanded"), "false");
     assert.ok(document.activeElement === button("新建项目"), "hidden-menu focus returns to the parent item");
+    const highlight = "rgb(229, 241, 251)";
+    const parentBackground = () => window.getComputedStyle(button("新建项目")).backgroundColor;
+    assert.notEqual(parentBackground(), highlight, "focus restoration must not leave a second pointer highlight on the parent");
+    await move(document.body); await pause();
+    assert.notEqual(parentBackground(), highlight, "leaving the entire menu clears the pointer highlight without discarding focus");
+    assert.ok(document.activeElement === button("新建项目"));
+    await key(button("新建项目"), "Tab");
+    assert.equal(parentBackground(), highlight, "keyboard navigation restores the visible focus indication");
+    await move(button("新建文件"));
+    assert.notEqual(parentBackground(), highlight, "returning to the mouse removes the old keyboard fill");
     assert.equal(controller.state.templateMenu?.id, sessionId);
     assert.equal(controller.state.templateMenu?.selected.length, 2);
     await key(button("新建项目"), "ArrowRight");
@@ -116,7 +153,7 @@ export const completion = (async () => {
 
     await move(template(file.relativePath));
     await key(template(word.relativePath), "ArrowRight"); await pause();
-    assert.equal(depth(), 2, "keyboard navigation cancels a pending hover collapse");
+    assert.equal(depth(), 2, "keyboard navigation reopens a branch after moving over a file");
     await key(template(child.relativePath), "ArrowLeft"); assert.equal(depth(), 1);
     await move(document.body); // Leave an old-session timer pending, then replace the whole context menu.
     await tick(() => controller.actions.closeContextMenu()); await openContext();
@@ -137,11 +174,14 @@ export const completion = (async () => {
 
     await tick(() => controller.actions.closeContextMenu());
     await tick(() => controller.actions.openTemplateMenu("panel-1", f.tabId, { x: 40, y: 40 }));
-    await move(template(file.relativePath)); await move(document.body); await pause();
+    await move(template(file.relativePath)); await move(document.body);
+    assert.ok(controller.state.templateMenu, "leaving the chain retains a brief crossing allowance");
+    await pause(120);
     assert.equal(controller.state.templateMenu, undefined, "leaving a standalone template menu closes the whole session");
     console.log("ok - real parent/template portals preserve hover navigation, focus, cross-level selection and session boundaries");
   } finally {
     if (releaseNested) await tick(() => releaseNested!(listing(nested.relativePath)));
     await tick(() => root.unmount());
+    style.remove();
   }
 })();
