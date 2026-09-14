@@ -13,19 +13,11 @@ function test(name: string, run: () => void) {
   }
 }
 
-test("file color presentation keeps rule foreground on the entry and rule background on the name label", () => {
-  assert.deepEqual(
-    getFileColorPresentation(
-      { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
-      true
-    ),
-    {
-      className: "has-color-filter has-color-filter--foreground",
-      style: { "--entry-rule-foreground": "#ffffff" },
-      labelClassName: "entry-name__label--rule-background",
-      labelStyle: { "--entry-rule-background": "#a4262c" }
-    }
-  );
+// 三态语义：仅前景→整行生效；仅背景→背景仅涂名称标签；
+// 前景+背景同时设置→前景只应用名称标签（整行/元数据回默认色），背景仍只涂名称。
+// 该规则不需要判断颜色深浅：用户配什么就显示什么，作用域只由“是否同时设置字体与背景”决定。
+
+test("file color presentation keeps foreground whole-row when only the font color is set", () => {
   assert.deepEqual(
     getFileColorPresentation({ foregroundColorHex: "#005a9e", backgroundColorHex: null }, true),
     {
@@ -35,6 +27,9 @@ test("file color presentation keeps rule foreground on the entry and rule backgr
       labelStyle: undefined
     }
   );
+});
+
+test("file color presentation keeps background only on the name label when only the background color is set", () => {
   assert.deepEqual(
     getFileColorPresentation({ foregroundColorHex: null, backgroundColorHex: "#fff4ce" }, true),
     {
@@ -44,18 +39,31 @@ test("file color presentation keeps rule foreground on the entry and rule backgr
       labelStyle: { "--entry-rule-background": "#fff4ce" }
     }
   );
-  assert.deepEqual(
-    getFileColorPresentation({ foregroundColorHex: null, backgroundColorHex: null }, true),
-    {
-      className: "",
-      style: undefined,
-      labelClassName: "",
-      labelStyle: undefined
-    }
-  );
 });
 
-test("file color presentation keeps decorations dormant while globally disabled", () => {
+test("font + background both set keeps the foreground on the name label only, never on the row", () => {
+  // 前景+背景同时设置：行级不再携带前景（元数据列回默认色），
+  // 前景变量改放名称标签，与背景一起只作用于名称区域。
+  const presentation = getFileColorPresentation(
+    { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
+    true
+  );
+  assert.deepEqual(presentation, {
+    className: "has-color-filter",
+    style: undefined,
+    labelClassName: "entry-name__label--rule-foreground entry-name__label--rule-background",
+    labelStyle: {
+      "--entry-rule-foreground": "#ffffff",
+      "--entry-rule-background": "#a4262c"
+    }
+  });
+});
+
+test("file color presentation keeps no decorations when no color is set or while disabled", () => {
+  assert.deepEqual(
+    getFileColorPresentation({ foregroundColorHex: null, backgroundColorHex: null }, true),
+    { className: "", style: undefined, labelClassName: "", labelStyle: undefined }
+  );
   assert.deepEqual(
     getFileColorPresentation(
       { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
@@ -65,7 +73,19 @@ test("file color presentation keeps decorations dormant while globally disabled"
   );
 });
 
-test("file color row attributes carry the icon accent and foreground but never the row background variable", () => {
+test("file color row attributes carry the icon accent but drop the foreground variable when both colors are set", () => {
+  // 仅前景：行级仍带整行前景变量。
+  assert.deepEqual(
+    getFileColorRowAttributes(
+      { accentColor: "#29659f", foregroundColorHex: "#005a9e", backgroundColorHex: null },
+      true
+    ),
+    {
+      classNameSuffix: " has-color-filter has-color-filter--foreground",
+      style: { "--row-accent": "#29659f", "--entry-rule-foreground": "#005a9e" }
+    }
+  );
+  // 前景+背景同时设置：行级不再带前景变量（元数据列回默认色）。
   assert.deepEqual(
     getFileColorRowAttributes(
       {
@@ -76,11 +96,8 @@ test("file color row attributes carry the icon accent and foreground but never t
       true
     ),
     {
-      classNameSuffix: " has-color-filter has-color-filter--foreground",
-      style: {
-        "--row-accent": "#29659f",
-        "--entry-rule-foreground": "#ffffff"
-      }
+      classNameSuffix: " has-color-filter",
+      style: { "--row-accent": "#29659f" }
     }
   );
   assert.deepEqual(
@@ -99,20 +116,33 @@ test("file color row attributes carry the icon accent and foreground but never t
   );
 });
 
-test("file color label attributes expose only the name-label background", () => {
+test("file color label attributes keep background plus foreground on the name label when both colors are set", () => {
+  // 仅背景：名称标签只带背景。
+  assert.deepEqual(
+    getFileColorLabelAttributes({ foregroundColorHex: null, backgroundColorHex: "#fff4ce" }, true),
+    {
+      className: "entry-name__label--rule-background",
+      style: { "--entry-rule-background": "#fff4ce" }
+    }
+  );
+  // 仅前景：名称标签无装饰（前景走整行）。
+  assert.deepEqual(
+    getFileColorLabelAttributes({ foregroundColorHex: "#005a9e", backgroundColorHex: null }, true),
+    { className: "", style: undefined }
+  );
+  // 前景+背景同时设置：名称标签同时带前景与背景。
   assert.deepEqual(
     getFileColorLabelAttributes(
       { foregroundColorHex: "#ffffff", backgroundColorHex: "#a4262c" },
       true
     ),
     {
-      className: "entry-name__label--rule-background",
-      style: { "--entry-rule-background": "#a4262c" }
+      className: "entry-name__label--rule-foreground entry-name__label--rule-background",
+      style: {
+        "--entry-rule-foreground": "#ffffff",
+        "--entry-rule-background": "#a4262c"
+      }
     }
-  );
-  assert.deepEqual(
-    getFileColorLabelAttributes({ foregroundColorHex: "#005a9e", backgroundColorHex: null }, true),
-    { className: "", style: undefined }
   );
   assert.deepEqual(
     getFileColorLabelAttributes(
@@ -168,6 +198,9 @@ test("configured list colors paint the name-label background and keep foreground
   assert.match(css, /@media \(forced-colors: active\)[\s\S]*background:\s*Canvas;[\s\S]*color:\s*CanvasText/);
   assert.match(css, /@media \(forced-colors: active\)[\s\S]*\.entry-name__label--rule-background\s*\{[^}]*background:\s*Canvas/);
   assert.match(css, /\.tag-stack span\s*\{[\s\S]*?color:\s*#38516b;[\s\S]*?background:\s*#eef3f8;/);
+  // 前景+背景同时设置：名称标签应用配置前景（颜色直通），但行表面不承载前景变量。
+  assert.match(css, /\.entry-name__label--rule-foreground\s*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
+  assert.doesNotMatch(css, /\.entry-name__label--rule-background\s*\{[^}]*color:\s*var\(--entry-rule-foreground\)/);
 });
 
 test("rule name-label background extends one space on the left and three on the right without moving the text", () => {

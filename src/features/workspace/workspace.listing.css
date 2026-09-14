@@ -678,6 +678,12 @@ body.is-column-pointer-dragging * {
   background: var(--entry-rule-background);
 }
 
+/* 前景 + 背景同时设置：前景直通到名称标签（不作用整行），
+   颜色不判断深浅，只由“是否同时设置字体与背景”决定作用域。 */
+.entry-name__label--rule-foreground {
+  color: var(--entry-rule-foreground);
+}
+
 .inline-edit-input {
   width: min(240px, 100%);
   min-width: 64px;

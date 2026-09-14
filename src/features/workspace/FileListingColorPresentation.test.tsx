@@ -96,6 +96,38 @@ const coloredEntries: EntryViewModel[] = [
     backgroundColorHex: "#fff4ce"
   },
   {
+    id: "font-only-file",
+    name: "摘要.pdf",
+    kind: "file",
+    path: "D:\\摘要.pdf",
+    parentPath: "D:\\",
+    sizeLabel: "5 KB",
+    modifiedLabel: "2026-04-21 12:00",
+    extension: ".pdf",
+    attributes: ["A"],
+    accentColor: "#0f6cbd",
+    tags: ["Pdf"],
+    description: "Foreground-only document",
+    foregroundColorHex: "#005a9e",
+    backgroundColorHex: null
+  },
+  {
+    id: "background-only-file",
+    name: "清单.xlsx",
+    kind: "file",
+    path: "D:\\清单.xlsx",
+    parentPath: "D:\\",
+    sizeLabel: "3 KB",
+    modifiedLabel: "2026-04-21 13:00",
+    extension: ".xlsx",
+    attributes: ["A"],
+    accentColor: "#0f6cbd",
+    tags: ["Sheet"],
+    description: "Background-only document",
+    foregroundColorHex: null,
+    backgroundColorHex: "#fff4ce"
+  },
+  {
     id: "plain-file",
     name: "notes.txt",
     kind: "file",
@@ -179,7 +211,8 @@ export const completion = (async () => {
   const VIEW_MODES: TabViewMode[] = ["details", "list", "tiles", "medium-icons", "content"];
 
   try {
-    await assertTest("colored entries paint the rule background only behind the name label in every view mode", async () => {
+    await assertTest("font+background entries keep foreground+background on the name label only in every view mode", async () => {
+      // colored-file 同时设置字体色与背景色：行级不再带前景变量，前景与背景都只落在名称标签。
       for (const viewMode of VIEW_MODES) {
         await act(async () => {
           render(viewMode);
@@ -189,7 +222,10 @@ export const completion = (async () => {
         const row = container.querySelector(ROW_SELECTOR);
         assert.ok(row, `${viewMode} renders an entry surface`);
         const rowStyle = (row as HTMLElement).getAttribute("style") ?? "";
-        assert.ok(rowStyle.includes("--entry-rule-foreground"), `${viewMode} row carries the foreground variable`);
+        assert.ok(
+          !rowStyle.includes("--entry-rule-foreground"),
+          `${viewMode} row must not carry the foreground variable when both colors are set`
+        );
         assert.ok(
           !rowStyle.includes("--entry-rule-background"),
           `${viewMode} row must not carry the background variable on the surrounding surface`
@@ -198,12 +234,17 @@ export const completion = (async () => {
         const label: HTMLElement | null = container.querySelector<HTMLElement>(".entry-name__label--rule-background");
         assert.ok(label, `${viewMode} renders a rule-colored name label`);
         assert.equal(label!.textContent, "季度报告.docx");
+        assert.ok(
+          label!.classList.contains("entry-name__label--rule-foreground"),
+          `${viewMode} name label carries the foreground class`
+        );
         const labelStyle = label!.getAttribute("style") ?? "";
         assert.ok(labelStyle.includes("--entry-rule-background"), `${viewMode} name label carries the background variable`);
+        assert.ok(labelStyle.includes("--entry-rule-foreground"), `${viewMode} name label carries the foreground variable`);
         assert.notEqual(label, row, `${viewMode} name label is a separate element above the surface`);
       }
 
-      // 未着色条目不产生名称标签类或背景变量。
+      // 未着色条目/仅背景条目不因前景产生整行/标签前景。
       await act(async () => {
         render("list");
         await flushEffects();
@@ -220,6 +261,37 @@ export const completion = (async () => {
       assert.ok(coloredRow!.querySelector(".entry-name__label--rule-background"));
     });
 
+    await assertTest("font-only entry applies the foreground whole-row; background-only entry paints only the name label", async () => {
+      await act(async () => {
+        render("list");
+        await flushEffects();
+      });
+
+      // 仅字体色：行级带前景变量（整行生效），名称标签无装饰。
+      const fontOnlyRow = Array.from(container.querySelectorAll(".file-list-item")).find(
+        (row) => row.textContent?.includes("摘要.pdf")
+      );
+      assert.ok(fontOnlyRow, "font-only entry renders a list row");
+      const fontOnlyStyle = (fontOnlyRow as HTMLElement).getAttribute("style") ?? "";
+      assert.ok(fontOnlyStyle.includes("--entry-rule-foreground"), "font-only row carries the whole-row foreground variable");
+      assert.equal(fontOnlyRow!.querySelector(".entry-name__label--rule-background"), null, "font-only row paints no name-label background");
+      assert.equal(fontOnlyRow!.querySelector(".entry-name__label--rule-foreground"), null, "font-only row paints no name-label foreground");
+
+      // 仅背景色：行级不带前景变量，名称标签只带背景。
+      const backgroundOnlyRow = Array.from(container.querySelectorAll(".file-list-item")).find(
+        (row) => row.textContent?.includes("清单.xlsx")
+      );
+      assert.ok(backgroundOnlyRow, "background-only entry renders a list row");
+      const backgroundOnlyStyle = (backgroundOnlyRow as HTMLElement).getAttribute("style") ?? "";
+      assert.ok(!backgroundOnlyStyle.includes("--entry-rule-foreground"), "background-only row carries no foreground variable");
+      const bgLabel = backgroundOnlyRow!.querySelector<HTMLElement>(".entry-name__label--rule-background");
+      assert.ok(bgLabel, "background-only entry paints a name-label background");
+      assert.ok(
+        !bgLabel!.classList.contains("entry-name__label--rule-foreground"),
+        "background-only entry paints no name-label foreground class"
+      );
+    });
+
     await assertTest("selected colored entries keep their name-label colors above the selection surface", async () => {
       await act(async () => {
         render("details", ["colored-file"]);
@@ -230,10 +302,17 @@ export const completion = (async () => {
       assert.ok(selectedRow);
       assert.match(selectedRow!.className, /\bis-selected\b/);
       const rowStyle = (selectedRow as HTMLElement).getAttribute("style") ?? "";
-      assert.ok(rowStyle.includes("--entry-rule-foreground"), "selected colored row keeps the foreground variable");
+      assert.ok(
+        !rowStyle.includes("--entry-rule-foreground"),
+        "selected font+background row keeps no whole-row foreground variable"
+      );
       const label = selectedRow!.querySelector<HTMLElement>(".entry-name__label--rule-background");
       assert.ok(label, "selected colored entry keeps its name-label background element");
       assert.ok((label!.getAttribute("style") ?? "").includes("--entry-rule-background"));
+      assert.ok(
+        (label!.getAttribute("style") ?? "").includes("--entry-rule-foreground"),
+        "selected font+background name label keeps its foreground variable"
+      );
 
       // 未选中的普通条目不参与着色。
       const plainRow = Array.from(container.querySelectorAll(".file-row")).find(
