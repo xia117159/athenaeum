@@ -151,6 +151,7 @@ assertTest("toBackendSettingsModelUpdate serializes the complete settings model"
     detailsRowHeight: 46,
     sizeBarMode: "folder-max",
     folderExpansionEnabled: false,
+    notificationsEnabled: false,
     tooltipHoverDelayMs: 125,
     metadataRetentionHours: null,
     fileVisibility: {

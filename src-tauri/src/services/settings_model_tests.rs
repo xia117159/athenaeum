@@ -30,6 +30,7 @@ fn update(
         details_row_height: 30,
         size_bar_mode: settings.size_bar_mode.clone(),
         folder_expansion_enabled: true,
+        notifications_enabled: true,
         tooltip_hover_delay_ms: settings.tooltip_hover_delay_ms,
         metadata_retention_hours: settings.metadata_retention_hours,
         file_visibility: settings.file_visibility.clone(),

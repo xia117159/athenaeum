@@ -358,6 +358,7 @@ export interface SettingsSnapshot {
   detailsRowHeight: number;
   sizeBarMode?: "folder-total" | "folder-max";
   folderExpansionEnabled?: boolean;
+  notificationsEnabled?: boolean;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
   fileVisibility?: FileVisibilitySettings;
@@ -376,6 +377,7 @@ export interface SettingsModelUpdate {
   detailsRowHeight: number;
   sizeBarMode: "folder-total" | "folder-max";
   folderExpansionEnabled: boolean;
+  notificationsEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilitySettings;

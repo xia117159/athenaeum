@@ -1,4 +1,4 @@
-﻿﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
@@ -61,6 +61,7 @@ export const completion = (async () => {
   }, interactions, {
     loadBootstrap: () => ({
       ...createMockWorkspaceBootstrap("tauri"),
+      settingsModel: { ...createMockWorkspaceBootstrap("tauri").settingsModel, notificationsEnabled: true },
       startupDiagnostics: ["Invalid persisted colorRulesRevision was reset to 0"]
     })
   });

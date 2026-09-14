@@ -309,6 +309,7 @@ export interface SettingsModel {
   detailsRowHeight: number;
   sizeBarMode: SizeBarMode;
   folderExpansionEnabled?: boolean;
+  notificationsEnabled?: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilityState;

@@ -2660,14 +2660,18 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
           state.settings.model,
           normalizeSettingsModel(action.payload.model)
         );
+        const notifications = model.notificationsEnabled === true || state.notifications.length === 0
+          ? state.notifications : [];
         if (
           hasSameJsonShape(state.settings.model, model) &&
+          notifications === state.notifications &&
           (action.payload.section === undefined || action.payload.section === state.settings.section)
         ) {
           return state;
         }
         return invalidatePropertiesIfTargetChanged({
           ...state,
+          notifications,
           fileVisibility: model.fileVisibility,
           panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           settings: {
@@ -2683,10 +2687,13 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
           ...action.payload.settingsModel,
           tagRules: state.settings.model.tagRules
         }));
+        const notifications = model.notificationsEnabled === true || state.notifications.length === 0
+          ? state.notifications : [];
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));
         if (
           hasSameJsonShape(state.settings.model, model) &&
+          notifications === state.notifications &&
           hasSameJsonShape(state.bookmarks, action.payload.bookmarks) &&
           hasSameJsonShape(state.hotlist, action.payload.hotlist) &&
           hasSameJsonShape(state.remoteProfiles, action.payload.remoteProfiles) &&
@@ -2696,6 +2703,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         }
         return invalidatePropertiesIfTargetChanged({
           ...state,
+          notifications,
           fileVisibility: model.fileVisibility,
           panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           bookmarks: action.payload.bookmarks,
@@ -2737,6 +2745,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       return updateOperations(state, { type: "recordsCleared", payload: action.payload });
 
     case "notificationAdded":
+      // Apply the setting after any preceding settings/bootstrap action in the same batch.
+      if (state.settings.model.notificationsEnabled !== true) return state;
       return {
         ...state,
         notifications: [...state.notifications, action.payload]

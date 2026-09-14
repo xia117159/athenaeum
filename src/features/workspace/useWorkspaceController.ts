@@ -350,6 +350,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
         current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+        current.notificationsEnabled !== next.notificationsEnabled ||
         current.sizeBarMode !== next.sizeBarMode ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
@@ -367,6 +368,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
     !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
     current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+    current.notificationsEnabled !== next.notificationsEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 

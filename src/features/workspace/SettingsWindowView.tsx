@@ -40,6 +40,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     detailsRowHeight: model.detailsRowHeight,
     sizeBarMode: model.sizeBarMode,
     folderExpansionEnabled: model.folderExpansionEnabled === true,
+    notificationsEnabled: model.notificationsEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
     fileVisibility: { ...model.fileVisibility },
@@ -75,7 +76,7 @@ function getSettingsErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function computeDirtySections(
+export function computeDirtySections(
   persisted: WorkspaceState,
   draft: WorkspaceState,
   normalizedPersistedModel: SettingsModel,
@@ -100,7 +101,7 @@ function computeDirtySections(
   ) {
     sections.add("file-list");
   }
-  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu)) sections.add("menu-mouse");
+  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu) || pm.notificationsEnabled !== dm.notificationsEnabled) sections.add("menu-mouse");
   if (!hasSameJsonShape(pm.theme, dm.theme)) sections.add("appearance");
   if (hasColorRuleDraftChanges(dm.colorRules, pm.colorRules, colorRulesRawDraftDirty)) {
     sections.add("color-rules");
@@ -630,6 +631,9 @@ export function SettingsWindowView() {
         onUpdateSizeBarMode={(value) => updateDraftModel((model) => ({ ...model, sizeBarMode: normalizeSizeBarMode(value) }))}
         onUpdateFolderExpansionEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
+        }
+        onUpdateNotificationsEnabled={(enabled) =>
+          updateDraftModel((model) => ({ ...model, notificationsEnabled: enabled }))
         }
         onUpdateTooltipHoverDelay={(value) =>
           updateDraftModel((model) => ({

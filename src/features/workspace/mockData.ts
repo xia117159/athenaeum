@@ -942,6 +942,7 @@ function createSettingsModel(): SettingsModel {
     ],
     navigationColumns: [], detailsRowHeight: 24, sizeBarMode: "folder-total",
     folderExpansionEnabled: false,
+    notificationsEnabled: false,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
     metadataRetentionHours: DEFAULT_METADATA_RETENTION_HOURS,
     fileVisibility: {

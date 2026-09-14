@@ -62,6 +62,8 @@ pub struct SettingsSnapshot {
     pub size_bar_mode: String,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
@@ -88,6 +90,8 @@ pub struct SettingsModelUpdate {
     pub size_bar_mode: String,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]

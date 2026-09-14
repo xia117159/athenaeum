@@ -95,6 +95,7 @@ function createProps(state: WorkspaceState) {
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
     onUpdateFolderExpansionEnabled: () => undefined,
+    onUpdateNotificationsEnabled: () => undefined,
     onUpdateTooltipHoverDelay: () => undefined,
     onUpdateMetadataRetentionHours: () => undefined,
     onUpdateContextMenuDefault: () => undefined,
@@ -575,6 +576,25 @@ export const completion = (async () => {
       });
       container.querySelector<HTMLButtonElement>("[data-context-menu-value='custom']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       assert.deepEqual(menuUpdates, ["custom"]);
+
+      // 通知提示开关：模型为隐藏（不勾选）时，点击后把启用变化交给处理器。
+      const notificationsOffState = createSettingsState("menu-mouse");
+      notificationsOffState.settings.model.notificationsEnabled = false;
+      const notificationUpdates: boolean[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(notificationsOffState),
+            onUpdateNotificationsEnabled: (enabled) => notificationUpdates.push(enabled)
+          })
+        );
+        await flushEffects();
+      });
+      const notificationCheckbox = container.querySelector<HTMLInputElement>("[data-setting-id='notifications-enabled']");
+      assert.ok(notificationCheckbox, "menu-mouse page renders the notifications toggle");
+      assert.equal(notificationCheckbox!.checked, false);
+      notificationCheckbox!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(notificationUpdates, [true]);
 
       await act(async () => {
         root.render(

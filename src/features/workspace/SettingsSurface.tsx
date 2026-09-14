@@ -61,6 +61,7 @@ export type SettingsSurfaceProps = {
   onUpdateDetailsRowHeight: (value: number) => void;
   onUpdateSizeBarMode?: (value: SettingsModel["sizeBarMode"]) => void;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
+  onUpdateNotificationsEnabled: (enabled: boolean) => void;
   onUpdateTooltipHoverDelay: (value: number) => void;
   onUpdateMetadataRetentionHours: (value: number | null) => void;
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
@@ -211,6 +212,7 @@ export function SettingsSurface({
   onUpdateDetailsRowHeight,
   onUpdateSizeBarMode = () => undefined,
   onUpdateFolderExpansionEnabled,
+  onUpdateNotificationsEnabled,
   onUpdateTooltipHoverDelay,
   onUpdateMetadataRetentionHours,
   onUpdateContextMenuDefault,
@@ -301,8 +303,10 @@ export function SettingsSurface({
           ) : settings.section === "menu-mouse" ? (
             <MenuMousePage
               defaultMenu={settings.model.contextMenu.defaultMenu}
+              notificationsEnabled={settings.model.notificationsEnabled === true}
               disabled={controlsDisabled}
               onUpdateContextMenuDefault={onUpdateContextMenuDefault}
+              onUpdateNotificationsEnabled={onUpdateNotificationsEnabled}
             />
           ) : settings.section === "file-associations" ? (
             <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
@@ -671,12 +675,16 @@ function ShortcutCaptureInput({
 
 function MenuMousePage({
   defaultMenu,
+  notificationsEnabled,
   disabled,
-  onUpdateContextMenuDefault
+  onUpdateContextMenuDefault,
+  onUpdateNotificationsEnabled
 }: {
   defaultMenu: SettingsModel["contextMenu"]["defaultMenu"];
+  notificationsEnabled: boolean;
   disabled: boolean;
   onUpdateContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) => void;
+  onUpdateNotificationsEnabled: (enabled: boolean) => void;
 }) {
   return (
     <div className="settings-page">
@@ -712,6 +720,32 @@ function MenuMousePage({
               软件自定义
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-group">
+        <header className="settings-group__header">
+          <div>
+            <strong>通知提示</strong>
+            <span>控制右下角弹出的错误与操作结果通知。</span>
+          </div>
+        </header>
+        <div className="settings-row">
+          <div>
+            <strong>显示通知提示</strong>
+            <span>关闭后不再弹出任何右下角通知（含错误提示）；文件打开进度条仍会显示。</span>
+          </div>
+          <label className="settings-check-inline">
+            <input
+              type="checkbox"
+              aria-label="显示通知提示"
+              data-setting-id="notifications-enabled"
+              checked={notificationsEnabled}
+              disabled={disabled}
+              onChange={(event) => onUpdateNotificationsEnabled(event.currentTarget.checked)}
+            />
+            <span>启用</span>
+          </label>
         </div>
       </section>
     </div>
