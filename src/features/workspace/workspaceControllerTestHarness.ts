@@ -455,6 +455,32 @@ return { statuses: {}, isGitRepo: false };
   };
 }
 
+/**
+ * jsdom 不实现 ResizeObserver，而 react-resizable-panels 在挂载时会直接从
+ * `ownerDocument.defaultView` 上取构造器且不做可用性判断。这里补一个最小实现：
+ * observe 后异步回调一次，让依赖尺寸的组件能走到测量分支（jsdom 没有布局，
+ * 尺寸需要测试自行通过 offsetWidth/offsetHeight 提供）。
+ */
+class TestResizeObserver {
+  constructor(private readonly callback: ResizeObserverCallback) {}
+
+  observe(target: Element) {
+    setTimeout(() => {
+      const width = (target as HTMLElement).offsetWidth ?? 0;
+      const height = (target as HTMLElement).offsetHeight ?? 0;
+      const entry = {
+        target,
+        borderBoxSize: [{ blockSize: height, inlineSize: width }]
+      } as unknown as ResizeObserverEntry;
+      this.callback([entry], this as unknown as ResizeObserver);
+    }, 0);
+  }
+
+  unobserve() {}
+
+  disconnect() {}
+}
+
 export function installDomEnvironment() {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost"
@@ -465,6 +491,14 @@ export function installDomEnvironment() {
   globalThis.HTMLElement = dom.window.HTMLElement;
   globalThis.HTMLInputElement = dom.window.HTMLInputElement;
   globalThis.Node = dom.window.Node;
+  // jsdom 把 DOMRect 挂在 window 上，但没有导出到 Node 全局；react-resizable-panels 直接引用裸标识符 DOMRect。
+  globalThis.DOMRect = dom.window.DOMRect as unknown as typeof DOMRect;
+  if (typeof dom.window.ResizeObserver === "undefined") {
+    Object.defineProperty(dom.window, "ResizeObserver", {
+      configurable: true,
+      value: TestResizeObserver
+    });
+  }
   installLegacyInputEventPatch(dom);
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,

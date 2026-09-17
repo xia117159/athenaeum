@@ -17,7 +17,8 @@
     "lucide-react": "^1.17.0",
     "react": "19.2.4",
     "react-colorful": "^5.7.0",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "react-resizable-panels": "4.12.4"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^29.0.2",

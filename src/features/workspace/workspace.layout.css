@@ -37,8 +37,8 @@
   background: #ffffff;
 }
 
-.split-pane,
-.split-pane__segment,
+.split-group,
+.split-group__pane,
 .panel-layout,
 .panel-layout--single,
 .panel-surface,
@@ -59,73 +59,35 @@
   min-width: 0;
 }
 
-.split-pane {
-  display: flex;
+/* react-resizable-panels 自带 display/width/height/flex-direction 内联样式，
+   这里只补交叉轴收缩与内容包裹。 */
+.split-group {
+  min-width: 0;
+}
+
+.split-group__pane {
   width: 100%;
   height: 100%;
-}
-
-.split-pane--horizontal {
-  flex-direction: row;
-}
-
-.split-pane--vertical {
-  flex-direction: column;
-}
-
-.split-pane__segment {
-  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  min-width: 0;
-  min-height: 0;
 }
 
-.split-pane__segment--fill {
-  flex: 1 1 auto;
-}
-
-.split-pane__segment > * {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.split-pane__handle {
-  position: relative;
-  flex: 0 0 var(--split-handle-size, 4px);
+/* 分隔条内联 flex-basis: auto，因此尺寸由主轴上的 width/height 决定。
+   整条浅灰色带就是拖拽热区，不再叠加装饰中线，避免把色带切成
+   “空隙-线-空隙”的观感。 */
+.split-group__handle {
   background: #ececec;
 }
 
-.split-pane--horizontal .split-pane__handle {
+.split-group--horizontal > .split-group__handle {
+  width: var(--split-handle-size, 4px);
   cursor: col-resize;
 }
 
-.split-pane--vertical .split-pane__handle {
+.split-group--vertical > .split-group__handle {
+  height: var(--split-handle-size, 4px);
   cursor: row-resize;
-}
-
-.split-pane__handle::before {
-  content: "";
-  position: absolute;
-  background: #bdbdbd;
-  border-radius: 0;
-}
-
-.split-pane--horizontal .split-pane__handle::before {
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  transform: translateX(-50%);
-}
-
-.split-pane--vertical .split-pane__handle::before {
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  transform: translateY(-50%);
 }
 
 .tree-pane,

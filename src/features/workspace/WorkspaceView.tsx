@@ -1,6 +1,6 @@
 import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2 } from "lucide-react";
-import { ResizableSplit } from "./ResizableSplit";
+import { SplitPane } from "./SplitPane";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
@@ -378,13 +378,12 @@ export function WorkspaceView() {
       <section className="workspace-main">
         <div className={`workspace-main__content${state.treeVisible ? "" : " workspace-main__content--tree-hidden"}`}>
           {state.treeVisible ? (
-            <ResizableSplit
+            <SplitPane
               direction="horizontal"
               ratio={state.layoutRatios.tree}
               min={0.12}
               max={0.36}
               minSizePx={160}
-              handleSize={8}
               onRatioChange={(value) => actions.setSplitRatio("tree", value)}
             >
               <ExplorerTreePane
@@ -407,7 +406,7 @@ export function WorkspaceView() {
                 activeEntries={filteredActiveEntries}
                 selectedEntries={selectedEntries}
               />
-            </ResizableSplit>
+            </SplitPane>
           ) : (
             <WorkspaceRightContent
               state={state}
@@ -540,20 +539,19 @@ function WorkspaceRightContent({
 
   return (
     <div className="workspace-main__right workspace-main__right--with-info">
-      <ResizableSplit
+      <SplitPane
         direction="vertical"
         ratio={1 - state.layoutRatios.search}
         min={0.5}
         max={0.82}
         minSizePx={240}
         secondMinSizePx={222}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("search", 1 - value)}
         className="workspace-main__right-split"
       >
         {panels}
         {informationPanel}
-      </ResizableSplit>
+      </SplitPane>
     </div>
   );
 }
@@ -626,90 +624,84 @@ function PanelLayout({
 
   if (state.layoutMode === "dual") {
     return (
-      <ResizableSplit
+      <SplitPane
         direction="horizontal"
         ratio={state.layoutRatios.primary}
         min={0}
         max={1}
         minSizePx={280}
         secondMinSizePx={280}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("primary", value)}
       >
         {renderPanel("panel-1")}
         {renderPanel("panel-2")}
-      </ResizableSplit>
+      </SplitPane>
     );
   }
 
   if (state.layoutMode === "triple") {
     return (
-      <ResizableSplit
+      <SplitPane
         direction="horizontal"
         ratio={state.layoutRatios.primary}
         min={0}
         max={1}
         minSizePx={280}
         secondMinSizePx={280}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("primary", value)}
       >
         {renderPanel("panel-1")}
-        <ResizableSplit
+        <SplitPane
           direction="vertical"
           ratio={state.layoutRatios.tripleSecondary}
           min={0}
           max={1}
           minSizePx={180}
           secondMinSizePx={180}
-          handleSize={8}
           onRatioChange={(value) => actions.setSplitRatio("tripleSecondary", value)}
         >
           {renderPanel("panel-2")}
           {renderPanel("panel-3")}
-        </ResizableSplit>
-      </ResizableSplit>
+        </SplitPane>
+      </SplitPane>
     );
   }
 
   return (
-    <ResizableSplit
+    <SplitPane
       direction="horizontal"
       ratio={state.layoutRatios.primary}
       min={0}
       max={1}
       minSizePx={280}
       secondMinSizePx={280}
-      handleSize={8}
       onRatioChange={(value) => actions.setSplitRatio("primary", value)}
     >
-      <ResizableSplit
+      <SplitPane
         direction="vertical"
         ratio={state.layoutRatios.quadLeftSecondary}
         min={0}
         max={1}
         minSizePx={180}
         secondMinSizePx={180}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("quadLeftSecondary", value)}
       >
         {renderPanel("panel-1")}
         {renderPanel("panel-3")}
-      </ResizableSplit>
-      <ResizableSplit
+      </SplitPane>
+      <SplitPane
         direction="vertical"
         ratio={state.layoutRatios.quadRightSecondary}
         min={0}
         max={1}
         minSizePx={180}
         secondMinSizePx={180}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("quadRightSecondary", value)}
       >
         {renderPanel("panel-2")}
         {renderPanel("panel-4")}
-      </ResizableSplit>
-    </ResizableSplit>
+      </SplitPane>
+    </SplitPane>
   );
 }
 
