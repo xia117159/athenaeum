@@ -61,6 +61,8 @@ pub struct SettingsSnapshot {
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
     #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
+    #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default)]
     pub notifications_enabled: bool,
@@ -88,6 +90,8 @@ pub struct SettingsModelUpdate {
     pub details_row_height: u16,
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
+    #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default)]

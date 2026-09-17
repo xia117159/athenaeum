@@ -22,6 +22,8 @@ pub struct SettingsStore {
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
     #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
+    #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default)]
     pub notifications_enabled: bool,
@@ -48,6 +50,7 @@ impl Default for SettingsStore {
             navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
             size_bar_mode: default_size_bar_mode(),
+            tree_auto_follow_enabled: false,
             folder_expansion_enabled: false,
             notifications_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),

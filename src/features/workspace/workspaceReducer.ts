@@ -62,6 +62,7 @@ import type { OperationClearOutcome } from "../../app/types";
 import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
 import { compareRevisionTokens } from "./colorFilterEditorModel";
 import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { emptyTreeState, normalizeTreeState, treeStateFromTab, reduceWorkspaceTree, reconcileWorkspaceTree } from "./workspaceTreeState";
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
 import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
@@ -84,6 +85,7 @@ export type WorkspaceAction =
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
+  | { type: "treeNodeSelected"; payload: { path: string } }
   | { type: "treeVisibilitySet"; payload: boolean }
   | { type: "colorFilterTogglePendingSet"; payload: boolean }
   | { type: "colorFilterSnapshotReceived"; payload: ColorFilterConfigSnapshot }
@@ -366,6 +368,8 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     bootstrap.activePanelId,
     bootstrap.panels[bootstrap.activePanelId]?.activeTabId
   );
+  const activePanelId = visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0];
+  const activeTab = getActiveTab(normalizedPanels[activePanelId]);
 
   return {
     status: "ready",
@@ -373,11 +377,14 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
+    treeState: bootstrap.settingsModel.treeAutoFollowEnabled && !isNavigationTab(activeTab)
+      ? treeStateFromTab(activeTab)
+      : normalizeTreeState(bootstrap.treeState) ?? emptyTreeState(),
     colorFilterTogglePending: false,
     fileVisibility: { ...bootstrap.settingsModel.fileVisibility },
     syncScroll: false,
     panels: normalizedPanels,
-    activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
+    activePanelId,
     directoryTree: bootstrap.directoryTree,
     bookmarks: bootstrap.bookmarks,
     hotlist: bootstrap.hotlist,
@@ -811,14 +818,6 @@ function createSearchHistoryState(
   };
 }
 
-function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
-  const normalizedPath = normalizeLocationPath(path);
-  if (expanded) {
-    return expandedNodePaths.includes(normalizedPath) ? expandedNodePaths : [...expandedNodePaths, normalizedPath];
-  }
-  return expandedNodePaths.filter((nodePath) => nodePath !== normalizedPath);
-}
-
 function normalizeDirectoryNode(node: DirectoryNode): DirectoryNode {
   const normalizedPath = normalizeLocationPath(node.path);
 
@@ -1247,9 +1246,10 @@ function updateColumnsForSettingsAndTab(
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   state = prepareSelectionInteraction(state, action);
-  return reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceMenus(state, action)
+  const next = reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceTree(state, action) ?? reduceWorkspaceMenus(state, action)
     ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
     ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
+  return reconcileWorkspaceTree(state, next, action);
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -1638,11 +1638,11 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
                       : Math.max(0, nextHistory.findIndex((historyPath) => historyPath === nextPath)));
 
             const breadcrumbPaths = action.payload.snapshot.breadcrumbs.map((breadcrumb) => breadcrumb.path);
-            const nextExpandedNodePaths = breadcrumbPaths.reduce<string[]>(
+            const nextExpandedNodePaths = state.settings.model.treeAutoFollowEnabled ? breadcrumbPaths.reduce<string[]>(
               (paths, breadcrumbPath) =>
                 paths.includes(breadcrumbPath) ? paths : [...paths, breadcrumbPath],
               tab.expandedNodePaths
-            );
+            ) : tab.expandedNodePaths;
 
             const anchorEntry = pathChanged
               ? (action.payload.previousPath
@@ -1753,16 +1753,6 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
             : { ...node, connectionState: "error", errorMessage: action.payload.message }
         )
       };
-
-    case "treeNodeExpansionSet":
-      return updatePanel(state, action.payload.panelId, (panel) =>
-        updateTab(panel, action.payload.tabId, (tab) => ({
-          ...tab,
-          expandedNodePaths: isNavigationTab(tab)
-            ? tab.expandedNodePaths
-            : setExpandedPath(tab.expandedNodePaths, action.payload.path, action.payload.expanded)
-        }))
-      );
 
     case "tabReconnectRequired":
       return updatePanel(state, action.payload.panelId, (panel) =>

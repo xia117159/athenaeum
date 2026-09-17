@@ -135,6 +135,7 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
         navigationColumns: model.navigationColumns,
         detailsRowHeight: normalizeDetailsRowHeight(model.detailsRowHeight),
         sizeBarMode: model.sizeBarMode,
+        treeAutoFollowEnabled: model.treeAutoFollowEnabled === true,
         folderExpansionEnabled: model.folderExpansionEnabled === true,
         notificationsEnabled: model.notificationsEnabled === true,
         tooltipHoverDelayMs: model.tooltipHoverDelayMs,

@@ -388,13 +388,10 @@ export function WorkspaceView() {
             >
               <ExplorerTreePane
                 nodes={filterDirectoryNodesByFileVisibility(state.directoryTree, state.fileVisibility)}
-                activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
-                expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
+                activePath={state.treeState.activePath}
+                expandedNodePaths={state.treeState.expandedNodePaths}
                 onToggle={(path) => {
-                  if (isActiveNavigationTab) {
-                    return;
-                  }
-                  const isExpanded = activeTab.expandedNodePaths.includes(path);
+                  const isExpanded = state.treeState.expandedNodePaths.includes(path);
                   actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
                 }}
                 onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}

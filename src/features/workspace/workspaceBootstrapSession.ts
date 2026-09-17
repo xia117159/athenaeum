@@ -1,3 +1,4 @@
+import { normalizeTreeState, treeStateFromTab } from "./workspaceTreeState";
 import type { RemoteProfile as BackendRemoteProfile } from "../../app/types";
 import { createRemoteRootUri } from "./remoteUri";
 import { resolveWorkspaceDirectory } from "./workspaceDirectoryGateway";
@@ -128,7 +129,7 @@ function createReconnectTab(
     locked: tab.locked,
     history: normalizedHistory,
     historyIndex: tab.historyIndex,
-    expandedNodePaths: tab.expandedNodePaths.length > 0 ? tab.expandedNodePaths : snapshot.breadcrumbs.map((breadcrumb) => breadcrumb.path),
+    expandedNodePaths: tab.expandedNodePaths,
     viewMode: tab.viewMode,
     sort: tab.sort,
     columns: tab.columns,
@@ -327,12 +328,15 @@ export async function mergeBootstrapWithSession(
     layoutMode: session.layoutMode,
     layoutRatios: normalizeLayoutRatios(session.layoutRatios),
     treeVisible: session.treeVisible !== false,
+    treeState: normalizeTreeState(session.treeState) ?? treeStateFromTab(
+      dedupedPanels[activePanelId].tabs.find(tab => tab.id === dedupedPanels[activePanelId].activeTabId) ?? dedupedPanels[activePanelId].tabs[0]),
     informationPanel: {
       ...base.informationPanel,
       ...normalizePersistedInformationPanel(session.informationPanel)
     },
     activePanelId,
     panels: dedupedPanels,
-    settingsModel: normalizeSettingsModel(session.settingsModel)
+    settingsModel: normalizeSettingsModel({ ...session.settingsModel, treeAutoFollowEnabled:
+      base.source === "tauri" ? base.settingsModel.treeAutoFollowEnabled === true : session.settingsModel.treeAutoFollowEnabled === true })
   };
 }

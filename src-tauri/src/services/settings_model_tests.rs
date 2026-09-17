@@ -3,6 +3,32 @@ use crate::domain::models::FileAssociationRule;
 use std::fs;
 
 #[test]
+fn tree_auto_follow_defaults_and_settings_round_trip() {
+    let root = std::env::temp_dir().join(format!("sfm-tree-follow-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default();
+    metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json");
+    let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    let mut legacy = serde_json::to_value(&settings).unwrap();
+    legacy.as_object_mut().unwrap().remove("treeAutoFollowEnabled");
+    let defaulted: SettingsStore = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["treeAutoFollowEnabled"], false);
+    let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+    request.as_object_mut().unwrap().remove("treeAutoFollowEnabled");
+    let defaulted: SettingsModelUpdate = serde_json::from_value(request).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["treeAutoFollowEnabled"], false);
+    for enabled in [true, false] {
+        let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+        request["treeAutoFollowEnabled"] = serde_json::json!(enabled);
+        commit_model(&mut metadata, &mut settings, serde_json::from_value(request).unwrap()).unwrap();
+        let reloaded = SettingsStore::load_from(path.clone()).unwrap();
+        assert_eq!(serde_json::to_value(reloaded).unwrap()["treeAutoFollowEnabled"], enabled);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn template_root_settings_round_trip() {
     let root = std::env::temp_dir().join(format!("sfm-template-settings-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&root).unwrap();
@@ -29,6 +55,7 @@ fn update(
         navigation_columns: settings.navigation_columns.clone(),
         details_row_height: 30,
         size_bar_mode: settings.size_bar_mode.clone(),
+        tree_auto_follow_enabled: settings.tree_auto_follow_enabled,
         folder_expansion_enabled: true,
         notifications_enabled: true,
         tooltip_hover_delay_ms: settings.tooltip_hover_delay_ms,

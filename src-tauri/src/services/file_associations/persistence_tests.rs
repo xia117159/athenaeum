@@ -18,6 +18,7 @@ fn file_associations_persisted_legacy_shape_survives_round_trip_and_snapshot() {
         settings.navigation_columns,
         settings.details_row_height,
         settings.size_bar_mode,
+        settings.tree_auto_follow_enabled,
         settings.folder_expansion_enabled,
         settings.notifications_enabled,
         settings.tooltip_hover_delay_ms,

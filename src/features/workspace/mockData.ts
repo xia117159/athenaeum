@@ -941,6 +941,7 @@ function createSettingsModel(): SettingsModel {
       { id: "location", label: "位置", visible: false, width: "1.3fr", align: "left" }
     ],
     navigationColumns: [], detailsRowHeight: 24, sizeBarMode: "folder-total",
+    treeAutoFollowEnabled: false,
     folderExpansionEnabled: false,
     notificationsEnabled: false,
     tooltipHoverDelayMs: DEFAULT_TOOLTIP_HOVER_DELAY_MS,

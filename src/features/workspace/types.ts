@@ -308,6 +308,7 @@ export interface SettingsModel {
   navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
   sizeBarMode: SizeBarMode;
+  treeAutoFollowEnabled?: boolean;
   folderExpansionEnabled?: boolean;
   notificationsEnabled?: boolean;
   tooltipHoverDelayMs: number;
@@ -636,6 +637,7 @@ export interface TabState {
    * 的末项无法推断光标端方向）。
    */
   selectionCursorId?: string | null;
+  /** Per-tab expansion memory used only while automatic tree following is enabled. */
   expandedNodePaths: string[];
   /** Transient details-list branches; independent of the navigation tree and session. */
   folderExpansion?: Record<string, FolderExpansionBranch>;
@@ -671,7 +673,13 @@ export interface LayoutRatios {
   search: number;
 }
 
+export interface WorkspaceTreeState {
+  activePath: string;
+  expandedNodePaths: string[];
+}
+
 export interface WorkspaceBootstrap {
+  treeState?: WorkspaceTreeState;
   source: DataSource;
   startupDiagnostics: string[];
   layoutMode: PanelLayoutMode;
@@ -689,6 +697,7 @@ export interface WorkspaceBootstrap {
 }
 
 export interface WorkspaceState {
+  treeState: WorkspaceTreeState;
   status: "loading" | "ready";
   source: DataSource;
   layoutMode: PanelLayoutMode;

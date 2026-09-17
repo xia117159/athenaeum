@@ -60,6 +60,7 @@ export type SettingsSurfaceProps = {
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
   onUpdateSizeBarMode?: (value: SettingsModel["sizeBarMode"]) => void;
+  onUpdateTreeAutoFollowEnabled?: (enabled: boolean) => void;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
   onUpdateNotificationsEnabled: (enabled: boolean) => void;
   onUpdateTooltipHoverDelay: (value: number) => void;
@@ -211,6 +212,7 @@ export function SettingsSurface({
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
   onUpdateSizeBarMode = () => undefined,
+  onUpdateTreeAutoFollowEnabled = () => undefined,
   onUpdateFolderExpansionEnabled,
   onUpdateNotificationsEnabled,
   onUpdateTooltipHoverDelay,
@@ -291,6 +293,8 @@ export function SettingsSurface({
               detailsRowHeight={settings.model.detailsRowHeight}
               sizeBarMode={settings.model.sizeBarMode}
               onUpdateSizeBarMode={onUpdateSizeBarMode}
+              treeAutoFollowEnabled={settings.model.treeAutoFollowEnabled === true}
+              onUpdateTreeAutoFollowEnabled={onUpdateTreeAutoFollowEnabled}
               folderExpansionEnabled={settings.model.folderExpansionEnabled === true}
               onUpdateFolderExpansionEnabled={onUpdateFolderExpansionEnabled}
               tooltipHoverDelayMs={settings.model.tooltipHoverDelayMs}

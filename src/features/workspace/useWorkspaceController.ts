@@ -13,6 +13,7 @@ import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDr
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
 import { getFolderListingRows, getTabEntries } from "./folderExpansion";
+import { useWorkspaceTreeController } from "./useWorkspaceTreeController";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
 import { useFileOpeningController } from "./useFileOpeningController";
@@ -43,7 +44,6 @@ import {
   findDirectoryTabForNavigationFolder,
   findEntryByPath,
   findTab,
-  findTreeNode,
   getActiveDirectoryTab,
   getEntryNameFromPath,
   getErrorMessage,
@@ -108,7 +108,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }));
   useFolderExpansionController({ state, dispatch, workspaceGateway });
   useDirectorySizeController({ state, dispatch, workspaceGateway, enabled: options.role !== "settings" });
-  const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
   const userNavigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
@@ -162,6 +161,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+  const loadTreeChildren = useWorkspaceTreeController({ state, dispatch, workspaceGateway,
+    notify: message => pushNotification("danger", message), enabled: options.role !== "settings" });
   const fileOpening = useFileOpeningController({ state, dispatch, gateway: workspaceGateway,
     enabled: options.role !== "settings", notify: pushNotification });
 
@@ -349,6 +350,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+        current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
         current.folderExpansionEnabled !== next.folderExpansionEnabled ||
         current.notificationsEnabled !== next.notificationsEnabled ||
         current.sizeBarMode !== next.sizeBarMode ||
@@ -367,6 +369,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.columns, next.columns) ||
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
     !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+    current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
     current.folderExpansionEnabled !== next.folderExpansionEnabled ||
     current.notificationsEnabled !== next.notificationsEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
@@ -513,8 +516,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     if (state.status !== "ready" || state.source !== "tauri") {
       return;
     }
-    void workspaceGateway.saveSession(state);
-  }, [state, workspaceGateway]);
+    if (options.role !== "settings") void workspaceGateway.saveSession(state);
+  }, [state, workspaceGateway, options.role]);
 
   useEffect(() => {
     if (state.source !== "tauri") {
@@ -581,6 +584,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     state.settings.model.templateRoot,
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
+    state.settings.model.treeAutoFollowEnabled,
     state.settings.model.folderExpansionEnabled,
     state.settings.model.sizeBarMode,
     state.settings.model.contextMenu,
@@ -596,55 +600,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     writeSearchHistory("content", state.search.histories.content);
     writeSearchHistory("name", state.search.histories.name);
   }, [state.search.histories.content, state.search.histories.name]);
-
-  useEffect(() => {
-    if (state.status !== "ready") {
-      hydratingTreePathsRef.current.clear();
-      return;
-    }
-
-    const activeTab = getActiveTab(state.panels[state.activePanelId]);
-    if (isNavigationTab(activeTab) || activeTab.status !== "ready") {
-      return;
-    }
-
-    const pendingPaths = Array.from(new Set(activeTab.expandedNodePaths.map((path) => normalizeLocationPath(path)))).filter(
-      (path) => {
-        if (!path || hydratingTreePathsRef.current.has(path)) {
-          return false;
-        }
-
-        const node = findTreeNode(state.directoryTree, path);
-        return Boolean(node && node.expandable && !node.loaded && node.connectionState !== "error");
-      }
-    );
-
-    if (pendingPaths.length === 0) {
-      return;
-    }
-
-    for (const path of pendingPaths) {
-      hydratingTreePathsRef.current.add(path);
-
-      void workspaceGateway
-        .loadTreeChildren(path)
-        .then((children) => {
-          dispatch({ type: "treeChildrenLoaded", payload: { path, children } });
-        })
-        .catch((error) => {
-          if (isRemotePath(path)) {
-            dispatch({
-              type: "treeNodeConnectionFailed",
-              payload: { path, message: getErrorMessage(error, `无法展开 ${path}`) }
-            });
-          }
-          pushNotification("danger", getErrorMessage(error, `无法展开 ${path}`));
-        })
-        .finally(() => {
-          hydratingTreePathsRef.current.delete(path);
-        });
-    }
-  }, [state.status, state.activePanelId, state.panels, state.directoryTree, workspaceGateway]);
 
   useEffect(() => {
     if (state.status !== "ready" || state.source !== "tauri") {
@@ -1661,6 +1616,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const openTreeNode = useEffectEvent((panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => {
+    dispatch({ type: "treeNodeSelected", payload: { path } });
     const activeTab = getActiveTab(state.panels[panelId]);
     if (isNavigationTab(activeTab)) {
       void handleOpenNewTab(panelId, path);
@@ -1672,41 +1628,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
 
     void commitNavigation(panelId, path);
-  });
-
-  const loadTreeChildren = useEffectEvent(async (panelId: PanelId, tabId: string, path: string, expand: boolean) => {
-    if (isNavigationTab(findTab(state, panelId, tabId))) {
-      return;
-    }
-    dispatch({ type: "treeNodeExpansionSet", payload: { panelId, tabId, path, expanded: expand } });
-
-    if (!expand) {
-      return;
-    }
-
-    const node = findTreeNode(state.directoryTree, path);
-
-    if (node?.loaded || node?.expandable === false) {
-      return;
-    }
-
-    try {
-      if (isRemotePath(path)) {
-        dispatch({ type: "treeNodeConnectionStarted", payload: { path } });
-      }
-      const children = await workspaceGateway.loadTreeChildren(path);
-      dispatch({ type: "treeChildrenLoaded", payload: { path, children } });
-    } catch (error) {
-      if (isRemotePath(path)) {
-        dispatch({
-          type: "treeNodeConnectionFailed",
-          payload: { path, message: getErrorMessage(error, `无法展开 ${path}`) }
-        });
-      } else {
-        dispatch({ type: "treeNodeExpansionSet", payload: { panelId, tabId, path, expanded: false } });
-      }
-      pushNotification("danger", getErrorMessage(error, `无法展开 ${path}`));
-    }
   });
 
   const reconnectTab = useEffectEvent((panelId: PanelId, tabId: string) => {

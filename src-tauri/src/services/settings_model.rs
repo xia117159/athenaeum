@@ -23,6 +23,7 @@ pub fn commit_model(
     staged.set_navigation_columns(model.navigation_columns);
     staged.set_details_row_height(model.details_row_height);
     staged.set_size_bar_mode(model.size_bar_mode);
+    staged.tree_auto_follow_enabled = model.tree_auto_follow_enabled;
     staged.set_folder_expansion_enabled(model.folder_expansion_enabled);
     staged.set_notifications_enabled(model.notifications_enabled);
     staged.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);

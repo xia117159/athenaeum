@@ -8,7 +8,8 @@ import type {
   PanelLayoutMode,
   SettingsModel,
   TabState,
-  WorkspaceState
+  WorkspaceState,
+  WorkspaceTreeState
 } from "./types";
 import { isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
@@ -50,6 +51,7 @@ type StoredInformationPanel = Omit<PersistedInformationPanel, "activeTab"> & {
 };
 
 export type PersistedWorkspaceSession = {
+  treeState?: WorkspaceTreeState;
   layoutMode: PanelLayoutMode;
   layoutRatios: PersistedLayoutRatios;
   treeVisible?: boolean;
@@ -212,6 +214,7 @@ export function toPersistedSession(state: WorkspaceState): PersistedWorkspaceSes
     layoutMode: state.layoutMode,
     layoutRatios: state.layoutRatios,
     treeVisible: state.treeVisible,
+    treeState: { activePath: state.treeState.activePath, expandedNodePaths: [...state.treeState.expandedNodePaths] },
     informationPanel: {
       expanded: state.informationPanel.expanded,
       activeTab: state.informationPanel.activeTab

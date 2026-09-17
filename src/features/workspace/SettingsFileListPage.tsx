@@ -1,4 +1,6 @@
 export function SettingsFileListPage({
+  treeAutoFollowEnabled,
+  onUpdateTreeAutoFollowEnabled,
   detailsRowHeight,
   sizeBarMode,
   onUpdateSizeBarMode,
@@ -11,6 +13,8 @@ export function SettingsFileListPage({
   onUpdateTooltipHoverDelay,
   onUpdateMetadataRetentionHours
 }: {
+  treeAutoFollowEnabled: boolean;
+  onUpdateTreeAutoFollowEnabled: (enabled: boolean) => void;
   detailsRowHeight: number;
   sizeBarMode: "folder-total" | "folder-max";
   onUpdateSizeBarMode: (value: "folder-total" | "folder-max") => void;
@@ -33,6 +37,18 @@ export function SettingsFileListPage({
             <span>调整详细信息视图密度、悬停提示和注释/标签保留策略。</span>
           </div>
         </header>
+        <div className="settings-row">
+          <div>
+            <strong>目录树自动跟踪展开</strong>
+            <span>跟随当前标签页的目录，自动选中并展开目录树；关闭后，切换标签页和浏览目录时保持目录树状态。</span>
+          </div>
+          <label className="settings-check-inline">
+            <input type="checkbox" aria-label="目录树自动跟踪展开" data-setting-id="tree-auto-follow-enabled"
+              checked={treeAutoFollowEnabled} disabled={disabled}
+              onChange={event => onUpdateTreeAutoFollowEnabled(event.currentTarget.checked)} />
+            <span>启用</span>
+          </label>
+        </div>
         <div className="settings-row">
           <div>
             <strong>详细信息列表内展开文件夹</strong>

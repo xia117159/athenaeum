@@ -4019,6 +4019,7 @@ export const completion = (async () => {
       let hydratedController: ReturnType<typeof useWorkspaceController> | undefined;
 
       const bootstrap = createMockWorkspaceBootstrap("mock");
+      bootstrap.settingsModel.treeAutoFollowEnabled = true;
       const panel = bootstrap.panels["panel-1"];
       const activeTab = panel.tabs[0];
       const loadResponses = new Map<string, DirectoryNode[]>([
@@ -4158,6 +4159,7 @@ export const completion = (async () => {
       };
       let reconnectController: ReturnType<typeof useWorkspaceController> | undefined;
       const bootstrap = createMockWorkspaceBootstrap("tauri");
+      bootstrap.settingsModel.treeAutoFollowEnabled = true;
       const remoteRootPath = "sftp://deploy@edge-01.internal/releases";
       const remoteCurrentPath = `${remoteRootPath}/current`;
       const baseTab = bootstrap.panels["panel-1"].tabs[0];

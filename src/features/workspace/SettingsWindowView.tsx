@@ -39,6 +39,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
     sizeBarMode: model.sizeBarMode,
+    treeAutoFollowEnabled: model.treeAutoFollowEnabled === true,
     folderExpansionEnabled: model.folderExpansionEnabled === true,
     notificationsEnabled: model.notificationsEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
@@ -95,6 +96,7 @@ export function computeDirtySections(
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
     pm.detailsRowHeight !== dm.detailsRowHeight ||
     pm.sizeBarMode !== dm.sizeBarMode ||
+    pm.treeAutoFollowEnabled !== dm.treeAutoFollowEnabled ||
     pm.folderExpansionEnabled !== dm.folderExpansionEnabled ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours
@@ -629,6 +631,7 @@ export function SettingsWindowView() {
           }))
         }
         onUpdateSizeBarMode={(value) => updateDraftModel((model) => ({ ...model, sizeBarMode: normalizeSizeBarMode(value) }))}
+        onUpdateTreeAutoFollowEnabled={(enabled) => updateDraftModel(model => ({ ...model, treeAutoFollowEnabled: enabled }))}
         onUpdateFolderExpansionEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
         }

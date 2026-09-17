@@ -298,6 +298,7 @@ export const workspaceSettingsGatewayTests = (async () => {
             ),
             detailsRowHeight: 44,
             sizeBarMode: "folder-total",
+            treeAutoFollowEnabled: false,
             folderExpansionEnabled: false,
             notificationsEnabled: false,
             tooltipHoverDelayMs: 125,

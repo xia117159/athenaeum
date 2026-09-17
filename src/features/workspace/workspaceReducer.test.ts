@@ -1096,6 +1096,7 @@ assertTest("workspaceReducer marks a remote tab as reconnect-required and clears
 
 assertTest("workspaceReducer keeps explicit tree expansion state without double toggling", () => {
     const state = createState();
+  state.settings.model.treeAutoFollowEnabled = true;
     const activeTab = getActiveTab(state.panels["panel-1"]);
 
     const expanded = workspaceReducer(state, {
@@ -2158,6 +2159,7 @@ assertTest("workspaceReducer removes remote roots when the remote profile list b
 
 assertTest("workspaceReducer merges new breadcrumb paths into expandedNodePaths on navigation", () => {
   const state = createState();
+  state.settings.model.treeAutoFollowEnabled = true;
   const activeTab = getActiveTab(state.panels["panel-1"]);
 
   const expanded = workspaceReducer(state, {
@@ -2249,6 +2251,7 @@ assertTest("workspaceReducer normalizes Windows verbatim paths when tree childre
 
 assertTest("workspaceReducer normalizes Windows verbatim paths before storing tree expansion state", () => {
   const state = createState();
+  state.settings.model.treeAutoFollowEnabled = true;
   const activeTab = getActiveTab(state.panels["panel-1"]);
 
   const expanded = workspaceReducer(state, {
@@ -2268,6 +2271,7 @@ assertTest("workspaceReducer normalizes Windows verbatim paths before storing tr
 
 assertTest("workspaceReducer does not duplicate paths already in expandedNodePaths during breadcrumb merge", () => {
   const state = createState();
+  state.settings.model.treeAutoFollowEnabled = true;
   const activeTab = getActiveTab(state.panels["panel-1"]);
   const initialCount = activeTab.expandedNodePaths.length;
 

@@ -57,6 +57,7 @@ function createWorkspaceState(): WorkspaceState {
       search: 0.36
     },
     treeVisible: false,
+    treeState: { activePath: "", expandedNodePaths: [] },
     colorFilterTogglePending: false,
     fileVisibility: {
       showHidden: false,
