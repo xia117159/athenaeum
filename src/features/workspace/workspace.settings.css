@@ -288,7 +288,7 @@
 }
 
 .settings-window__body {
-  grid-template-columns: clamp(212px, 27vw, 248px) minmax(0, 1fr);
+  grid-template-columns: 184px minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
 }
@@ -356,20 +356,20 @@
   grid-template-rows: auto minmax(0, 1fr);
   container-name: settings-content;
   container-type: inline-size;
-  padding: 24px 28px 18px;
+  padding: 16px 20px 12px;
   overflow: hidden;
 }
 
 .settings-page__header {
   display: grid;
   gap: 4px;
-  padding: 2px 0 16px;
+  padding: 0 0 12px;
 }
 
 .settings-page__header h2 {
   margin: 0;
-  font-size: 30px;
-  font-weight: 500;
+  font-size: 22px;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
@@ -388,12 +388,11 @@
 
 .settings-row {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(220px, 1fr);
+  grid-template-columns: minmax(185px, 220px) minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
-  min-height: 38px;
-  padding: 7px 0;
-  border-bottom: 1px solid #edf0f3;
+  gap: 12px;
+  min-height: 34px;
+  padding: 3px 0;
 }
 
 .settings-row > div:first-child {
@@ -404,7 +403,7 @@
 
 .settings-row strong,
 .settings-table strong {
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .settings-row span,
@@ -422,7 +421,8 @@
 }
 
 .settings-control-inline input[type="number"] {
-  width: 96px;
+  width: 76px;
+  height: 26px;
   text-align: right;
 }
 
@@ -579,7 +579,7 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 30px;
+  min-height: 28px;
   padding: 3px 8px 3px 4px;
   border: 1px solid #c8c8c8;
   border-radius: 3px;
@@ -651,6 +651,8 @@
   border-radius: 4px;
   background: #ffffff;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .theme-color-control .react-colorful {
@@ -753,7 +755,7 @@
 
 .settings-table {
   width: 100%;
-  min-width: 560px;
+  min-width: 0;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -770,13 +772,13 @@
 
 .settings-table td {
   min-height: 34px;
-  padding: 6px 8px;
+  padding: 3px 8px;
   border-bottom: 1px solid #edf0f3;
   vertical-align: middle;
 }
 
 .settings-table td:first-child {
-  min-width: 220px;
+  min-width: 120px;
 }
 
 .settings-table td:first-child span {

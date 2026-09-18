@@ -43,7 +43,7 @@ export const completion = (async () => {
       assert.equal(checkbox().checked, true);
       assert.equal(Reflect.get(state.settings.model, "treeAutoFollowEnabled"), false);
       assert.equal(saved.length, 0);
-      assert.ok(container.querySelector('[data-section-id="file-list"] .settings-window__nav-dirty'));
+      assert.ok(container.querySelector('[data-section-id="general"] .settings-window__nav-dirty'));
       await click(button("确定"));
       assert.deepEqual(saved.map((model) => Reflect.get(model, "treeAutoFollowEnabled")), [true]);
     });

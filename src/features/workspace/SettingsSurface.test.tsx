@@ -156,7 +156,7 @@ export const completion = (async () => {
       const nav = container.querySelector(".settings-window__nav");
       const content = container.querySelector(".settings-window__content");
       const navItems = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-section-id]"));
-      const activeNavItem = container.querySelector("[data-section-id='file-list'].is-active");
+      const activeNavItem = container.querySelector("[data-section-id='general'].is-active");
 
       assert.equal(container.querySelector(".settings-modal"), null);
       assert.ok(surface);
@@ -167,7 +167,7 @@ export const completion = (async () => {
       assert.equal(container.querySelectorAll(".settings-window__nav-group").length, 3);
       assert.deepEqual(
         navItems.map((item) => item.dataset.sectionId),
-        ["shortcuts", "file-list", "menu-mouse", "file-associations", "templates", "appearance", "color-rules", "tag-rules", "connections"]
+        ["general", "shortcuts", "file-associations", "appearance", "color-rules", "tag-rules", "connections"]
       );
       assert.ok(activeNavItem);
 

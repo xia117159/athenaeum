@@ -181,6 +181,7 @@ export function normalizeContextMenuDefault(value?: string | null): SettingsMode
 
 export function normalizeSettingsSection(value?: string | null): SettingsSection {
   switch (value) {
+    case "general":
     case "templates":
     case "shortcuts":
     case "file-list":

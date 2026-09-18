@@ -31,7 +31,6 @@
   padding: 6px 10px;
 }
 .file-association-hint,
-.file-association-help,
 .file-association-warning,
 .file-association-error {
   margin: 0;
@@ -39,12 +38,6 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.file-association-hint,
-.file-association-help { color: #626262; }
-.file-association-help {
-  padding: 7px 10px;
-  border-top: 1px solid #d6d6d6;
-  background: #f7f7f7;
-}
+.file-association-hint { color: #626262; }
 .file-association-warning { color: #805900; }
 .file-association-error { color: #b42318; }

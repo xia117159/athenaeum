@@ -140,7 +140,7 @@ export function SettingsWindowView() {
   const settingsReady = state.status === "ready";
   const [draftState, setDraftState] = useState<WorkspaceState>(() => {
     const draft = createDraftState(state);
-    draft.settings.section = requestedSettingsSection(window.location.search, draft.settings.section);
+    draft.settings.section = requestedSettingsSection(window.location.search, "general");
     return draft;
   });
   const [dirty, setDirty] = useState(false);
@@ -154,12 +154,16 @@ export function SettingsWindowView() {
   const [colorRulesValid, setColorRulesValid] = useState(true);
   const [colorRulesRawDraftDirty, setColorRulesRawDraftDirty] = useState(false);
   const [colorRulesResetSequence, setColorRulesResetSequence] = useState(0);
+  const [navigationVersion, setNavigationVersion] = useState(0);
 
   useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
     void listenSettingsNavigation(section => {
-      if (!disposed) setDraftState(current => ({ ...current, settings: { ...current.settings, section } }));
+      if (!disposed) {
+        setDraftState(current => ({ ...current, settings: { ...current.settings, section } }));
+        setNavigationVersion(version => version + 1);
+      }
     }).then(unlisten => {
       if (disposed) unlisten(); else stop = unlisten;
     }).catch(error => {
@@ -283,6 +287,7 @@ export function SettingsWindowView() {
   };
 
   const updateDraftSection = (section: SettingsSection) => {
+    setNavigationVersion(version => version + 1);
     setDraftState((current) => ({
       ...current,
       settings: {
@@ -547,6 +552,7 @@ export function SettingsWindowView() {
         onInspectAssociationPrograms={actions.inspectAssociationPrograms}
         state={draftState}
         dirtySections={dirtySections}
+        navigationVersion={navigationVersion}
         onSelectSection={updateDraftSection}
         onUpdateShortcut={(id, binding) =>
           updateDraftModel((model) => ({

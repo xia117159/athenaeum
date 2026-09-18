@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { SettingsGroupHeader, SettingsRow } from "./SettingsPrimitives";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { HexAlphaColorPicker } from "react-colorful";
 import type { SettingsSurfaceProps } from "./SettingsSurface";
 import { DEFAULT_THEME, type HoverColorKey } from "./workspaceTheme";
@@ -63,7 +64,33 @@ function ThemeColorControl({
   const opacity = getThemeColorOpacityPercent(value, fallback);
   const [hexDraft, setHexDraft] = useState(normalizedColor);
   const controlRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelPosition, setPanelPosition] = useState<{ top: number; left: number; maxHeight: number }>();
   const panelId = `${settingId}-color-panel`;
+
+  useLayoutEffect(() => {
+    if (!isOpen) { setPanelPosition(undefined); return; }
+    const control = controlRef.current;
+    const panel = panelRef.current;
+    const page = control?.closest<HTMLElement>(".settings-page");
+    if (!control || !panel || !page) return;
+    const place = () => {
+      const bounds = page.getBoundingClientRect();
+      if (!bounds.height) return;
+      const anchor = control.getBoundingClientRect();
+      const popup = panel.getBoundingClientRect();
+      const maxHeight = Math.max(0, bounds.height - 8);
+      const height = Math.min(popup.height, maxHeight);
+      const below = anchor.bottom + 4;
+      const top = below + height <= bounds.bottom - 4 ? below : Math.max(bounds.top + 4, anchor.top - height - 4);
+      const left = Math.max(bounds.left + 4, Math.min(anchor.right - popup.width, bounds.right - popup.width - 4));
+      setPanelPosition({ top: top - anchor.top, left: left - anchor.left, maxHeight });
+    };
+    place();
+    page.addEventListener("scroll", place);
+    window.addEventListener("resize", place);
+    return () => { page.removeEventListener("scroll", place); window.removeEventListener("resize", place); };
+  }, [isOpen]);
 
   useEffect(() => {
     setHexDraft(normalizedColor);
@@ -136,7 +163,6 @@ function ThemeColorControl({
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={isOpen ? panelId : undefined}
-        title={normalizedColor}
         onClick={() => {
           if (!disabled) {
             onOpenChange(!isOpen);
@@ -150,7 +176,7 @@ function ThemeColorControl({
         <span className="theme-color-control__value">{normalizedColor}</span>
       </button>
       {isOpen ? (
-        <div className="theme-color-control__panel" id={panelId} role="dialog" aria-label="Color picker">
+        <div ref={panelRef} className="theme-color-control__panel" id={panelId} role="dialog" aria-label="Color picker" style={panelPosition}>
           <HexAlphaColorPicker
             color={normalizedColor}
             onChange={handlePickerChange}
@@ -231,133 +257,105 @@ export function AppearancePage({
   return (
     <div className="settings-page">
       <section className="settings-group">
-        <header className="settings-group__header"><div><strong>鼠标悬停</strong><span>应用内菜单和文件列表的悬停颜色。Windows 原生菜单使用系统外观。</span></div></header>
-        {([
-          { key: "menuHoverBackground", id: "menu-hover-background", label: "菜单悬停背景色" },
-          { key: "menuHoverText", id: "menu-hover-text", label: "菜单悬停文字色" },
-          { key: "fileHoverBorder", id: "file-hover-border", label: "文件列表悬停边框色" }
-        ] as const).map(color => (
-          <div className="settings-row" key={color.id}>
-            <div><strong>{color.label}</strong><span>{color.key === "fileHoverBorder" ? "仅显示边框，保留文件原有颜色。" : "同时用于鼠标悬停和键盘选择。"}</span></div>
-            <ThemeColorControl value={hoverTheme[color.key]} fallback={DEFAULT_THEME[color.key]} settingId={color.id}
-              disabled={disabled || !onUpdateHoverColor} isOpen={openThemeColorId === color.id}
-              onOpenChange={open => setThemeColorOpen(color.id, open)} onUpdate={value => onUpdateHoverColor?.(color.key, value)} />
-          </div>
-        ))}
-      </section>
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>面板</strong>
-            <span>控制当前焦点面板的强调色。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>焦点强调色</strong>
-            <span>用于活动面板顶部强调线。</span>
-          </div>
-          <ThemeColorControl
-            value={panelFocusAccent}
-            fallback="#0f6cbd"
-            settingId="panel-focus-accent"
-            disabled={disabled}
-            isOpen={openThemeColorId === "panel-focus-accent"}
-            onOpenChange={(open) => setThemeColorOpen("panel-focus-accent", open)}
-            onUpdate={onUpdatePanelFocusAccent}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>活动选项卡背景色</strong>
-            <span>与焦点强调色配对，用于当前焦点面板的活动选项卡背景。</span>
-          </div>
-          <ThemeColorControl
-            value={activeTabBackground}
-            fallback="#ffffff"
-            settingId="active-tab-background"
-            disabled={disabled}
-            isOpen={openThemeColorId === "active-tab-background"}
-            onOpenChange={(open) => setThemeColorOpen("active-tab-background", open)}
-            onUpdate={onUpdateActiveTabBackground}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>拖拽填充色</strong>
-            <span>用于列表、文件夹行和标签页的拖拽高亮底色。</span>
-          </div>
-          <ThemeColorControl
-            value={dropHighlightFill}
-            fallback="#0f6cbd"
-            settingId="drop-highlight-fill"
-            disabled={disabled}
-            isOpen={openThemeColorId === "drop-highlight-fill"}
-            onOpenChange={(open) => setThemeColorOpen("drop-highlight-fill", open)}
-            onUpdate={onUpdateDropHighlightFill}
-          />
-        </div>
-        <div className="settings-row">
-          <div>
-            <strong>拖拽描边色</strong>
-            <span>用于拖拽目标边框和强调线。</span>
-          </div>
-          <ThemeColorControl
-            value={dropHighlightBorder}
-            fallback="#0f6cbd"
-            settingId="drop-highlight-border"
-            disabled={disabled}
-            isOpen={openThemeColorId === "drop-highlight-border"}
-            onOpenChange={(open) => setThemeColorOpen("drop-highlight-border", open)}
-            onUpdate={onUpdateDropHighlightBorder}
-          />
+        <SettingsGroupHeader title="鼠标悬停" description="应用内菜单和文件列表的悬停颜色。Windows 原生菜单使用系统外观。" />
+        <div className="settings-group__fields">
+          {([
+            { key: "menuHoverBackground", id: "menu-hover-background", label: "菜单悬停背景色" },
+            { key: "menuHoverText", id: "menu-hover-text", label: "菜单悬停文字色" },
+            { key: "fileHoverBorder", id: "file-hover-border", label: "文件列表悬停边框色" }
+          ] as const).map(color => (
+            <SettingsRow title={color.label} description={color.key === "fileHoverBorder" ? "仅显示边框，保留文件原有颜色。" : "同时用于鼠标悬停和键盘选择。"} key={color.id}>
+              <ThemeColorControl value={hoverTheme[color.key]} fallback={DEFAULT_THEME[color.key]} settingId={color.id}
+                disabled={disabled || !onUpdateHoverColor} isOpen={openThemeColorId === color.id}
+                onOpenChange={open => setThemeColorOpen(color.id, open)} onUpdate={value => onUpdateHoverColor?.(color.key, value)} />
+            </SettingsRow>
+          ))}
         </div>
       </section>
-
       <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>大小比例</strong>
-            <span>详细信息列表中，占比越大越接近较大占比颜色；不改变文字颜色。</span>
-          </div>
-        </header>
-        {([
-          { endpoint: "sizeBarLow", id: "size-bar-low", label: "较小占比颜色", value: sizeBarLow, fallback: "#dceaf7" },
-          { endpoint: "sizeBarHigh", id: "size-bar-high", label: "较大占比颜色", value: sizeBarHigh, fallback: "#3979b7" }
-        ] as const).map((color) => (
-          <div className="settings-row" key={color.id}>
-            <div><strong>{color.label}</strong><span>支持颜色和不透明度。</span></div>
-            <ThemeColorControl value={color.value} fallback={color.fallback} settingId={color.id}
-              disabled={disabled || !onUpdateSizeBarColor} isOpen={openThemeColorId === color.id}
-              onOpenChange={(open) => setThemeColorOpen(color.id, open)} onUpdate={(value) => onUpdateSizeBarColor?.(color.endpoint, value)} />
-          </div>
-        ))}
-      </section>
-
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>标签页</strong>
-            <span>控制标签页最小宽度。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>最小宽度</strong>
-            <span>最低 1px</span>
-          </div>
-          <label className="settings-control-inline">
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={String(tabMinWidth)}
-              data-setting-id="tab-min-width"
-              onInput={(event) => onUpdateTabMinWidth(Number(event.currentTarget.value))}
+        <SettingsGroupHeader title="面板" description="控制当前焦点面板的强调色。" />
+        <div className="settings-group__fields">
+          <SettingsRow title="焦点强调色" description="用于活动面板顶部强调线。">
+            <ThemeColorControl
+              value={panelFocusAccent}
+              fallback="#0f6cbd"
+              settingId="panel-focus-accent"
               disabled={disabled}
+              isOpen={openThemeColorId === "panel-focus-accent"}
+              onOpenChange={(open) => setThemeColorOpen("panel-focus-accent", open)}
+              onUpdate={onUpdatePanelFocusAccent}
             />
-            <span>px</span>
-          </label>
+          </SettingsRow>
+          <SettingsRow title="活动选项卡背景色" description="与焦点强调色配对，用于当前焦点面板的活动选项卡背景。">
+            <ThemeColorControl
+              value={activeTabBackground}
+              fallback="#ffffff"
+              settingId="active-tab-background"
+              disabled={disabled}
+              isOpen={openThemeColorId === "active-tab-background"}
+              onOpenChange={(open) => setThemeColorOpen("active-tab-background", open)}
+              onUpdate={onUpdateActiveTabBackground}
+            />
+          </SettingsRow>
+          <SettingsRow title="拖拽填充色" description="用于列表、文件夹行和标签页的拖拽高亮底色。">
+            <ThemeColorControl
+              value={dropHighlightFill}
+              fallback="#0f6cbd"
+              settingId="drop-highlight-fill"
+              disabled={disabled}
+              isOpen={openThemeColorId === "drop-highlight-fill"}
+              onOpenChange={(open) => setThemeColorOpen("drop-highlight-fill", open)}
+              onUpdate={onUpdateDropHighlightFill}
+            />
+          </SettingsRow>
+          <SettingsRow title="拖拽描边色" description="用于拖拽目标边框和强调线。">
+            <ThemeColorControl
+              value={dropHighlightBorder}
+              fallback="#0f6cbd"
+              settingId="drop-highlight-border"
+              disabled={disabled}
+              isOpen={openThemeColorId === "drop-highlight-border"}
+              onOpenChange={(open) => setThemeColorOpen("drop-highlight-border", open)}
+              onUpdate={onUpdateDropHighlightBorder}
+            />
+          </SettingsRow>
+        </div>
+      </section>
+
+      <section className="settings-group">
+        <SettingsGroupHeader title="大小比例" description="详细信息列表中，占比越大越接近较大占比颜色；不改变文字颜色。" />
+        <div className="settings-group__fields">
+          {([
+            { endpoint: "sizeBarLow", id: "size-bar-low", label: "较小占比颜色", value: sizeBarLow, fallback: "#dceaf7" },
+            { endpoint: "sizeBarHigh", id: "size-bar-high", label: "较大占比颜色", value: sizeBarHigh, fallback: "#3979b7" }
+          ] as const).map((color) => (
+            <SettingsRow title={color.label} description="支持颜色和不透明度。" key={color.id}>
+              <ThemeColorControl value={color.value} fallback={color.fallback} settingId={color.id}
+                disabled={disabled || !onUpdateSizeBarColor} isOpen={openThemeColorId === color.id}
+                onOpenChange={(open) => setThemeColorOpen(color.id, open)} onUpdate={(value) => onUpdateSizeBarColor?.(color.endpoint, value)} />
+            </SettingsRow>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-group">
+        <SettingsGroupHeader title="标签页" description="控制标签页最小宽度。" />
+        <div className="settings-group__fields">
+          <SettingsRow title="最小宽度" description="最低 1px">
+            <label className="settings-control-inline">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={String(tabMinWidth)}
+                data-setting-id="tab-min-width"
+                aria-label="标签页最小宽度"
+                onInput={(event) => onUpdateTabMinWidth(Number(event.currentTarget.value))}
+                disabled={disabled}
+              />
+              <span>px</span>
+            </label>
+          </SettingsRow>
         </div>
       </section>
     </div>

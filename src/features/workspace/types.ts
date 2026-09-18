@@ -16,6 +16,7 @@ export const THIS_PC_PATH = "此电脑";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
 export type SettingsSection =
+  | "general"
   | "templates"
   | "shortcuts"
   | "file-list"

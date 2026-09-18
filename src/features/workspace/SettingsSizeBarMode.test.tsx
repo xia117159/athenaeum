@@ -37,7 +37,7 @@ export const completion = (async () => {
       assert.equal(total.getAttribute("aria-pressed"), "true");
       await click(mode());
       assert.equal(mode().getAttribute("aria-pressed"), "true");
-      assert.ok(container.querySelector('[data-section-id="file-list"] .settings-window__nav-dirty'));
+      assert.ok(container.querySelector('[data-section-id="general"] .settings-window__nav-dirty'));
       assert.equal(state.settings.model.sizeBarMode, "folder-total");
       await click(container.querySelector<HTMLButtonElement>('[data-action="confirm-settings"]')!);
       assert.equal(saved.at(-1)?.sizeBarMode, "folder-max");
