@@ -1,5 +1,5 @@
 import { sortEntries } from "./fileListingSort";
-import { projectEntrySize } from "./directorySizes";
+import { createEntrySizeProjector } from "./directorySizes";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { DEFAULT_FILE_VISIBILITY, entryMatchesFileVisibility } from "./workspaceVisibility";
 import type { EntryViewModel, FileVisibilityState, FolderExpansionBranch, SizeBarMode, TabState } from "./types";
@@ -48,9 +48,10 @@ export function getFolderListingRows(
   const treeEnabled = supportsFolderExpansion(tab, enabled);
   const filter = filterText.trim().toLowerCase();
   const seen = new Set<string>();
+  const projectSize = createEntrySizeProjector(tab, sizeBarMode);
   const visit = (entries: EntryViewModel[], depth: number): FolderListingRow[] => {
     const rows: FolderListingRow[] = [];
-    for (const entry of sortEntries(entries.map((item) => projectEntrySize(tab, item, sizeBarMode)), tab.sort, tab.snapshot.location.path)) {
+    for (const entry of sortEntries(entries.map(projectSize), tab.sort, tab.snapshot.location.path)) {
       const key = getPathComparisonKey(entry.path);
       const editing = tab.inlineEdit?.mode === "rename" && tab.inlineEdit.entryId === entry.id;
       if ((treeEnabled && seen.has(key)) || (!editing && !entryMatchesFileVisibility(entry, visibility))) continue;

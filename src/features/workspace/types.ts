@@ -104,6 +104,8 @@ export interface EntryViewModel {
   sizeBytes?: number | null;
   sizeLabel: string;
   sizeDisplay?: import("./directorySizeTypes").EntrySizeDisplay;
+  /** Raw metadata hint for rejecting a replaced entry's historical size. */
+  sizeCreatedAt?: string | null;
   createdLabel?: string;
   modifiedLabel: string;
   accessedLabel?: string;
@@ -643,6 +645,7 @@ export interface TabState {
   /** Transient details-list branches; independent of the navigation tree and session. */
   folderExpansion?: Record<string, FolderExpansionBranch>;
   directorySizes?: import("./directorySizeTypes").DirectorySizeTabState;
+  directorySizePresentation?: import("./directorySizeTypes").DirectorySizePresentation;
   viewMode: TabViewMode;
   sort: SortState;
   columns: ColumnDefinition[];

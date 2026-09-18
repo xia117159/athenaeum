@@ -122,6 +122,29 @@ export const completion = (async () => {
       } finally { await h.close(); }
     });
 
+    await assertTest("switching back to a tab displays its previous values while the new lease is still being verified", async () => {
+      const f = controllerFixture(); const wire = sizeTransport();
+      const inactive = { ...f.tab, id: "second-tab", snapshot: { ...f.tab.snapshot, location: { ...f.tab.snapshot.location, path: "C:\\different" }, entries: [] } };
+      f.state.panels["panel-1"].tabs.push(inactive);
+      const h = await mountSizes(f.state, wire.gateway);
+      const finish: Array<() => void> = [];
+      const subscribe = wire.gateway.subscribe;
+      wire.gateway.subscribe = async (request) => {
+        const value = await subscribe(request);
+        return new Promise((resolve) => { finish.push(() => resolve(value)); });
+      };
+      try {
+        await h.dispatch({ type: "tabActivated", payload: { panelId: "panel-1", tabId: inactive.id } });
+        await h.dispatch({ type: "tabActivated", payload: { panelId: "panel-1", tabId: f.tab.id } });
+        assert.equal(h.tab.directorySizes?.pending, true);
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeLabel, "60 B");
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
+      } finally {
+        await h.close();
+        await act(async () => { finish.forEach((resolve) => resolve()); await flushEffects(); });
+      }
+    });
+
     await assertTest("navigation releases a slow subscription and its late result cannot populate the new root", async () => {
       const f = controllerFixture();
       const requests: SubscribeDirectorySizesRequest[] = [];

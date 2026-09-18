@@ -1,4 +1,4 @@
-import type { DirectorySizeTabState, EntrySizeDisplay } from "./directorySizeTypes";
+import type { DirectorySizeTabState, EntrySizeDisplay, RetainedEntrySize } from "./directorySizeTypes";
 import type { EntryViewModel, SizeBarMode, TabState } from "./types";
 import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
 
@@ -26,7 +26,7 @@ export function formatDirectoryBytes(bytes: bigint): string {
 /** Never promote rounded labels or unsafe JS numbers to precise aggregate bytes. */
 export function exactSizeBytes(entry: EntryViewModel): bigint | null {
   if (entry.kind === "folder" && !entry.driveInfo) {
-    return entry.sizeDisplay && (entry.sizeDisplay.state === "complete" || entry.sizeDisplay.state === "partial")
+    return entry.sizeDisplay && (entry.sizeDisplay.state === "complete" || entry.sizeDisplay.state === "partial" || entry.sizeDisplay.retained)
       ? decimalBytes(entry.sizeDisplay.bytes)
       : null;
   }
@@ -60,52 +60,92 @@ export function listingSizeIdentityIsReliable(tab: TabState, path: string): bool
   return tab.folderExpansion?.[getPathComparisonKey(path)]?.sizeIdentityReliable !== false;
 }
 
-function sizeDisplay(tab: TabState, entry: EntryViewModel, mode: SizeBarMode): EntrySizeDisplay {
+/** One denominator per listing projection, shared by roots and expanded rows. */
+export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "folder-total") {
   const sizes = currentDirectorySizes(tab);
   const snapshot = sizes?.snapshot;
-  const base: EntrySizeDisplay = {
-    state: "unknown", bytes: null, share: null,
-    label: entry.kind === "folder" ? "--" : entry.sizeLabel,
-    title: "尚未计算目录大小"
+  const root = tab.snapshot.location.path;
+  const supported = supportsDirectorySizes(tab);
+  const rootRecord = sizes?.records[getPathComparisonKey(root)];
+  const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
+  const terminal = supported && !!sizes && !!snapshot && !sizes.paused && !sizes.pending && (snapshot.phase === "complete" || snapshot.phase === "partial");
+  const denominatorReady = terminal && !!rootRecord && rootAligned && listingSizeIdentityIsReliable(tab, root) &&
+    tab.snapshot.entries.every((entry) => entry.kind !== "folder" || entry.attributes.includes("L") ||
+      !!sizes.records[getPathComparisonKey(entry.path)]);
+  let denominator: bigint | null = null;
+  if (denominatorReady) {
+    denominator = 0n;
+    for (const sibling of tab.snapshot.entries) {
+      const bytes = knownEntryBytes(sibling, sizes);
+      if (bytes !== null) denominator = mode === "folder-max" ? (bytes > denominator ? bytes : denominator) : denominator + bytes;
+    }
+  }
+  return (entry: EntryViewModel): EntrySizeDisplay => {
+    const base: EntrySizeDisplay = {
+      state: "unknown", bytes: null, share: null,
+      label: entry.kind === "folder" ? "--" : entry.sizeLabel,
+      title: "尚未计算目录大小"
+    };
+    if (!listingSizeIdentityIsReliable(tab, root) || !listingSizeIdentityIsReliable(tab, entry.parentPath)) return { ...base, title: "列表路径无法可靠区分条目，目录大小不可用" };
+    if (entry.attributes.includes("L")) return { ...base, state: "excluded", title: "链接不参与递归大小统计" };
+    if (!supported || !sizes || !snapshot || sizes.paused || sizes.pending) return base;
+    if (snapshot.phase !== "complete" && snapshot.phase !== "partial") {
+      return { ...base, state: snapshot.phase === "stale" ? "stale" : "unknown", title: snapshot.reason ?? "目录大小尚未就绪" };
+    }
+
+    const fingerprint = listingSizeFingerprint(tab, entry.parentPath);
+    const parentRecord = sizes.records[getPathComparisonKey(entry.parentPath)];
+    if (!parentRecord) return base;
+    if (fingerprint && parentRecord.sizeFingerprint && fingerprint !== parentRecord.sizeFingerprint) {
+      return { ...base, state: "stale", title: "列表与大小统计已过期" };
+    }
+
+    const record = sizes.records[getPathComparisonKey(entry.path)];
+    const bytes = entry.kind === "folder" ? decimalBytes(record?.bytes) : exactSizeBytes(entry);
+    if (bytes === null || (entry.kind === "folder" && record?.state === "unknown")) return base;
+
+    const share = denominator === null ? null : ratioFromBigInt(bytes, denominator);
+    const partial = entry.kind === "folder" && record?.state === "partial";
+    const suffix = snapshot.freshness === "snapshot" ? "（时间点快照）" : "";
+    return {
+      state: partial ? "partial" : "complete",
+      bytes: String(bytes),
+      share,
+      label: partial ? `≥${formatDirectoryBytes(bytes)}` : entry.kind === "folder" ? formatDirectoryBytes(bytes) : entry.sizeLabel,
+      title: `${bytes} 字节${share === null ? "，分母不完整" : `，占当前文件夹 ${(share * 100).toFixed(2)}%`}${partial ? "（统计不完整，下限）" : ""}${suffix}`
+    };
   };
-  if (!listingSizeIdentityIsReliable(tab, entry.parentPath)) return { ...base, title: "列表路径无法可靠区分条目，目录大小不可用" };
-  if (entry.attributes.includes("L")) return { ...base, state: "excluded", title: "链接不参与递归大小统计" };
-  if (!sizes || !snapshot || sizes.paused || sizes.pending) return base;
-  if (snapshot.phase !== "complete" && snapshot.phase !== "partial") {
-    return { ...base, state: snapshot.phase === "stale" ? "stale" : "unknown", title: snapshot.reason ?? "目录大小尚未就绪" };
-  }
+}
 
-  const fingerprint = listingSizeFingerprint(tab, entry.parentPath);
-  const parentRecord = sizes.records[getPathComparisonKey(entry.parentPath)];
-  if (fingerprint && parentRecord?.sizeFingerprint && fingerprint !== parentRecord.sizeFingerprint) {
-    return { ...base, state: "stale", title: "列表与大小统计已过期" };
-  }
+export function retainedSizeMatches(row: RetainedEntrySize, entry: EntryViewModel) {
+  return row.path === entry.path && row.kind === entry.kind && row.createdAt === entry.sizeCreatedAt && !entry.attributes.includes("L");
+}
 
-  const record = sizes.records[getPathComparisonKey(entry.path)];
-  const bytes = entry.kind === "folder" ? decimalBytes(record?.bytes) : exactSizeBytes(entry);
-  if (bytes === null || (entry.kind === "folder" && record?.state === "unknown")) return base;
-
-  const rootEntries = tab.snapshot.entries;
-  const knownSizes = rootEntries
-    .map((sibling) => knownEntryBytes(sibling, sizes))
-    .filter((value): value is bigint => value !== null);
-  const denominator = mode === "folder-max"
-    ? knownSizes.reduce((max, value) => value > max ? value : max, 0n)
-    : knownSizes.reduce((sum, value) => sum + value, 0n);
-  const share = ratioFromBigInt(bytes, denominator);
-  const partial = entry.kind === "folder" && record?.state === "partial";
-  const suffix = snapshot.freshness === "snapshot" ? "（时间点快照）" : "";
-  return {
-    state: partial ? "partial" : "complete",
-    bytes: String(bytes),
-    share,
-    label: partial ? `≥${formatDirectoryBytes(bytes)}` : entry.kind === "folder" ? formatDirectoryBytes(bytes) : entry.sizeLabel,
-    title: `${bytes} 字节${share === null ? "，分母不完整" : `，占当前文件夹 ${(share * 100).toFixed(2)}%`}${partial ? "（统计不完整，下限）" : ""}${suffix}`
+export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "folder-total") {
+  const project = createCurrentSizeProjector(tab, mode);
+  const view = tab.directorySizePresentation?.current;
+  const root = tab.snapshot.location.path;
+  const rows = view?.rootPath === root && view.locationKind === tab.snapshot.location.kind ? view.rows : undefined;
+  const surface = tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
+    tab.columns.some((column) => column.id === "size" && column.visible);
+  return (entry: EntryViewModel): EntryViewModel => {
+    if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
+    let display = project(entry);
+    const old = rows?.[entry.path];
+    if (display.share === null && old && retainedSizeMatches(old, entry) &&
+      listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
+      const saved = mode === "folder-max" ? old.max : old.total;
+      const phase = currentDirectorySizes(tab)?.snapshot;
+      const reason = phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
+        : phase?.phase === "cancelled" ? "已取消刷新" : "等待刷新结果";
+      display = { ...saved, state: "stale", retained: true,
+        label: entry.kind === "folder" ? saved.label : entry.sizeLabel,
+        title: `上次结果（${reason}）；${saved.title}` };
+    }
+    return { ...entry, sizeLabel: display.label, sizeDisplay: display };
   };
 }
 
 export function projectEntrySize(tab: TabState, entry: EntryViewModel, mode: SizeBarMode = "folder-total"): EntryViewModel {
-  if (!supportsDirectorySizes(tab)) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
-  const display = sizeDisplay(tab, entry, mode);
-  return { ...entry, sizeLabel: display.label, sizeDisplay: display };
+  return createEntrySizeProjector(tab, mode)(entry);
 }

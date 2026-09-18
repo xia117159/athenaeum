@@ -43,7 +43,8 @@ test("old listing sizes below the total still need parent fingerprint pairing", 
   tab.snapshot.sizeFingerprint = "old-root";
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.state, "stale");
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null);
-  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, .6, "the expanded child keeps the current root denominator");
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, null, "new branch shares also await a consistent root denominator");
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.label, "60 B", "known branch bytes remain available");
   Object.values(tab.folderExpansion!)[0].sizeFingerprint = "old-parent";
   assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, null);
 });

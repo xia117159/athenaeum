@@ -45,6 +45,7 @@ import {
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 import { devLog } from "./devLog";
+import { reconcileDirectorySizePresentation } from "./directorySizePresentation";
 import {
   createNavigationTab,
   isDirectoryLikeTab,
@@ -1249,7 +1250,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
   const next = reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceTree(state, action) ?? reduceWorkspaceMenus(state, action)
     ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
     ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
-  return reconcileWorkspaceTree(state, next, action);
+  return reconcileDirectorySizePresentation(state, reconcileWorkspaceTree(state, next, action));
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {

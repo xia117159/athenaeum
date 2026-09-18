@@ -393,6 +393,7 @@ function mapEntryViewModel(
     path: resolvedPath,
     parentPath: currentPath,
     sizeBytes: entry.kind === "directory" ? null : entry.size ?? null,
+    sizeCreatedAt: entry.createdAt,
     sizeLabel: entry.kind === "directory" ? "--" : formatFileSize(entry.size),
     createdLabel: formatDateLabel(entry.createdAt),
     modifiedLabel: formatDateLabel(entry.modifiedAt),

@@ -44,6 +44,26 @@ export interface EntrySizeDisplay {
   share: number | null;
   label: string;
   title: string;
+  /** Last displayed value, never evidence that the current scan is valid. */
+  retained?: boolean;
+}
+export interface RetainedEntrySize {
+  path: string;
+  parentPath: string;
+  kind: import("./types").EntryKind;
+  createdAt?: string | null;
+  total: EntrySizeDisplay;
+  max: EntrySizeDisplay;
+}
+export interface DirectorySizePresentationView {
+  rootPath: string;
+  locationKind: import("./types").LocationDescriptor["kind"];
+  scope: string;
+  rows: Record<string, RetainedEntrySize>;
+}
+export interface DirectorySizePresentation {
+  current?: DirectorySizePresentationView;
+  history: DirectorySizePresentationView[];
 }
 export interface DirectorySizesGateway {
   subscribe(request: SubscribeDirectorySizesRequest): Promise<DirectorySizeSnapshot>;
