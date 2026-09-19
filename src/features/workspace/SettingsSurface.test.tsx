@@ -95,6 +95,7 @@ function createProps(state: WorkspaceState) {
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
     onUpdateFolderExpansionEnabled: () => undefined,
+    onUpdateFolderExpansionOnRowClick: () => undefined,
     onUpdateNotificationsEnabled: () => undefined,
     onUpdateTooltipHoverDelay: () => undefined,
     onUpdateMetadataRetentionHours: () => undefined,

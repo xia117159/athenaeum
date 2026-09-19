@@ -607,6 +607,7 @@ function PanelLayout({
       fileVisibility={state.fileVisibility}
       colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
       folderExpansionEnabled={state.settings.model.folderExpansionEnabled === true}
+      folderExpansionOnRowClick={state.settings.model.folderExpansionOnRowClick === true}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
       keyboardNavToken={state.keyboardNavToken}
@@ -725,6 +726,7 @@ function PanelSurface({
   fileVisibility,
   colorFilterEnabled,
   folderExpansionEnabled,
+  folderExpansionOnRowClick,
   syncScrollEnabled,
   navigation,
   keyboardNavToken,
@@ -753,6 +755,7 @@ function PanelSurface({
   fileVisibility: WorkspaceState["fileVisibility"];
   colorFilterEnabled: boolean;
   folderExpansionEnabled: boolean;
+  folderExpansionOnRowClick: boolean;
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
   keyboardNavToken?: symbol;
@@ -859,6 +862,7 @@ function PanelSurface({
             tabId={activeTab.id}
             entries={entries}
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
+            folderExpansionOnRowClick={folderExpansionOnRowClick}
             sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
               statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind}
               onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}

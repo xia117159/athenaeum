@@ -360,6 +360,7 @@ export interface SettingsSnapshot {
   sizeBarMode?: "folder-total" | "folder-max";
   treeAutoFollowEnabled?: boolean;
   folderExpansionEnabled?: boolean;
+  folderExpansionOnRowClick?: boolean;
   notificationsEnabled?: boolean;
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
@@ -380,6 +381,7 @@ export interface SettingsModelUpdate {
   sizeBarMode: "folder-total" | "folder-max";
   treeAutoFollowEnabled: boolean;
   folderExpansionEnabled: boolean;
+  folderExpansionOnRowClick: boolean;
   notificationsEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

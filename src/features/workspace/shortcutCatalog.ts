@@ -219,6 +219,13 @@ export const DEFAULT_SHORTCUTS: SettingsModel["shortcuts"] = [
     description: "清除列表中的多选，恢复为无选中。"
   },
   {
+    id: "toggle-folder-expansion",
+    action: "展开/折叠文件夹",
+    scope: "listing",
+    binding: "Space",
+    description: "在详细信息视图中展开/折叠当前焦点所在的选中文件夹；需启用“详细信息列表内展开文件夹”。"
+  },
+  {
     id: "open-entry",
     action: "打开",
     scope: "listing",

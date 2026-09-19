@@ -5,11 +5,11 @@ import type { SettingsSurfaceProps } from "./SettingsSurface";
 
 export function SettingsGeneralPage({ state, disabled = false,
   onUpdateDetailsRowHeight, onUpdateSizeBarMode = () => {}, onUpdateTreeAutoFollowEnabled = () => {},
-  onUpdateFolderExpansionEnabled, onUpdateTooltipHoverDelay, onUpdateMetadataRetentionHours,
+  onUpdateFolderExpansionEnabled, onUpdateFolderExpansionOnRowClick, onUpdateTooltipHoverDelay, onUpdateMetadataRetentionHours,
   onUpdateContextMenuDefault, onUpdateNotificationsEnabled, onUpdateTemplateRoot = () => {},
   onChooseTemplateRoot = async () => null
 }: Pick<SettingsSurfaceProps, "state" | "disabled" | "onUpdateDetailsRowHeight" | "onUpdateSizeBarMode" |
-  "onUpdateTreeAutoFollowEnabled" | "onUpdateFolderExpansionEnabled" | "onUpdateTooltipHoverDelay" |
+  "onUpdateTreeAutoFollowEnabled" | "onUpdateFolderExpansionEnabled" | "onUpdateFolderExpansionOnRowClick" | "onUpdateTooltipHoverDelay" |
   "onUpdateMetadataRetentionHours" | "onUpdateContextMenuDefault" | "onUpdateNotificationsEnabled" |
   "onUpdateTemplateRoot" | "onChooseTemplateRoot">) {
   const model = state.settings.model;
@@ -18,6 +18,7 @@ export function SettingsGeneralPage({ state, disabled = false,
       onUpdateSizeBarMode={onUpdateSizeBarMode} treeAutoFollowEnabled={model.treeAutoFollowEnabled === true}
       onUpdateTreeAutoFollowEnabled={onUpdateTreeAutoFollowEnabled} folderExpansionEnabled={model.folderExpansionEnabled === true}
       onUpdateFolderExpansionEnabled={onUpdateFolderExpansionEnabled} tooltipHoverDelayMs={model.tooltipHoverDelayMs}
+      folderExpansionOnRowClick={model.folderExpansionOnRowClick === true} onUpdateFolderExpansionOnRowClick={onUpdateFolderExpansionOnRowClick}
       metadataRetentionHours={model.metadataRetentionHours} disabled={disabled} onUpdateDetailsRowHeight={onUpdateDetailsRowHeight}
       onUpdateTooltipHoverDelay={onUpdateTooltipHoverDelay} onUpdateMetadataRetentionHours={onUpdateMetadataRetentionHours} />
     <section className="settings-group" id="settings-group-menu-mouse">

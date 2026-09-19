@@ -26,6 +26,8 @@ pub struct SettingsStore {
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
+    #[serde(default)]
     pub notifications_enabled: bool,
     #[serde(default = "default_tooltip_hover_delay_ms")]
     pub tooltip_hover_delay_ms: u32,
@@ -52,6 +54,7 @@ impl Default for SettingsStore {
             size_bar_mode: default_size_bar_mode(),
             tree_auto_follow_enabled: false,
             folder_expansion_enabled: false,
+            folder_expansion_on_row_click: false,
             notifications_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),

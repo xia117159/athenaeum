@@ -65,6 +65,8 @@ pub struct SettingsSnapshot {
     #[serde(default)]
     pub folder_expansion_enabled: bool,
     #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
+    #[serde(default)]
     pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
@@ -94,6 +96,8 @@ pub struct SettingsModelUpdate {
     pub tree_auto_follow_enabled: bool,
     #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
     #[serde(default)]
     pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,

@@ -12,6 +12,9 @@ import {
   shortcutMatches
 } from "./workspaceShortcuts";
 import type { SettingsModel } from "./types";
+import { createMockWorkspaceBootstrap } from "./mockData";
+import { normalizeSettingsModel } from "./workspaceMappers";
+import { toBackendSettingsModelUpdate } from "./workspaceBackendDtos";
 
 function assertTest(name: string, fn: () => void) {
   try {
@@ -92,6 +95,30 @@ assertTest("eventToShortcutBinding supports single-key arrow bindings", () => {
     shortcutMatches(new Map([["navigate-up", normalizeShortcutBinding("Up")]]), "navigate-up", "up"),
     true
   );
+});
+
+assertTest("space events match captured plain and modified Space bindings", () => {
+  for (const modifiers of [emptyModifiers, { ...emptyModifiers, ctrlKey: true }, { ...emptyModifiers, shiftKey: true }]) {
+    const event = { key: " ", ...modifiers } as KeyboardEvent;
+    const captured = eventToShortcutCaptureCandidate(event);
+    assert.ok(captured.endsWith("Space"));
+    assert.equal(eventToShortcutBinding(event), normalizeShortcutBinding(captured));
+  }
+});
+
+assertTest("folder expansion shortcut is added to legacy settings and keeps customized bindings through IPC", () => {
+  const model = createMockWorkspaceBootstrap().settingsModel;
+  model.shortcuts = model.shortcuts.filter(shortcut => shortcut.id !== "toggle-folder-expansion");
+  const normalized = normalizeSettingsModel(model);
+  const shortcut = normalized.shortcuts.find(shortcut => shortcut.id === "toggle-folder-expansion");
+  assert.ok(shortcut);
+  assert.equal(shortcut.binding, "Space");
+  assert.equal(shortcut.scope, "listing");
+  assert.equal(getShortcutBinding([], shortcut.id), "Space");
+  shortcut.binding = "Ctrl+Space";
+  const roundTrip = normalizeSettingsModel(normalized);
+  assert.equal(getShortcutBinding(roundTrip.shortcuts, shortcut.id), "Ctrl+Space");
+  assert.equal(toBackendSettingsModelUpdate(roundTrip).shortcuts.find(item => item.id === shortcut.id)?.accelerator, "Ctrl+Space");
 });
 
 assertTest("normalizeShortcutBindingForStorage keeps saved accelerators aligned with backend validation", () => {

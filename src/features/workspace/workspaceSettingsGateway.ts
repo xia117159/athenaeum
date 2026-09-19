@@ -137,6 +137,7 @@ export async function saveWorkspaceSettingsModel(model: SettingsModel, runtime: 
         sizeBarMode: model.sizeBarMode,
         treeAutoFollowEnabled: model.treeAutoFollowEnabled === true,
         folderExpansionEnabled: model.folderExpansionEnabled === true,
+        folderExpansionOnRowClick: model.folderExpansionOnRowClick === true,
         notificationsEnabled: model.notificationsEnabled === true,
         tooltipHoverDelayMs: model.tooltipHoverDelayMs,
         metadataRetentionHours: model.metadataRetentionHours,

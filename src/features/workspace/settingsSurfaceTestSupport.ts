@@ -15,6 +15,7 @@ export function settingsSurfaceProps(section: SettingsSection): SettingsSurfaceP
     onOpenColorRulesHelp: noop, onUpdatePanelFocusAccent: noop, onUpdateActiveTabBackground: noop,
     onUpdateDropHighlightFill: noop, onUpdateDropHighlightBorder: noop, onUpdateTabMinWidth: noop,
     onUpdateDetailsRowHeight: noop, onUpdateFolderExpansionEnabled: noop,
+    onUpdateFolderExpansionOnRowClick: noop,
     onUpdateTreeAutoFollowEnabled: noop, onUpdateNotificationsEnabled: noop,
     onUpdateTooltipHoverDelay: noop, onUpdateMetadataRetentionHours: noop,
     onUpdateContextMenuDefault: noop, onSaveRemoteProfile: noop, onDeleteRemoteProfile: noop,

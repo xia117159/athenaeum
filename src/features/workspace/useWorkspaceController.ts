@@ -12,7 +12,7 @@ import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
-import { getFolderListingRows, getTabEntries } from "./folderExpansion";
+import { getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./folderExpansion";
 import { useWorkspaceTreeController } from "./useWorkspaceTreeController";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
@@ -352,6 +352,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
         current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
         current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+        current.folderExpansionOnRowClick !== next.folderExpansionOnRowClick ||
         current.notificationsEnabled !== next.notificationsEnabled ||
         current.sizeBarMode !== next.sizeBarMode ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
@@ -371,6 +372,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
     current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
     current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+    current.folderExpansionOnRowClick !== next.folderExpansionOnRowClick ||
     current.notificationsEnabled !== next.notificationsEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
@@ -586,6 +588,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     state.settings.model.fileVisibility,
     state.settings.model.treeAutoFollowEnabled,
     state.settings.model.folderExpansionEnabled,
+    state.settings.model.folderExpansionOnRowClick,
     state.settings.model.sizeBarMode,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
@@ -2693,6 +2696,20 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+      if (shortcutMatches(shortcuts, "toggle-folder-expansion", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest(
+          '[contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], button, .tree-pane, .information-panel'
+        )) return;
+        const panel = state.panels[state.activePanelId];
+        const tab = getActiveTab(panel);
+        if (state.status !== "ready" || tab.status !== "ready" || tab.inlineEdit ||
+          !supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)) return;
+        const entry = currentListingEntry(state);
+        if (!entry || entry.kind !== "folder" || entry.driveInfo || !tab.selectedEntryIds.includes(entry.id)) return;
+        event.preventDefault();
+        if (!event.repeat) dispatch({ type: "folderExpansionToggled", payload: { panelId: panel.id, tabId: tab.id, path: entry.path } });
+        return;
+      }
       if (shortcutMatches(shortcuts, "batch-rename", eventBinding) && !editable && !event.isComposing) {
         if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
         event.preventDefault();

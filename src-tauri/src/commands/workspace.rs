@@ -62,6 +62,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
             settings.size_bar_mode.clone(),
             settings.tree_auto_follow_enabled,
             settings.folder_expansion_enabled,
+            settings.folder_expansion_on_row_click,
             settings.notifications_enabled,
             settings.tooltip_hover_delay_ms,
             settings.metadata_retention_hours,

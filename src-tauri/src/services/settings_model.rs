@@ -25,6 +25,7 @@ pub fn commit_model(
     staged.set_size_bar_mode(model.size_bar_mode);
     staged.tree_auto_follow_enabled = model.tree_auto_follow_enabled;
     staged.set_folder_expansion_enabled(model.folder_expansion_enabled);
+    staged.folder_expansion_on_row_click = model.folder_expansion_on_row_click;
     staged.set_notifications_enabled(model.notifications_enabled);
     staged.set_tooltip_hover_delay_ms(model.tooltip_hover_delay_ms);
     staged.set_metadata_retention_hours(model.metadata_retention_hours);

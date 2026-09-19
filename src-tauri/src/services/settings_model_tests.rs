@@ -3,6 +3,35 @@ use crate::domain::models::FileAssociationRule;
 use std::fs;
 
 #[test]
+fn folder_row_click_defaults_and_settings_round_trip() {
+    let root = std::env::temp_dir().join(format!("sfm-row-click-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default();
+    metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json");
+    let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    let mut legacy = serde_json::to_value(&settings).unwrap();
+    legacy.as_object_mut().unwrap().remove("folderExpansionOnRowClick");
+    let defaulted: SettingsStore = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["folderExpansionOnRowClick"], false);
+    let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+    request.as_object_mut().unwrap().remove("folderExpansionOnRowClick");
+    let defaulted: SettingsModelUpdate = serde_json::from_value(request).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["folderExpansionOnRowClick"], false);
+    for master in [false, true] {
+        for enabled in [true, false] {
+            let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+            request["folderExpansionEnabled"] = serde_json::json!(master);
+            request["folderExpansionOnRowClick"] = serde_json::json!(enabled);
+            commit_model(&mut metadata, &mut settings, serde_json::from_value(request).unwrap()).unwrap();
+            let reloaded = SettingsStore::load_from(path.clone()).unwrap();
+            assert_eq!(serde_json::to_value(reloaded).unwrap()["folderExpansionOnRowClick"], enabled);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn tree_auto_follow_defaults_and_settings_round_trip() {
     let root = std::env::temp_dir().join(format!("sfm-tree-follow-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&root).unwrap();
@@ -57,6 +86,7 @@ fn update(
         size_bar_mode: settings.size_bar_mode.clone(),
         tree_auto_follow_enabled: settings.tree_auto_follow_enabled,
         folder_expansion_enabled: true,
+        folder_expansion_on_row_click: settings.folder_expansion_on_row_click,
         notifications_enabled: true,
         tooltip_hover_delay_ms: settings.tooltip_hover_delay_ms,
         metadata_retention_hours: settings.metadata_retention_hours,

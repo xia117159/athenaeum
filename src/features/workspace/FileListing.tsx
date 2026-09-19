@@ -296,6 +296,7 @@ export function FileListingShell({
   tabId,
   entries,
   folderRows,
+  folderExpansionOnRowClick = false,
   sizeHeaderAccessory,
   onToggleFolderExpansion,
   onRetryFolderExpansion,
@@ -343,6 +344,7 @@ export function FileListingShell({
   tabId: string;
   entries: EntryViewModel[];
   folderRows?: FolderListingRow[];
+  folderExpansionOnRowClick?: boolean;
   sizeHeaderAccessory?: ReactNode;
   onToggleFolderExpansion?: (path: string) => void;
   onRetryFolderExpansion?: (path: string) => void;
@@ -873,7 +875,7 @@ export function FileListingShell({
 
         lastClickedEntryIdRef.current = entry.id;
         onSelect(entry, event.ctrlKey || event.metaKey);
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && viewMode === "details" && folderRows !== undefined && entry.kind === "folder" && !entry.driveInfo) {
+        if (folderExpansionOnRowClick && !event.ctrlKey && !event.metaKey && !event.shiftKey && viewMode === "details" && folderRows !== undefined && entry.kind === "folder" && !entry.driveInfo) {
           onToggleFolderExpansion?.(entry.path);
         }
       },

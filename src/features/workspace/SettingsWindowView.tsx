@@ -41,6 +41,7 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     sizeBarMode: model.sizeBarMode,
     treeAutoFollowEnabled: model.treeAutoFollowEnabled === true,
     folderExpansionEnabled: model.folderExpansionEnabled === true,
+    folderExpansionOnRowClick: model.folderExpansionOnRowClick === true,
     notificationsEnabled: model.notificationsEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
@@ -98,6 +99,7 @@ export function computeDirtySections(
     pm.sizeBarMode !== dm.sizeBarMode ||
     pm.treeAutoFollowEnabled !== dm.treeAutoFollowEnabled ||
     pm.folderExpansionEnabled !== dm.folderExpansionEnabled ||
+    pm.folderExpansionOnRowClick !== dm.folderExpansionOnRowClick ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours
   ) {
@@ -640,6 +642,9 @@ export function SettingsWindowView() {
         onUpdateTreeAutoFollowEnabled={(enabled) => updateDraftModel(model => ({ ...model, treeAutoFollowEnabled: enabled }))}
         onUpdateFolderExpansionEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
+        }
+        onUpdateFolderExpansionOnRowClick={(enabled) =>
+          updateDraftModel((model) => ({ ...model, folderExpansionOnRowClick: enabled }))
         }
         onUpdateNotificationsEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, notificationsEnabled: enabled }))

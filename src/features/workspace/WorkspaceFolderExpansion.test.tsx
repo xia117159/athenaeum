@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { createWorkspaceState } from "./workspaceReducer";
 import { expansionFixture, expansionInteractions, expansionSnapshot } from "./folderExpansionTestSupport";
 import { getPathComparisonKey } from "./workspacePathRelations";
+import { getFolderBranch } from "./folderExpansion";
 import { assertTest, createTestGateway, flushEffects, installDomEnvironment, waitFor } from "./workspaceControllerTestHarness";
 
 export const completion = (async () => {
@@ -37,6 +38,17 @@ export const completion = (async () => {
       assert.ok(arrow);
       await act(async () => { arrow.click(); await flushEffects(); });
       assert.deepEqual(toggled, [["panel-1", tab.id, f.parent.path]]);
+    });
+    await assertTest("workspace applies row-click preference live without removing expanded children", async () => {
+      for (const enabled of [false, true, false]) {
+        Reflect.set(state.settings.model, "folderExpansionOnRowClick", enabled);
+        await render();
+        const before = toggled.length;
+        const row = [...container.querySelectorAll<HTMLElement>(".file-row")].find(row => row.dataset.entryPath === f.parent.path)!;
+        await act(async () => { row.click(); await flushEffects(); });
+        assert.equal(toggled.length, before + Number(enabled));
+        assert.equal(paths().includes(f.child.path), true);
+      }
     });
     await assertTest("quick filter retains ancestors; child context menus and counts use the same visible rows", async () => {
       state.search.filterText = "child.txt";
@@ -99,6 +111,11 @@ export const completion = (async () => {
       const arrow = parentRow.querySelector<HTMLButtonElement>(".file-name-tree__toggle")!;
       await act(async () => { arrow.focus(); arrow.click(); await flushEffects(); });
       assert.equal(document.activeElement, arrow);
+      await key(" ");
+      assert.equal(controller.state.panels["panel-1"].tabs[0].folderExpansion, undefined,
+        "Space on the arrow must collapse exactly once without also invoking the listing shortcut");
+      await key(" ");
+      assert.equal(getFolderBranch(controller.state.panels["panel-1"].tabs[0], live.parent.path)?.status, "ready");
       await key("ArrowDown");
       assert.deepEqual(controller.state.panels["panel-1"].tabs[0].selectedEntryIds, [live.nested.id]);
       assert.notEqual(document.activeElement, arrow, "row navigation must release expansion-button focus before Enter");

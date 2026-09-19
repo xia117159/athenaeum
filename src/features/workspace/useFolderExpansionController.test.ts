@@ -37,6 +37,149 @@ async function toggle(harness: Awaited<ReturnType<typeof mount>>, path: string, 
 export const completion = (async () => {
   const dom = installDomEnvironment();
   dom.window.confirm = () => true;
+  await assertTest("Space toggles only the selected cursor folder in the active panel and tab", async () => {
+    const f = expansionFixture();
+    const inactiveTab = { ...f.bootstrap.panels["panel-1"].tabs[0], id: "inactive-tab", selectedEntryIds: [f.parent.id] };
+    f.bootstrap.panels["panel-1"].tabs.push(inactiveTab);
+    f.bootstrap.layoutMode = "dual";
+    f.bootstrap.panels["panel-2"].tabs = [{ ...inactiveTab, id: "other-panel-tab" }];
+    f.bootstrap.panels["panel-2"].activeTabId = "other-panel-tab";
+    const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, []) });
+    const pressSpace = async () => act(async () => {
+      window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+      await flushEffects();
+    });
+    try {
+      await act(async () => {
+        harness.controller.actions.selectMultipleEntries("panel-1", f.tabId, [f.parent.id, f.sibling.id]);
+        await flushEffects();
+      });
+      harness.tab.selectionCursorId = f.parent.id;
+      await pressSpace();
+      assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+      assert.equal(getFolderBranch(harness.tab, f.sibling.path), undefined);
+      assert.equal(harness.controller.state.panels["panel-1"].tabs[1].folderExpansion, undefined);
+      assert.equal(harness.controller.state.panels["panel-2"].tabs[0].folderExpansion, undefined);
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.parent.id, f.sibling.id]);
+      await pressSpace();
+      assert.equal(harness.tab.folderExpansion, undefined);
+      await act(async () => { harness.controller.actions.updateShortcutBinding("toggle-folder-expansion", "F8"); await flushEffects(); });
+      await pressSpace();
+      assert.equal(harness.tab.folderExpansion, undefined, "the previous binding stops working after customization");
+    } finally { await harness.close(); }
+  });
+  for (const kind of ["local", "ftp", "sftp"] as const) {
+    await assertTest(`a custom expansion shortcut toggles the selected ${kind} folder without navigation or selection changes`, async () => {
+      const f = expansionFixture(kind);
+      f.bootstrap.settingsModel.folderExpansionOnRowClick = false;
+      f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+        scope: "listing", binding: "F8", description: "" });
+      const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, [f.child]) });
+      const key = async (options: KeyboardEventInit = {}) => {
+        const event = new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true, ...options });
+        await act(async () => { window.dispatchEvent(event); await flushEffects(); });
+        return event;
+      };
+      try {
+        await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false); await flushEffects(); });
+        assert.equal((await key()).defaultPrevented, true);
+        assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+        assert.deepEqual(harness.interactions.resolvedPaths, [f.parent.path]);
+        await key({ repeat: true });
+        await key({ isComposing: true });
+        assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+        await key();
+        assert.equal(getFolderBranch(harness.tab, f.parent.path), undefined);
+        assert.deepEqual(harness.tab.selectedEntryIds, [f.parent.id]);
+        assert.equal(harness.tab.snapshot.location.path, f.path);
+        assert.deepEqual(harness.interactions.systemOpens, []);
+      } finally { await harness.close(); }
+    });
+  }
+  await assertTest("expansion shortcuts ignore disabled, unavailable, hidden and non-folder targets", async () => {
+    for (const excluded of ["disabled", "icons", "search", "virtual", "loading", "empty-selection", "filtered", "file"] as const) {
+      const f = expansionFixture();
+      const tab = f.bootstrap.panels["panel-1"].tabs[0];
+      if (excluded === "disabled") f.bootstrap.settingsModel.folderExpansionEnabled = false;
+      if (excluded === "icons") tab.viewMode = "list";
+      if (excluded === "search") tab.kind = "search-results";
+      if (excluded === "virtual") tab.snapshot.location.kind = "virtual";
+      if (excluded === "loading") tab.status = "loading";
+      if (excluded === "file") f.parent.kind = "file";
+      f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+        scope: "listing", binding: "F8", description: "" });
+      const harness = await mount(f.bootstrap);
+      try {
+        await act(async () => {
+          harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false);
+          await flushEffects();
+        });
+        if (excluded === "empty-selection") harness.tab.selectedEntryIds = [];
+        if (excluded === "filtered") harness.controller.state.search.filterText = "sibling";
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true }));
+          await flushEffects();
+        });
+        assert.equal(harness.tab.folderExpansion, undefined, excluded);
+        assert.deepEqual(harness.interactions.resolvedPaths, [], excluded);
+      } finally { await harness.close(); }
+    }
+  });
+  await assertTest("expansion shortcuts do not act through editing, buttons, menus, dialogs or other panes", async () => {
+    const f = expansionFixture();
+    f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+      scope: "listing", binding: "F8", description: "" });
+    const harness = await mount(f.bootstrap);
+    const targets = document.createElement("div");
+    targets.innerHTML = '<input /><textarea></textarea><select></select><button><span>button</span></button>' +
+      '<div contenteditable="true"><span>edit</span></div><div role="dialog"><span>dialog</span></div>' +
+      '<div role="menu"><span>menu</span></div><div class="tree-pane"><span>tree</span></div>' +
+      '<div class="information-panel"><span>properties</span></div>';
+    document.body.appendChild(targets);
+    try {
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false); await flushEffects(); });
+      for (const target of targets.querySelectorAll("input, textarea, select, span")) {
+        await act(async () => {
+          target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true }));
+          await flushEffects();
+        });
+        assert.equal(harness.tab.folderExpansion, undefined, target.outerHTML);
+      }
+      assert.deepEqual(harness.interactions.resolvedPaths, []);
+    } finally { targets.remove(); await harness.close(); }
+  });
+  await assertTest("row-click-only settings save once and settings events preserve expansion without echo saves", async () => {
+    const f = expansionFixture();
+    let onSettings!: Parameters<WorkspaceGateway["listenSettingsChanged"]>[0];
+    const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, [f.child]) }, gateway => {
+      gateway.listenSettingsChanged = async listener => { onSettings = listener; return () => undefined; };
+    });
+    try {
+      await toggle(harness, f.parent.path);
+      const branch = getFolderBranch(harness.tab, f.parent.path);
+      harness.interactions.savedSettingsModels.length = 0;
+      await act(async () => {
+        const next = { ...harness.controller.state.settings.model, folderExpansionOnRowClick: true };
+        await harness.controller.actions.applySettingsModel(next);
+        await flushEffects();
+      });
+      assert.equal(harness.interactions.savedSettingsModels.length, 1);
+      assert.equal(Reflect.get(harness.interactions.savedSettingsModels[0], "folderExpansionOnRowClick"), true);
+      assert.equal(getFolderBranch(harness.tab, f.parent.path), branch);
+      for (const enabled of [false, true]) {
+        await act(async () => {
+          const state = harness.controller.state;
+          const settingsModel = { ...state.settings.model, folderExpansionOnRowClick: enabled };
+          onSettings({ settingsModel, bookmarks: state.bookmarks, hotlist: state.hotlist,
+            remoteProfiles: state.remoteProfiles, navigationItems: state.navigation.items });
+          await flushEffects();
+        });
+        assert.equal(Reflect.get(harness.controller.state.settings.model, "folderExpansionOnRowClick"), enabled);
+        assert.equal(getFolderBranch(harness.tab, f.parent.path), branch);
+      }
+      assert.equal(harness.interactions.savedSettingsModels.length, 1);
+    } finally { await harness.close(); }
+  });
   for (const kind of ["local", "ftp", "sftp"] as const) {
     await assertTest(`folder expansion lazily loads ${kind} child entries and keeps the parent location`, async () => {
       const f = expansionFixture(kind);

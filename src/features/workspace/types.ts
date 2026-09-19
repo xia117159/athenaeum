@@ -314,6 +314,7 @@ export interface SettingsModel {
   sizeBarMode: SizeBarMode;
   treeAutoFollowEnabled?: boolean;
   folderExpansionEnabled?: boolean;
+  folderExpansionOnRowClick?: boolean;
   notificationsEnabled?: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;

@@ -8,6 +8,8 @@ export function SettingsFileListPage({
   onUpdateSizeBarMode,
   folderExpansionEnabled,
   onUpdateFolderExpansionEnabled,
+  folderExpansionOnRowClick,
+  onUpdateFolderExpansionOnRowClick,
   tooltipHoverDelayMs,
   metadataRetentionHours,
   disabled,
@@ -22,6 +24,8 @@ export function SettingsFileListPage({
   onUpdateSizeBarMode: (value: "folder-total" | "folder-max") => void;
   folderExpansionEnabled: boolean;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
+  folderExpansionOnRowClick: boolean;
+  onUpdateFolderExpansionOnRowClick: (enabled: boolean) => void;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   disabled: boolean;
@@ -51,6 +55,19 @@ export function SettingsFileListPage({
               checked={folderExpansionEnabled}
               disabled={disabled}
               onChange={(event) => onUpdateFolderExpansionEnabled(event.currentTarget.checked)}
+            />
+            <span>启用</span>
+          </label>
+        </SettingsRow>
+        <SettingsRow title="单击文件夹行展开/收起" description="默认关闭：单击选中，双击进入，点击箭头展开/收起。启用后单击整行立即展开/收起，双击时可能先展开再进入。">
+          <label className="settings-check-inline">
+            <input
+              type="checkbox"
+              aria-label="单击文件夹行展开/收起"
+              data-setting-id="folder-expansion-on-row-click"
+              checked={folderExpansionOnRowClick}
+              disabled={disabled || !folderExpansionEnabled}
+              onChange={(event) => onUpdateFolderExpansionOnRowClick(event.currentTarget.checked)}
             />
             <span>启用</span>
           </label>

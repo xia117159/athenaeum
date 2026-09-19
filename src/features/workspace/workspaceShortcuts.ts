@@ -158,7 +158,7 @@ export function eventToShortcutBinding(event: KeyboardEvent) {
     parts.push("shift");
   }
 
-  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase().replace(/^arrow/, "");
+  const key = event.key === " " ? "space" : event.key.toLowerCase().replace(/^arrow/, "");
   if (!MODIFIER_KEYS.has(key)) {
     parts.push(key);
   }
