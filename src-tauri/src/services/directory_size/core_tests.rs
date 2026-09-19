@@ -1,6 +1,11 @@
 use super::{core::*, scan::{DirectorySize, ScanOutcome, ScanResult, ScanStats}, target::normalize_local_path, watch::{RootIdentity, WatchPoll}};
 use crate::domain::{directory_sizes::*, models::{RemoteProfile, RemoteAuthKind, LocationKind}};
 use std::{collections::HashMap, sync::{Arc, atomic::{AtomicU8, Ordering}}};
+#[path = "rename_core_tests.rs"]
+mod rename_tests;
+#[cfg(windows)]
+#[path = "rename_service_tests.rs"]
+mod rename_service_tests;
 
 fn profile() -> RemoteProfile {
     RemoteProfile { id: "remote".into(), name: "Remote".into(), protocol: LocationKind::Sftp, host: "example.invalid".into(),
@@ -18,7 +23,8 @@ fn subscribe(core: &mut Core, id: &str, path: &str, now: u64) -> DirectorySizeSn
     core.subscribe(core.owner_token("main").unwrap(), request(id, path), path.starts_with('/').then(profile), now).unwrap()
 }
 fn result(job: &ScanJob, bytes: u64) -> ScanResult {
-    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()) })]),
+    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()),
+        stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() } })]),
         stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() },
         outcome: ScanOutcome::Complete, accounted_bytes: 1024, message: None }
 }
@@ -32,6 +38,93 @@ fn monitored(core: &mut Core, job: &ScanJob) -> Arc<AtomicU8> {
     flag
 }
 fn finish(core: &mut Core, job: &ScanJob, now: u64) { core.finished(job, result(job, 100), Some(RootIdentity([1, 2, 3, 4])), now); }
+
+#[test]
+fn size_service_entering_scanned_child_reuses_ancestor_without_a_job() {
+    let mut core = core();
+    subscribe(&mut core, "parent", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0);
+    let changed = monitored(&mut core, &job);
+    let mut scanned = result(&job, 100);
+    let mut child = scanned.directories[&*job.target.path].clone();
+    child.bytes = 40;
+    child.stats.known_bytes = 40;
+    scanned.directories.insert(normalize_local_path("C:\\root\\child").unwrap().into(), child);
+    core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+    let pending = subscribe(&mut core, "child", "C:\\root\\child", 2);
+    assert_eq!(core.root_count(), 1, "navigation must share the monitored tree");
+    assert!(core.take_jobs(2).is_empty(), "navigation must not traverse again");
+    assert_eq!(pending.phase, DirectorySizePhase::Queued);
+    let verify = core.take_identity_job(2).unwrap();
+    core.identity_finished(&verify, Ok(RootIdentity([1, 2, 3, 4])), 3);
+    let snapshot = core.snapshot("child").unwrap();
+    assert_eq!(snapshot.total_bytes.as_deref(), Some("40"));
+    assert!(core.lookup("main", LookupDirectorySizesRequest { consumer_id: "child".into(), generation: snapshot.generation,
+        paths: vec!["C:\\root\\sibling".into()] }, 3).is_err());
+    core.release("main", "parent", 4).unwrap();
+    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Complete);
+    changed.store(1, Ordering::Relaxed);
+    core.tick(5);
+    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Stale);
+}
+
+#[test]
+fn size_service_complete_child_of_partial_tree_is_scoped_and_refresh_is_independent() {
+    let mut core = core();
+    subscribe(&mut core, "parent", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0);
+    monitored(&mut core, &job);
+    let mut scanned = result(&job, 40);
+    let child = scanned.directories[&*job.target.path].clone();
+    let parent = scanned.directories.get_mut(&*job.target.path).unwrap();
+    parent.complete = false;
+    parent.stats.errors = 2;
+    scanned.stats.errors = 2;
+    scanned.outcome = ScanOutcome::Partial;
+    scanned.directories.insert(normalize_local_path("C:\\root\\child").unwrap().into(), child.clone());
+    let mut unvisited = child;
+    unvisited.stats = ScanStats::default(); unvisited.complete = false;
+    scanned.directories.insert(normalize_local_path("C:\\root\\unvisited").unwrap().into(), unvisited);
+    core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+    subscribe(&mut core, "child", "C:\\root\\child", 2);
+    let verify = core.take_identity_job(2).unwrap();
+    core.identity_finished(&verify, Ok(RootIdentity([1, 2, 3, 4])), 3);
+    let child = core.snapshot("child").unwrap();
+    assert_eq!(child.phase, DirectorySizePhase::Complete);
+    assert_eq!((child.files, child.directories, child.errors), (1, 1, 0));
+    assert_eq!(child.known_bytes, "40");
+    assert_eq!(core.snapshot("parent").unwrap().phase, DirectorySizePhase::Partial);
+    let unknown = core.lookup("main", LookupDirectorySizesRequest { consumer_id: "parent".into(), generation: child.generation,
+        paths: vec!["C:\\root\\unvisited".into()] }, 3).unwrap();
+    assert_eq!(unknown.directories[0].state, DirectorySizeRecordState::Unknown);
+    assert_eq!(unknown.directories[0].bytes, None);
+    core.release("main", "child", 4).unwrap();
+    let mut refresh = request("fresh-child", "C:\\root\\child"); refresh.refresh = true;
+    let fresh = core.subscribe(core.owner_token("main").unwrap(), refresh, None, 4).unwrap();
+    assert!(fresh.generation > child.generation);
+    assert_eq!(core.snapshot("parent").unwrap().generation, child.generation);
+    let jobs = core.take_jobs(4);
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].target.path, normalize_local_path("C:\\root\\child").unwrap());
+}
+
+#[test]
+fn size_service_remote_navigation_and_component_prefixes_do_not_share_ancestors() {
+    for (parent, child) in [("/root", "/root/child"), ("C:\\root", "C:\\root-other")] {
+        let mut core = core();
+        subscribe(&mut core, "parent", parent, 0);
+        let job = core.take_jobs(0).remove(0);
+        monitored(&mut core, &job);
+        let mut scanned = result(&job, 1);
+        let child_record = scanned.directories[&*job.target.path].clone();
+        let path = if child.starts_with('/') { child.into() } else { normalize_local_path(child).unwrap() };
+        scanned.directories.insert(Arc::from(path), child_record);
+        core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+        subscribe(&mut core, "child", child, 2);
+        assert_eq!(core.root_count(), 2);
+        assert_eq!(core.take_jobs(2).len(), 1);
+    }
+}
 
 #[test]
 fn size_service_single_flight_independent_leases_and_last_release_fence() {
@@ -293,7 +386,8 @@ fn size_service_remote_lookup_keeps_legal_trailing_spaces_distinct() {
     let job = core.take_jobs(0).remove(0);
     let mut result = result(&job, 100);
     for (path, bytes) in [("/root/folder", 10), ("/root/folder ", 90)] {
-        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()) });
+        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()),
+            stats: ScanStats { known_bytes: bytes, directories: 1, ..Default::default() } });
     }
     core.finished(&job, result, None, 1);
     let lookup = core.lookup("main", LookupDirectorySizesRequest { consumer_id: "a".into(), generation: job.generation,

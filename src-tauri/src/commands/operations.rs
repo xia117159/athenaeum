@@ -12,7 +12,7 @@ use crate::{
     services::{
         fs_service,
         operation_service::{
-            execute_conflict_resolution, execute_operation_task, execute_workspace_undo,
+            execute_conflict_resolution, execute_operation_task_with_sizes, execute_workspace_undo,
         },
         AppState,
     },
@@ -97,8 +97,8 @@ pub fn delete_entries(request: FileOperationRequest) -> Result<OperationResult, 
 }
 
 #[tauri::command]
-pub fn rename_entry(request: RenameRequest) -> Result<OperationResult, String> {
-    let renamed = fs_service::rename_entry(Path::new(&request.source), &request.new_name)
+pub fn rename_entry(request: RenameRequest, state: State<'_, Arc<AppState>>) -> Result<OperationResult, String> {
+    let renamed = fs_service::rename_entry_with_sizes(Path::new(&request.source), &request.new_name, &state.directory_sizes)
         .map_err(|error| error.to_string())?;
     Ok(OperationResult {
         affected_paths: vec![renamed.to_string_lossy().into_owned()],
@@ -178,7 +178,7 @@ pub fn start_file_operation(
                 return;
             };
             let execution =
-                execute_operation_task(&task_id, &intent, app_data_dir, cancellation, None);
+                execute_operation_task_with_sizes(&task_id, &intent, app_data_dir, cancellation, None, Some(&app_state.directory_sizes));
             let finished = {
                 let mut operations = app_state
                     .operations
@@ -244,7 +244,10 @@ pub fn resolve_file_operation_conflict(
     std::thread::spawn(move || {
         let task_id = execution.task_id.clone();
         let intent = execution.intent.clone();
-        let operation = execute_conflict_resolution(execution, app_data_dir);
+        let operation = if intent.kind == crate::domain::models::OperationIntentKind::Rename {
+            execute_operation_task_with_sizes(&task_id, &intent, app_data_dir, execution.cancellation,
+                Some(execution.resolution), Some(&app_state.directory_sizes))
+        } else { execute_conflict_resolution(execution, app_data_dir) };
         let finished = {
             let mut operations = app_state
                 .operations

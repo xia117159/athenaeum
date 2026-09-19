@@ -1,6 +1,7 @@
 import type { DirectorySizeTabState, EntrySizeDisplay, RetainedEntrySize } from "./directorySizeTypes";
 import type { EntryViewModel, SizeBarMode, TabState } from "./types";
 import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
+import { currentListingSizeCache } from "./directorySizeCache";
 
 export function supportsDirectorySizes(tab: TabState) {
   return tab.kind === "directory" && tab.status === "ready" && tab.viewMode === "details" &&
@@ -128,9 +129,18 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   const rows = view?.rootPath === root && view.locationKind === tab.snapshot.location.kind ? view.rows : undefined;
   const surface = tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
     tab.columns.some((column) => column.id === "size" && column.visible);
+  const hints = new Map(currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab))?.directories.map((record) => [record.path, record]));
   return (entry: EntryViewModel): EntryViewModel => {
     if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
     let display = project(entry);
+    const hint = hints.get(entry.path);
+    const hintBytes = decimalBytes(hint?.bytes);
+    if (display.bytes === null && hintBytes !== null && hint?.state !== "unknown" && entry.kind === "folder" &&
+      !entry.attributes.includes("L") && supportsDirectorySizes(tab) && listingSizeIdentityIsReliable(tab, root)) {
+      display = { state: "stale", bytes: String(hintBytes), share: null,
+        label: `${hint?.state === "partial" ? "≥" : ""}${formatDirectoryBytes(hintBytes)}`,
+        title: `上次结果（等待目录身份校验）；${hintBytes} 字节` };
+    }
     const old = rows?.[entry.path];
     if (display.share === null && old && retainedSizeMatches(old, entry) &&
       listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {

@@ -6,6 +6,8 @@ pub mod color_filter;
 pub mod drive_service;
 pub mod directory_size;
 pub mod file_watcher;
+#[cfg(windows)]
+pub(crate) mod watch_registry;
 pub mod file_associations;
 pub mod file_opening;
 pub mod fs_service;

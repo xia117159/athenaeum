@@ -52,6 +52,7 @@ export interface DirectoryListing {
   parent?: string | null;
   canGoUp: boolean;
   sizeFingerprint?: string | null;
+  directorySizeCache?: import("../features/workspace/directorySizeTypes").DirectorySizeCache | null;
 }
 
 export type ItemPropertyField =

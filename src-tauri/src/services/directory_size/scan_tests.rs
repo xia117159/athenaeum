@@ -46,6 +46,9 @@ fn size_scan_aggregates_once_bottom_up_including_hidden_files() {
     assert_eq!(result.outcome, ScanOutcome::Complete);
     assert_eq!(source.reads.len(), 3);
     assert_eq!(result.stats.files, 4);
+    assert_eq!(result.directories["/root"].stats, result.stats);
+    assert_eq!(result.directories["/root/folder"].stats, ScanStats { known_bytes: 60, files: 2, directories: 2, ..Default::default() });
+    assert_eq!(result.directories["/root/folder/deep"].stats, ScanStats { known_bytes: 20, files: 1, directories: 1, ..Default::default() });
     assert!(result.directories.values().all(|value| value.complete && value.fingerprint.is_some()));
 }
 

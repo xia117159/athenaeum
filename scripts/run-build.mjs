@@ -135,6 +135,16 @@ export async function copyStaticAssets({
   );
 }
 
+export function onBuildWarning(warning, defaultHandler) {
+  // This bundle runs entirely in the browser; dependency RSC boundaries do not apply.
+  if (warning.code === "MODULE_LEVEL_DIRECTIVE"
+    && /(?:^|[\\/])node_modules[\\/]/.test(warning.id ?? "")
+    && warning.message.includes('Module level directives cause errors when bundled, "use client" in ')) {
+    return;
+  }
+  defaultHandler(warning);
+}
+
 export default async function runBuild() {
   await ensureCleanDir(tempDir);
   await ensureCleanDir(distDir);
@@ -145,6 +155,7 @@ export default async function runBuild() {
   const collectedCss = new Set();
   const bundle = await rollup({
     input: path.join(tempDir, "main.js"),
+    onwarn: onBuildWarning,
     plugins: [
       createCssPlugin(collectedCss),
       nodeResolve({

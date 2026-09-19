@@ -67,6 +67,7 @@ import { emptyTreeState, normalizeTreeState, treeStateFromTab, reduceWorkspaceTr
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
 import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
+import { reconcileListingSizeCache } from "./directorySizeCache";
 import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
 import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
 import { prepareSelectionInteraction } from "./folderSelectionRestore";
@@ -1660,7 +1661,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
               title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
               titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
-              snapshot: action.payload.snapshot,
+              snapshot: reconcileListingSizeCache(action.payload.snapshot, pathChanged ? undefined : tab.directorySizes),
               directorySizes: pathChanged ? undefined : tab.directorySizes,
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,

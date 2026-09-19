@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryResult> {
+pub(super) fn apply_undo_action(action: &UndoAction, sizes: Option<&crate::services::directory_size::DirectorySizeService>) -> Result<OperationEntryResult> {
     match action {
         UndoAction::TemplateCreation { .. } => bail!("模板副本必须通过专用撤销执行器处理"),
         UndoAction::BatchRename { .. } => bail!("批量重命名必须通过批次撤销执行器处理"),
@@ -37,7 +37,7 @@ pub(super) fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryRes
                 );
             }
             let cancellation = AtomicBool::new(false);
-            move_entry_exact(from, to, &cancellation)?;
+            rename::move_entry_with_sizes(from, to, &cancellation, sizes)?;
             Ok(OperationEntryResult {
                 entry_result_id: Uuid::new_v4().to_string(),
                 source: Some(OperationPathRef::Local {
@@ -61,7 +61,7 @@ pub(super) fn apply_undo_action(action: &UndoAction) -> Result<OperationEntryRes
                 );
             }
             let cancellation = AtomicBool::new(false);
-            move_entry_exact(trash_path, original_path, &cancellation)?;
+            rename::move_entry_with_sizes(trash_path, original_path, &cancellation, sizes)?;
             Ok(OperationEntryResult {
                 entry_result_id: Uuid::new_v4().to_string(),
                 source: Some(OperationPathRef::Local {

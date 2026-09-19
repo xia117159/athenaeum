@@ -2,6 +2,7 @@ import type { DirectorySizeLookup, DirectorySizeSnapshot, DirectorySizeTabState 
 import type { SizeAlignmentTarget } from "./directorySizeAlignmentRequest";
 import type { DirectorySnapshot, FolderExpansionBranch, PanelId, TabState } from "./types";
 import { currentDirectorySizes } from "./directorySizes";
+import { reconcileListingSizeCache } from "./directorySizeCache";
 import { alignFolderListing } from "./folderExpansionState";
 import { getPathComparisonKey, isSameOrDescendantPath, pathsEqual } from "./workspacePathRelations";
 
@@ -28,6 +29,22 @@ function unavailable(sizes: DirectorySizeTabState, phase: "cancelled" | "failed"
 }
 
 export function reduceDirectorySizes(tab: TabState, action: DirectorySizeAction): TabState {
+  let next = reduceDirectorySizeState(tab, action);
+  if (next === tab) return next;
+  const sizes = next.directorySizes;
+  const phase = sizes?.snapshot;
+  const invalidated = action.type === "directorySizeRequested" || action.type === "directorySizeReleased" ||
+    phase && ["stale", "failed", "cancelled", "scanning"].includes(phase.phase);
+  if (sizes && invalidated) {
+    const versions = [sizes.cacheFence, phase, tab.directorySizes?.snapshot, tab.snapshot.directorySizeCache].filter((value) => value !== undefined);
+    const cacheFence = versions.sort((a, b) => b.generation - a.generation || b.sequence - a.sequence)[0];
+    if (cacheFence) next = { ...next, directorySizes: { ...sizes, cacheFence: { generation: cacheFence.generation, sequence: cacheFence.sequence } } };
+  }
+  const snapshot = reconcileListingSizeCache(next.snapshot, next.directorySizes);
+  return snapshot === next.snapshot ? next : { ...next, snapshot };
+}
+
+function reduceDirectorySizeState(tab: TabState, action: DirectorySizeAction): TabState {
   const payload = action.payload;
   if (tab.id !== payload.tabId || tab.kind !== "directory" || !pathsEqual(tab.snapshot.location.path, payload.rootPath)) return tab;
   const sizes = currentDirectorySizes(tab) ?? initialSizes(payload.rootPath);

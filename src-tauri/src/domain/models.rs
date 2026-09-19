@@ -116,6 +116,8 @@ pub struct DirectoryListing {
     pub can_go_up: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_size_cache: Option<super::directory_sizes::DirectorySizeCache>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

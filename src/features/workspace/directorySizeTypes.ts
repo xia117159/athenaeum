@@ -26,6 +26,11 @@ export interface LookupDirectorySizesRequest { consumerId: string; generation: n
 export interface DirectorySizeLookup {
   consumerId: string; generation: number; sequence: number; stale: boolean; directories: DirectorySizeRecord[];
 }
+export interface DirectorySizeCache {
+  generation: number;
+  sequence: number;
+  directories: DirectorySizeRecord[];
+}
 export interface DirectorySizeTabState {
   rootPath: string;
   requestVersion: number;
@@ -36,6 +41,8 @@ export interface DirectorySizeTabState {
   forceRefresh?: boolean;
   consumerId?: string;
   snapshot?: DirectorySizeSnapshot;
+  /** Rejected listing versions remain rejected across consumer replacement. */
+  cacheFence?: { generation: number; sequence: number };
   records: Record<string, DirectorySizeRecord>;
 }
 export interface EntrySizeDisplay {

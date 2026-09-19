@@ -94,13 +94,15 @@ pub fn list_directory(
         metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
         metadata.clone()
     };
-    fs_service::list_directory(Path::new(&path), &metadata.color_rules, |entry_path| {
+    let mut listing = fs_service::list_directory(Path::new(&path), &metadata.color_rules, |entry_path| {
         (
             metadata.tags_for_path(entry_path),
             metadata.comment_for_path(entry_path),
         )
     })
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    state.directory_sizes.attach_listing_cache(&mut listing);
+    Ok(listing)
 }
 
 #[tauri::command]

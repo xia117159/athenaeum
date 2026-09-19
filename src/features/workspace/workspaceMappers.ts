@@ -11,7 +11,7 @@ import type {
   WorkspaceBootstrap as BackendWorkspaceBootstrap
 } from "../../app/types";
 import { normalizeLocationPath } from "./mockData";
-import { directoryListingIdentityIsReliable } from "./directorySizeMapping";
+import { directoryListingIdentityIsReliable, mapDirectorySizeCache } from "./directorySizeMapping";
 import { normalizeNavigationColumns } from "./NavigationTabColumns";
 import { createRemoteRootUri, createRemoteUri, resolveRemotePath, trimTrailingSlash } from "./remoteUri";
 import {
@@ -414,6 +414,7 @@ function mapEntryViewModel(
 
 function cloneDirectorySnapshot(snapshot: DirectorySnapshot): DirectorySnapshot {
   return {
+    directorySizeCache: snapshot.directorySizeCache,
     sizeFingerprint: snapshot.sizeFingerprint,
     sizeIdentityReliable: snapshot.sizeIdentityReliable,
     location: { ...snapshot.location },
@@ -446,6 +447,7 @@ export function mapDirectoryListingToSnapshot(
   const sizeIdentityReliable = directoryListingIdentityIsReliable(listing, locationPath, entries);
 
   return {
+    directorySizeCache: mapDirectorySizeCache(listing, locationPath, entries, sizeIdentityReliable),
     sizeFingerprint: sizeIdentityReliable ? listing.sizeFingerprint : null,
     sizeIdentityReliable,
     location: {

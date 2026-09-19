@@ -5,6 +5,10 @@ pub(crate) mod watch;
 mod core;
 mod target;
 mod runtime;
+mod rename_proof;
+mod rename_runtime;
+mod rename_handoff;
+pub(crate) use rename_runtime::RenameSession;
 pub use runtime::{DirectorySizeService, EventSink};
 
 #[cfg(test)]

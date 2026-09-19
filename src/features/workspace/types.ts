@@ -135,6 +135,7 @@ export interface DirectorySnapshot {
   entries: EntryViewModel[];
   sizeFingerprint?: string | null;
   sizeIdentityReliable?: boolean;
+  directorySizeCache?: import("./directorySizeTypes").DirectorySizeCache;
 }
 
 export interface FolderExpansionBranch {

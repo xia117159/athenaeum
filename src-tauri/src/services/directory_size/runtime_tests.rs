@@ -1,6 +1,9 @@
 use super::{DirectorySizeService, EventSink};
 use crate::domain::directory_sizes::*;
 use std::{fs, path::PathBuf, sync::{Arc, Mutex}, time::{Duration, Instant}};
+#[cfg(windows)]
+#[path = "rename_runtime_tests.rs"]
+mod rename_tests;
 
 struct TestRoot(PathBuf);
 impl TestRoot {
@@ -18,6 +21,39 @@ fn await_complete(events: &Mutex<Vec<DirectorySizeSnapshot>>, consumer: &str, by
         assert!(Instant::now() < deadline, "background service did not publish {consumer}/{bytes}: {:?}", events.lock().unwrap());
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn size_runtime_listing_carries_scanned_grandchildren_without_new_generation() {
+    let root = TestRoot::new();
+    let child = root.0.join("child");
+    fs::create_dir_all(child.join("deep")).unwrap();
+    fs::write(child.join("deep").join("payload"), [0_u8; 60]).unwrap();
+    let service = DirectorySizeService::default();
+    let events = Arc::new(Mutex::new(vec![])); let observed = events.clone();
+    let sink: Arc<EventSink> = Arc::new(move |_, snapshot| observed.lock().unwrap().push(snapshot));
+    service.open_owner("main"); service.start(Arc::downgrade(&sink));
+    service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
+        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false
+    }, None).unwrap();
+    let parent = await_complete(&events, "parent", "60", 0);
+    let mut listing = crate::services::fs_service::list_directory(&child, &[], |_| (vec![], None)).unwrap();
+    service.attach_listing_cache(&mut listing);
+    let cache = listing.directory_size_cache.as_ref().expect("first listing must carry cached grandchildren");
+    assert_eq!(cache.generation, parent.generation);
+    assert_eq!(cache.directories.len(), 2);
+    assert!(cache.directories.iter().all(|record| record.bytes.as_deref() == Some("60")));
+    service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
+        consumer_id: "child".into(), target: DirectorySizeTarget::Local { path: child.to_str().unwrap().into() }, refresh: false
+    }, None).unwrap();
+    let scoped = await_complete(&events, "child", "60", 0);
+    assert_eq!(scoped.generation, parent.generation);
+    assert_eq!(scoped.directories, 2);
+    listing.size_fingerprint = Some("different".into());
+    service.attach_listing_cache(&mut listing);
+    assert!(listing.directory_size_cache.is_none());
+    service.shutdown();
 }
 
 #[cfg(windows)]
@@ -67,6 +103,33 @@ fn size_runtime_contract_uses_typed_targets_camel_case_and_decimal_bytes() {
     assert_eq!(json["knownBytes"], "18446744073709551615");
     assert_eq!(json["totalBytes"], "18446744073709551615");
     assert_eq!(json["phase"], "complete");
+}
+
+#[cfg(windows)]
+#[test]
+fn size_runtime_legacy_rename_preserves_parent_and_new_subtree_cache() {
+    let root = TestRoot::new();
+    fs::create_dir_all(root.0.join("old/deep")).unwrap();
+    fs::write(root.0.join("old/deep/data"), [0; 60]).unwrap();
+    let service = DirectorySizeService::default();
+    let events = Arc::new(Mutex::new(vec![])); let observed = events.clone();
+    let sink: Arc<EventSink> = Arc::new(move |_, event| observed.lock().unwrap().push(event));
+    service.open_owner("main"); service.start(Arc::downgrade(&sink));
+    service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
+        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false
+    }, None).unwrap();
+    let before = await_complete(&events, "parent", "60", 0);
+    let counts = service.debug_counts();
+    crate::services::fs_service::rename_entry_with_sizes(&root.0.join("old"), "new", &service).unwrap();
+    for path in [&root.0, &root.0.join("new")] {
+        let mut listing = crate::services::fs_service::list_directory(path, &[], |_| (vec![], None)).unwrap();
+        service.attach_listing_cache(&mut listing);
+        let cache = listing.directory_size_cache.expect("successful rename must keep the parent and descendant cache");
+        assert!(cache.generation > before.generation);
+        assert!(cache.directories.iter().all(|record| record.bytes.as_deref() == Some("60")));
+    }
+    assert_eq!(service.debug_counts(), counts, "rename reuses the existing root without a scan job");
+    service.shutdown();
 }
 
 #[test]

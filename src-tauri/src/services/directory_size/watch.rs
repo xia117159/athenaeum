@@ -46,51 +46,39 @@ pub(crate) fn read_root_identity(path: &Path) -> Result<RootIdentity, String> {
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn read_root_identity(_path: &Path) -> Result<RootIdentity, String> { Err("此平台无法校验目录身份".into()) }
 
-#[derive(Debug)]
-pub(crate) struct RecursiveWatch {
-    // Native change handles may move between threads; only the owning service
-    // coordinator polls them. Store the value, not a borrowed pointer.
-    #[cfg(windows)]
-    handle: isize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WatchPoll { Quiet, Changed, Lost }
 
-impl RecursiveWatch {
-    #[cfg(windows)]
-    pub fn open(path: &str) -> Option<Self> {
-        use windows::Win32::Storage::FileSystem::{FindFirstChangeNotificationW,
-            FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_CHANGE_CREATION, FILE_NOTIFY_CHANGE_DIR_NAME,
-            FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SECURITY, FILE_NOTIFY_CHANGE_SIZE};
-        let filter = FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_DIR_NAME |
-            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SECURITY | FILE_NOTIFY_CHANGE_SIZE;
-        let handle = unsafe { FindFirstChangeNotificationW(&windows_core::HSTRING::from(path), true, filter) }.ok()?;
-        Some(Self { handle: handle.0 as isize })
-    }
-
-    #[cfg(windows)]
-    pub fn poll(&mut self) -> WatchPoll {
-        use windows::Win32::{Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
-            Storage::FileSystem::FindNextChangeNotification, System::Threading::WaitForSingleObject};
-        let handle = HANDLE(self.handle as *mut _);
-        match unsafe { WaitForSingleObject(handle, 0) } {
-            WAIT_TIMEOUT => WatchPoll::Quiet,
-            WAIT_OBJECT_0 => if unsafe { FindNextChangeNotification(handle) }.is_ok() { WatchPoll::Changed } else { WatchPoll::Lost },
-            _ => WatchPoll::Lost,
-        }
-    }
-
-    #[cfg(not(windows))]
-    pub fn open(_path: &str) -> Option<Self> { None }
-    #[cfg(not(windows))]
-    pub fn poll(&mut self) -> WatchPoll { WatchPoll::Lost }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChangeKind { Added, Removed, Modified, RenameOld, RenameNew }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WatchEvent { pub path: String, pub kind: ChangeKind }
+#[derive(Debug, Default)]
+pub(crate) struct WatchChanges {
+    pub events: Vec<WatchEvent>, pub lost: bool, pub watermark: u64, pub drained_ticket: u64,
 }
 
 #[cfg(windows)]
-impl Drop for RecursiveWatch {
-    fn drop(&mut self) {
-        let _ = unsafe { windows::Win32::Storage::FileSystem::FindCloseChangeNotification(
-            windows::Win32::Foundation::HANDLE(self.handle as *mut _)) };
+#[path = "watch_native.rs"]
+mod native;
+#[cfg(windows)]
+pub(crate) use native::RecursiveWatch;
+
+#[cfg(not(windows))]
+#[derive(Debug)]
+pub(crate) struct RecursiveWatch;
+#[cfg(not(windows))]
+impl RecursiveWatch {
+    pub fn open(_path: &str) -> Option<Self> { None }
+    pub fn take_changes(&mut self) -> WatchChanges { WatchChanges { lost: true, ..Default::default() } }
+    pub fn epoch(&self) -> u64 { 0 }
+    pub fn request_drain(&self) -> u64 { 0 }
+    pub fn drain_handle(&self) -> Self { Self }
+    pub fn wait(&self) -> bool { false }
+}
+impl RecursiveWatch {
+    pub fn poll(&mut self) -> WatchPoll {
+        let changes = self.take_changes();
+        if changes.lost { WatchPoll::Lost } else if changes.events.is_empty() { WatchPoll::Quiet } else { WatchPoll::Changed }
     }
 }

@@ -88,3 +88,36 @@ fn local_size_scan_excludes_directory_junctions_and_rejects_a_link_root() {
     fs::remove_dir(&junction).unwrap();
     assert!(outside.0.join("not-counted").exists());
 }
+#[cfg(windows)]
+#[test]
+fn local_size_watch_reports_actual_rename_names_and_keeps_watching_the_same_tree() {
+    use super::watch::{ChangeKind, RecursiveWatch};
+    use std::time::{Duration, Instant};
+    let path = std::env::temp_dir().join(format!("athenaeum-size-events-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(path.join("old").join("deep")).unwrap();
+    let mut watch = RecursiveWatch::open(path.to_str().unwrap()).unwrap();
+    std::fs::rename(path.join("old"), path.join("new")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut events = vec![];
+    while Instant::now() < deadline {
+        let changes = watch.take_changes();
+        assert!(!changes.lost, "ordinary rename must retain detailed monitoring");
+        events.extend(changes.events);
+        if events.iter().any(|event| event.kind == ChangeKind::RenameNew) { break; }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(events.iter().any(|event| event.kind == ChangeKind::RenameOld && event.path == "old"));
+    assert!(events.iter().any(|event| event.kind == ChangeKind::RenameNew && event.path == "new"));
+    std::fs::write(path.join("new/deep/payload"), b"new bytes").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut saw_payload = false;
+    while Instant::now() < deadline {
+        let changes = watch.take_changes();
+        assert!(!changes.lost);
+        if changes.events.iter().any(|event| event.path.ends_with("payload")) { saw_payload = true; break; }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(saw_payload);
+    drop(watch);
+    std::fs::remove_dir_all(path).unwrap();
+}

@@ -308,6 +308,7 @@ where
             .map(|parent| parent.to_string_lossy().into_owned()),
         can_go_up: canonical.parent().is_some(),
         size_fingerprint: size_fingerprint.finish(),
+        directory_size_cache: None,
     })
 }
 
@@ -588,6 +589,7 @@ pub fn delete_entry_recycle(path: &Path) -> Result<()> {
     remove_path(path)
 }
 
+#[cfg(test)]
 pub fn rename_entry(source: &Path, new_name: &str) -> Result<PathBuf> {
     validate_entry_name(new_name)?;
     let parent = source.parent().context("cannot rename root path")?;
@@ -603,6 +605,14 @@ pub fn rename_entry(source: &Path, new_name: &str) -> Result<PathBuf> {
             destination.display()
         )
     })?;
+    Ok(destination)
+}
+
+pub fn rename_entry_with_sizes(source: &Path, new_name: &str, sizes: &super::directory_size::DirectorySizeService) -> Result<PathBuf> {
+    validate_entry_name(new_name)?;
+    let destination = source.parent().context("cannot rename root path")?.join(new_name);
+    if destination.exists() { bail!("destination already exists: {}", destination.display()); }
+    sizes.rename_file(source, &destination, true)?;
     Ok(destination)
 }
 

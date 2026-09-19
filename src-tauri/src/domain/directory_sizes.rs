@@ -68,3 +68,11 @@ pub struct DirectorySizeLookup {
     pub stale: bool,
     pub directories: Vec<DirectorySizeRecord>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectorySizeCache {
+    pub generation: u64,
+    pub sequence: u64,
+    pub directories: Vec<DirectorySizeRecord>,
+}

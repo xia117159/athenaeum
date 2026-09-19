@@ -41,9 +41,11 @@ pub fn execute_batch(
         emit(&running);
     }
     let initial = payload.clone();
+    let paths = payload.entries.iter().filter_map(|entry| Some((entry.current_path.clone(), entry.current_path.parent()?.join(&entry.target_name)))).collect::<Vec<_>>();
+    let mut sizes = state.directory_sizes.begin_rename(&paths, payload.direction == transaction::Direction::Forward && !payload.identity_unknown());
     let mut progress_at = Instant::now();
     let execution = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        transaction::run(
+        transaction::run_with_size_session(
             payload,
             &root,
             &cancellation,
@@ -83,8 +85,10 @@ pub fn execute_batch(
                 }
                 Ok(())
             },
+            Some(&mut sizes),
         )
     }));
+    let normal_return = execution.is_ok();
     let outcome = match execution {
         Ok(outcome) => outcome,
         Err(_) => {
@@ -128,6 +132,7 @@ pub fn execute_batch(
             }
         }
     };
+    sizes.finish(normal_return && outcome.committed && outcome.payload.direction == transaction::Direction::Forward);
     let finished = state
         .operations
         .lock()

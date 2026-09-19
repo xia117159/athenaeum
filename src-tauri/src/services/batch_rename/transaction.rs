@@ -196,6 +196,7 @@ pub struct BatchRunOutcome {
     pub cleanup_warning: Option<String>,
 }
 
+#[cfg(test)]
 pub fn run(
     payload: BatchPayload,
     log_root: &Path,
@@ -203,13 +204,21 @@ pub fn run(
     commit: &mut dyn FnMut(&BatchPayload) -> Result<()>,
     observer: &mut Observer<'_>,
 ) -> BatchRunOutcome {
+    run_with_size_session(payload, log_root, cancelled, commit, observer, None)
+}
+
+pub(crate) fn run_with_size_session(
+    payload: BatchPayload, log_root: &Path, cancelled: &AtomicBool,
+    commit: &mut dyn FnMut(&BatchPayload) -> Result<()>, observer: &mut Observer<'_>,
+    sizes: Option<&mut crate::services::directory_size::RenameSession<'_>>,
+) -> BatchRunOutcome {
     #[cfg(windows)]
     {
-        runner::run(payload, log_root, cancelled, commit, observer)
+        runner::run(payload, log_root, cancelled, commit, observer, sizes)
     }
     #[cfg(not(windows))]
     {
-        let _ = (log_root, cancelled, commit, observer);
+        let _ = (log_root, cancelled, commit, observer, sizes);
         BatchRunOutcome {
             payload,
             committed: false,
