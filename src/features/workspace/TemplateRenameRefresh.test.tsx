@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import React, { act } from "react";
 import { FileListingShell } from "./FileListing";
 import { getFolderListingRows } from "./folderExpansion";
-import { expansionEntry, expansionFixture, expansionInteractions, expansionSnapshot } from "./folderExpansionTestSupport";
+import { expansionEntry, expansionFixture, expansionInteractions, expansionSnapshot, quickFilterProgram } from "./folderExpansionTestSupport";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { createTestGateway, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { CreationTemplateEntry } from "../../app/templates";
@@ -43,7 +43,7 @@ export const completion = (async () => {
         if (controller.state.status !== "ready") return null;
         const tab = activeTab(), { actions } = controller;
         // A quick filter must not hide the copied row while it is being renamed.
-        const rows = getFolderListingRows(tab, undefined, "does-not-match");
+        const rows = getFolderListingRows(tab, undefined, quickFilterProgram("does-not-match"));
         return <FileListingShell panelId="panel-1" tabId={tab.id} columns={tab.columns} sort={tab.sort} currentPath={f.path}
           entries={rows.map(row => row.entry)} folderRows={rows} selectedEntryIds={tab.selectedEntryIds} viewMode={tab.viewMode}
           detailsRowHeight={24} inlineEdit={tab.inlineEdit} onSort={() => {}} onSelect={() => {}} onOpen={() => {}}

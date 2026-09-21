@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
 import { expansionEntry, expansionSnapshot } from "./folderExpansionTestSupport";
+import { withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { assertTest, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
@@ -62,7 +63,7 @@ export const completion = (async () => {
               assert.deepEqual(getFolderListingRows(h.state.panels[panelId].tabs[0]).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
             }
             assert.equal(h.state.panels[matchedPanel].tabs[0].snapshot, matchedRoot);
-            await h.change((state) => ({ ...state, search: { ...state.search, filterText: "child" } }));
+            await h.change((state) => withQuickFilterText(state, "child"));
             assert.equal(t.listings.length, 2); assert.equal(t.wire.subscribed.length, 2);
           } finally { await h.close(); }
         });

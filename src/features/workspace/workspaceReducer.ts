@@ -63,6 +63,17 @@ import type { OperationClearOutcome } from "../../app/types";
 import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
 import { compareRevisionTokens } from "./colorFilterEditorModel";
 import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { DEFAULT_QUICK_FILTER_STATE } from "./quickFilterTypes";
+import type { QuickFilterMode, QuickFilterState, QuickFilterSyntax } from "./quickFilterTypes";
+import {
+  applyQuickFilterApplied,
+  applyQuickFilterCleared,
+  applyQuickFilterMode,
+  applyQuickFilterSyntax,
+  applyQuickFilterText,
+  pruneQuickFilterCache,
+  resolveTabQuickFilter
+} from "./quickFilterState";
 import { emptyTreeState, normalizeTreeState, treeStateFromTab, reduceWorkspaceTree, reconcileWorkspaceTree } from "./workspaceTreeState";
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
@@ -174,7 +185,12 @@ export type WorkspaceAction =
   | { type: "searchTabChanged"; payload: SearchTabId }
   | { type: "searchStarted"; payload?: { searchId?: string } }
   | { type: "searchQueryChanged"; payload: Partial<SearchQuery> }
-  | { type: "searchFilterChanged"; payload: string }
+  | { type: "quickFilterTextChanged"; payload: { path: string; text: string } }
+  | { type: "quickFilterApplied"; payload: { path: string; text: string; ok: boolean; message: string | null } }
+  | { type: "quickFilterModeChanged"; payload: { mode: QuickFilterMode } }
+  | { type: "quickFilterSyntaxChanged"; payload: { syntax: QuickFilterSyntax } }
+  | { type: "quickFilterCleared"; payload: { path: string } }
+  | { type: "quickFilterTypeaheadAppended"; payload: { path: string; text: string } }
   | { type: "searchHistoryLoaded"; payload: { tab: SearchTabId; history: string[] } }
   | { type: "searchHistorySelected"; payload: { index: number } }
   | { type: "searchHistoryDeleted"; payload: { index: number } }
@@ -345,6 +361,21 @@ function createFallbackDirectoryTabForPanel(state: WorkspaceState, panelId: Pane
   return fallbackTab ? cloneRecoveredTab(fallbackTab, panelId) : undefined;
 }
 
+/** 仅在快速过滤状态真正变化时重建 state 对象，保住引用相等以免下游 memo 失效。 */
+function withQuickFilter(state: WorkspaceState, next: QuickFilterState): WorkspaceState {
+  return next === state.quickFilter ? state : { ...state, quickFilter: next };
+}
+
+/**
+ * 集中式淘汰（spec §5.8）：任何状态变更后立即删除已无标签页停留的路径条目。
+ * 面板/标签页结构未变时路径键集合不可能变化，因此跳过遍历（评审 G1 的性能守卫）。
+ */
+function pruneQuickFilterForAction(previous: WorkspaceState, next: WorkspaceState): WorkspaceState {
+  if (next === previous || next.panels === previous.panels) return next;
+  const quickFilter = pruneQuickFilterCache(next);
+  return quickFilter === next.quickFilter ? next : { ...next, quickFilter };
+}
+
 export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceState {
   const visiblePanelIds = getVisiblePanelIds(bootstrap.layoutMode);
   const fallbackTab = PANEL_ORDER.flatMap((panelId) => bootstrap.panels[panelId].tabs)[0];
@@ -399,9 +430,9 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
+    quickFilter: { ...DEFAULT_QUICK_FILTER_STATE, byPath: {} },
     search: {
       loading: false,
-      filterText: "",
       query: {
         name: "",
         content: "",
@@ -1133,7 +1164,9 @@ function getCurrentPropertiesTargetKey(state: WorkspaceState): string | undefine
   if (!isDirectoryTab(tab)) {
     return undefined;
   }
-  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility, state.search.filterText, state.settings.model.folderExpansionEnabled === true);
+  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility,
+    resolveTabQuickFilter(state, state.activePanelId, tab.id), state.settings.model.folderExpansionEnabled === true,
+    state.settings.model.sizeBarMode);
   if (selectedEntries.length > 1) {
     return `multi:${selectedEntries.map((entry) => entry.id).join("|")}`;
   }
@@ -1246,12 +1279,13 @@ function updateColumnsForSettingsAndTab(
   );
 }
 
-export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
-  state = prepareSelectionInteraction(state, action);
+export function workspaceReducer(initialState: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+  const state = prepareSelectionInteraction(initialState, action);
   const next = reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceTree(state, action) ?? reduceWorkspaceMenus(state, action)
     ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
     ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
-  return reconcileDirectorySizePresentation(state, reconcileWorkspaceTree(state, next, action));
+  const settled = reconcileDirectorySizePresentation(state, reconcileWorkspaceTree(state, next, action));
+  return pruneQuickFilterForAction(initialState, settled);
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -1825,7 +1859,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         action.payload.panelId, (panel) =>
         updateTab(panel, action.payload.tabId, (tab) => reduceFolderExpansion(
           tab, action, state.settings.model.folderExpansionEnabled === true, state.fileVisibility,
-          state.activePanelId === action.payload.panelId ? state.search.filterText : ""
+          resolveTabQuickFilter(state, action.payload.panelId, action.payload.tabId)
         ))
       ));
 
@@ -1904,9 +1938,11 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: (supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)
-                    ? getFolderListingRows(tab, state.fileVisibility, state.activePanelId === action.payload.panelId ? state.search.filterText : "").map(({ entry }) => entry)
-                    : tab.snapshot.entries).map((entry) => entry.id),
+                  // B23：全选的目标集恒等于可见行集，不再按文件夹展开是否生效分叉到未过滤的
+                  // snapshot.entries —— 否则保留/排除过滤藏起来的行仍会被全选并随之被删除/复制。
+                  selectedEntryIds: getFolderListingRows(tab, state.fileVisibility,
+                    resolveTabQuickFilter(state, action.payload.panelId, action.payload.tabId),
+                    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map(({ entry }) => entry.id),
                   selectionAnchorId: null,
                   selectionCursorId: null
                 }
@@ -2230,18 +2266,29 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         }
       };
 
-    case "searchFilterChanged":
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          activeTab: "search"
-        },
-        search: {
-          ...state.search,
-          filterText: action.payload
-        }
-      };
+    case "quickFilterTextChanged":
+    case "quickFilterTypeaheadAppended":
+      // §5.7：两条路径共用同一内部函数，避免键盘直输与输入框写入的语义漂移。
+      return withQuickFilter(state, applyQuickFilterText(state.quickFilter, action.payload.path, action.payload.text));
+
+    case "quickFilterApplied":
+      return withQuickFilter(
+        state,
+        applyQuickFilterApplied(state.quickFilter, action.payload.path, {
+          text: action.payload.text,
+          ok: action.payload.ok,
+          message: action.payload.message
+        })
+      );
+
+    case "quickFilterModeChanged":
+      return withQuickFilter(state, applyQuickFilterMode(state.quickFilter, action.payload.mode));
+
+    case "quickFilterSyntaxChanged":
+      return withQuickFilter(state, applyQuickFilterSyntax(state.quickFilter, action.payload.syntax));
+
+    case "quickFilterCleared":
+      return withQuickFilter(state, applyQuickFilterCleared(state.quickFilter, action.payload.path));
 
     case "searchHistoryLoaded":
       {

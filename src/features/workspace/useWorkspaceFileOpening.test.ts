@@ -42,7 +42,10 @@ export const completion = (async () => {
       onToggleExpanded:actions.setInformationPanelExpanded, onSelectInformationTab:actions.selectInformationPanelTab,
       onOpenHistory:actions.openOperationHistory, onRunSearch:() => {void actions.runSearch();},
       onStopSearch:() => {void actions.stopSearch();}, onSelectSearchTab:actions.selectSearchTab,
-      onUpdateQuery:actions.updateSearchQuery, onUpdateFilter:actions.updateSearchFilter,
+      onUpdateQuery:actions.updateSearchQuery,
+      quickFilter:{text:"", error:null, mode:"highlight", syntax:"substring"} as const,
+      onUpdateQuickFilterText:() => undefined, onChangeQuickFilterMode:actions.changeQuickFilterMode,
+      onChangeQuickFilterSyntax:actions.changeQuickFilterSyntax, onClearQuickFilter:() => undefined,
       onSelectHistory:actions.selectSearchHistory, onDeleteHistory:actions.deleteSearchHistory
     });
   }

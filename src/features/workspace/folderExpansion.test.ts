@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getFolderListingRows } from "./folderExpansion";
-import { expansionEntry, expansionFixture } from "./folderExpansionTestSupport";
+import { getFolderListingRows, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { expansionEntry, expansionFixture, quickFilterProgram } from "./folderExpansionTestSupport";
 import { getSelectedEntries, getTabsForPaths } from "./workspaceControllerUtils";
 import { getVisibleDirectoryRefreshTargets, getVisibleWatchRoots } from "./workspaceRefreshPlanner";
 import { createWorkspaceState } from "./workspaceReducer";
 import { getPathComparisonKey, getTopLevelPaths } from "./workspacePathRelations";
 import { toPersistedSession } from "./workspaceSessionStore";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import type { TabState } from "./types";
 
 function expandedFixture(kind: "local" | "ftp" | "sftp" = "local") {
   const fixture = expansionFixture(kind);
@@ -31,10 +32,11 @@ test("tree rows sort siblings and preserve parent-child order and depth", () => 
 
 test("quick filtering retains loaded ancestors and hidden parents hide their entire branch", () => {
   const { tab, parent, nested, leaf } = expandedFixture();
-  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, "leaf.txt").map(({ entry }) => entry.id), [parent.id, nested.id, leaf.id]);
+  const keep = quickFilterProgram("leaf.txt");
+  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, keep).map(({ entry }) => entry.id), [parent.id, nested.id, leaf.id]);
   parent.isHidden = true;
-  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, "leaf.txt"), []);
-  assert.equal(getFolderListingRows(tab, { ...DEFAULT_FILE_VISIBILITY, showHidden: true }, "leaf.txt").length, 3);
+  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, keep), []);
+  assert.equal(getFolderListingRows(tab, { ...DEFAULT_FILE_VISIBILITY, showHidden: true }, keep).length, 3);
 });
 
 test("expanded children are available to file actions and parent refresh planning", () => {
@@ -107,10 +109,77 @@ test("excluded search views preserve duplicate-path result rows", () => {
   assert.deepEqual(getFolderListingRows(tab).map((row) => row.entry.id), [child.id, "second-hit"]);
 });
 
+test("D21: excluding a branch from the listing does not remove its watch root", () => {
+  const { state, parent, path, nested } = expandedFixture();
+  assert.deepEqual(getVisibleWatchRoots(state).directoryPaths, [path, parent.path, nested.path],
+    "precondition: both expanded branches are watched while unfiltered");
+
+  // 排除过滤把**已展开的父文件夹本身**藏起来，其整棵子树随之消失。
+  // 若 watch 根改用过滤后的投影推导，这两个根就会掉出集合：清除过滤后用户会看到陈旧内容（D21 要防的正是这一情形）。
+  state.quickFilter = {
+    mode: "exclude",
+    syntax: "substring",
+    byPath: {
+      [getPathComparisonKey(state.panels["panel-1"].tabs[0].snapshot.location.path)]:
+        { text: "parent", appliedText: "parent", error: null }
+    }
+  };
+  assert.deepEqual(
+    getFolderListingRows(state.panels["panel-1"].tabs[0], DEFAULT_FILE_VISIBILITY, quickFilterProgram("parent", "exclude"))
+      .filter((row) => row.expansion).map((row) => row.entry.path),
+    [],
+    "precondition: the filtered projection exposes no expanded branch");
+
+  assert.deepEqual(getVisibleWatchRoots(state).directoryPaths, [path, parent.path, nested.path],
+    "D21: watch roots must be derived from the unfiltered projection");
+});
+
 test("expanded directory data is transient and is not serialized into the session", () => {
   const { state, child } = expandedFixture();
   const session = toPersistedSession(state);
   const json = JSON.stringify(session);
   assert.equal(json.includes('"folderExpansion":'), false);
   assert.equal(json.includes(child.path.replace(/\\/g, "\\\\")), false);
+});
+
+// ---------------------------------------------------------------------------
+// D19：四种「展开不生效」的回退配置下，可见行集仍必须等于操作目标集
+// ---------------------------------------------------------------------------
+
+/**
+ * D19 枚举的四种配置。四者的共同点是 `supportsFolderExpansion` 为假，
+ * 因此都会走到"没有树"的那条分支 —— 这正是旧实现回退到未过滤 `snapshot.entries` 的入口。
+ */
+const D19_FALLBACK_CONFIGURATIONS: Array<{ name: string; enabled: boolean; apply: (tab: TabState) => void }> = [
+  { name: "① 展开功能关闭（出厂默认）", enabled: false, apply: () => {} },
+  { name: "② 磁贴视图（details 之外）", enabled: true, apply: (tab) => { tab.viewMode = "tiles"; } },
+  { name: "③ 「此电脑」虚拟标签页", enabled: true, apply: (tab) => { tab.snapshot.location.kind = "virtual"; } },
+  { name: "④ 搜索结果标签页", enabled: true, apply: (tab) => { tab.kind = "search-results"; } }
+];
+
+test("D19: every fallback configuration keeps the operation target set equal to the visible row set", () => {
+  for (const configuration of D19_FALLBACK_CONFIGURATIONS) {
+    const { tab, sibling, parent } = expandedFixture();
+    configuration.apply(tab);
+    assert.equal(supportsFolderExpansion(tab, configuration.enabled), false,
+      `${configuration.name}: the fixture must exercise the no-tree branch`);
+
+    // 先全选未过滤时的可见行集，模拟"用户全选后再输入过滤词"。
+    tab.selectedEntryIds = getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, null, configuration.enabled)
+      .map(({ entry }) => entry.id);
+    assert.deepEqual([...tab.selectedEntryIds].sort(), [parent.id, sibling.id].sort(),
+      `${configuration.name}: precondition is a full unfiltered selection`);
+
+    const keep = quickFilterProgram("sibling");
+    const visible = getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, keep, configuration.enabled)
+      .map(({ entry }) => entry.id);
+    assert.deepEqual(visible, [sibling.id],
+      `${configuration.name}: only the matching row may stay visible`);
+
+    // B23：操作目标集必须等于可见行集（顺序一致），不得回退到未过滤的 snapshot.entries。
+    assert.deepEqual(
+      getTabSelectedEntries(tab, DEFAULT_FILE_VISIBILITY, keep, configuration.enabled).map((entry) => entry.id),
+      visible,
+      `${configuration.name}: the operation target set must equal the visible row set`);
+  }
 });

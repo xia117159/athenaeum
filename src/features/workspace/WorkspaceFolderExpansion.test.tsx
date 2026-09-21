@@ -15,6 +15,11 @@ export const completion = (async () => {
   const tab = state.panels["panel-1"].tabs[0];
   tab.folderExpansion = { [getPathComparisonKey(f.parent.path)]: { path: f.parent.path, entries: [f.child, f.nested], status: "ready" } };
   tab.selectedEntryIds = [f.child.id];
+  // 快速过滤取代旧的 search.filterText：include 模式等价于「保留命中行及其祖先链」。
+  const setQuickFilter = (text: string) => {
+    state.quickFilter = { mode: "include", syntax: "substring",
+      byPath: { [getPathComparisonKey(tab.snapshot.location.path)]: { text, appliedText: text, error: null } } };
+  };
   const toggled: unknown[][] = [];
   const actions = new Proxy({ toggleFolderExpansion: (...args: unknown[]) => toggled.push(args) }, {
     get: (target, key) => Reflect.get(target, key) ?? (() => undefined)
@@ -51,7 +56,7 @@ export const completion = (async () => {
       }
     });
     await assertTest("quick filter retains ancestors; child context menus and counts use the same visible rows", async () => {
-      state.search.filterText = "child.txt";
+      setQuickFilter("child.txt");
       state.contextMenu = { panelId: "panel-1", tabId: tab.id, mode: "custom", scope: "selection", x: 0, y: 0 };
       await render();
       assert.deepEqual(paths(), [f.parent.path, f.child.path]);
@@ -61,7 +66,7 @@ export const completion = (async () => {
         assert.ok(trigger); trigger.click(); await flushEffects();
       });
       assert.ok([...document.querySelectorAll(".context-menu__item")].find((button) => button.textContent?.includes("复制文件名")));
-      state.search.filterText = "sibling";
+      setQuickFilter("sibling");
       await render();
       assert.deepEqual(paths(), [f.sibling.path]);
       assert.doesNotMatch(container.querySelector(".information-panel__summary")?.textContent ?? "", /child.txt/);
@@ -69,7 +74,7 @@ export const completion = (async () => {
     });
     await assertTest("disabled, icon and search-result views do not expose folder expansion", async () => {
       state.contextMenu = undefined;
-      state.search.filterText = "";
+      setQuickFilter("");
       for (const excluded of ["disabled", "icons", "search"] as const) {
         state.settings.model.folderExpansionEnabled = excluded !== "disabled";
         tab.kind = excluded === "search" ? "search-results" : "directory";

@@ -9,6 +9,7 @@ import type { FileAssociationRule } from "../../app/fileAssociations";
 import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
 import type { BatchRenameDialogState, RenameTarget } from "./batchRenameState";
 import type { TemplateMenuState, TemplateCreationPending } from "./templateCreationState";
+import type { QuickFilterState } from "./quickFilterTypes";
 
 export type DataSource = "mock" | "tauri";
 
@@ -573,7 +574,6 @@ export interface RemoteConnectionProfile {
 
 export interface SearchState {
   loading: boolean;
-  filterText: string;
   activeTab: SearchTabId;
   query: SearchQuery;
   results: SearchResult[];
@@ -720,6 +720,12 @@ export interface WorkspaceState {
   navigation: NavigationState;
   remoteProfiles: RemoteConnectionProfile[];
   search: SearchState;
+  /**
+   * 快速过滤状态（spec 20260920-quick-filter）。
+   * 过滤文本按路径缓存于 `byPath`；`mode`/`syntax` 是会话全局偏好（D4-R，不随路径条目淘汰而重置）。
+   * 纯内存态，不持久化（D11）。
+   */
+  quickFilter: QuickFilterState;
   informationPanel: InformationPanelState;
   settings: SettingsSurfaceState;
   clipboard?: ClipboardState;

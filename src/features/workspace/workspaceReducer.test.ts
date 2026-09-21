@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
+import { getFolderListingRows } from "./folderExpansion";
 import {
   createNavigationTab,
   createWorkspaceState,
@@ -17,6 +18,11 @@ import type {
 
 function createState() {
   return createWorkspaceState(createMockWorkspaceBootstrap());
+}
+
+/** 快速过滤文本按路径缓存（D4），因此断言需要激活面板激活标签页的当前路径。 */
+function currentPathOf(state: ReturnType<typeof createState>) {
+  return getActiveTab(state.panels[state.activePanelId]).snapshot.location.path;
 }
 
 function createResult(id: string, name = "report.txt"): SearchResult {
@@ -341,7 +347,10 @@ assertTest("workspaceReducer clears the previously focused panel selection when 
 assertTest("workspaceReducer selects all entries with allEntriesSelected action", () => {
   const state = createState();
   const activeTab = getActiveTab(state.panels["panel-1"]);
-  const allEntryIds = activeTab.snapshot.entries.map((entry) => entry.id);
+  // B23：全选写入的就是可见行集，因此顺序必须与列表渲染一致（排序 + 可见性过滤），
+  // 而不是 snapshot.entries 的插入顺序 —— 否则全选后的删除/复制会与用户看到的不符。
+  const visibleEntryIds = getFolderListingRows(activeTab, state.fileVisibility, null,
+    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map(({ entry }) => entry.id);
 
   const selected = workspaceReducer(state, {
     type: "allEntriesSelected",
@@ -351,8 +360,10 @@ assertTest("workspaceReducer selects all entries with allEntriesSelected action"
     }
   } as WorkspaceAction);
 
-  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, allEntryIds);
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds, visibleEntryIds);
   assert.ok(getActiveTab(selected.panels["panel-1"]).selectedEntryIds.length > 0);
+  assert.deepEqual(getActiveTab(selected.panels["panel-1"]).selectedEntryIds.length, activeTab.snapshot.entries.length,
+    "no visible entry is dropped by the row projection");
 });
 
 assertTest("workspaceReducer clears all selection with entrySelectionCleared action", () => {
@@ -1270,7 +1281,6 @@ assertTest("createWorkspaceState initializes the docked information panel search
   assert.equal(state.informationPanel.activeTab, "properties");
   assert.equal(state.informationPanel.properties.status, "idle");
   assert.equal(state.search.loading, false);
-  assert.equal(state.search.filterText, "");
   assert.deepEqual(state.search.query, {
     name: "",
     content: "",
@@ -1297,16 +1307,20 @@ assertTest("createWorkspaceState initializes the docked information panel search
   });
 });
 
-assertTest("workspaceReducer tracks information panel filter text and search progress", () => {
+assertTest("workspaceReducer tracks search progress", () => {
   const state = createState();
   const started = workspaceReducer(state, {
     type: "searchStarted",
     payload: { searchId: "search-42" }
   } as WorkspaceAction);
+  // §8:713：原 `searchFilterChanged` 断言改写为 `quickFilterTextChanged`，
+  // 并断言过滤文本变化**不再**切换 informationPanel.activeTab（D18）。
   const filtered = workspaceReducer(started, {
-    type: "searchFilterChanged",
-    payload: "atlas"
+    type: "quickFilterTextChanged",
+    payload: { path: currentPathOf(state), text: "atlas" }
   } as WorkspaceAction);
+  assert.equal(filtered.informationPanel.activeTab, started.informationPanel.activeTab,
+    "quick filter text must not switch the information panel tab (D18)");
   const progressed = workspaceReducer(filtered, {
     type: "searchProgressUpdated",
     payload: {
@@ -1321,7 +1335,6 @@ assertTest("workspaceReducer tracks information panel filter text and search pro
   assert.equal(progressed.informationPanel.expanded, true);
   assert.equal(progressed.informationPanel.activeTab, "search");
   assert.equal(progressed.search.loading, true);
-  assert.equal(progressed.search.filterText, "atlas");
   assert.deepEqual(progressed.search.results, []);
   assert.deepEqual(progressed.search.progress, {
     searchId: "search-42",
@@ -1342,15 +1355,18 @@ assertTest("workspaceReducer routes search entry points through informationPanel
     type: "informationPanelExpandedSet",
     payload: false
   } as WorkspaceAction);
+  // §8:713 第二处：原 `searchFilterChanged` 断言改写为 `quickFilterTextChanged`。
   const filtered = workspaceReducer(collapsed, {
-    type: "searchFilterChanged",
-    payload: "report"
+    type: "quickFilterTextChanged",
+    payload: { path: currentPathOf(state), text: "report" }
   } as WorkspaceAction);
   assert.equal(searchOpened.informationPanel.expanded, true);
   assert.equal(searchOpened.informationPanel.activeTab, "search");
   assert.equal(collapsed.informationPanel.expanded, false);
-  assert.equal(filtered.informationPanel.expanded, false);
-  assert.equal(filtered.informationPanel.activeTab, "search");
+  assert.equal(collapsed.informationPanel.activeTab, "search");
+  assert.equal(filtered.informationPanel.expanded, false, "filtering must not expand the panel (B20)");
+  assert.equal(filtered.informationPanel.activeTab, "search",
+    "filtering must not switch away from the search tab (D18)");
 });
 
 assertTest("workspaceReducer ignores stale properties responses by request id and target key", () => {

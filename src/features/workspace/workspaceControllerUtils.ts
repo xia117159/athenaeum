@@ -9,6 +9,7 @@ import {
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { getPathComparisonKey, isSameOrDescendantPath } from "./workspacePathRelations";
 import { getExpandedFolderPaths, getTabEntries, getTabSelectedEntries } from "./folderExpansion";
+import { resolvePanelQuickFilter } from "./quickFilterState";
 export { isSameOrDescendantPath } from "./workspacePathRelations";
 import type {
   ColumnDefinition,
@@ -173,8 +174,8 @@ export function getSelectedEntries(state: WorkspaceState, panelId: PanelId) {
   if (!isDirectoryTab(tab)) {
     return [];
   }
-  return getTabSelectedEntries(tab, state.fileVisibility, state.activePanelId === panelId ? state.search.filterText : "",
-    state.settings.model.folderExpansionEnabled === true);
+  return getTabSelectedEntries(tab, state.fileVisibility, resolvePanelQuickFilter(state, panelId),
+    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode);
 }
 
 export function createSelectionKey(entries: EntryViewModel[]) {

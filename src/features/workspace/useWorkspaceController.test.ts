@@ -404,10 +404,10 @@ export const completion = (async () => {
           extensionController?.actions.selectMultipleEntries("panel-1", extensionTab.id, ids);
           await flushEffects();
         });
-        await waitFor(
-          () => extensionController?.state.informationPanel.properties.summary?.selectionKey === ids.join("|"),
-          "multi-selection extension summary was not updated"
-        );
+        await waitFor(() => { // B23：selectionKey 跟随可见行顺序（文件夹在前），这里只比较条目集合。
+          const key = extensionController?.state.informationPanel.properties.summary?.selectionKey.split("|") ?? [];
+          return key.length === ids.length && ids.every((id) => key.includes(id));
+        }, "multi-selection extension summary was not updated");
         return extensionController!.state.informationPanel.properties.summary;
       }
 

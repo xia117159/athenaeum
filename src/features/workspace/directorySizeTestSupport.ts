@@ -1,7 +1,22 @@
 import { expansionEntry, expansionFixture } from "./folderExpansionTestSupport";
+import { applyQuickFilterMode, applyQuickFilterText } from "./quickFilterState";
 import { createWorkspaceState } from "./workspaceReducer";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import type { DirectorySizeRecord, DirectorySizeSnapshot, DirectorySizeTabState } from "./directorySizeTypes";
+import type { QuickFilterMode } from "./quickFilterTypes";
+import type { WorkspaceState } from "./types";
+
+/**
+ * 用快速过滤取代已被移除的 `search.filterText`。
+ * 默认 `include` 模式，等价于旧字符串过滤的「保留命中行及其祖先链」语义，
+ * 从而保持这些测试原有的断言意图不变（`highlight` 模式按 D7 不改变行集）。
+ */
+export function withQuickFilterText(state: WorkspaceState, text: string, mode: QuickFilterMode = "include"): WorkspaceState {
+  const panel = state.panels[state.activePanelId];
+  const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId) ?? panel.tabs[0];
+  const quickFilter = applyQuickFilterText(applyQuickFilterMode(state.quickFilter, mode), tab.snapshot.location.path, text);
+  return { ...state, quickFilter };
+}
 
 export function sizeSnapshot(override: Partial<DirectorySizeSnapshot> = {}): DirectorySizeSnapshot {
   return { consumerId: "size-test", generation: 1, sequence: 2, phase: "complete", totalBytes: "100", knownBytes: "100", files: 3,

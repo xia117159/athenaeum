@@ -75,7 +75,7 @@ export const completion = (async () => {
           directories: request.paths.map((path) => sizeRecord(path, path === f.path ? "100" : path === f.parent.path ? "20" : "80", "root-stamp")) });
       });
       try {
-        const rows = getFolderListingRows(h.tab, h.current.state.fileVisibility, "", false);
+        const rows = getFolderListingRows(h.tab, h.current.state.fileVisibility, null, false);
         assert.deepEqual(rows.map((row) => row.entry.name), ["parent", "a-large"]);
         await act(async () => { window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Home", bubbles: true })); await flushEffects(); });
         assert.deepEqual(h.tab.selectedEntryIds, [rows[0].entry.id]);

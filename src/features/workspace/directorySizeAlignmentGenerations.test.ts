@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
-import { sizeSnapshot } from "./directorySizeTestSupport";
+import { sizeSnapshot, withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { assertTest, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { DirectorySnapshot } from "./types";
@@ -28,7 +28,7 @@ export const completion = (async () => {
         assert.equal(h.tab.directorySizes?.snapshot?.generation, 2);
         assert.equal(h.state.panels["panel-2"].tabs[0].directorySizes?.snapshot?.generation, 1);
         assert.equal(pending.length, 2, "two retained generations must not delete each other's attempted maps");
-        await h.change((state) => ({ ...state, search: { ...state.search, filterText: "a" } }));
+        await h.change((state) => withQuickFilterText(state, "a"));
         assert.equal(pending.length, 2, "rerenders do not create replacement physical reads");
         const aligned = { ...f.tab.snapshot, sizeFingerprint: "root-stamp" };
         await act(async () => { pending[firstResult](aligned); await flushEffects(); });

@@ -3,9 +3,11 @@ import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { getFolderBranch, getTabEntries } from "./folderExpansion";
+import { getPathComparisonKey } from "./workspacePathRelations";
 import { expansionEntry, expansionFixture, expansionInteractions, expansionSnapshot } from "./folderExpansionTestSupport";
 import { assertTest, createTestGateway, flushEffects, installDomEnvironment, waitFor } from "./workspaceControllerTestHarness";
 import type { DirectorySnapshot, WorkspaceBootstrap } from "./types";
+import type { QuickFilterMode } from "./quickFilterTypes";
 import type { WorkspaceGateway } from "./workspaceGateway";
 
 type Controller = ReturnType<typeof useWorkspaceController>;
@@ -32,6 +34,21 @@ async function toggle(harness: Awaited<ReturnType<typeof mount>>, path: string, 
   const action = Reflect.get(harness.controller.actions, name);
   assert.equal(typeof action, "function", `workspace controller must expose ${name}`);
   await act(async () => { action("panel-1", harness.tab.id, path); await flushEffects(); });
+}
+
+/**
+ * 快速过滤取代旧的 `search.filterText` / `updateSearchFilter`：`include` 模式保留命中行
+ * 及其祖先链，等价于旧字符串过滤的语义，因此这些测试的原意保持不变。
+ */
+function setQuickFilter(harness: Awaited<ReturnType<typeof mount>>, text: string) {
+  harness.controller.state.quickFilter = { mode: "include", syntax: "substring",
+    byPath: text ? { [getPathComparisonKey(harness.tab.snapshot.location.path)]: { text, appliedText: text, error: null } } : {} };
+}
+
+/** 与 `setQuickFilter` 相同的直接写入方式，但可指定模式，用于覆盖 B22 的三种模式。 */
+function setQuickFilterMode(harness: Awaited<ReturnType<typeof mount>>, mode: QuickFilterMode, text: string) {
+  harness.controller.state.quickFilter = { mode, syntax: "substring",
+    byPath: text ? { [getPathComparisonKey(harness.tab.snapshot.location.path)]: { text, appliedText: text, error: null } } : {} };
 }
 
 export const completion = (async () => {
@@ -115,7 +132,7 @@ export const completion = (async () => {
           await flushEffects();
         });
         if (excluded === "empty-selection") harness.tab.selectedEntryIds = [];
-        if (excluded === "filtered") harness.controller.state.search.filterText = "sibling";
+        if (excluded === "filtered") setQuickFilter(harness, "sibling");
         await act(async () => {
           window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true }));
           await flushEffects();
@@ -548,11 +565,11 @@ export const completion = (async () => {
     try {
       await toggle(harness, f.parent.path);
       await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
-      await act(async () => { harness.controller.actions.updateSearchFilter("sibling"); await flushEffects(); });
+      await act(async () => { setQuickFilter(harness, "sibling"); await flushEffects(); });
       await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
       assert.equal(harness.interactions.deleteCalls.length, 0);
       await act(async () => {
-        harness.controller.actions.updateSearchFilter("");
+        setQuickFilter(harness, "");
         harness.controller.actions.setFileVisibility({ showHidden: false });
         await flushEffects();
       });
@@ -577,6 +594,49 @@ export const completion = (async () => {
       assert.deepEqual(harness.tab.selectedEntryIds, []);
       await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
       assert.equal(harness.interactions.deleteCalls.length, 0);
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 exclude mode keeps an excluded selected descendant out of the delete target set", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.child.id], "precondition: the nested child is selected while visible");
+
+      await act(async () => { setQuickFilterMode(harness, "exclude", f.child.name); await flushEffects(); });
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.child.id], "filtering must not rewrite the selection itself");
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.equal(harness.interactions.deleteCalls.length, 0, "a row hidden by exclude is not a delete target");
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 include mode keeps a non-matching selected descendant out of the delete target set", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      await act(async () => { setQuickFilterMode(harness, "include", "no-such-name-anywhere"); await flushEffects(); });
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.equal(harness.interactions.deleteCalls.length, 0, "a row filtered out by include is not a delete target");
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 highlight mode leaves every selected descendant deletable", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      // 高亮不改行集（D7）：命中与否都不影响可操作性，因此删除必须真正发生。
+      await act(async () => { setQuickFilterMode(harness, "highlight", f.child.name); await flushEffects(); });
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.deepEqual(harness.interactions.deleteCalls.at(-1)?.paths, [f.child.path], "highlight keeps the row operable");
     } finally { await harness.close(); }
   });
 })();

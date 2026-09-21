@@ -185,6 +185,27 @@ export function shortcutMatches(bindings: Map<string, string>, actionId: string,
   return DEFAULT_SHORTCUT_BINDINGS.get(actionId) === eventBinding;
 }
 
+/**
+ * B25/D25：判断事件绑定是否属于一个「已配置的、无 Ctrl/Alt/Meta 的 ASCII 可打印单字符」快捷键。
+ *
+ * - `eventBinding` 是 `eventToShortcutBinding` 的规范化结果（小写、空格归一为 `space`），
+ *   因此匹配 `/^(shift\+)?[!-~]$/`（`[!-~]` 即 0x21–0x7E）的字符串只有 `X` 与 `shift+X` 两类；
+ *   `escape` / `space` / `enter` / 功能键 / 组合键都不可能匹配（B14/B17 语义因此自动保持）。
+ * - 必须与实际配置比较（遍历 `bindings`），而不是只做形态判断：只做形态会吞掉全部可打印字符，
+ *   直接废掉 B14 键盘直输。
+ */
+export function isSingleKeyShortcutBinding(bindings: Map<string, string>, eventBinding: string): boolean {
+  if (!/^(shift\+)?[!-~]$/.test(eventBinding)) {
+    return false;
+  }
+  for (const binding of bindings.values()) {
+    if (binding === eventBinding) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function modifiersMatchShortcutBinding(modifiers: ModifierState, binding: string) {
   const normalized = normalizeShortcutBinding(binding);
   if (!normalized) {

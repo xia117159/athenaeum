@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
-import { sizeSnapshot } from "./directorySizeTestSupport";
+import { sizeSnapshot, withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { assertTest, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { WorkspaceState } from "./types";
@@ -24,14 +24,14 @@ export const completion = (async () => {
         assert.equal(wire.subscribed[0].refresh, false);
         assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
         assert.equal(wire.lookedUp.flatMap((request) => request.paths).some((path) => path.endsWith(".txt")), false);
-        await h.change((state) => ({ ...changeTab(state, { sort: { columnId: "size", direction: "desc" } }), search: { ...state.search, filterText: "child" } }));
+        await h.change((state) => withQuickFilterText(changeTab(state, { sort: { columnId: "size", direction: "desc" } }), "child"));
         await h.change((state) => changeTab(state, { folderExpansion: undefined }));
         assert.equal(wire.subscribed.length, 1);
         assert.deepEqual(h.interactions.resolvedPaths, []);
         await h.request("cancel");
         assert.equal(wire.released.length, 1);
         assert.equal(h.tab.directorySizes?.paused, true);
-        await h.change((state) => ({ ...state, search: { ...state.search, filterText: "" } }));
+        await h.change((state) => withQuickFilterText(state, ""));
         assert.equal(wire.subscribed.length, 1);
         await h.request("calculate");
         assert.equal(wire.subscribed.length, 2);
@@ -93,7 +93,7 @@ export const completion = (async () => {
       try {
         assert.equal(h.tab.directorySizes?.snapshot?.phase, "failed");
         assert.match(h.tab.directorySizes?.snapshot?.reason ?? "", /listener unavailable/);
-        await h.change((state) => ({ ...state, search: { ...state.search, filterText: "a" } }));
+        await h.change((state) => withQuickFilterText(state, "a"));
         assert.equal(attempts, 1); assert.equal(wire.subscribed.length, 0);
       } finally { await h.close(); }
     });

@@ -2,6 +2,8 @@ import { type FormEvent, type KeyboardEvent, useRef } from "react";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { FileSystemIcon } from "./FileSystemIcon";
 import { OperationSummaryButton } from "./OperationTaskCenter";
+import { QuickFilterControls } from "./QuickFilterControls";
+import type { QuickFilterMode, QuickFilterSyntax } from "./quickFilterTypes";
 import type { EntryViewModel, InformationPanelTab, ItemPropertyField, WorkspaceState } from "./types";
 
 const SEARCH_TABS = ["名称和位置", "大小", "日期", "标签", "内容", "重复", "排除"] as const;
@@ -503,7 +505,11 @@ export function WorkspaceInformationPanel({
   onStopSearch,
   onSelectSearchTab,
   onUpdateQuery,
-  onUpdateFilter,
+  quickFilter,
+  onUpdateQuickFilterText,
+  onChangeQuickFilterMode,
+  onChangeQuickFilterSyntax,
+  onClearQuickFilter,
   onSelectHistory,
   onDeleteHistory
 }: {
@@ -519,7 +525,12 @@ export function WorkspaceInformationPanel({
   onStopSearch: () => void;
   onSelectSearchTab: (tab: WorkspaceState["search"]["activeTab"]) => void;
   onUpdateQuery: (payload: Partial<WorkspaceState["search"]["query"]>) => void;
-  onUpdateFilter: (value: string) => void;
+  /** 快速过滤：文本按路径缓存，模式/语法是会话全局偏好（D4-R）。 */
+  quickFilter: { text: string; error: string | null; mode: QuickFilterMode; syntax: QuickFilterSyntax };
+  onUpdateQuickFilterText: (value: string) => void;
+  onChangeQuickFilterMode: (mode: QuickFilterMode) => void;
+  onChangeQuickFilterSyntax: (syntax: QuickFilterSyntax) => void;
+  onClearQuickFilter: () => void;
   onSelectHistory: (index: number) => void;
   onDeleteHistory: (index: number) => void;
 }) {
@@ -571,15 +582,10 @@ export function WorkspaceInformationPanel({
       aria-label="信息面板"
     >
       <div className="information-panel__summary">
-        <label className="information-panel__filter">
-          <span>过滤</span>
-          <input
-            type="search"
-            value={search.filterText}
-            onInput={(event) => onUpdateFilter(event.currentTarget.value)}
-            aria-label="实时过滤"
-          />
-        </label>
+        <QuickFilterControls text={quickFilter.text} error={quickFilter.error} mode={quickFilter.mode}
+          syntax={quickFilter.syntax} onUpdateText={onUpdateQuickFilterText}
+          onChangeMode={onChangeQuickFilterMode} onChangeSyntax={onChangeQuickFilterSyntax}
+          onClear={onClearQuickFilter} />
 
         <div className="information-panel__summary-item">
           <span>文件夹</span>

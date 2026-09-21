@@ -4,7 +4,7 @@ import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGatewa
 import { openCommentWindow } from "./commentWindow";
 import { openOperationHistoryWindow } from "./operationHistoryWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
-import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
+import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, isSingleKeyShortcutBinding, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
@@ -13,6 +13,10 @@ import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDr
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
 import { getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./folderExpansion";
+import { resolveActiveQuickFilterProgram } from "./quickFilterState";
+import { type QuickFilterMode, type QuickFilterSyntax } from "./quickFilterTypes";
+import { useQuickFilterCompilationScheduler } from "./useQuickFilterCompilationScheduler";
+import { decideQuickFilterTypeahead, type QuickFilterTypeaheadTarget } from "./useQuickFilterTypeahead";
 import { useWorkspaceTreeController } from "./useWorkspaceTreeController";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
@@ -148,6 +152,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
   const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
+  /** 键盘直输聚合状态（B15/B16）：`target` 是「面板:标签页:路径」身份键，变化即视为新聚合。 */
+  const quickFilterTypeaheadRef = useRef({ target: "", lastAt: 0 });
 
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
@@ -1094,9 +1100,13 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   }, [
     state.status, state.panels, state.layoutMode, state.activePanelId,
-    state.navigation.items, state.fileVisibility, state.search.filterText,
+    state.navigation.items, state.fileVisibility, state.quickFilter,
     state.settings.model.folderExpansionEnabled
   ]);
+
+  // §6.6 编译调度的唯一规则见 `useQuickFilterCompilationScheduler`：作用域是**全部**面板的
+  // 目录类标签页路径，而不只是激活面板的路径（D24 ②：过滤结果不得由谁持有焦点决定）。
+  useQuickFilterCompilationScheduler({ state, dispatch });
 
   useEffect(() => {
     let disposed = false;
@@ -2686,6 +2696,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       );
     };
 
+    function handleQuickFilterTypeaheadEvent(event: KeyboardEvent): boolean {
+      if (state.status !== "ready") return false;
+      const tab = getActiveTab(state.panels[state.activePanelId]);
+      const path = tab?.snapshot.location.path;
+      if (!path) return false;
+      const identity = `${state.activePanelId}\u0000${tab.id}\u0000${path}`;
+      const tracked = quickFilterTypeaheadRef.current;
+      const lastAt = tracked.target === identity ? tracked.lastAt : 0;
+      const decision = decideQuickFilterTypeahead({ key: event.key,
+        target: event.target as QuickFilterTypeaheadTarget | null, ctrlKey: event.ctrlKey,
+        altKey: event.altKey, metaKey: event.metaKey, isComposing: event.isComposing,
+        repeat: event.repeat, state, activePath: path, now: Date.now(), lastAt });
+      quickFilterTypeaheadRef.current = { target: identity,
+        lastAt: decision.kind === "type" ? decision.resetAt : decision.kind === "clearFilter" ? 0 : lastAt };
+      if (decision.kind === "ignore") return false;
+      event.preventDefault();
+      dispatch(decision.kind === "type"
+        ? { type: "quickFilterTypeaheadAppended", payload: { path, text: decision.text } }
+        : { type: "quickFilterCleared", payload: { path } });
+      return true;
+    }
+
     const handleWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || options.role === "settings") {
         return;
@@ -2696,6 +2728,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+      // B25：已配置的单键快捷键优先于直输；Esc/空格等非可打印单字符仍先走直输（B17）。
+      // 判定必含 !editable：聚焦底部过滤输入框（editable）时该键按 D25 ④ 仍由输入框接收。
+      const singleKeyShortcutOwns = !editable && isSingleKeyShortcutBinding(shortcuts, eventBinding);
+      if (!editable && !singleKeyShortcutOwns && handleQuickFilterTypeaheadEvent(event)) return;
       if (shortcutMatches(shortcuts, "toggle-folder-expansion", eventBinding) && !editable && !event.isComposing) {
         if (event.target instanceof HTMLElement && event.target.closest(
           '[contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], button, .tree-pane, .information-panel'
@@ -2867,7 +2903,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (isNavigationTab(activeTab)) {
           return;
         }
-        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, resolveActiveQuickFilterProgram(state),
           state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
         const orderedEntryIds = visibleEntries.map((entry) => entry.id);
 
@@ -3084,6 +3120,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "tabSortSet", payload: { panelId, tabId, sort } }),
       setTabViewMode: (panelId: PanelId, tabId: string, viewMode: TabViewMode) =>
         dispatch({ type: "tabViewModeSet", payload: { panelId, tabId, viewMode } }),
+      /** B19/B18 写入路径：文本按路径写入；模式与语法是会话全局偏好（D4-R）。 */
+      updateQuickFilterText: (path: string, text: string) =>
+        dispatch({ type: "quickFilterTextChanged", payload: { path, text } }),
+      changeQuickFilterMode: (mode: QuickFilterMode) =>
+        dispatch({ type: "quickFilterModeChanged", payload: { mode } }),
+      changeQuickFilterSyntax: (syntax: QuickFilterSyntax) =>
+        dispatch({ type: "quickFilterSyntaxChanged", payload: { syntax } }),
+      clearQuickFilter: (path: string) =>
+        dispatch({ type: "quickFilterCleared", payload: { path } }),
       openEntry: (panelId: PanelId, entry: EntryViewModel) => {
         if (isNavigationTab(getActiveTab(state.panels[panelId]))) {
           return;
@@ -3157,7 +3202,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "searchTabChanged", payload: tab }),
       updateSearchQuery: (payload: Partial<WorkspaceState["search"]["query"]>) =>
         dispatch({ type: "searchQueryChanged", payload }),
-      updateSearchFilter: (value: string) => dispatch({ type: "searchFilterChanged", payload: value }),
       selectSearchHistory: (index: number) => dispatch({ type: "searchHistorySelected", payload: { index } }),
       deleteSearchHistory: (index: number) => dispatch({ type: "searchHistoryDeleted", payload: { index } }),
       runSearch: () => void runSearch(),

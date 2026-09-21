@@ -56,6 +56,8 @@ import type {
 } from "./types";
 import { formatDriveSize } from "./workspaceDirectoryGateway";
 import { getFileColorRowAttributes, getFileColorLabelAttributes } from "./fileColorStyle";
+import { renderEntryNameText } from "./entryNameHighlight";
+import type { QuickFilterProgram } from "./quickFilterTypes";
 
 type DropOperation = "copy" | "move";
 
@@ -338,6 +340,7 @@ export function FileListingShell({
   onInlineEditCancel,
   gitStatus,
   selectionCursorId,
+  quickFilter,
   colorFilterEnabled = true
 }: {
   panelId: PanelId;
@@ -386,6 +389,8 @@ export function FileListingShell({
   onInlineEditCancel: () => void;
   gitStatus?: Record<string, GitFileStatus>;
   selectionCursorId?: string | null;
+  /** 快速过滤程序；仅 `highlight` 模式会产生局部高亮（§6.7 / D7 / B21）。 */
+  quickFilter?: QuickFilterProgram | null;
   colorFilterEnabled?: boolean;
 }) {
   const visibleColumns = columns.filter((column) => column.visible);
@@ -612,7 +617,7 @@ export function FileListingShell({
     const label = getFileColorLabelAttributes(entry, colorFilterEnabled);
     return (
       <span className={label.className || undefined} style={label.style}>
-        {entry.name}
+        {renderEntryNameText(entry.name, quickFilter ?? null)}
       </span>
     );
   };

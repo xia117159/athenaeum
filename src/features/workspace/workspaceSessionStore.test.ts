@@ -98,9 +98,9 @@ function createWorkspaceState(): WorkspaceState {
       gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
+    quickFilter: { mode: "highlight", syntax: "substring", byPath: {} },
     search: {
       loading: false,
-      filterText: "",
       query: {
         name: "",
         content: "",

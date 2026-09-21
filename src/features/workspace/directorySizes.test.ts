@@ -5,7 +5,7 @@ import { getFolderListingRows } from "./folderExpansion";
 import { sortEntries } from "./fileListingSort";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
-import { expansionEntry } from "./folderExpansionTestSupport";
+import { expansionEntry, quickFilterProgram } from "./folderExpansionTestSupport";
 import { sizeFixture, sizeRecord } from "./directorySizeTestSupport";
 import { buildThisPcSnapshot } from "./workspaceDirectoryGateway";
 
@@ -17,7 +17,7 @@ test("size shares keep one root denominator for 60/30/10 and expanded descendant
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "60 B");
   assert.equal(projectEntrySize(tab, a).sizeLabel, "30 B");
   assert.deepEqual(getFolderListingRows(tab).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
-  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, "child").map(({ entry }) => entry.sizeDisplay?.share), [.6, .6]);
+  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, quickFilterProgram("child")).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6]);
   tab.folderExpansion = undefined;
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
 });

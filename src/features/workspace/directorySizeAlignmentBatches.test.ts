@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
-import { sizeRecord } from "./directorySizeTestSupport";
+import { sizeRecord, withQuickFilterText } from "./directorySizeTestSupport";
 import { expansionEntry, expansionSnapshot } from "./folderExpansionTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { getPathComparisonKey } from "./workspacePathRelations";
@@ -74,7 +74,7 @@ export const completion = (async () => {
           assert.equal(h.tab.snapshot.sizeFingerprint, "root-stamp");
           assert.equal(h.tab.folderExpansion![t.branchKey].sizeFingerprint, "parent-stamp");
           assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, .6);
-          await h.change((state) => ({ ...state, search: { ...state.search, filterText: "child" } }));
+          await h.change((state) => withQuickFilterText(state, "child"));
           assert.equal(t.listings.length, 2); assert.equal(t.lookups.length, 2); assert.equal(t.wire.subscribed.length, 1);
         } finally { await h.close(); }
       });
@@ -101,7 +101,7 @@ export const completion = (async () => {
         await t.replyLookup(0, new Error("root lookup denied"));
         assert.equal(h.tab.directorySizes?.snapshot?.phase, "failed");
         assert.match(h.tab.directorySizes?.snapshot?.reason ?? "", /root lookup denied/);
-        await h.change((state) => ({ ...state, search: { ...state.search, filterText: "child" } }));
+        await h.change((state) => withQuickFilterText(state, "child"));
         assert.equal(t.listings.length, 0); assert.equal(t.wire.subscribed.length, 1);
       } finally { await h.close(); }
     });

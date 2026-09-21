@@ -2,6 +2,7 @@ import type { AssociationProgramInfo, FileOpenProgress } from "../../app/fileAss
 import type { EntryViewModel, PanelId, WorkspaceState } from "./types";
 import type { WorkspaceAction } from "./workspaceReducer";
 import { getFolderListingRows } from "./folderExpansion";
+import { resolvePanelQuickFilter } from "./quickFilterState";
 import { matchingFileAssociations } from "./fileAssociations";
 import { menuParentIsActive, type MenuAnchor, type MenuParent } from "./workspaceMenuState";
 
@@ -44,8 +45,7 @@ function currentTab(state: WorkspaceState, panelId: PanelId) {
 
 export function currentListingEntry(state: WorkspaceState, panelId = state.activePanelId): EntryViewModel | undefined {
   const tab = currentTab(state, panelId);
-  const entries = getFolderListingRows(tab, state.fileVisibility,
-    panelId === state.activePanelId ? state.search.filterText : "",
+  const entries = getFolderListingRows(tab, state.fileVisibility, resolvePanelQuickFilter(state, panelId),
     state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map(row => row.entry);
   return entries.find(entry => entry.id === tab.selectionCursorId)
     ?? entries.find(entry => entry.id === tab.selectedEntryIds.at(-1))

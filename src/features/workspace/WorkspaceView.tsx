@@ -22,6 +22,8 @@ import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
 import { getFolderListingRows, supportsFolderExpansion } from "./folderExpansion";
+import { resolveActiveQuickFilterProgram, resolvePanelQuickFilter, resolveQuickFilterInput, resolveTabQuickFilter } from "./quickFilterState";
+import type { QuickFilterProgram } from "./quickFilterTypes";
 import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
 import { DirectorySizeControl } from "./DirectorySizeControl";
 import { ReconnectPanel } from "./ReconnectPanel";
@@ -76,7 +78,7 @@ export function WorkspaceView() {
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
+  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, resolveActiveQuickFilterProgram(state),
     state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
   const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
   const contextTab = state.contextMenu
@@ -399,7 +401,6 @@ export function WorkspaceView() {
               <WorkspaceRightContent
                 state={state}
                 actions={actions}
-                activeFilterText={state.search.filterText}
                 activeEntries={filteredActiveEntries}
                 selectedEntries={selectedEntries}
               />
@@ -408,7 +409,6 @@ export function WorkspaceView() {
             <WorkspaceRightContent
               state={state}
               actions={actions}
-              activeFilterText={state.search.filterText}
               activeEntries={filteredActiveEntries}
               selectedEntries={selectedEntries}
             />
@@ -425,7 +425,7 @@ export function WorkspaceView() {
           }
           tab={contextTab}
           visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
-            state.contextMenu.panelId === state.activePanelId ? state.search.filterText : "",
+            resolveTabQuickFilter(state, state.contextMenu.panelId, contextTab.id),
             state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry) : []}
           clipboard={state.clipboard}
           actions={actions}
@@ -493,17 +493,19 @@ function ExplorerTreePane({
 function WorkspaceRightContent({
   state,
   actions,
-  activeFilterText,
   activeEntries,
   selectedEntries
 }: {
   state: WorkspaceState;
   actions: WorkspaceActions;
-  activeFilterText: string;
   activeEntries: EntryViewModel[];
   selectedEntries: EntryViewModel[];
 }) {
-  const panels = <PanelLayout state={state} actions={actions} activeFilterText={activeFilterText} />;
+  const panels = <PanelLayout state={state} actions={actions} />;
+
+  // 快速过滤输入框绑定激活面板激活标签页的路径：文本按路径缓存（D4）。
+  const quickFilterPath = getActiveTab(state.panels[state.activePanelId])?.snapshot.location.path ?? "";
+  const quickFilterInput = resolveQuickFilterInput(state, quickFilterPath);
 
   const informationPanel = (
     <WorkspaceInformationPanel
@@ -519,7 +521,11 @@ function WorkspaceRightContent({
       onStopSearch={() => actions.stopSearch()}
       onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
       onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
-      onUpdateFilter={(value) => actions.updateSearchFilter(value)}
+      quickFilter={quickFilterInput}
+      onUpdateQuickFilterText={(value) => actions.updateQuickFilterText(quickFilterPath, value)}
+      onChangeQuickFilterMode={actions.changeQuickFilterMode}
+      onChangeQuickFilterSyntax={actions.changeQuickFilterSyntax}
+      onClearQuickFilter={() => actions.clearQuickFilter(quickFilterPath)}
       onSelectHistory={(index) => actions.selectSearchHistory(index)}
       onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
     />
@@ -555,12 +561,10 @@ function WorkspaceRightContent({
 
 function PanelLayout({
   state,
-  actions,
-  activeFilterText
+  actions
 }: {
   state: WorkspaceState;
   actions: WorkspaceActions;
-  activeFilterText: string;
 }) {
   const handleSyncScroll = useCallback(
     (sourcePanelId: PanelId, deltaX: number, deltaY: number) => {
@@ -587,7 +591,7 @@ function PanelLayout({
       key={panelId}
       panel={state.panels[panelId]}
       isFocused={state.activePanelId === panelId}
-      filterText={activeFilterText}
+      quickFilter={resolvePanelQuickFilter(state, panelId)}
       columns={state.settings.model.columns}
       navigationColumns={state.settings.model.navigationColumns}
       clipboard={state.clipboard}
@@ -706,7 +710,7 @@ function PanelLayout({
 function PanelSurface({
   panel,
   isFocused,
-  filterText,
+  quickFilter,
   columns,
   navigationColumns,
   clipboard,
@@ -735,7 +739,7 @@ function PanelSurface({
 }: {
   panel: PanelState;
   isFocused: boolean;
-  filterText: string;
+  quickFilter: QuickFilterProgram | null;
   columns: ColumnDefinition[];
   navigationColumns: WorkspaceState["settings"]["model"]["navigationColumns"];
   clipboard: WorkspaceState["clipboard"];
@@ -765,9 +769,9 @@ function PanelSurface({
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
   const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
+    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, null, folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
     : [];
-  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled, sizeBarMode);
+  const rows = getFolderListingRows(activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode);
   const entries = rows.map((row) => row.entry);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
@@ -861,6 +865,7 @@ function PanelSurface({
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}
+            quickFilter={quickFilter}
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
             folderExpansionOnRowClick={folderExpansionOnRowClick}
             sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}

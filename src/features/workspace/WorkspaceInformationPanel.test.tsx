@@ -82,7 +82,6 @@ function createEntry(name: string, sizeLabel: string, kind: EntryViewModel["kind
 
 const searchState: WorkspaceState["search"] = {
   loading: false,
-  filterText: "report",
   query: {
     name: "",
     content: "void",
@@ -122,6 +121,9 @@ export const completion = (async () => {
   const root = ReactDOM.createRoot(container);
   const queryUpdates: Array<Partial<WorkspaceState["search"]["query"]>> = [];
   const filterUpdates: string[] = [];
+  const modeUpdates: string[] = [];
+  const syntaxUpdates: string[] = [];
+  let clearCount = 0;
   const selectedHistory: number[] = [];
   const deletedHistory: number[] = [];
   const selectedInformationTabs: WorkspaceState["informationPanel"]["activeTab"][] = [];
@@ -179,8 +181,18 @@ export const completion = (async () => {
     onUpdateQuery: (payload: Partial<WorkspaceState["search"]["query"]>) => {
       queryUpdates.push(payload);
     },
-    onUpdateFilter: (value: string) => {
+    quickFilter: { text: "report", error: null, mode: "highlight", syntax: "substring" } as const,
+    onUpdateQuickFilterText: (value: string) => {
       filterUpdates.push(value);
+    },
+    onChangeQuickFilterMode: (mode: string) => {
+      modeUpdates.push(mode);
+    },
+    onChangeQuickFilterSyntax: (syntax: string) => {
+      syntaxUpdates.push(syntax);
+    },
+    onClearQuickFilter: () => {
+      clearCount += 1;
     },
     onSelectHistory: (index: number) => {
       selectedHistory.push(index);
@@ -191,6 +203,57 @@ export const completion = (async () => {
   });
 
   try {
+    await assertTest("§7:654 the panel wires quick-filter text, mode, syntax and clear to their own callbacks", async () => {
+      // 该用例锁定"面板到回调"的接线。易错点：mode 与 syntax 两个回调写反时，
+      // 控件级测试（QuickFilterControls.test.tsx 走自有 harness）无法发现，
+      // 只有面板级采集能区分。因此这里断言每个回调收到**自己**的参数。
+      await act(async () => {
+        root.render(React.createElement(WorkspaceInformationPanel, { ...createPanelProps() }));
+        await flushEffects();
+      });
+      filterUpdates.length = 0;
+      modeUpdates.length = 0;
+      syntaxUpdates.length = 0;
+      clearCount = 0;
+
+      // 左键点击模式按钮 ⇒ 应只触发 onChangeQuickFilterMode。
+      const modeButton = container.querySelector<HTMLButtonElement>("[data-quick-filter-mode]")!;
+      await act(async () => { modeButton.click(); await flushEffects(); });
+      assert.equal(modeUpdates.length, 1, "the mode button must call onChangeQuickFilterMode");
+      assert.equal(syntaxUpdates.length, 0, "the mode button must NOT call onChangeQuickFilterSyntax");
+
+      // 左键点击语法按钮 ⇒ 应只触发 onChangeQuickFilterSyntax。
+      const syntaxButton = container.querySelector<HTMLButtonElement>("[data-quick-filter-syntax]")!;
+      await act(async () => { syntaxButton.click(); await flushEffects(); });
+      assert.equal(syntaxUpdates.length, 1, "the syntax button must call onChangeQuickFilterSyntax");
+      assert.equal(modeUpdates.length, 1, "the syntax button must NOT call onChangeQuickFilterMode");
+
+      // 输入框内 Esc 走 onClearQuickFilter（B19：文本非空时清空）。
+      // 必须先把焦点放进输入框：React 的 ChangeEventPlugin 在 keydown 上会走
+      // getInstIfValueChanged(activeElementInst)，而 activeElementInst 只在 focusin 期间赋值；
+      // 未聚焦时该值为 null，插件会抛错并中断派发，onKeyDown 根本不会执行。
+      clearCount = 0;
+      const input = container.querySelector<HTMLInputElement>(".quick-filter__input")!;
+      assert.equal(input.value, "report", "precondition: the input carries the non-empty prop text");
+      input.focus();
+      assert.equal(document.activeElement, input, "precondition: focus is in the filter box");
+      await act(async () => {
+        input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await flushEffects();
+      });
+      assert.equal(clearCount, 1, "Escape in the input must reach onClearQuickFilter");
+
+      // 输入的文本走 onUpdateQuickFilterText（受控输入需走原型 setter）。
+      filterUpdates.length = 0;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+        setter?.call(input, "atlas");
+        input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        await flushEffects();
+      });
+      assert.deepEqual(filterUpdates, ["atlas"], "typing must reach onUpdateQuickFilterText");
+    });
+
     await assertTest("WorkspaceInformationPanel renders the content tab as three columns with Chinese labels", async () => {
       await act(async () => {
         root.render(
@@ -202,7 +265,7 @@ export const completion = (async () => {
       });
 
       assert.ok(container.querySelector(".information-panel"));
-      assert.equal(container.querySelector<HTMLInputElement>(".information-panel__filter input")?.value, "report");
+      assert.equal(container.querySelector<HTMLInputElement>(".quick-filter__input")?.value, "report");
       assert.equal(container.textContent?.includes("输入或粘贴要查找的文件的部分内容"), true);
       assert.equal(container.querySelector<HTMLTextAreaElement>(".information-panel__content-input")?.value, "void");
       assert.equal(container.querySelector<HTMLSelectElement>("#info-content-mode")?.value, "regex");
@@ -233,7 +296,7 @@ export const completion = (async () => {
         await flushEffects();
       });
 
-      const filterInput = container.querySelector<HTMLInputElement>(".information-panel__filter input");
+      const filterInput = container.querySelector<HTMLInputElement>(".quick-filter__input");
       assert.ok(filterInput);
       await act(async () => {
         setInputValue(filterInput, "error");
@@ -382,7 +445,7 @@ export const completion = (async () => {
       assert.ok(container.querySelector(".information-panel.is-collapsed"));
       assert.ok(container.querySelector(".information-panel__summary"));
       assert.equal(container.querySelector(".information-panel__content-shell"), null);
-      assert.equal(container.querySelector<HTMLInputElement>(".information-panel__filter input")?.value, "report");
+      assert.equal(container.querySelector<HTMLInputElement>(".quick-filter__input")?.value, "report");
       assert.equal(container.querySelector<HTMLButtonElement>(".operation-summary-button")?.nextElementSibling?.className, "information-panel__collapse-toggle");
     });
 
@@ -805,7 +868,9 @@ export const completion = (async () => {
       assert.equal(css.includes("max-height: 30px;"), true);
       assert.equal(css.includes("gap: 3px;"), true);
       assert.equal(css.includes("min-height: 20px;"), true);
-      assert.equal(css.includes("grid-template-columns: minmax(128px, 260px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;"), true);
+      assert.equal(css.includes("grid-template-columns: minmax(200px, 300px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;"), true);
+      // 已废弃的 `.information-panel__filter` 规则必须彻底移除（原 <label> 已被 QuickFilterControls 替换）。
+      assert.equal(css.includes("information-panel__filter"), false, "the dead filter rules must be gone");
       assert.equal(css.includes("width: 24px;"), true);
       assert.equal(css.includes("height: 24px;"), true);
       assert.equal(css.includes(".information-panel__history"), true);
