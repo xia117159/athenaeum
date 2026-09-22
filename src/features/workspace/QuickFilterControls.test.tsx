@@ -162,6 +162,147 @@ export const completion = (async () => {
     assert.deepEqual(menuItems(), [], "an outside pointerdown must dismiss the menu");
   });
 
+  await assertTest("B3: the menu is positioned inside the viewport when the trigger sits at the bottom edge", async () => {
+    // 评审 B-3：底部状态栏贴近视口下沿，右键菜单若直接用 `rect.bottom` 作为 top，
+    // 会有一大半落到视口之外 —— 出厂默认（折叠侧栏）实测菜单 863..935 对视口高 865，
+    // 可见比例仅 0.028，溢出 70px 且不随窗口大小变化，body 又 overflow:hidden 无法滚动到。
+    // jsdom 不做布局，因此这里手工铺设真实几何：
+    const VIEWPORT_HEIGHT = 865;
+    const MENU_HEIGHT = 72;
+    const TRIGGER_BOTTOM = 863;
+    const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    const innerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    Object.defineProperty(window, "innerHeight", { value: VIEWPORT_HEIGHT, configurable: true });
+    Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+
+    // 触发按钮贴近视口下沿。
+    const triggerRect = {
+      x: 20, y: TRIGGER_BOTTOM - 22, left: 20, right: 42, top: TRIGGER_BOTTOM - 22,
+      bottom: TRIGGER_BOTTOM, width: 22, height: 22, toJSON: () => ({})
+    } as DOMRect;
+    const originalTriggerRect = modeButton().getBoundingClientRect;
+    modeButton().getBoundingClientRect = () => triggerRect;
+
+    try {
+      await render();
+      await rightClick(modeButton());
+      const surface = document.querySelector<HTMLElement>(".quick-filter__menu");
+      assert.ok(surface, "precondition: the menu is open");
+
+      // 菜单面自身有真实高度（其他项都返回 0 会让断言失去鉴别力）。
+      surface.getBoundingClientRect = () => ({
+        x: 20, y: 0, left: 20, right: 140, top: 0, bottom: MENU_HEIGHT, width: 120, height: MENU_HEIGHT, toJSON: () => ({})
+      } as DOMRect);
+      // 打开后再量一次：实现必须在菜单挂载并量到尺寸之后重新定位。
+      await act(async () => {
+        window.dispatchEvent(new dom.window.Event("resize"));
+        await flushEffects();
+      });
+
+      const top = Number.parseFloat(surface.style.top || "NaN");
+      assert.ok(Number.isFinite(top), `the menu must carry an explicit numeric top, got ${JSON.stringify(surface.style.top)}`);
+
+      // SR1 R-13：`top + height <= viewport - 8` 这种断言**只要发生夹取就成立**，
+      // 无法区分"菜单正确贴着按钮下沿"与"被夹到屏幕顶端/压住触发器"。
+      // 因此这里锁定的是实现契约本身：`positionMenu` 只做
+      // `Math.max(8, Math.min(anchor.y, viewport.height - size.height - 8))`（menuInteraction.ts:22-33），
+      // 即 top 必须是 anchor.y 在这个区间上的**投影**。
+      const expectedTop = Math.max(8, Math.min(TRIGGER_BOTTOM, VIEWPORT_HEIGHT - MENU_HEIGHT - 8));
+      assert.equal(top, expectedTop,
+        `the menu top must be the clamped projection of the trigger's bottom edge: ` +
+        `clamp(${TRIGGER_BOTTOM}) in [8, ${VIEWPORT_HEIGHT - MENU_HEIGHT - 8}] = ${expectedTop}, got ${top}`);
+      // 由于 863 > 865-72-8=785，本次必然发生夹取 —— 断言必须能证明"确实夹了"，
+      // 而不是恰好等于 anchor.y（否则等于没测到 B-3）。
+      assert.ok(top < TRIGGER_BOTTOM,
+        `this fixture must actually exercise the clamp: top=${top} must be strictly above the trigger bottom ${TRIGGER_BOTTOM}`);
+      assert.ok(top + MENU_HEIGHT <= VIEWPORT_HEIGHT - 8,
+        `the menu must fit inside the viewport: top=${top} + height=${MENU_HEIGHT} must be <= ${VIEWPORT_HEIGHT - 8}`);
+      assert.ok(top >= 8, `the menu must not be pushed above the viewport: top=${top}`);
+      // 水平方向同样要落在视口内（B-3 是四边问题，不只是纵向）。
+      const left = Number.parseFloat(surface.style.left || "NaN");
+      assert.ok(Number.isFinite(left) && left >= 8, `the menu must carry an explicit in-viewport left, got ${JSON.stringify(surface.style.left)}`);
+    } finally {
+      if (originalTriggerRect) modeButton().getBoundingClientRect = originalTriggerRect;
+      if (innerHeightDescriptor) Object.defineProperty(window, "innerHeight", innerHeightDescriptor);
+      if (innerWidthDescriptor) Object.defineProperty(window, "innerWidth", innerWidthDescriptor);
+    }
+  });
+
+  await assertTest("B3: the menu is re-measured and stays inside the viewport after a resize", async () => {
+    // 窗口变小时菜单必须重新夹取；原实现从不调用 positionMenu，也就永远不重新量。
+    const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    Object.defineProperty(window, "innerHeight", { value: 900, configurable: true });
+    const MENU_HEIGHT = 200;
+    const triggerRect = {
+      x: 20, y: 700, left: 20, right: 42, top: 700, bottom: 722, width: 22, height: 22, toJSON: () => ({})
+    } as DOMRect;
+    modeButton().getBoundingClientRect = () => triggerRect;
+    try {
+      await render();
+      await rightClick(modeButton());
+      const surface = document.querySelector<HTMLElement>(".quick-filter__menu")!;
+      assert.ok(surface);
+      surface.getBoundingClientRect = () => ({
+        x: 20, y: 0, left: 20, right: 160, top: 0, bottom: MENU_HEIGHT, width: 140, height: MENU_HEIGHT, toJSON: () => ({})
+      } as DOMRect);
+
+      // 视口突然变矮：722 + 200 = 922 > 700 - 8，必须被夹回来。
+      Object.defineProperty(window, "innerHeight", { value: 700, configurable: true });
+      await act(async () => {
+        window.dispatchEvent(new dom.window.Event("resize"));
+        await flushEffects();
+      });
+      const top = Number.parseFloat(surface.style.top);
+      assert.ok(top + MENU_HEIGHT <= 700 - 8,
+        `after shrinking the viewport the menu must be re-clamped: top=${top} + ${MENU_HEIGHT} <= 692`);
+    } finally {
+      if (innerHeightDescriptor) Object.defineProperty(window, "innerHeight", innerHeightDescriptor);
+    }
+  });
+
+  await assertTest("B3: the menu follows the trigger when the pane scrolls (no resize involved)", async () => {
+    // IR1 F-2：规格 §3.6 承诺"`ResizeObserver` + `resize`/**`scroll`** 重测"，但实现只接了前两者。
+    // 触发按钮会**在不发生 resize 的情况下**移动：拖动分隔条改变面板宽度/滚动列表都会让
+    // 底部状态栏里的按钮位移。兄弟菜单都接了滚动重测（`MenuPrimitives.tsx:42`、
+    // `OpenWithMenu.tsx:57`、`TemplateCreationMenu.tsx:81`），快速过滤菜单当时是唯一漏的。
+    const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    Object.defineProperty(window, "innerHeight", { value: 900, configurable: true });
+    const MENU_HEIGHT = 100;
+    // 触发按钮先在下沿附近，随后**因滚动而上移** 300px（视口高度不变）。
+    // 起始位置选在**不被夹取**的区间内（`bottom + 100 <= 900 - 8`），
+    // 这样 `before` 断言等于 `triggerBottom` 本身，测试隔离的正是"是否跟随滚动"。
+    let triggerBottom = 600;
+    const triggerRect = () => ({
+      x: 20, y: triggerBottom - 22, left: 20, right: 42, top: triggerBottom - 22,
+      bottom: triggerBottom, width: 22, height: 22, toJSON: () => ({})
+    } as DOMRect);
+    modeButton().getBoundingClientRect = () => triggerRect();
+    try {
+      await render();
+      await rightClick(modeButton());
+      const surface = document.querySelector<HTMLElement>(".quick-filter__menu")!;
+      assert.ok(surface);
+      surface.getBoundingClientRect = () => ({
+        x: 20, y: 0, left: 20, right: 160, top: 0, bottom: MENU_HEIGHT, width: 140, height: MENU_HEIGHT, toJSON: () => ({})
+      } as DOMRect);
+      await act(async () => { await flushEffects(); });
+      const beforeScroll = Number.parseFloat(surface.style.top);
+      assert.equal(beforeScroll, 600, "precondition: the menu initially sits at the trigger's bottom edge (unclamped)");
+
+      // 只派发 scroll（**不派发 resize**），模拟拖动分隔条/滚动导致的按钮位移。
+      triggerBottom = 300;
+      await act(async () => {
+        document.dispatchEvent(new dom.window.Event("scroll"));
+        await flushEffects();
+      });
+      const afterScroll = Number.parseFloat(surface.style.top);
+      assert.equal(afterScroll, 300,
+        `the menu must follow the trigger on scroll without a resize (got top=${afterScroll}, expected 300)`);
+    } finally {
+      if (innerHeightDescriptor) Object.defineProperty(window, "innerHeight", innerHeightDescriptor);
+    }
+  });
+
   await assertTest("B14: a letter key while the filter menu is open never reaches the window", async () => {
     // 实机复现路径：右键出菜单后不点菜单项，直接按字母键 —— 焦点若仍停在触发按钮上，
     // 事件会绕过 handleMenuKeyDown 冒泡到 window，被键盘直输当成过滤文本写入（违反 B14:
@@ -206,6 +347,19 @@ export const completion = (async () => {
       await flushEffects();
     });
     assert.equal(document.activeElement, items[expected], "ArrowDown moves to the next item");
+  });
+
+  await assertTest("G8: the filter input exposes a title hint describing the active syntax", async () => {
+    // 评审 G-8 / spec.md:218（B14）：输入框只有 aria-label，没有 title。
+    // 鼠标用户悬停时看不到"当前是哪种语法、怎么用"的任何提示，
+    // 而语法是会话全局状态（D4-R），恰恰最需要就地说明。
+    await render(null);
+    const field = input();
+    assert.equal(field.getAttribute("aria-label"), "实时过滤", "the accessible name stays stable for screen readers");
+    const hint = field.getAttribute("title");
+    assert.ok(hint, "the input must carry a title hint");
+    assert.match(hint!, /子串|通配符|正则/, "the hint must name the active syntax");
+    assert.match(hint!, /\*/, "the hint must document the wildcard characters");
   });
 
   await assertTest("B19: an invalid regex exposes all three error affordances and a red border", async () => {

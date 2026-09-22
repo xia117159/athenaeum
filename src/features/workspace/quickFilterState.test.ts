@@ -247,6 +247,102 @@ test("pruneQuickFilterCache keeps the identical reference when nothing is remove
 });
 
 // ---------------------------------------------------------------------------
+// 需求 6：进入子文件夹再返回，过滤词必须保留
+// ---------------------------------------------------------------------------
+
+/** 用真实 reducer 导航到 `path`（模拟用户在标签页内跳转，走 tabSnapshotCommitted）。 */
+function navigate(state: WorkspaceState, tabId: string, path: string, pushHistory = true): WorkspaceState {
+  const tab = state.panels["panel-1"].tabs.find((candidate) => candidate.id === tabId)!;
+  return workspaceReducer(state, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: "panel-1" as PanelId,
+      tabId,
+      pushHistory,
+      snapshot: {
+        ...tab.snapshot,
+        status: "ready",
+        entries: [],
+        location: { ...tab.snapshot.location, path }
+      }
+    }
+  } as never);
+}
+
+test("Req6: entering a subfolder and coming back keeps the filter text", () => {
+  // 用户复现（需求 6）：在某目录输入过滤词 → 进入子文件夹 → 返回上级，
+  // 过滤词必须仍然在，而不是被静默清空。
+  // 根因：淘汰存活键只看"当前路径并集"，进入子目录后原路径不再被任何标签页停留 ⇒ 立即淘汰。
+  const { state, path, tabId } = createState();
+  const parent = path;
+  const child = `${path}\\sub`;
+  const filtered = withEntry(state, parent, { text: "pro", appliedText: "pro" });
+  assert.equal(Object.keys(filtered.quickFilter.byPath).length, 1);
+
+  // 进入子文件夹：导航后按 reducer 的包装器重新淘汰。
+  const entered = navigate(filtered, tabId, child);
+  const afterEnter = { ...entered, quickFilter: pruneQuickFilterCache(entered) };
+  assert.equal(afterEnter.panels["panel-1"].tabs[0].snapshot.location.path, child, "precondition: navigated into the subfolder");
+  assert.equal(
+    Object.keys(afterEnter.quickFilter.byPath).length,
+    1,
+    "the parent path must survive while it is still in the tab's history"
+  );
+
+  // 返回上级：过滤词与生效文本都必须恢复。
+  const returned = navigate(afterEnter, tabId, parent);
+  const afterReturn = { ...returned, quickFilter: pruneQuickFilterCache(returned) };
+  assert.equal(afterReturn.panels["panel-1"].tabs[0].snapshot.location.path, parent);
+  assert.deepEqual(
+    resolveQuickFilterInput(afterReturn, parent),
+    { text: "pro", error: null, mode: "highlight", syntax: "substring" },
+    "the filter text must be intact after returning"
+  );
+  assert.equal(resolveQuickFilterProgram(afterReturn, parent)?.text, "pro", "the effective match must be restored");
+});
+
+test("Req6: a path truncated from the tab history stops being retained", () => {
+  // 有界性：`history` 是标签页自身的导航栈，被新分支截断的路径照旧淘汰，
+  // 因此"加入 history"不会让长会话下的缓存无界增长。
+  // 截断路径（workspaceReducer.ts:1657）：先回退（historyIndex 前移），再导航到新分支。
+  const { state, path, tabId } = createState();
+  const pathA = path;
+  const pathB = `${path}\\b`;
+  const pathC = `${path}\\c`;
+  const filtered = { ...withEntry(state, pathA, { text: "a", appliedText: "a" }) };
+  const withB = withEntry(filtered, pathB, { text: "b", appliedText: "b" });
+  assert.equal(Object.keys(withB.quickFilter.byPath).length, 2, "precondition: A and B both carry a filter");
+
+  // A → B：history = [A, B]，两条都在历史里，都应存活。
+  const atB = navigate(withB, tabId, pathB);
+  assert.equal(Object.keys(atB.quickFilter.byPath).length, 2, "both A and B are still reachable");
+
+  // 回退到 A（不压栈）：historyIndex 回到 0，history 仍是 [A, B]。
+  const backToA = navigate(atB, tabId, pathA, false);
+  const tab = backToA.panels["panel-1"].tabs.find((candidate) => candidate.id === tabId)!;
+  assert.equal(tab.historyIndex, 0, "precondition: the tab is back at A");
+
+  // 从 A 走新分支到 C：前向历史 B 被截断 ⇒ B 不再存活。
+  const atC = navigate(backToA, tabId, pathC);
+  const afterC = atC.panels["panel-1"].tabs.find((candidate) => candidate.id === tabId)!;
+  assert.deepEqual(afterC.history, [pathA, pathC], "precondition: the forward branch B was truncated");
+  const keys = Object.keys(atC.quickFilter.byPath);
+  assert.equal(keys.includes(pathB.toLowerCase()), false, "B left the history and must be evicted");
+  assert.deepEqual(keys, [pathA.toLowerCase()].filter((key) => keys.includes(key)),
+    "A (still in history) survives; C never had a filter");
+});
+
+test("Req6: pruneQuickFilterCache keeps the identical reference when history still covers the path", () => {
+  const { state, path, tabId } = createState();
+  const filtered = withEntry(state, path, { text: "pro", appliedText: "pro" });
+  const entered = navigate(filtered, tabId, `${path}\\sub`);
+  // 进入子目录后，父路径只能靠 history 存活；此时"无删除"必须仍返回同一引用，
+  // 否则每一步导航都会让下游 memo 全部失效。
+  assert.equal(pruneQuickFilterCache(entered), entered.quickFilter,
+    "no removal must keep the identical reference");
+});
+
+// ---------------------------------------------------------------------------
 // D4-R：模式/语法是会话全局偏好，不随淘汰或路径切换而重置
 // ---------------------------------------------------------------------------
 

@@ -90,11 +90,12 @@
   cursor: row-resize;
 }
 
+/* G-12：`.workspace-statusbar` 已无渲染者（`WorkspaceVisualDensity.test.ts:133` 明确断言
+   工作区不再渲染状态栏），其共享边框/背景选择器一并删除，避免留下已死的样式契约。 */
 .tree-pane,
 .panel-surface,
 .information-panel,
-.context-menu,
-.workspace-statusbar {
+.context-menu {
   border: 1px solid #cfcfcf;
   border-radius: 0;
   background: #ffffff;

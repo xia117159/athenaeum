@@ -87,8 +87,18 @@ export function resolveQuickFilterInput(
 }
 
 /**
- * 缓存淘汰（D5）：删除已无任何标签页停留的路径条目。
- * 存活键集合 = 所有面板 × 所有标签页中 `isDirectoryLikeTab` 的路径比较键并集。
+ * 缓存淘汰（D5 + 评审需求 6）。
+ *
+ * 存活键集合 = 所有面板 × 所有 `isDirectoryLikeTab` 标签页的
+ * **当前路径 ∪ 该标签页 `history` 中的全部路径**。
+ *
+ * 只取"当前路径并集"会把需求 6 破坏掉：用户在某目录输入过滤词 → 进入子文件夹 →
+ * 返回上级时过滤词被静默清空，因为原路径在进入子文件夹的那一刻就不再被任何标签页停留。
+ * 加入 `history` 后，"返回上级"能恢复过滤词，而真正离场的路径照旧淘汰。
+ *
+ * 有界性：`history` 是标签页自身的导航栈（`workspaceReducer.ts:1657` 在导航时截断前向分支），
+ * 标签页关闭即随之释放，因此不引入新的全局容器，长会话下不会无界增长。
+ *
  * 无删除时返回**同一引用**，以免破坏下游 memo。
  */
 export function pruneQuickFilterCache(state: WorkspaceState): QuickFilterState {
@@ -98,7 +108,12 @@ export function pruneQuickFilterCache(state: WorkspaceState): QuickFilterState {
   const live = new Set<string>();
   for (const panel of Object.values(state.panels)) {
     for (const tab of panel.tabs) {
-      if (isDirectoryLikeTab(tab)) live.add(getPathComparisonKey(tab.snapshot.location.path));
+      if (!isDirectoryLikeTab(tab)) continue;
+      live.add(getPathComparisonKey(tab.snapshot.location.path));
+      // 需求 6：标签页历史里的路径也算存活，返回上级时才不会丢过滤词。
+      for (const historyPath of tab.history) {
+        live.add(getPathComparisonKey(historyPath));
+      }
     }
   }
   let removed = false;

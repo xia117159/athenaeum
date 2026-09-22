@@ -170,17 +170,20 @@ test("§5.8 eviction keeps live paths and drops paths no tab uses once panels ch
   assert.equal(withExtraTab.quickFilter.byPath[live.toLowerCase()]?.text, "pro", "a live path key survives");
 });
 
-test("§5.8 closing the last tab on a path evicts its cached filter text", () => {
+test("§5.8 + 需求 6: a path leaves the cache only when it leaves the tab's history", () => {
   const state = createState();
   const live = activePath(state);
   const seeded = seed(state, live, "pro");
 
-  // 先开一个不同路径的标签页，再关掉原先那个：原路径不再有任何标签页停留。
+  // 开一个不同路径的标签页：新标签页只在自己的路径上有历史，因此**不**覆盖 `live`。
+  const firstTab = state.panels[state.activePanelId].tabs[0];
   const otherTab = {
-    ...state.panels[state.activePanelId].tabs[0],
+    ...firstTab,
     id: "other-path-tab",
+    history: ["D:\\elsewhere"],
+    historyIndex: 0,
     snapshot: {
-      ...state.panels[state.activePanelId].tabs[0].snapshot,
+      ...firstTab.snapshot,
       location: { path: "D:\\elsewhere", kind: "local" as const, label: "elsewhere" }
     }
   };
@@ -190,14 +193,35 @@ test("§5.8 closing the last tab on a path evicts its cached filter text", () =>
   } as WorkspaceAction);
   assert.equal(withOther.quickFilter.byPath[live.toLowerCase()]?.text, "pro", "still alive while its tab exists");
 
-  const originalTabId = state.panels[state.activePanelId].tabs[0].id;
-  const closed = workspaceReducer(withOther, {
+  // 把原标签页导航到子目录：`live` 仍在它的 history 里 ⇒ 仍然保留。
+  const nested = `${live}\\sub`;
+  const navigated = workspaceReducer(withOther, {
+    type: "tabSnapshotCommitted",
+    payload: {
+      panelId: state.activePanelId,
+      tabId: firstTab.id,
+      pushHistory: true,
+      snapshot: {
+        ...firstTab.snapshot,
+        status: "ready" as const,
+        entries: [],
+        location: { ...firstTab.snapshot.location, path: nested }
+      }
+    }
+  } as WorkspaceAction);
+  const navigatedTab = navigated.panels[state.activePanelId].tabs.find((tab) => tab.id === firstTab.id)!;
+  assert.ok(navigatedTab.history.includes(live), "precondition: the parent path is in the tab's history");
+  assert.equal(navigated.quickFilter.byPath[live.toLowerCase()]?.text, "pro",
+    "the parent path must survive while it is still in that tab's history (需求 6)");
+
+  // 关闭该标签页 ⇒ 它的 history 一并释放 ⇒ 原路径淘汰。
+  const closed = workspaceReducer(navigated, {
     type: "tabClosed",
-    payload: { panelId: state.activePanelId, tabId: originalTabId }
+    payload: { panelId: state.activePanelId, tabId: firstTab.id }
   } as WorkspaceAction);
   assert.equal(
     closed.quickFilter.byPath[live.toLowerCase()],
     undefined,
-    "the cached text must be evicted once the last tab on that path closes (D5)"
+    "the cached text must be evicted once no tab can reach that path any more (D5)"
   );
 });

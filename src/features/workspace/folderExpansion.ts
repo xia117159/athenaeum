@@ -33,6 +33,19 @@ export function getTabEntries(tab: TabState): EntryViewModel[] {
   return result;
 }
 
+/**
+ * 行投影（纯函数）。
+ *
+ * 评审 S-6 记录了"同一次投影在同一帧内被重复计算"的放大问题。这里**刻意不做全局记忆化**：
+ * 投影结果直接决定操作目标集（B23：删除/复制/Ctrl+A 的作用范围），而投影读取的输入里
+ * 有多处会被**就地修改**而不更换引用——`snapshot.entries.push(...)`（7 个测试文件如此，
+ * 如 `directorySizeAlignment.test.ts:70`）、`tab.sort.direction = "desc"`
+ * （`folderExpansion.test.ts:29`）、`parent.isHidden = true`（`folderExpansion.test.ts:37`），
+ * 以及 `tab.folderExpansion[key].entries` 的内容。
+ * 任何基于引用的缓存键都无法可靠察觉这些变更，一旦读到陈旧行集，
+ * 用户就会对错的文件执行删除/复制。因此把"去重"放在**调用侧**（同一状态只投影一次），
+ * 而不是在纯函数里放一个可能失效的缓存。
+ */
 export function getFolderListingRows(
   tab: TabState,
   visibility: FileVisibilityState = DEFAULT_FILE_VISIBILITY,
@@ -83,9 +96,43 @@ export function getTabSelectedEntries(
   enabled: boolean,
   sizeBarMode: SizeBarMode = "folder-total"
 ) {
-  // B23：操作目标集恒等于可见行集。这里不再存在「文件夹展开未生效 ⇒ 退回未过滤 snapshot.entries」
-  // 的分支，否则保留/排除过滤把行藏起来之后，Ctrl+A、删除、复制、批量重命名仍会作用到不可见的行。
-  const entries = getFolderListingRows(tab, visibility, quickFilter, enabled, sizeBarMode).map((row) => row.entry);
+  // B23：操作目标集恒等于可见行集子集。这里不再存在「文件夹展开未生效 ⇒ 退回未过滤
+  // snapshot.entries」的分支，否则保留/排除过滤把行藏起来之后，Ctrl+A、删除、复制、
+  // 批量重命名仍会作用到不可见的行。
+  if (tab.kind === "navigation" || tab.selectedEntryIds.length === 0) return [];
   const selectedIds = new Set(tab.selectedEntryIds);
+
+  // S-7 快路径：出厂默认（展开关闭）且无快速过滤时，"廉价情形必须廉价"。
+  //
+  // 缺陷背景：基线在这里有一条 `!supportsFolderExpansion ⇒ tab.snapshot.entries` 的廉价分支，
+  // 它**违反 B23**（忽略可见性与过滤）因而被删除；但删除后即使不展开、无过滤，
+  // 每次调用也要整趟排序并逐条投影大小（2 万条目实测 284×–356× 回归）。
+  //
+  // 本快路径**不**恢复那条违规分支：它逐条套用与 `getFolderListingRows` **完全相同**的
+  // 判定（重命名中的行豁免可见性；`keep` 在 `quickFilter === null` 时恒真），只是把投影范围
+  // 从"全部条目"缩小到"被选中的条目"。
+  //
+  // 为什么等价：
+  // - 可见性是**逐条**谓词（`entryMatchesFileVisibility` 只读该条目自身），不含跨条目状态，
+  //   因此"先选后判"与"先判后选"结果相同；
+  // - `quickFilter === null` 时 `keep` 恒真，故行集就是全部通过可见性的条目；
+  // - `sortEntries` 使用**逐对**比较器（不依赖数组其余元素），故"先排序再筛"与"先筛再排序"
+  //   在选中项之间的相对顺序上完全一致；
+  // - `!supportsFolderExpansion` ⇒ `treeEnabled` 为假 ⇒ 不启用 `seen` 去重、不递归展开分支，
+  //   因此不存在"展开分支子条目"这一类需要保留的行。
+  // 由 `folderExpansion.test.ts` 的等价性用例（与慢路径逐项对照）锁定。
+  if (quickFilter === null && !supportsFolderExpansion(tab, enabled)) {
+    const projectSize = createEntrySizeProjector(tab, sizeBarMode);
+    const selected: EntryViewModel[] = [];
+    for (const entry of tab.snapshot.entries) {
+      if (!selectedIds.has(entry.id)) continue;
+      const editing = tab.inlineEdit?.mode === "rename" && tab.inlineEdit.entryId === entry.id;
+      if (!editing && !entryMatchesFileVisibility(entry, visibility)) continue;
+      selected.push(projectSize(entry));
+    }
+    return sortEntries(selected, tab.sort, tab.snapshot.location.path);
+  }
+
+  const entries = getFolderListingRows(tab, visibility, quickFilter, enabled, sizeBarMode).map((row) => row.entry);
   return entries.filter((entry) => selectedIds.has(entry.id));
 }

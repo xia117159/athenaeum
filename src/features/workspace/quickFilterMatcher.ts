@@ -1,4 +1,5 @@
 import { pinyin } from "pinyin-pro";
+import { compileLinearRegex } from "./regexEngine";
 import type {
   QuickFilterCompileResult,
   QuickFilterMode,
@@ -13,11 +14,12 @@ import type {
  * 三条硬性设计约束（详见 spec §6）：
  * 1. 匹配源只有 `entry.name`（D6）。本模块不接触路径、描述或标签。
  * 2. 拼音只在 `substring` 语法下叠加（D3），且 `pinyin-pro` **只在本模块**被引入（评审 Sug3）。
- * 3. 匹配不得存在可被用户输入触发的病态回溯：`wildcard` 走线性 NFA，
- *    `regex` 走**结构性风险检测**（spec §6.4，实现期修订：原"墙钟探测"方案被否决）。
+ * 3. 匹配不得存在可被用户输入触发的病态回溯：`wildcard` 与 `regex` **都走线性 NFA**。
+ *    `regex` 原先用"结构性风险启发式 + 原生 RegExp"，评审 B-1/B-2 证明该方案同时漏判
+ *    （`(.*a){3}$`、`([a-z]{1,10}){1,10}$` 冻结界面）与误拒（31% 的合理模式），
+ *    因此改为 `regexEngine.compileLinearRegex`（spec §3.1/§3.3）。
  */
 
-const REGEX_RANGE_ITERATION_LIMIT = 4096;
 const COMPILE_CACHE_LIMIT = 128;
 const NAME_CACHE_LIMIT = 2048;
 
@@ -27,6 +29,21 @@ interface NameIndex {
   lowerPoints: string[];
   starts: number[];
   lengths: number[];
+  /**
+   * S-2：NFC 归一化后的名称。匹配一律针对它进行，因此组合字符与预组合字符互相命中。
+   * 名称本身已是 NFC 时与 `name` **同一字符串**（Windows 上的常态，零额外成本）。
+   */
+  nfcName: string;
+  /**
+   * S-2：每个 `points[i]` 所属 cluster 的 code unit 区间。归一化会把一个 cluster 的多个
+   * code unit 折叠成若干 code point（如 `e`+U+0301 → `é`），它们**共享**同一个原始区间，
+   * 因此区间端点必然落在 cluster 边界上，不会切出半个簇。
+   */
+  spans: Array<{ start: number; end: number }>;
+  /** S-2：每个 cluster 在 `nfcName` 中的起始 code unit 偏移，用于把正则区间映射回原串。 */
+  clusterNfcStarts: number[];
+  /** 名称已是 NFC 时为真：此时 spans 与 cluster 一一对应，映射可走恒等快路径。 */
+  plain: boolean;
 }
 
 /** 与 `index.points` 逐位对齐的拼音表；非 CJK 位置回退为字面字符。 */
@@ -39,8 +56,18 @@ const nameIndexCache = new Map<string, NameIndex>();
 const pinyinTablesCache = new Map<string, PinyinTables>();
 const compileCache = new Map<string, QuickFilterCompileResult>();
 
+/**
+ * LRU 写入。原实现 `cache.clear()` 在达到上限时**整表清空**，导致刚形成的复用窗口
+ * 在跨过 2048 条后瞬间归零（评审 S-1：n=2000 时复用率 52×，n=2100 时 ≈0×）。
+ * `Map` 的插入顺序即访问顺序，删除最早一项即可。
+ */
 function cacheSet<T>(cache: Map<string, T>, key: string, value: T, limit: number): T {
-  if (cache.size >= limit) cache.clear();
+  if (cache.has(key)) cache.delete(key);
+  while (cache.size >= limit) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
   cache.set(key, value);
   return value;
 }
@@ -54,28 +81,139 @@ function isCjkCodePoint(code: number) {
   );
 }
 
+/** 组合记号：必须并入前一 cluster（`\p{M}` 覆盖 Mn/Mc/Me）。 */
+function isCombiningMark(point: string) {
+  return COMBINING_MARK.test(point);
+}
+const COMBINING_MARK = /\p{M}/u;
+
 /**
- * 按 code point 切分名称，并预计算 code unit 偏移。
- * 位置基准统一为 code point，切片渲染前才换算回 code unit，因此非 BMP 名称不会切出半个代理对。
+ * S-2 的核心：把名称切成"规范组合簇"，使
+ *
+ *     NFC(name) === concat(NFC(cluster_i))
+ *
+ * 成立。该恒等式是区间数学仍然正确的前提 —— 它保证每个归一化后的 code point 唯一对应
+ * 原串中一个**连续**区间，因此不需要任何"把偏移猜回去"的启发式。
+ *
+ * 合并规则（纯局部判定，不依赖任何 Unicode 表）：
+ * ① 下一个 code point 是组合记号（`\p{M}`）⇒ 并入；
+ * ② 或它与**当前整个簇**结构性组合（`NFC(cur+next) !== NFC(cur)+NFC(next)`）⇒ 并入。
+ *
+ * **②必须与"整个簇"比较，不能只与紧邻的前一个 code point 比较**。两种比较方式各有一个
+ * 已实测的反例，且都是同一类错误（交互对象不在紧邻位置），只是层次不同：
+ *
+ * - 只看**紧邻对**会漏掉**非相邻的规范重排**：
+ *   `"e" + U+0316 + U+0301` 归一化为 `"é" + U+0316` —— 第三个 code point 与第一个组合，
+ *   而 `NFC(U+0316 + U+0301) === U+0316 + U+0301`（彼此不组合），紧邻判定看不见。
+ * - 只看**紧邻对**还会漏掉**谚文 L+V+T**：`NFC(V+T) === V+T`（V 与 T 单独不组合），
+ *   但 `NFC(L+V+T)` 是一个音节。实测在 43 万组谚文语料上有 **288 例**反例。
+ *
+ * 与整个簇比较则两者都被覆盖（因为 `cur` 已包含 L 和 V）。**规则①仍不可省**：一个当下
+ * 看似惰性的记号（`e`+U+0316）可能被**后续**记号重排，把基字符与记号分开就会破坏恒等式。
+ *
+ * 实测（**470 万**组语料：谚文 L/V/T 全交叉 2–4 字、长记号串、1916 个特殊字符的两两
+ * 穷举、多脚本随机串）上述恒等式与"簇严格铺满原串"**零反例**。
+ */
+function splitClusters(name: string): Array<{ text: string; start: number }> {
+  const points = Array.from(name);
+  const clusters: Array<{ text: string; start: number }> = [];
+  let current = "";
+  let currentStart = 0;
+  let offset = 0;
+  for (const point of points) {
+    if (current === "") {
+      current = point;
+      currentStart = offset;
+    } else {
+      const interacts = isCombiningMark(point) ||
+        (current + point).normalize("NFC") !== current.normalize("NFC") + point.normalize("NFC");
+      if (interacts) {
+        current += point;
+      } else {
+        clusters.push({ text: current, start: currentStart });
+        current = point;
+        currentStart = offset;
+      }
+    }
+    offset += point.length;
+  }
+  if (current !== "") clusters.push({ text: current, start: currentStart });
+  return clusters;
+}
+
+/**
+ * 按 NFC code point 切分名称，并把每个 code point 映射回**原始串**的 cluster 区间。
+ *
+ * `nfcName === name` 时走恒等快路径（Windows 上绝大多数名称如此）：一个 code point 一个
+ * cluster，区间就是该 code point 自身的 code unit 跨度，与修复前逐位一致。
  */
 function getNameIndex(name: string): NameIndex {
   const cached = nameIndexCache.get(name);
   if (cached) return cached;
-  const points = Array.from(name);
+
+  const nfcName = name.normalize("NFC");
+  if (nfcName === name) {
+    const points = Array.from(name);
+    const starts: number[] = [];
+    const lengths: number[] = [];
+    const spans: Array<{ start: number; end: number }> = [];
+    const clusterNfcStarts: number[] = [];
+    let offset = 0;
+    for (const point of points) {
+      starts.push(offset);
+      lengths.push(point.length);
+      spans.push({ start: offset, end: offset + point.length });
+      clusterNfcStarts.push(offset);
+      offset += point.length;
+    }
+    return cacheSet(nameIndexCache, name, {
+      points,
+      lowerPoints: points.map((point) => point.toLowerCase()),
+      starts,
+      lengths,
+      nfcName,
+      spans,
+      clusterNfcStarts,
+      plain: true
+    }, NAME_CACHE_LIMIT);
+  }
+
+  // 需要归一化：按 cluster 展开，同一 cluster 的多个 code point 共享同一个原始区间。
+  const clusters = splitClusters(name);
+  const points: string[] = [];
   const starts: number[] = [];
   const lengths: number[] = [];
-  let offset = 0;
-  for (const point of points) {
-    starts.push(offset);
-    lengths.push(point.length);
-    offset += point.length;
+  const spans: Array<{ start: number; end: number }> = [];
+  const clusterNfcStarts: number[] = [];
+  let nfcOffset = 0;
+  for (const cluster of clusters) {
+    const nfcText = cluster.text.normalize("NFC");
+    clusterNfcStarts.push(nfcOffset);
+    spans.push({ start: cluster.start, end: cluster.start + cluster.text.length });
+    for (const point of Array.from(nfcText)) {
+      points.push(point);
+      starts.push(cluster.start);
+      lengths.push(cluster.text.length);
+    }
+    nfcOffset += nfcText.length;
   }
-  return cacheSet(nameIndexCache, name, { points, lowerPoints: points.map((point) => point.toLowerCase()), starts, lengths }, NAME_CACHE_LIMIT);
+  return cacheSet(nameIndexCache, name, {
+    points,
+    lowerPoints: points.map((point) => point.toLowerCase()),
+    starts,
+    lengths,
+    nfcName,
+    spans,
+    clusterNfcStarts,
+    plain: false
+  }, NAME_CACHE_LIMIT);
 }
 
 /**
  * 逐"最大 CJK 连续段"调用 pinyin-pro，避免跨段分组干扰上下文取音，
  * 也避免非中文段落进入转写。返回的表与 code point 严格对齐。
+ *
+ * S-2：拼音表建立在**归一化后**的 code point 上（`index.points`），与匹配用的点位一致。
  */
 function getPinyinTables(name: string): PinyinTables {
   const cached = pinyinTablesCache.get(name);
@@ -153,21 +291,37 @@ function substringMatchEnd(name: string, query: string, queryPoints: string[], s
   return null;
 }
 
-function pushRange(ranges: QuickFilterRange[], index: NameIndex, start: number, end: number) {
-  ranges.push({ start: index.starts[start], end: index.starts[end] + index.lengths[end] });
+/** 把 code point 区间换算成原始串的 code unit 区间（S-2：同一簇的多个 code point 共享一个区间）。 */
+function pointRangeToUnits(index: NameIndex, start: number, end: number): QuickFilterRange {
+  return { start: index.starts[start], end: index.starts[end] + index.lengths[end] };
 }
 
-/** 非重叠、从左到右的命中区间。 */
+/**
+ * 非重叠、从左到右的命中区间。
+ *
+ * IR2-F1（严重级）：去重必须发生在 **code unit 空间**，而不是 code point 空间。
+ * 原因：S-2 让同一簇折叠出的多个 code point **共享同一个原始区间**，因此"再前进一个
+ * code point"并不保证越过该簇。若用 code point 下标做去重（`start <= lastEnd`），
+ * 当查询只命中簇内 code point 的**真子集**（典型是单个组合记号）时，同一簇会被连续命中
+ * 两次，而两次换算得到**完全相同**的区间 ⇒ 渲染层把名称画两遍（实测
+ * `"e\u0316\u0301\u0316"` + 查询 `"\u0316"` 得到 `[[0,4],[0,4]]`）。
+ * 改为比较换算后的 code unit 区间是否已被上一段覆盖即可。
+ */
 function substringRanges(name: string, query: string, queryPoints: string[]): QuickFilterRange[] {
   const index = getNameIndex(name);
   const ranges: QuickFilterRange[] = [];
-  let lastEnd = -1;
+  let lastUnitEnd = -1;
+  let lastPointEnd = -1;
   for (let start = 0; start < index.points.length; start += 1) {
-    if (start <= lastEnd) continue;
+    if (start <= lastPointEnd) continue;
     const end = substringMatchEnd(name, query, queryPoints, start);
     if (end === null) continue;
-    pushRange(ranges, index, start, end);
-    lastEnd = end;
+    const units = pointRangeToUnits(index, start, end);
+    lastPointEnd = end;
+    // 同一簇内的后继 code point 会换算出与上一段相同的区间，跳过以免重复。
+    if (units.start < lastUnitEnd) continue;
+    ranges.push(units);
+    lastUnitEnd = units.end;
   }
   return ranges;
 }
@@ -193,8 +347,12 @@ interface GlobProgram {
   chars: string[];
 }
 
+/**
+ * 编译通配符模式。S-2：模式先做 NFC 归一化，与名称一侧的归一化对齐，
+ * 因此 `caf?` 能命中 `cafe\u0301`（归一化后是 4 个 code point）。
+ */
 function compileGlob(pattern: string): GlobProgram {
-  const points = Array.from(pattern);
+  const points = Array.from(pattern.normalize("NFC"));
   const kinds = new Uint8Array(points.length);
   const chars: string[] = new Array(points.length).fill("");
   for (let position = 0; position < points.length; position += 1) {
@@ -241,128 +399,114 @@ function globTest(name: string, glob: GlobProgram): boolean {
   return current[total] === 1;
 }
 
-// ---------------------------------------------------------------------------
-// regex：原生 RegExp + 结构性风险检测
-// ---------------------------------------------------------------------------
-
 /**
- * 读出 `index` 处的量词记号。只有无界量词（`*`、`+`、`{n,}`）才可能造成指数级回溯；
- * `?` 与 `{n,m}` 是有界的，不算。`count` 用于评估"有界重复放大内部歧义"。
+ * 通配符命中区间：在 NFA 的可达状态图上做一次 BFS，回溯出一条从 `(0, 0)` 到
+ * `(名末, 模式末)` 的路径，并把路径上**由字面记号消费掉**的 code point 合并成区间。
+ *
+ * 这样 `*.txt` 只高亮 `.txt`、`report?` 只高亮 `report`，而不是把整名点亮（评审 S-3）。
+ * `*` 与 `?` 消费的字符不属于"字面命中"，因此不高亮 —— 这是刻意的：
+ * 高亮要回答"我输入的哪些字被匹配到了"。
  */
-function quantifierTokenAt(pattern: string, index: number): { length: number; unbounded: boolean; count: number } {
-  const character = pattern[index];
-  if (character === "*" || character === "+") return { length: 1, unbounded: true, count: Infinity };
-  if (character !== "{") return { length: 0, unbounded: false, count: 1 };
-  const close = pattern.indexOf("}", index + 1);
-  if (close === -1) return { length: 0, unbounded: false, count: 1 };
-  const body = pattern.slice(index + 1, close);
-  if (!/^\d+(,\d*)?$/.test(body)) return { length: 0, unbounded: false, count: 1 };
-  const length = close - index + 1;
-  if (body.includes(",")) {
-    const upper = body.slice(body.indexOf(",") + 1);
-    // `{n,}` 无上界 ⇒ 无界；`{n,m}` 有界，count = m。
-    return upper === "" ? { length, unbounded: true, count: Infinity } : { length, unbounded: false, count: Number(upper) };
+function globLiteralRanges(name: string, glob: GlobProgram): QuickFilterRange[] {
+  if (!globTest(name, glob)) return [];
+  const index = getNameIndex(name);
+  const total = glob.kinds.length;
+  const pointCount = index.points.length;
+  const width = total + 1;
+  const size = (pointCount + 1) * width;
+  const id = (position: number, state: number) => position * width + state;
+
+  const previous = new Int32Array(size).fill(-1);
+  // 0 = ε 迁移（未消费字符），1 = 字面记号消费，2 = `*`/`?` 消费。
+  const kindOf = new Uint8Array(size);
+  const queue = new Int32Array(size);
+  let head = 0;
+  let tail = 0;
+  previous[id(0, 0)] = id(0, 0);
+  queue[tail] = id(0, 0);
+  tail += 1;
+
+  while (head < tail) {
+    const current = queue[head];
+    head += 1;
+    const position = Math.floor(current / width);
+    const state = current % width;
+    const candidates: number[] = [];
+    const kinds: number[] = [];
+    const push = (next: number, kind: number) => {
+      candidates.push(next);
+      kinds.push(kind);
+    };
+    // `*` 允许零个字符：同位置直接跳到下一状态。
+    if (state < total && glob.kinds[state] === KIND_STAR) push(id(position, state + 1), 0);
+    if (position < pointCount && state < total) {
+      const kind = glob.kinds[state];
+      const point = index.lowerPoints[position];
+      if (kind === KIND_STAR) push(id(position + 1, state), 2);
+      else if (kind === KIND_ANY) push(id(position + 1, state + 1), 2);
+      else if (glob.chars[state] === point) push(id(position + 1, state + 1), 1);
+    }
+    for (let index2 = 0; index2 < candidates.length; index2 += 1) {
+      const next = candidates[index2];
+      if (previous[next] !== -1) continue;
+      previous[next] = current;
+      kindOf[next] = kinds[index2];
+      queue[tail] = next;
+      tail += 1;
+    }
   }
-  return { length, unbounded: false, count: Number(body) };
+
+  const goal = id(pointCount, total);
+  if (previous[goal] === -1) return [];
+  const literals = new Set<number>();
+  let cursor = goal;
+  while (cursor !== id(0, 0)) {
+    if (kindOf[cursor] === 1) literals.add(Math.floor(cursor / width) - 1);
+    cursor = previous[cursor];
+  }
+  if (literals.size === 0) return [];
+
+  const ranges: QuickFilterRange[] = [];
+  let start = -1;
+  let end = -1;
+  for (let position = 0; position < pointCount; position += 1) {
+    if (!literals.has(position)) continue;
+    const pointStart = index.starts[position];
+    const pointEnd = pointStart + index.lengths[position];
+    if (start < 0) {
+      start = pointStart;
+      end = pointEnd;
+    } else if (pointStart === end) {
+      // 紧邻的下一个 code point：延长当前区间。
+      end = pointEnd;
+    } else if (pointStart < end) {
+      // IR2-F1（阻断级）：同一个簇里的**第二个** code point 与前一个共享完全相同的
+      // `starts`/`lengths`（S-2 的归一化会把一个簇折叠成多个 code point），因此
+      // `pointStart` 等于**当前区间的起点**而不是终点，`pointStart === end` 不成立。
+      // 若在此另起区间，就会得到 [[0,3],[0,3]] —— 渲染层把名称画两遍。
+      // 该 code point 已被当前区间覆盖，跳过即可。
+      continue;
+    } else {
+      ranges.push({ start, end });
+      start = pointStart;
+      end = pointEnd;
+    }
+  }
+  if (start >= 0) ranges.push({ start, end });
+  return ranges;
 }
 
-/**
- * 歧义权重上限：超过它即判定为风险。取 3 的依据是实测回溯量级 ——
- * 无界量词彼此可匹配同一段文本时，回溯量约为"名称长度 ^ 权重"，权重 4 在
- * 255 字符名称上已达 ~4×10⁹ 步，而权重 ≤3 仍在可控范围。
- */
-const UNSAFE_QUANTIFIER_WEIGHT = 3;
+// ---------------------------------------------------------------------------
+// regex：线性 NFA 引擎（匹配内核见 ./regexEngine.ts）
+// ---------------------------------------------------------------------------
 
-/**
- * 确定性的正则风险结构检测（判定只依赖模式文本，不可能挂起）。
- *
- * 覆盖**两类**灾难性回溯形态，二者都由"同一段文本存在指数级多种切分方式"造成：
- *
- * 1. **嵌套**：无界量词直接作用于自身已含无界量词的分组 —— `(a+)+`、`(\d*)*`、`((a+))*`、`(ab+)+`。
- * 2. **顺序/重复**：同一层出现多个可匹配同一段文本的无界量词，或"含无界量词的分组被有界重复放大"。
- *    典型是 §6.2 点名的 `.*a.*a.*a.*a.*a.*a.*a.*a.*a.*a.*`，以及 `(.*a){7}` ——
- *    后者的分组量词 `{7}` 虽然是**有界**的，但每次重复都会把内部 `.*` 的歧义再乘一层。
- *
- * 实现期修订（第二轮）：初版只检测形态 1，实测漏检形态 2 —— `(.*a){7}$` 对 41 字符名称
- * 单次 `ranges()` 耗时 **5726ms**（`{6}` 1247ms、`{5}` 226ms），正是 §6.2 要消除的
- * "键入瞬间冻结界面"。因此改为对**歧义权重**求和：同一层每个无界量词计 1，
- * 含无界量词的分组被有界重复 n 次则把内部权重乘 n，无界量词套无界量词直接判危。
- */
-function hasUnsafeQuantifierStructure(pattern: string): boolean {
-  type Frame = { sum: number; hasUnbounded: boolean };
-  const frames: Frame[] = [{ sum: 0, hasUnbounded: false }];
-  let index = 0;
-  while (index < pattern.length) {
-    const character = pattern[index];
-    if (character === "\\") {
-      index += 2;
-      continue;
-    }
-    if (character === "[") {
-      index += 1;
-      while (index < pattern.length && pattern[index] !== "]") {
-        if (pattern[index] === "\\") index += 1;
-        index += 1;
-      }
-      index += 1;
-      const classQuantifier = quantifierTokenAt(pattern, index);
-      if (classQuantifier.length > 0) {
-        if (classQuantifier.unbounded) {
-          frames[frames.length - 1].sum += 1;
-          frames[frames.length - 1].hasUnbounded = true;
-        }
-        index += classQuantifier.length;
-      }
-      continue;
-    }
-    if (character === "(") {
-      frames.push({ sum: 0, hasUnbounded: false });
-      index += 1;
-      continue;
-    }
-    if (character === ")") {
-      const child = frames.pop() ?? { sum: 0, hasUnbounded: false };
-      index += 1;
-      if (frames.length === 0) frames.push({ sum: 0, hasUnbounded: false });
-      const parent = frames[frames.length - 1];
-      const groupQuantifier = quantifierTokenAt(pattern, index);
-      if (groupQuantifier.length === 0) {
-        parent.sum += child.sum;
-        parent.hasUnbounded = parent.hasUnbounded || child.hasUnbounded;
-        continue;
-      }
-      if (groupQuantifier.unbounded) {
-        // 形态 1：无界量词套在"内部已含无界量词"的分组上。
-        if (child.hasUnbounded) return true;
-        parent.sum += 1;
-        parent.hasUnbounded = true;
-      } else {
-        // 形态 2：有界重复把内部歧义按次数放大。
-        parent.sum += child.sum * groupQuantifier.count;
-        parent.hasUnbounded = parent.hasUnbounded || child.hasUnbounded;
-      }
-      index += groupQuantifier.length;
-      if (parent.sum > UNSAFE_QUANTIFIER_WEIGHT) return true;
-      continue;
-    }
-    const quantifier = quantifierTokenAt(pattern, index);
-    if (quantifier.length > 0) {
-      if (quantifier.unbounded) {
-        frames[frames.length - 1].sum += 1;
-        frames[frames.length - 1].hasUnbounded = true;
-      }
-      index += quantifier.length;
-      if (frames[frames.length - 1].sum > UNSAFE_QUANTIFIER_WEIGHT) return true;
-      continue;
-    }
-    index += 1;
-  }
-  return false;
-}
+// ---------------------------------------------------------------------------
+// regex：线性 NFA 引擎（无回溯，因此不需要任何"危险模式"启发式）
+// ---------------------------------------------------------------------------
 
 /**
  * 把区间边界对齐到 code point 边界，避免把代理对切成两半。
- * 正则带 `gi` 不带 `u`（§6.3），因此匹配可能停在代理对中间：
+ * 引擎按 code unit 匹配（等价无 `u` 标志，§6.3），因此匹配可能停在代理对中间：
  * `start` 落在低位代理时要回退一位，`end` 前面是高位的代理时要前进一位。
  */
 function alignRangeToCodePoints(name: string, start: number, end: number, floor: number): QuickFilterRange | null {
@@ -379,30 +523,6 @@ function alignRangeToCodePoints(name: string, start: number, end: number, floor:
   return { start: alignedStart, end: alignedEnd };
 }
 
-function regexRanges(regex: RegExp, name: string): QuickFilterRange[] {
-  const ranges: QuickFilterRange[] = [];
-  regex.lastIndex = 0;
-  let iterations = 0;
-  let floor = 0;
-  let match = regex.exec(name);
-  while (match && iterations < REGEX_RANGE_ITERATION_LIMIT) {
-    iterations += 1;
-    if (match[0].length > 0) {
-      const aligned = alignRangeToCodePoints(name, match.index, match.index + match[0].length, floor);
-      if (aligned) {
-        ranges.push(aligned);
-        floor = aligned.end;
-      }
-    } else {
-      // 零长度匹配必须手动推进，否则 exec 会永远停在同一位置。
-      regex.lastIndex = match.index + 1;
-    }
-    if (regex.lastIndex > name.length) break;
-    match = regex.exec(name);
-  }
-  return ranges;
-}
-
 function createProgram(
   mode: QuickFilterMode,
   text: string,
@@ -412,8 +532,14 @@ function createProgram(
   return { mode, text, test, ranges };
 }
 
+/**
+ * substring 程序。
+ *
+ * S-2：查询与名称都先做 NFC 归一化再比较，因此组合字符与预组合字符互相命中。
+ * 名称一侧的归一化由 `getNameIndex` 完成（`index.points` 即 NFC code point）。
+ */
 function compileSubstring(mode: QuickFilterMode, text: string): QuickFilterProgram {
-  const query = text.toLowerCase();
+  const query = text.normalize("NFC").toLowerCase();
   const queryPoints = Array.from(query);
   return createProgram(
     mode,
@@ -423,56 +549,119 @@ function compileSubstring(mode: QuickFilterMode, text: string): QuickFilterProgr
   );
 }
 
+/**
+ * 通配符程序同时保留"线性 NFA 判定"与"字面记号命中区间"。
+ *
+ * 评审 S-3：原实现命中时返回整名区间 `[{0, name.length}]`，等于"命中即全名高亮"，
+ * 与另两种语法的逐段高亮不一致。这里改为沿匹配路径回溯出**字面记号**在名称中的区间，
+ * 使 `*.txt` 只高亮 `.txt`、`report?` 只高亮 `report` + 一个字符。
+ */
 function compileWildcard(mode: QuickFilterMode, text: string): QuickFilterProgram {
   const glob = compileGlob(text);
   return createProgram(
     mode,
     text,
     (name) => globTest(name, glob),
-    (name) => (globTest(name, glob) ? [{ start: 0, end: name.length }] : [])
+    (name) => globLiteralRanges(name, glob)
   );
 }
 
 function compileRegex(mode: QuickFilterMode, text: string): QuickFilterCompileResult {
-  let regex: RegExp;
-  try {
-    regex = new RegExp(text, "gi");
-  } catch (error) {
-    // 语法错误优先报告，避免用户看到一个"过于复杂"却其实是写错了的模式。
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `正则表达式无效：${message}` };
-  }
-  if (hasUnsafeQuantifierStructure(text)) {
-    return { ok: false, message: "正则表达式过于复杂，已保留上一次有效匹配" };
+  // S-2：正则也走 NFC 对齐。查询与名称都归一化，因此 `café` 能命中 `cafe\u0301`。
+  const source = text.normalize("NFC");
+  const engine = compileLinearRegex(source);
+  if (!engine.ok) {
+    // 语法错误与"不支持的构造/规模上限"共用同一失败通道（评审 G-4），
+    // 但诊断文本分别说明原因，用户能据此判断是自己写错了还是能力边界。
+    return { ok: false, message: `正则表达式无效：${engine.message}` };
   }
   return {
     ok: true,
     program: createProgram(
       mode,
       text,
+      (name) => engine.test(getNameIndex(name).nfcName),
       (name) => {
-        regex.lastIndex = 0;
-        return regex.test(name);
-      },
-      (name) => regexRanges(regex, name)
+        // 引擎在**归一化后**的字符串上匹配，因此得到的是 NFC 坐标下的区间，
+        // 必须映射回原始串的 cluster 区间（S-2）。映射只把区间**扩大到完整 cluster**，
+        // 因此端点永远落在 cluster 边界上，不会切出半个簇。
+        const index = getNameIndex(name);
+        const aligned: QuickFilterRange[] = [];
+        let floor = 0;
+        for (const range of engine.matchRanges(index.nfcName)) {
+          const fixed = index.plain
+            ? alignRangeToCodePoints(name, range.start, range.end, floor)
+            : mapNfcRangeToOriginal(index, name, range.start, range.end, floor);
+          if (!fixed) continue;
+          aligned.push(fixed);
+          floor = fixed.end;
+        }
+        return aligned;
+      }
     )
   };
 }
 
 /**
+ * 把 NFC 坐标下的区间 `[start, end)` 映射回原始串的 code unit 区间。
+ *
+ * 取所有与 `[start, end)` 相交的 cluster，返回从**第一个** cluster 起点到**最后一个**
+ * cluster 终点的区间 —— 即把区间扩大到完整 cluster 边界。这是唯一安全的做法：
+ * 归一化后单个 code point 可能来自多个原 code unit，任何"按比例换算"都会切碎簇。
+ * `floor` 保证不越过上一区间（`\b` 一类零宽断言对齐后可能与上一段相接）。
+ */
+function mapNfcRangeToOriginal(
+  index: NameIndex,
+  name: string,
+  start: number,
+  end: number,
+  floor: number
+): QuickFilterRange | null {
+  if (end <= start) return null;
+  let first = -1;
+  let last = -1;
+  const total = index.spans.length;
+  for (let cluster = 0; cluster < total; cluster += 1) {
+    const clusterStart = index.clusterNfcStarts[cluster];
+    const clusterEnd = cluster + 1 < total ? index.clusterNfcStarts[cluster + 1] : index.nfcName.length;
+    if (clusterEnd <= start) continue;
+    if (clusterStart >= end) break;
+    if (first < 0) first = cluster;
+    last = cluster;
+  }
+  if (first < 0) return null;
+  let alignedStart = index.spans[first].start;
+  const alignedEnd = Math.min(index.spans[last].end, name.length);
+  if (alignedStart < floor) alignedStart = floor;
+  if (alignedStart >= alignedEnd) return null;
+  return { start: alignedStart, end: alignedEnd };
+}
+
+/**
  * 编译快速过滤程序。
  * `text` 为空串时返回恒真、无区间的程序；只有 `regex` 语法可能返回失败（D22）。
+ *
+ * 首尾空白按基线行为处理（评审 G-17）：`trim` 后为空 ⇒ 不过滤，否则以 `trim` 后文本匹配。
+ * 这恢复了基线把 `"report "`（尾随空格）视为 `"report"` 的行为，词内空格不受影响。
  */
 export function compileQuickFilter(text: string, syntax: QuickFilterSyntax, mode: QuickFilterMode): QuickFilterCompileResult {
-  const cacheKey = `${syntax}\u0000${mode}\u0000${text}`;
+  const applied = text.trim();
+  // `mode` 参与键：`entryNameHighlight.tsx:16` 依据 `program.mode` 决定是否高亮，
+  // 因此不同 mode 的程序不可互换（评审 S-1 修正）。
+  const cacheKey = `${syntax}\u0000${mode}\u0000${applied}`;
   const cached = compileCache.get(cacheKey);
   if (cached) return cached;
-  if (text === "") {
-    return cacheSet(compileCache, cacheKey, { ok: true, program: createProgram(mode, text, () => true, () => []) }, COMPILE_CACHE_LIMIT);
+  if (applied === "") {
+    return cacheSet(
+      compileCache,
+      cacheKey,
+      { ok: true, program: createProgram(mode, applied, () => true, () => []) },
+      COMPILE_CACHE_LIMIT
+    );
   }
   const result =
     syntax === "regex"
-      ? compileRegex(mode, text)
-      : { ok: true as const, program: syntax === "wildcard" ? compileWildcard(mode, text) : compileSubstring(mode, text) };
+      ? compileRegex(mode, applied)
+      : { ok: true as const, program: syntax === "wildcard" ? compileWildcard(mode, applied) : compileSubstring(mode, applied) };
   return cacheSet(compileCache, cacheKey, result, COMPILE_CACHE_LIMIT);
 }

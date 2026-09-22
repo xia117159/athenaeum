@@ -385,7 +385,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
-  const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab)
+  // S-7：这里曾对每次渲染**无条件**整趟重投影（2 万条目实测约 0.72s/趟），而结果只是一个
+  // 用于 effect 依赖的比较键。改为只在信息面板真的展开在属性页时才计算 —— 那个 effect
+  // 在其余情形下都会提前 return，因此提前返回时键值取空串不改变任何行为。
+  //
+  // 真正的成本削减在 `getTabSelectedEntries` 内部：出厂默认（未展开 + 无过滤）下它走
+  // 选中项快路径，不再整趟投影全目录。
+  const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab) &&
+    state.informationPanel.expanded && state.informationPanel.activeTab === "properties"
     ? getSelectedEntries(state, state.activePanelId).map((entry) => entry.id).join("|")
     : "";
   const propertiesEffectKey = [
@@ -1100,7 +1107,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   }, [
     state.status, state.panels, state.layoutMode, state.activePanelId,
-    state.navigation.items, state.fileVisibility, state.quickFilter,
+    state.navigation.items, state.fileVisibility,
+    // G-16：原先还依赖 `state.quickFilter`，但 `getVisibleWatchRoots` 明确按 D21
+    // 使用**未过滤**投影（`workspaceRefreshPlanner.ts:32` 传 `null`），
+    // 因此过滤文本变化不影响监视根；保留该依赖只会让每次输入都多跑一次根集合更新。
     state.settings.model.folderExpansionEnabled
   ]);
 
@@ -2903,8 +2913,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (isNavigationTab(activeTab)) {
           return;
         }
+        // G-15：这里原先漏传第 5 个参数 `sizeBarMode`，于是键盘上下选择使用的行序
+        // 与 `WorkspaceView` 实际渲染的行序在按"大小"排序时可能不一致（行集相同、顺序不同）。
         const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, resolveActiveQuickFilterProgram(state),
-          state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+          state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
         const orderedEntryIds = visibleEntries.map((entry) => entry.id);
 
         if (matchedListShortcut === "select-all") {
