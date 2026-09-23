@@ -55,7 +55,11 @@ test("resolveQuickFilterProgram compiles appliedText with the session syntax", (
 
   // 同一个 appliedText 在 regex 语法下按正则解释（`.` 变成任意字符）。
   const asRegex: WorkspaceState = { ...substring, quickFilter: { ...substring.quickFilter, syntax: "regex" } };
-  const regexProgram = resolveQuickFilterProgram(asRegex, path);
+  assert.equal(resolveQuickFilterProgram(asRegex, path), null, "regex selectors never compile on the UI thread");
+  const committed = withEntry(asRegex, path, { text: "pro", appliedText: "pro", regexEvaluation: {
+    text: "pro", matches: { pro: { matched: true, ranges: [{ start: 0, end: 3 }] } }
+  } });
+  const regexProgram = resolveQuickFilterProgram(committed, path);
   assert.ok(regexProgram);
   assert.equal(regexProgram.test("pro"), true);
 });

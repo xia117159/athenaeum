@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyQuickFilterApplied,
   applyQuickFilterCleared,
   applyQuickFilterMode,
   applyQuickFilterSyntax,
@@ -42,26 +41,6 @@ test("empty text clears appliedText and error unconditionally in every syntax (r
     const next = applyQuickFilterText(dirty, PATH, "");
     assert.deepEqual(next.byPath[KEY], { text: "", appliedText: "", error: null }, `${syntax} must fully clear`);
   }
-});
-
-test("quickFilterApplied ignores a stale dispatch whose text no longer matches the entry", () => {
-  const current = stateWith({ [KEY]: { text: "newest", appliedText: "old", error: null } }, { syntax: "regex" });
-  const stale = applyQuickFilterApplied(current, PATH, { text: "older", ok: true, message: null });
-  assert.equal(stale, current, "a stale dispatch must be a no-op and keep the identical reference");
-});
-
-test("quickFilterApplied on success promotes the text and clears the error", () => {
-  const pending = stateWith({ [KEY]: { text: "pro", appliedText: "old", error: "正则表达式无效：x" } }, { syntax: "regex" });
-  const next = applyQuickFilterApplied(pending, PATH, { text: "pro", ok: true, message: null });
-  assert.deepEqual(next.byPath[KEY], { text: "pro", appliedText: "pro", error: null });
-});
-
-test("quickFilterApplied on failure keeps the previous effective match and records the message", () => {
-  const pending = stateWith({ [KEY]: { text: "a(1", appliedText: "keep-me", error: null } }, { syntax: "regex" });
-  const next = applyQuickFilterApplied(pending, PATH, { text: "a(1", ok: false, message: "正则表达式无效：x" });
-  assert.equal(next.byPath[KEY].appliedText, "keep-me", "the list must not change on an invalid pattern (D12)");
-  assert.equal(next.byPath[KEY].error, "正则表达式无效：x");
-  assert.equal(next.byPath[KEY].text, "a(1");
 });
 
 test("modeChanged touches only the session mode", () => {

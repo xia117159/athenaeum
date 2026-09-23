@@ -1116,7 +1116,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   // §6.6 编译调度的唯一规则见 `useQuickFilterCompilationScheduler`：作用域是**全部**面板的
   // 目录类标签页路径，而不只是激活面板的路径（D24 ②：过滤结果不得由谁持有焦点决定）。
-  useQuickFilterCompilationScheduler({ state, dispatch });
+  useQuickFilterCompilationScheduler({ state, dispatch, enabled: options.role !== "settings" });
 
   useEffect(() => {
     let disposed = false;

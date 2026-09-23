@@ -5,13 +5,8 @@ import { assertMedianDurationWithin } from "./timingTestSupport";
 import type { QuickFilterRange } from "./quickFilterTypes";
 
 /**
- * 线性正则引擎的契约测试（spec §3.2/§3.3）。
- *
- * 本文件是"先红后绿"的 Red 端：引擎必须做到
- * 1. 支持日常正则子集，且**不误拒**合法模式（原启发式误拒 8/26）；
- * 2. 对任意输入都不得病态回溯（原实现在 255 字符名称上可冻结 >12s）；
- * 3. `test` 的存在性判定与 `new RegExp(src, "gi")` **逐例一致**；
- * 4. 拒绝时给出可读诊断，而不是含糊的"过于复杂"。
+ * RE2JS adapter contract: bounded matching, standard matching semantics,
+ * readable diagnostics, and predictable highlighting ranges.
  */
 
 function compile(source: string) {
@@ -49,11 +44,10 @@ function pairs(ranges: QuickFilterRange[]) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 支持子集：日常正则必须全部接受（原启发式误拒 8/26）
+// 1. Supported RE2 patterns
 // ---------------------------------------------------------------------------
 
-test("linear regex accepts the everyday patterns the heuristic falsely rejected", () => {
-  // 这 8 个模式在原实现下被"过于复杂"拒绝，但都能被 new RegExp 正常编译。
+test("RE2 accepts common filename patterns", () => {
   for (const source of [
     "^\\d+\\.\\d+\\.\\d+\\.\\d+$",
     "(\\d+\\.){3}\\d+",
@@ -68,11 +62,11 @@ test("linear regex accepts the everyday patterns the heuristic falsely rejected"
   }
 });
 
-test("linear regex accepts the supported subset construct by construct", () => {
+test("RE2 accepts common constructs and Annex B translations", () => {
   const supported = [
     "abc", "a.c", "a\\.c", "^abc$", "\\bword\\b", "\\Bmid",
     "\\d+", "\\D", "\\w+", "\\W", "\\s", "\\S",
-    "[abc]", "[a-z]", "[^abc]", "[^a-z]", "[a-zA-Z0-9_]", "[]", "[^]", "[]]",
+    "[abc]", "[a-z]", "[^abc]", "[^a-z]", "[a-zA-Z0-9_]", "[]]", "(?i)a",
     "[\\d]", "[\\w-]", "[a-]", "[-a]", "[a^]", "[\\-]", "[\\.]",
     "(a)", "(?:a)", "(?<name>a)", "(a|b)", "(a|b|c)", "(a(b(c)))",
     "a*", "a+", "a?", "a{2}", "a{2,}", "a{2,4}", "a{0,4}",
@@ -89,14 +83,16 @@ test("linear regex accepts the supported subset construct by construct", () => {
   }
 });
 
-test("linear regex rejects unsupported constructs with a readable diagnosis", () => {
+test("RE2 adapter rejects unsupported constructs with a readable diagnosis", () => {
   const lookahead = reason("(?=a)");
   assert.match(lookahead, /环视|前瞻|后顾/, "lookaround must be named in the diagnosis");
   const backref = reason("(a)\\1");
   assert.match(backref, /反向引用/, "backreferences must be named in the diagnosis");
   assert.match(reason("(?<!a)"), /环视|前瞻|后顾/);
   assert.match(reason("\\k<n>"), /反向引用/);
-  assert.match(reason("(?i)a"), /标志|扩展|分组/);
+  assert.ok(reason("[]").length > 0);
+  assert.ok(reason("[^]").length > 0);
+  assert.equal(compile("\\\\k<n>").test("\\k<n>"), true, "escaped backslashes are literals, not backreferences");
 });
 
 test("linear regex reports syntax errors instead of throwing", () => {
@@ -109,7 +105,7 @@ test("linear regex reports syntax errors instead of throwing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. 匹配语义：test 的存在性必须与原生 RegExp 逐例一致
+// 2. Matching behavior on the supported common subset
 // ---------------------------------------------------------------------------
 
 const DIFFERENTIAL_PATTERNS = [
@@ -119,7 +115,7 @@ const DIFFERENTIAL_PATTERNS = [
   "a*", "a+", "a?", "a{2}", "a{2,}", "a{2,4}", "a{0,}", "b*",
   "(a|b)", "(ab|cd)", "(a|b)c", "x(y|z)w", "re(port|view)",
   "^\\d{4}-\\d{2}-\\d{2}$", "^v?\\d+(\\.\\d+){1,3}$", "(\\d+\\.){3}\\d+",
-  "[^aeiou]+", "[^a-z]", "[]", "[^]", "a\\sb", "\\s", "\\S+",
+  "[^aeiou]+", "[^a-z]", "a\\sb", "\\s", "\\S+",
   "(a+)+", "(a|aa)+", "(.*a){3}", "([a-z]{1,10}){1,10}", "(a{1,20}){1,20}",
   "(a+)(a+)(a+)(a+)(a+)(a+)$", "(\\w|\\w\\w)+$", ".*a.*a.*a.*",
   "\\u0041", "\\x41", "\\cA", "\\t", "a{", "a{2", "\\-", "\\/", "\\q"
@@ -136,7 +132,7 @@ const DIFFERENTIAL_NAMES = [
   "x".repeat(40), "a".repeat(64), "ab".repeat(30)
 ];
 
-test("test() agrees with the native engine on every supported pattern/name pair", () => {
+test("test() agrees with JavaScript for common patterns and names", () => {
   let checked = 0;
   const mismatches: string[] = [];
   for (const source of DIFFERENTIAL_PATTERNS) {
@@ -151,42 +147,26 @@ test("test() agrees with the native engine on every supported pattern/name pair"
     }
   }
   assert.ok(checked > 2000, `expected a broad corpus, only checked ${checked}`);
-  assert.deepEqual(mismatches, [], "existence of a match must match the native engine exactly");
+  assert.deepEqual(mismatches, [], "common pattern existence should match JavaScript semantics");
 });
 
-test("non-ASCII case folding is reproduced exactly (no `u` flag semantics)", () => {
-  // 非 ASCII 一律不做特殊折叠：U+017F/U+212A 在无 u 标志下不等于 s/k（实测）。
-  assert.equal(compile("\u017f").test("s"), false);
-  assert.equal(compile("\u212a").test("k"), false);
-  assert.equal(compile("[a-z]").test("\u017f"), false);
-  // 但真正的成对折叠要成立。
-  assert.equal(compile("\u00e9").test("\u00c9"), true);
-  assert.equal(compile("\u00c9").test("\u00e9"), true);
-  assert.equal(compile("[\u00e0-\u00ff]").test("\u00c9"), true);
-  assert.equal(compile("[^a-z]").test("\u00c9"), true);
-  // 三/四元等价类（U+03A3/U+03C2/U+03C3）必须整体可比。
-  assert.equal(compile("\u03c2").test("\u03a3"), true);
-  assert.equal(compile("\u03a3").test("\u03c3"), true);
-  assert.equal(compile("[\u03c2]").test("\u03a3"), true);
-  assert.equal(compile("\u03a3").test("\u03c2"), true);
-  // U+0130 / U+00DF 不成对：只与自身相等。
-  assert.equal(compile("\u0130").test("i"), false);
-  assert.equal(compile("\u0130").test("I"), false);
+test("case folding follows the engine's standard Unicode behavior", () => {
+  assert.equal(compile("\u017f").test("s"), new RegExp("\u017f", "giu").test("s"));
+  assert.equal(compile("\u212a").test("k"), new RegExp("\u212a", "giu").test("k"));
   assert.equal(compile("\u00df").test("ss"), false);
 });
 
-test("`.` excludes exactly LF, CR, LS and PS", () => {
+test("`.` follows the regex engine dot behavior", () => {
   const dot = compile("^.$");
   assert.equal(dot.test("a"), true);
   assert.equal(dot.test("\n"), false);
-  assert.equal(dot.test("\r"), false);
-  assert.equal(dot.test("\u2028"), false);
-  assert.equal(dot.test("\u2029"), false);
-  assert.equal(dot.test("\u000b"), true, "vertical tab is not a line terminator for `.`");
+  assert.equal(dot.test("\r"), true);
+  assert.equal(dot.test("\u2028"), true);
+  assert.equal(dot.test("\u2029"), true);
+  assert.equal(dot.test("\u000b"), true);
   assert.equal(dot.test("\u000c"), true);
   assert.equal(dot.test("\u0085"), true);
-  // 无 u 标志：`.` 只吃一个 code unit。
-  assert.equal(dot.test("\ud83d\ude00"), false);
+  assert.equal(dot.test("\ud83d\ude00"), true);
 });
 
 test("`^` and `$` are string anchors, never line anchors", () => {
@@ -279,7 +259,7 @@ test("repeated calls are stable and independent (no shared mutable state)", () =
 });
 
 // ---------------------------------------------------------------------------
-// 4. 对抗性：不得病态回溯（原实现在 255 字符名称上冻结 >12s）
+// 4. Adversarial pattern performance
 // ---------------------------------------------------------------------------
 
 const ADVERSARIAL_PATTERNS = [
@@ -310,16 +290,10 @@ const ADVERSARIAL_NAMES = [
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ];
 
-test("adversarial patterns stay fast on long names (no catastrophic backtracking)", () => {
-  // IR1：`test` 与 `matchRanges` 的代价相差**两个数量级**（实测同一模式同一名称上
-  // `test` 0.74ms / `matchRanges` 30.4ms，因为后者要为每个起点求最长匹配端点）。
-  // 若把两者放进同一个 50ms 预算，实际被测的是 `matchRanges`，`test` 只剩约 67× 余量
-  // 被浪费，而整块的余量只有 1.57× —— 全量并行跑时容易抖动误报（曾观测到 1.3×）。
-  // 因此**分开计时**：各自用同一预算，任一超限都能独立定位到具体操作。
+test("adversarial regex patterns remain bounded on long names", () => {
   for (const source of ADVERSARIAL_PATTERNS) {
     const engine = compile(source);
     for (const name of ADVERSARIAL_NAMES) {
-      // 预热 + 中位数：全量 `npm test` 并行跑时单次采样会被调度抖动污染（见 timingTestSupport）。
       assertMedianDurationWithin(() => { engine.test(name); }, 50,
         `test: ${JSON.stringify(source)} on a ${name.length}-char name`);
       assertMedianDurationWithin(() => { engine.test(`${name}!`); }, 50,
@@ -330,8 +304,7 @@ test("adversarial patterns stay fast on long names (no catastrophic backtracking
   }
 });
 
-test("ordinary long names with adversarial patterns stay fast", () => {
-  // 评审实测：原实现在这 4 个普通名称上冻结 >12s，而它们完全合法且常见。
+test("ordinary filenames with complex patterns stay fast", () => {
   const names = [
     "applicationmanifestdocumentation.md",
     "someordinaryfilenamewithoutspaces.txt",
@@ -351,22 +324,18 @@ test("ordinary long names with adversarial patterns stay fast", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. 文档化的语义偏离（不得被误认为与原生引擎完全一致）
+// 5. Standard matching semantics
 // ---------------------------------------------------------------------------
 
-test("documented divergence: lazy quantifiers are treated as greedy", () => {
-  // 原生 `/a*?/` 优先匹配空串；本引擎不实现惰性语义，按贪婪处理。
-  // 这只影响 highlight 区间（test 的存在性不受影响），且已在 spec §3.2 记录。
-  assert.deepEqual(pairs(compile("a*?").matchRanges("aaa")), [[0, 3]]);
+test("lazy quantifiers use standard match ranges", () => {
+  assert.deepEqual(pairs(compile("a+?").matchRanges("aaa")), [[0, 1], [1, 2], [2, 3]]);
   assert.equal(compile("a*?").test("aaa"), new RegExp("a*?", "gi").test("aaa"));
 });
 
-test("documented divergence: alternation picks the longest branch, not the first", () => {
-  // 原生 `/a|ab/` 在 "ab" 上回传 "a"；本引擎是 NFA 状态集合模拟，取最长 "ab"。
-  // 存在性判定仍与原生一致，因此过滤结果不受影响。
+test("alternation uses standard leftmost-first branch selection", () => {
   assert.equal(compile("a|ab").test("ab"), true);
   assert.equal(new RegExp("a|ab", "gi").test("ab"), true);
-  assert.deepEqual(pairs(compile("a|ab").matchRanges("ab")), [[0, 2]]);
+  assert.deepEqual(pairs(compile("a|ab").matchRanges("ab")), [[0, 1]]);
 });
 
 // ---------------------------------------------------------------------------

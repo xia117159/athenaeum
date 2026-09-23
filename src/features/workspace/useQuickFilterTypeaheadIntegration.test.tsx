@@ -1,3 +1,4 @@
+import { installQuickFilterTestWorker, settleQuickFilter } from "./quickFilterWorkerTestSupport";
 import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
@@ -34,6 +35,7 @@ async function mount(bootstrap: WorkspaceBootstrap, overrides: Parameters<typeof
  */
 export const completion = (async () => {
   const dom = installDomEnvironment();
+  installQuickFilterTestWorker();
   const key = async (value: string, init: KeyboardEventInit = {}) => act(async () => {
     (document.activeElement ?? dom.window.document.body).dispatchEvent(new dom.window.KeyboardEvent("keydown", {
       key: value, bubbles: true, cancelable: true, ...init
@@ -121,12 +123,12 @@ export const completion = (async () => {
       assert.equal(pending.appliedText, "", "regex must not take effect before the debounce elapses");
       assert.equal(pending.error, null, "the debounce window must not raise an error");
 
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      await settleQuickFilter(() => h.controller.state, f.path);
       assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).appliedText, "p.*t");
       assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).error, null);
 
       await act(async () => { h.controller.actions.updateQuickFilterText(f.path, "a(1"); await flushEffects(); });
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      await settleQuickFilter(() => h.controller.state, f.path);
       const invalid = resolveQuickFilterEntry(h.controller.state, f.path);
       assert.match(invalid.error ?? "", /./, "an invalid pattern must surface a diagnostic");
       assert.equal(invalid.appliedText, "p.*t", "an invalid pattern keeps the last valid match");

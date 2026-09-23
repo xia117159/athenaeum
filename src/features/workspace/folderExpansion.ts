@@ -66,9 +66,10 @@ export function getFolderListingRows(
       seen.add(key);
       // 匹配源只有 entry.name（D6/B1）。路径片段不再产生命中，这正是「输入 TEST 不该命中
       // …\A-TEST\123456.txt」的修复点：匹配的是名称，而不是完整路径。
-      const matched = quickFilter ? quickFilter.test(entry.name) : false;
+      const pending = quickFilter?.isPending?.(entry.name) === true;
+      const matched = quickFilter && !pending ? quickFilter.test(entry.name) : false;
       // 排除过滤命中项时，整棵子树都必须消失（D17），因此要在递归之前就跳过。
-      if (quickFilter?.mode === "exclude" && matched && !editing) continue;
+      if (quickFilter?.mode === "exclude" && (matched || pending) && !editing) continue;
       const expansion = treeEnabled && entry.kind === "folder" ? tab.folderExpansion?.[key] : undefined;
       const children = expansion ? visit(expansion.entries, depth + 1) : [];
       // 高亮模式不改变行集（D7，着色由渲染层负责）；保留过滤额外保留命中行的祖先链；

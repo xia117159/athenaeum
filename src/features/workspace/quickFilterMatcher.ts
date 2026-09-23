@@ -497,17 +497,13 @@ function globLiteralRanges(name: string, glob: GlobProgram): QuickFilterRange[] 
 }
 
 // ---------------------------------------------------------------------------
-// regex：线性 NFA 引擎（匹配内核见 ./regexEngine.ts）
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// regex：线性 NFA 引擎（无回溯，因此不需要任何"危险模式"启发式）
+// regex: RE2JS adapter, evaluated in the Worker in production.
 // ---------------------------------------------------------------------------
 
 /**
  * 把区间边界对齐到 code point 边界，避免把代理对切成两半。
- * 引擎按 code unit 匹配（等价无 `u` 标志，§6.3），因此匹配可能停在代理对中间：
- * `start` 落在低位代理时要回退一位，`end` 前面是高位的代理时要前进一位。
+ * RE2JS returns Unicode character boundaries as UTF-16 offsets. Keep this
+ * defensive alignment at the renderer boundary for malformed surrogate input.
  */
 function alignRangeToCodePoints(name: string, start: number, end: number, floor: number): QuickFilterRange | null {
   let alignedStart = start;

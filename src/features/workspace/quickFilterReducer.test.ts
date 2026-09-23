@@ -1,3 +1,6 @@
+import { collectQuickFilterCorpora } from "./quickFilterEvaluationState";
+import { evaluateQuickFilter } from "./quickFilterEvaluator";
+import { getPathComparisonKey } from "./workspacePathRelations";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createMockWorkspaceBootstrap } from "./mockData";
@@ -21,6 +24,14 @@ function activePath(state: WorkspaceState): string {
 
 function seed(state: WorkspaceState, path: string, text: string): WorkspaceState {
   return workspaceReducer(state, { type: "quickFilterTextChanged", payload: { path, text } } as WorkspaceAction);
+}
+
+function evaluationAction(state: WorkspaceState, path: string): WorkspaceAction {
+  const key = getPathComparisonKey(path);
+  const entry = state.quickFilter.byPath[key];
+  const corpus = collectQuickFilterCorpora(state).get(key)!;
+  return { type: "quickFilterEvaluationCommitted", payload: { path, expectedEntry: entry, corpusKey: corpus.key,
+    result: evaluateQuickFilter({ text: entry.text, fallbackText: entry.appliedText, names: corpus.names, includeRanges: true }) } };
 }
 
 const GHOST = "C:\\ghost-path-that-no-tab-uses";
@@ -66,47 +77,40 @@ test("§5.7 under regex the applied text lags until the compile result lands", (
   assert.equal(typed.quickFilter.byPath[path.toLowerCase()].text, "pro");
   assert.equal(typed.quickFilter.byPath[path.toLowerCase()].appliedText, "", "not effective until compiled");
 
-  const applied = workspaceReducer(typed, {
-    type: "quickFilterApplied",
-    payload: { path, text: "pro", ok: true, message: null }
-  } as WorkspaceAction);
-  assert.deepEqual(applied.quickFilter.byPath[path.toLowerCase()], { text: "pro", appliedText: "pro", error: null });
+  const applied = workspaceReducer(typed, evaluationAction(typed, path));
+  const entry = applied.quickFilter.byPath[path.toLowerCase()];
+  assert.equal(entry.text, "pro");
+  assert.equal(entry.appliedText, "pro");
+  assert.equal(entry.error, null);
+  assert.ok(entry.regexEvaluation);
+
 });
 
 test("§5.7 an invalid regex records the message and keeps the previous effective match", () => {
   const state = createState();
   const path = activePath(state);
   const asRegex = workspaceReducer(state, { type: "quickFilterSyntaxChanged", payload: { syntax: "regex" } } as WorkspaceAction);
-  const good = workspaceReducer(seed(asRegex, path, "pro"), {
-    type: "quickFilterApplied",
-    payload: { path, text: "pro", ok: true, message: null }
-  } as WorkspaceAction);
+  const typed = seed(asRegex, path, "pro");
+  const good = workspaceReducer(typed, evaluationAction(typed, path));
+  const broken = seed(good, path, "a(1");
+  const diagnosed = workspaceReducer(broken, evaluationAction(broken, path));
+  const entry = diagnosed.quickFilter.byPath[path.toLowerCase()];
+  assert.equal(entry.text, "a(1");
+  assert.equal(entry.appliedText, "pro");
+  assert.ok(entry.error);
+  assert.deepEqual(entry.regexEvaluation, good.quickFilter.byPath[path.toLowerCase()].regexEvaluation);
 
-  const broken = workspaceReducer(good, { type: "quickFilterTextChanged", payload: { path, text: "a(1" } } as WorkspaceAction);
-  const diagnosed = workspaceReducer(broken, {
-    type: "quickFilterApplied",
-    payload: { path, text: "a(1", ok: false, message: "正则表达式无效：x" }
-  } as WorkspaceAction);
-  assert.deepEqual(diagnosed.quickFilter.byPath[path.toLowerCase()], {
-    text: "a(1",
-    appliedText: "pro",
-    error: "正则表达式无效：x"
-  });
-
-  // 空文本无条件清空生效匹配与诊断（评审 S3）。
   const cleared = workspaceReducer(diagnosed, { type: "quickFilterTextChanged", payload: { path, text: "" } } as WorkspaceAction);
   assert.deepEqual(cleared.quickFilter.byPath[path.toLowerCase()], { text: "", appliedText: "", error: null });
 });
 
-test("§5.7 a stale quickFilterApplied dispatch is dropped", () => {
-  const state = createState();
+test("stale Worker commit is dropped by the reducer", () => {
+  const state = workspaceReducer(createState(), { type: "quickFilterSyntaxChanged", payload: { syntax: "regex" } });
   const path = activePath(state);
-  const typed = seed(state, path, "newest");
-  const stale = workspaceReducer(typed, {
-    type: "quickFilterApplied",
-    payload: { path, text: "older", ok: true, message: null }
-  } as WorkspaceAction);
-  assert.equal(stale, typed, "a stale dispatch must not produce a new state object");
+  const old = seed(state, path, "older");
+  const action = evaluationAction(old, path);
+  const typed = seed(old, path, "newest");
+  assert.equal(workspaceReducer(typed, action), typed);
 });
 
 test("§5.7 quickFilterTypeaheadAppended behaves exactly like quickFilterTextChanged", () => {

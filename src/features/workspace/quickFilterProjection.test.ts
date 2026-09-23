@@ -7,6 +7,8 @@ import { getSelectedEntries } from "./workspaceControllerUtils";
 import { captureRenameTarget } from "./renameTarget";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
+import { evaluateQuickFilter } from "./quickFilterEvaluator";
+import { getTabEntries } from "./folderExpansion";
 import type { QuickFilterMode, QuickFilterSyntax } from "./quickFilterTypes";
 import type { TabState, WorkspaceState } from "./types";
 
@@ -70,7 +72,8 @@ function withFilter(state: WorkspaceState, tab: TabState, text: string, mode: Qu
     ...state,
     quickFilter: {
       mode, syntax,
-      byPath: { [getPathComparisonKey(tab.snapshot.location.path)]: { text, appliedText: text, error: null } }
+      byPath: { [getPathComparisonKey(tab.snapshot.location.path)]: { text, appliedText: text, error: null,
+        regexEvaluation: syntax === "regex" ? evaluateQuickFilter({ text, fallbackText: "", names: getTabEntries(tab).map(entry => entry.name), includeRanges: true }).evaluation ?? undefined : undefined } }
     }
   };
 }

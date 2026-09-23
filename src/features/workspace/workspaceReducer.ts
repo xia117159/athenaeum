@@ -65,8 +65,8 @@ import { compareRevisionTokens } from "./colorFilterEditorModel";
 import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
 import { DEFAULT_QUICK_FILTER_STATE } from "./quickFilterTypes";
 import type { QuickFilterMode, QuickFilterState, QuickFilterSyntax } from "./quickFilterTypes";
+import { applyQuickFilterEvaluation, type QuickFilterEvaluationCommit } from "./quickFilterEvaluationState";
 import {
-  applyQuickFilterApplied,
   applyQuickFilterCleared,
   applyQuickFilterMode,
   applyQuickFilterSyntax,
@@ -186,7 +186,7 @@ export type WorkspaceAction =
   | { type: "searchStarted"; payload?: { searchId?: string } }
   | { type: "searchQueryChanged"; payload: Partial<SearchQuery> }
   | { type: "quickFilterTextChanged"; payload: { path: string; text: string } }
-  | { type: "quickFilterApplied"; payload: { path: string; text: string; ok: boolean; message: string | null } }
+  | { type: "quickFilterEvaluationCommitted"; payload: QuickFilterEvaluationCommit }
   | { type: "quickFilterModeChanged"; payload: { mode: QuickFilterMode } }
   | { type: "quickFilterSyntaxChanged"; payload: { syntax: QuickFilterSyntax } }
   | { type: "quickFilterCleared"; payload: { path: string } }
@@ -2271,15 +2271,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       // §5.7：两条路径共用同一内部函数，避免键盘直输与输入框写入的语义漂移。
       return withQuickFilter(state, applyQuickFilterText(state.quickFilter, action.payload.path, action.payload.text));
 
-    case "quickFilterApplied":
-      return withQuickFilter(
-        state,
-        applyQuickFilterApplied(state.quickFilter, action.payload.path, {
-          text: action.payload.text,
-          ok: action.payload.ok,
-          message: action.payload.message
-        })
-      );
+    case "quickFilterEvaluationCommitted":
+      return applyQuickFilterEvaluation(state, action.payload);
 
     case "quickFilterModeChanged":
       return withQuickFilter(state, applyQuickFilterMode(state.quickFilter, action.payload.mode));

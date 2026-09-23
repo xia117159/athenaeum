@@ -1,3 +1,4 @@
+import { installQuickFilterTestWorker, settleQuickFilter } from "./quickFilterWorkerTestSupport";
 import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
@@ -52,6 +53,7 @@ function dualFixture() {
 
 export const completion = (async () => {
   installDomEnvironment();
+  installQuickFilterTestWorker();
 
   await assertTest("S2 switching syntax recompiles a non-focused panel's path instead of un-filtering it", async () => {
     const f = dualFixture();
@@ -69,7 +71,7 @@ export const completion = (async () => {
       await act(async () => { h.controller.actions.changeQuickFilterSyntax("regex"); await flushEffects(); });
       assert.equal(resolveQuickFilterProgram(h.controller.state, f.path), null,
         "a syntax switch blanks appliedText first (rule 3), so the list must not keep the stale program");
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      await settleQuickFilter(() => h.controller.state, f.path);
 
       // "pro" 在 regex 下同样合法，因此非焦点面板必须自行恢复过滤，而无须重新获得焦点。
       assert.ok(resolveQuickFilterProgram(h.controller.state, f.path),
@@ -84,13 +86,13 @@ export const completion = (async () => {
     try {
       await act(async () => { h.controller.actions.changeQuickFilterSyntax("regex"); await flushEffects(); });
       await act(async () => { h.controller.actions.updateQuickFilterText(f.path, "p.*t"); await flushEffects(); });
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      await settleQuickFilter(() => h.controller.state, f.path);
       assert.ok(resolveQuickFilterProgram(h.controller.state, f.path), "precondition: a valid pattern must be applied");
 
       // 转到另一条路径后写坏模式：非焦点路径上的"最后一次有效匹配"必须保留（规则 6）。
       await act(async () => { h.controller.actions.focusPanel("panel-2"); await flushEffects(); });
       await act(async () => { h.controller.actions.updateQuickFilterText(f.path, "a(1"); await flushEffects(); });
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+      await settleQuickFilter(() => h.controller.state, f.path);
       assert.ok(resolveQuickFilterProgram(h.controller.state, f.path),
         "an invalid pattern on a non-focused path must keep the last valid match");
     } finally { await h.close(); }

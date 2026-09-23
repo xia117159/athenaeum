@@ -32,13 +32,39 @@ export interface QuickFilterEntry {
   appliedText: string;
   /** 当前 text 的编译诊断；null 表示无错误。 */
   error: string | null;
+  /** Only committed Worker data is read by selectors and file commands. */
+  regexEvaluation?: QuickFilterRegexEvaluation;
+  /** Prevent retry loops for an unchanged invalid query or a failed Worker. */
+  regexAttempt?: { text: string; corpusKey: string };
+}
+
+export interface QuickFilterNameMatch {
+  matched: boolean;
+  ranges: QuickFilterRange[];
+}
+
+export interface QuickFilterRegexEvaluation {
+  text: string;
+  matches: Record<string, QuickFilterNameMatch>;
+}
+
+export interface QuickFilterEvaluationRequest {
+  text: string;
+  fallbackText: string;
+  names: string[];
+  includeRanges?: boolean;
+}
+
+export interface QuickFilterEvaluationResult {
+  error: string | null;
+  evaluation: QuickFilterRegexEvaluation | null;
 }
 
 export interface QuickFilterState {
   /** 会话全局偏好，不属于路径缓存（D4-R）。 */
   mode: QuickFilterMode;
   syntax: QuickFilterSyntax;
-  /** key = getPathComparisonKey(path)；只缓存过滤文本。 */
+  /** key = getPathComparisonKey(path); text and committed matching data. */
   byPath: Record<string, QuickFilterEntry>;
 }
 
@@ -53,6 +79,8 @@ export interface QuickFilterProgram {
   test(name: string): boolean;
   /** 命中区间，按 start 升序、互不重叠；text 为空串时恒为空。 */
   ranges(name: string): QuickFilterRange[];
+  /** Newly discovered names wait for evaluation in include/exclude modes. */
+  isPending?(name: string): boolean;
 }
 
 export type QuickFilterCompileResult =
@@ -76,7 +104,7 @@ export const QUICK_FILTER_SYNTAX_ORDER: readonly QuickFilterSyntax[] = ["substri
 
 /** 键盘直输聚合超时（B15）。 */
 export const QUICK_FILTER_TYPEAHEAD_TIMEOUT_MS = 1500;
-/** regex 语法的输入防抖（D13）；切换语法不走防抖（spec §6.6）。 */
+/** Delay before submitting a changed regex query or filename batch. */
 export const QUICK_FILTER_REGEX_DEBOUNCE_MS = 100;
 
 export const QUICK_FILTER_MODE_LABELS: Record<QuickFilterMode, string> = {

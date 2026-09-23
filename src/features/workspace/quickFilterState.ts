@@ -38,12 +38,23 @@ export function resolveQuickFilterEntry(state: WorkspaceState, path: string): Qu
 }
 
 /**
- * 编译该路径当前生效的匹配程序。
- * `appliedText` 为空（不过滤）或在当前语法下无法编译时返回 null。
+ * Resolve the applied filter. Regex reads only committed Worker data; other
+ * syntaxes compile synchronously. Empty input has no filtering program.
  */
 export function resolveQuickFilterProgram(state: WorkspaceState, path: string): QuickFilterProgram | null {
   const entry = resolveQuickFilterEntry(state, path);
-  if (entry.appliedText === "") return null;
+  if (entry.appliedText.trim() === "") return null;
+  if (state.quickFilter.syntax === "regex") {
+    const evaluation = entry.regexEvaluation;
+    if (!evaluation || evaluation.text !== entry.appliedText) return null;
+    return {
+      mode: state.quickFilter.mode,
+      text: evaluation.text,
+      test: (name) => Object.hasOwn(evaluation.matches, name) && evaluation.matches[name].matched,
+      ranges: (name) => Object.hasOwn(evaluation.matches, name) ? evaluation.matches[name].ranges : [],
+      isPending: (name) => !Object.hasOwn(evaluation.matches, name)
+    };
+  }
   const result = compileQuickFilter(entry.appliedText, state.quickFilter.syntax, state.quickFilter.mode);
   return result.ok ? result.program : null;
 }
@@ -146,32 +157,13 @@ function sameEntry(a: QuickFilterEntry, b: QuickFilterEntry) {
 export function applyQuickFilterText(state: QuickFilterState, path: string, text: string): QuickFilterState {
   const previous = state.byPath[getPathComparisonKey(path)] ?? DEFAULT_QUICK_FILTER_ENTRY;
   const entry: QuickFilterEntry =
-    text === ""
-      ? { text: "", appliedText: "", error: null }
+    text.trim() === ""
+      ? { text, appliedText: "", error: null }
       : state.syntax === "regex"
-        // regex 可能编译失败，因此生效匹配要等 controller 派发 quickFilterApplied。
-        ? { text, appliedText: previous.appliedText, error: previous.error }
+        // regex 可能编译失败，因此生效匹配要等 controller 派发 quickFilterEvaluationCommitted。
+        ? { text, appliedText: previous.appliedText, error: previous.error, regexEvaluation: previous.regexEvaluation }
         // substring / wildcard 不可能失败，立即生效（D13/D22）。
         : { text, appliedText: text, error: null };
-  return withEntry(state, path, entry, !sameEntry(previous, entry));
-}
-
-/**
- * 应用编译结果。`text` 只用作**陈旧性守卫**：与条目当前 text 不一致则整条丢弃，
- * 因此 `error` 永远描述用户当下看到的文本（评审 S5）。
- */
-export function applyQuickFilterApplied(
-  state: QuickFilterState,
-  path: string,
-  payload: { text: string; ok: boolean; message: string | null }
-): QuickFilterState {
-  const key = getPathComparisonKey(path);
-  const previous = state.byPath[key];
-  if (!previous || previous.text !== payload.text) return state;
-  const entry: QuickFilterEntry = payload.ok
-    ? { text: previous.text, appliedText: payload.text, error: null }
-    : // 失败时沿用上一次有效匹配（D12/B5）。
-      { text: previous.text, appliedText: previous.appliedText, error: payload.message };
   return withEntry(state, path, entry, !sameEntry(previous, entry));
 }
 
@@ -192,65 +184,9 @@ export function applyQuickFilterSyntax(state: QuickFilterState, syntax: QuickFil
   for (const [key, entry] of Object.entries(state.byPath)) {
     byPath[key] = syntax === "regex"
       ? { text: entry.text, appliedText: "", error: null }
-      : { text: entry.text, appliedText: entry.text, error: null };
+      : { text: entry.text, appliedText: entry.text.trim() ? entry.text : "", error: null };
   }
   return { ...state, syntax, byPath };
-}
-
-export interface QuickFilterCompileTask {
-  /** 比较键，用作指纹表的键。 */
-  key: string;
-  /** 该路径的真实写法，用于派发 `quickFilterApplied`。 */
-  path: string;
-  text: string;
-  fingerprint: string;
-}
-
-/**
- * 编译计划（§6.6）。作用域是**所有面板中全部目录类标签页的路径**，而不只是激活面板的路径。
- *
- * 语法是会话全局的：切到 regex 时 `applyQuickFilterSyntax` 会把**每一条**路径的 `appliedText`
- * 置空（旧语法下的有效文本在新语法下未必有效）。若只重算激活面板，其它**显示中**面板就会
- * 停在一个"文本还在、生效匹配为空"的状态——表现为"失去焦点即取消过滤"，正是 D24 ② 要消除的耦合。
- */
-export function planQuickFilterCompilations(state: WorkspaceState): {
-  tasks: QuickFilterCompileTask[];
-  /** 已无待编译内容（文本为空或已生效）的存活路径，需清掉指纹以便日后重算。 */
-  settled: string[];
-  /** 全部存活路径的比较键，用于淘汰已离场路径的指纹。 */
-  liveKeys: string[];
-} {
-  const tasks: QuickFilterCompileTask[] = [];
-  const settled: string[] = [];
-  const liveKeys: string[] = [];
-  const seen = new Set<string>();
-  for (const panel of Object.values(state.panels)) {
-    for (const tab of panel.tabs) {
-      if (!isDirectoryLikeTab(tab)) continue;
-      const path = tab.snapshot.location.path;
-      if (!path) continue;
-      const key = getPathComparisonKey(path);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      liveKeys.push(key);
-      const entry = state.quickFilter.byPath[key];
-      const text = entry?.text ?? "";
-      // `settled` 必须同时排除"还有陈旧诊断"的情形：regex 下文本回退到**上一次有效值**时
-      // `text === appliedText` 成立，但 `error` 仍描述着中间那次非法输入。若在此跳过重编译，
-      // `quickFilterApplied` 就永远不会派发，红框会一直留着（规格 §5.7：error 永远描述用户当下看到的文本）。
-      if (text === "" || (text === entry?.appliedText && !entry?.error)) {
-        settled.push(key);
-        continue;
-      }
-      tasks.push({
-        key,
-        path,
-        text,
-        fingerprint: `${state.quickFilter.syntax}\u0000${state.quickFilter.mode}\u0000${text}`
-      });
-    }
-  }
-  return { tasks, settled, liveKeys };
 }
 
 /** 清空某一路径的文本；模式与语法保留（B17）。 */
