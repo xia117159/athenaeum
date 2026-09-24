@@ -1,6 +1,8 @@
 pub(crate) mod metadata;
 pub(crate) mod scan;
 pub(crate) mod local;
+mod local_scan;
+mod history;
 pub(crate) mod watch;
 mod core;
 mod target;
@@ -18,3 +20,5 @@ mod runtime_tests;
 
 #[cfg(test)]
 mod local_tests;
+#[cfg(test)]
+mod history_tests;

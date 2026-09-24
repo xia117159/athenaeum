@@ -879,7 +879,7 @@ function PanelSurface({
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
             folderExpansionOnRowClick={folderExpansionOnRowClick}
             sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
-              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind}
+              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind} background={activeTab.snapshot.directorySizeCache?.historical === true}
               onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}
             onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
             onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}

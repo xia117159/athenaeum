@@ -57,6 +57,10 @@ pub struct DirectorySizeRecord {
     pub state: DirectorySizeRecordState,
     pub bytes: Option<String>,
     pub size_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,4 +79,6 @@ pub struct DirectorySizeCache {
     pub generation: u64,
     pub sequence: u64,
     pub directories: Vec<DirectorySizeRecord>,
+    #[serde(default)]
+    pub historical: bool,
 }

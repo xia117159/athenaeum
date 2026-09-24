@@ -8,6 +8,8 @@ mod cache;
 mod rename;
 #[path = "rename_commit.rs"]
 mod rename_commit;
+#[path = "history_core.rs"]
+mod history_core;
 use rename::Maintenance;
 
 pub(super) trait SizeWatch: Send {
@@ -39,7 +41,7 @@ pub(crate) struct OwnerToken { pub label: String, pub epoch: u64 }
 #[derive(Clone, Copy)]
 pub(super) struct ServiceLimits { pub roots: usize, pub leases: usize, pub workers: usize, pub remote_workers: usize, pub cache_bytes: usize }
 impl Default for ServiceLimits {
-    fn default() -> Self { Self { roots: 8, leases: 32, workers: 2, remote_workers: 1, cache_bytes: 64 * 1024 * 1024 } }
+    fn default() -> Self { Self { roots: 8, leases: 32, workers: 2, remote_workers: 1, cache_bytes: 256 * 1024 * 1024 } }
 }
 
 struct Lease { owner: OwnerToken, key: String, scope: ScanTarget, verified: bool, required_validation: u64, detached: bool }
@@ -51,6 +53,7 @@ struct Root {
     phase: DirectorySizePhase,
     stats: ScanStats,
     result: Option<ScanResult>,
+    captured_at: Option<chrono::DateTime<chrono::Utc>>,
     watch: Option<Box<dyn SizeWatch>>,
     identity: Option<RootIdentity>,
     last_identity_ok: Option<u64>,
@@ -67,7 +70,7 @@ struct Root {
 }
 impl Root {
     fn new(target: ScanTarget, generation: u64, now: u64) -> Self {
-        Self { target, generation, sequence: 0, phase: DirectorySizePhase::Queued, stats: ScanStats::default(), result: None,
+        Self { target, generation, sequence: 0, phase: DirectorySizePhase::Queued, stats: ScanStats::default(), result: None, captured_at: None,
             watch: None, identity: None, last_identity_ok: None, identity_expired: false, needs_scan: true, due: now,
             last_start: None, last_progress: now, last_used: now, running: None, reason: None, guard: None, drained_ticket: 0 }
     }
@@ -87,6 +90,8 @@ pub(super) struct Core {
     profile_updates: HashMap<String, usize>,
     events: HashMap<String, (String, DirectorySizeSnapshot)>,
     stopped: bool,
+    pub history: super::history::History,
+    pub history_enabled: bool,
     maintenance: HashMap<u64, Maintenance>,
     rename_ticket: u64,
     #[cfg(test)]
@@ -162,6 +167,9 @@ impl Core {
         self.leases.remove(consumer);
         self.events.remove(consumer);
         if !self.has_leases(&key) {
+            if self.roots.get(&key).is_some_and(|root| root.watch.is_none() && root.target.profile.is_none() && root.guard.is_none()) {
+                self.retire_result(&key);
+            }
             if let Some(root) = self.roots.get_mut(&key) {
                 root.last_used = now;
                 if root.guard.is_some() { return Ok(()); }
@@ -239,7 +247,7 @@ impl Core {
         if root.watch.is_none() { root.reason = Some("实时监控不可用，本次结果仅为快照".into()); }
         self.tick(now);
     }
-    pub fn finished(&mut self, job: &ScanJob, result: ScanResult, identity: Option<RootIdentity>, now: u64) {
+    pub fn finished(&mut self, job: &ScanJob, mut result: ScanResult, identity: Option<RootIdentity>, now: u64) {
         self.tick(now); // Poll pending subtree notifications before accepting any result.
         let current = self.job_current(job);
         if let Some(root) = self.roots.get_mut(&job.target.key) {
@@ -255,9 +263,20 @@ impl Core {
             self.invalidate(&job.target.key, now, true, true, 500, "根目录对象发生变化或无法验证，旧统计已失效");
             return;
         }
+        self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
         while self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
             if !self.evict_unleased(Some(&job.target.key)) { break; }
         }
+        if job.target.profile.is_none() && self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
+            self.compact_live_details();
+            if self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
+                Self::keep_result_paths(&mut result, &[job.target.path.as_str()]);
+            }
+            self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
+        }
+        // Evicting an unleased root may have retired its result into history;
+        // trim that newly-added history before the shared-budget admission test.
+        self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
         let fits = self.cache_bytes().saturating_add(result.accounted_bytes) <= self.limits.cache_bytes;
         let root = self.roots.get_mut(&job.target.key).unwrap();
         root.stats = result.stats.clone();
@@ -265,9 +284,10 @@ impl Core {
         root.reason = result.message.clone().map(|message| message.chars().take(256).collect()).or_else(|| root.reason.take());
         root.last_identity_ok = identity.map(|_| now);
         root.last_used = now;
-        if fits && result.outcome != ScanOutcome::Cancelled { root.result = Some(result); }
-        else if !fits { root.phase = DirectorySizePhase::Partial; root.reason = Some("统计缓存已达到 64 MiB 上限，无法保留目录明细".into()); }
+        if fits && result.outcome != ScanOutcome::Cancelled { root.result = Some(result); root.captured_at = Some(chrono::Utc::now()); }
+        else if !fits { root.phase = DirectorySizePhase::Partial; root.reason = Some("统计缓存已达到 256 MiB 上限，无法保留目录明细".into()); }
         for lease in self.leases.values_mut().filter(|lease| lease.key == job.target.key && !lease.detached) { lease.verified = true; }
+        self.capture_live_history(&job.target.key);
         self.emit(&job.target.key);
     }
     pub fn progress(&mut self, job: &ScanJob, stats: ScanStats, now: u64) {
@@ -297,7 +317,7 @@ impl Core {
         let abandoned: Vec<_> = self.maintenance.iter().filter(|(_, guard)| !guard.valid || now.saturating_sub(guard.started) > 30_000).map(|(id, _)| *id).collect();
         for id in abandoned { self.abandon_rename(id); }
         for (key, lost, reason) in changes {
-            if !self.has_leases(&key) && self.roots[&key].running.is_none() { self.roots.remove(&key); }
+            if !self.has_leases(&key) && self.roots[&key].running.is_none() { self.retire_result(&key); self.roots.remove(&key); }
             else { self.invalidate(&key, now, true, lost, 500, reason); }
         }
         let expired: Vec<_> = self.roots.iter().filter(|(key, root)| root.guard.is_none() && self.has_leases(key) && root.watch.is_some() && root.result.is_some()
@@ -355,7 +375,7 @@ impl Core {
                 let size = root.result.as_ref().unwrap().directories.get(key.as_str()).filter(|size| size.visited());
                 DirectorySizeRecord { path: path.clone(), state: match size { Some(size) if size.complete => DirectorySizeRecordState::Complete,
                     Some(_) => DirectorySizeRecordState::Partial, None => DirectorySizeRecordState::Unknown },
-                    bytes: size.map(|size| size.bytes.to_string()), size_fingerprint: size.and_then(|size| size.fingerprint.clone()) }
+                    bytes: size.map(|size| size.bytes.to_string()), size_fingerprint: size.and_then(|size| size.fingerprint.clone()), cached_at: None, created_at: None }
             }).collect()
         };
         Ok(DirectorySizeLookup { consumer_id: request.consumer_id, generation: request.generation, sequence: root.sequence, stale, directories })
@@ -382,6 +402,7 @@ impl Core {
     pub fn shutdown(&mut self) {
         self.stopped = true;
         for root in self.roots.values() { if let Some(running) = &root.running { running.cancelled.store(true, Ordering::Relaxed); } }
+        for key in self.roots.keys().cloned().collect::<Vec<_>>() { self.retire_result(&key); }
         self.roots.clear();
         self.leases.clear();
         self.events.clear();
@@ -391,7 +412,8 @@ impl Core {
     }
     #[cfg(test)]
     pub fn root_count(&self) -> usize { self.roots.len() }
-    pub fn cache_bytes(&self) -> usize { self.roots.values().filter_map(|root| root.result.as_ref()).map(|result| result.accounted_bytes).sum() }
+    pub fn cache_bytes(&self) -> usize { self.live_cache_bytes().saturating_add(self.history.bytes) }
+    fn live_cache_bytes(&self) -> usize { self.roots.values().filter_map(|root| root.result.as_ref()).map(|result| result.accounted_bytes).sum() }
     pub fn drain_events(&mut self) -> Vec<(String, DirectorySizeSnapshot)> { self.events.drain().map(|(_, event)| event).collect() }
     fn has_leases(&self, key: &str) -> bool { self.leases.values().any(|lease| lease.key == key) }
     fn reusable_root(&self, scope: &ScanTarget) -> Option<String> {
@@ -416,6 +438,7 @@ impl Core {
     fn invalidate(&mut self, key: &str, now: u64, rescan: bool, drop_watch: bool, quiet: u64, reason: &str) {
         if let Some(guard) = self.roots.get(key).and_then(|root| root.guard).and_then(|id| self.maintenance.get_mut(&id)) { guard.valid = false; }
         let leased = self.has_leases(key);
+        self.retire_result(key);
         let Some(root) = self.roots.get_mut(key) else { return; };
         self.generation += 1;
         root.generation = self.generation;
@@ -435,7 +458,7 @@ impl Core {
     fn evict_unleased(&mut self, except: Option<&str>) -> bool {
         let key = self.roots.iter().filter(|(key, root)| root.guard.is_none() && Some(key.as_str()) != except && root.running.is_none() && !self.has_leases(key))
             .min_by_key(|(_, root)| root.last_used).map(|(key, _)| key.clone());
-        if let Some(key) = key { self.roots.remove(&key); true } else { false }
+        if let Some(key) = key { self.retire_result(&key); self.roots.remove(&key); true } else { false }
     }
 }
 

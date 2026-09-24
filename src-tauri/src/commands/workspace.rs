@@ -35,7 +35,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
         .read()
         .expect("settings lock poisoned")
         .clone();
-    let initial_listing =
+    let mut initial_listing =
         fs_service::list_directory(Path::new(&initial_path), &metadata.color_rules, |path| {
             (
                 metadata.tags_for_path(path),
@@ -43,6 +43,7 @@ pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Workspace
             )
         })
         .map_err(|error| error.to_string())?;
+    state.directory_sizes.attach_listing_cache(&mut initial_listing);
     let startup_diagnostics = state
         .metadata
         .write()

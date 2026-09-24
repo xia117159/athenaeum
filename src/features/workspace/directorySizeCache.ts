@@ -6,6 +6,9 @@ import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
  * and projecting a row. Navigation request IDs do not fence size generations. */
 export function currentListingSizeCache(snapshot: DirectorySnapshot, sizes?: DirectorySizeTabState): DirectorySizeCache | undefined {
   const cache = snapshot.directorySizeCache;
+  // Historical display is independent from this process's live result fences.
+  // Its path/type/creation evidence is checked when a current listing is mapped.
+  if (cache?.historical) return cache;
   if (!cache || !sizes || !pathsEqual(sizes.rootPath, snapshot.location.path)) return cache;
   const phase = sizes.snapshot;
   const fence = sizes.cacheFence;

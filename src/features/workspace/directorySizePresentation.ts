@@ -84,8 +84,9 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
   for (const entry of entries.values()) {
     const display = total(entry);
     if (display.bytes === null || display.state !== "complete" && display.state !== "partial") continue;
-    // A partial lookup must not replace a coherent prior numerator/proportion pair.
-    if (display.share === null && rows[entry.path]) continue;
+    // Preserve the existing live ratio policy. With restart history, retain new
+    // scalar values even when a bounded scan cannot supply the denominator.
+    if (display.share === null && rows[entry.path] && !tab.snapshot.directorySizeCache?.historical) continue;
     rows[entry.path] = { path: entry.path, parentPath: entry.parentPath, kind: entry.kind, createdAt: entry.sizeCreatedAt,
       total: display, max: max(entry) };
   }

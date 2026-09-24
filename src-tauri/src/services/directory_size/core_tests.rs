@@ -23,7 +23,7 @@ fn subscribe(core: &mut Core, id: &str, path: &str, now: u64) -> DirectorySizeSn
     core.subscribe(core.owner_token("main").unwrap(), request(id, path), path.starts_with('/').then(profile), now).unwrap()
 }
 fn result(job: &ScanJob, bytes: u64) -> ScanResult {
-    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()),
+    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()), created_at: None,
         stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() } })]),
         stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() },
         outcome: ScanOutcome::Complete, accounted_bytes: 1024, message: None }
@@ -321,6 +321,57 @@ fn size_service_unmonitored_snapshot_is_not_reused_after_final_release_and_cache
 }
 
 #[test]
+fn local_completed_totals_survive_full_leased_cache_by_shedding_details() {
+    let mut core = core(); core.limits.cache_bytes = 2500;
+    let mut jobs = Vec::new();
+    for (id, path) in [("a", "C:\\one"), ("b", "C:\\two"), ("c", "C:\\three")] {
+        subscribe(&mut core, id, path, 0);
+        let job = core.take_jobs(0).remove(0); monitored(&mut core, &job);
+        let mut completed = result(&job, 100); completed.accounted_bytes = 2400;
+        core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+        jobs.push(job);
+    }
+    assert!(core.cache_bytes() <= 2500);
+    for id in ["a", "b", "c"] { assert_eq!(core.snapshot(id).unwrap().total_bytes.as_deref(), Some("100")); }
+}
+
+#[test]
+fn history_only_accepts_current_local_completions_and_shares_global_budget() {
+    let mut core = core(); core.history_enabled = true; core.limits.cache_bytes = 2500;
+    subscribe(&mut core, "a", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0); let changed = monitored(&mut core, &job);
+    let mut completed = result(&job, 100);
+    completed.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+    let captured = core.history.get(&job.target.path).unwrap().cached_at;
+    assert!(core.cache_bytes() <= 2500);
+    changed.store(1, Ordering::Relaxed); core.tick(2);
+    assert_eq!(core.history.get(&job.target.path).unwrap().cached_at, captured);
+    let mut obsolete = result(&job, 999);
+    obsolete.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&job, obsolete, Some(RootIdentity([1, 2, 3, 4])), 3);
+    assert_eq!(core.history.get(&job.target.path).unwrap().bytes, 100);
+    core.shutdown(); assert_eq!(core.history.get(&job.target.path).unwrap().cached_at, captured);
+}
+
+#[test]
+fn remote_result_admission_reclaims_history_created_by_local_eviction() {
+    let mut core = core(); core.history_enabled = true; core.limits.cache_bytes = 1600;
+    subscribe(&mut core, "local", "C:\\root", 0);
+    let local = core.take_jobs(0).remove(0); monitored(&mut core, &local);
+    let mut completed = result(&local, 100);
+    completed.directories.get_mut(local.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&local, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+    core.release("main", "local", 2).unwrap();
+    subscribe(&mut core, "remote", "/root", 3);
+    let remote = core.take_jobs(3).remove(0);
+    let mut completed = result(&remote, 200); completed.accounted_bytes = 1400;
+    core.finished(&remote, completed, None, 4);
+    assert_eq!(core.snapshot("remote").unwrap().total_bytes.as_deref(), Some("200"));
+    assert!(core.cache_bytes() <= 1600);
+}
+
+#[test]
 fn size_service_progress_is_throttled_and_shutdown_cancels_without_replacement() {
     let mut core = core();
     subscribe(&mut core, "a", "C:\\root", 0);
@@ -386,7 +437,7 @@ fn size_service_remote_lookup_keeps_legal_trailing_spaces_distinct() {
     let job = core.take_jobs(0).remove(0);
     let mut result = result(&job, 100);
     for (path, bytes) in [("/root/folder", 10), ("/root/folder ", 90)] {
-        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()),
+        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()), created_at: None,
             stats: ScanStats { known_bytes: bytes, directories: 1, ..Default::default() } });
     }
     core.finished(&job, result, None, 1);

@@ -52,6 +52,7 @@ impl Core {
         }
         // All names, root collisions, proofs and final accounting have passed.
         // Install the complete candidate set within the same Core critical section.
+        self.history.trim(self.limits.cache_bytes.saturating_sub(total));
         let mut installed = Vec::new();
         for (key, target, result) in candidates {
             let mut root = self.roots.remove(&key)?;

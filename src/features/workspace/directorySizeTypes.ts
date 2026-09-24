@@ -20,6 +20,9 @@ export interface DirectorySizeRecord {
   state: "complete" | "partial" | "unknown";
   bytes: string | null;
   sizeFingerprint: string | null;
+  /** Display-only history; never a live generation or freshness certificate. */
+  cachedAt?: string | null;
+  createdAt?: string | null;
 }
 export interface SubscribeDirectorySizesRequest { consumerId: string; target: DirectorySizeTarget; refresh: boolean }
 export interface LookupDirectorySizesRequest { consumerId: string; generation: number; paths: string[] }
@@ -30,6 +33,7 @@ export interface DirectorySizeCache {
   generation: number;
   sequence: number;
   directories: DirectorySizeRecord[];
+  historical?: boolean;
 }
 export interface DirectorySizeTabState {
   rootPath: string;

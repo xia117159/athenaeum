@@ -7,6 +7,7 @@ pub type EventSink = dyn Fn(&str, DirectorySizeSnapshot) + Send + Sync;
 pub struct DirectorySizeService {
     pub(super) core: Arc<Mutex<Core>>, clock: Instant, started: AtomicBool,
     stopped: Arc<AtomicBool>, wake: Mutex<Option<SyncSender<Message>>>,
+    history_path: Mutex<Option<std::path::PathBuf>>,
 }
 pub struct ProfileUpdate<'a> { service: &'a DirectorySizeService, id: String }
 impl Drop for ProfileUpdate<'_> {
@@ -17,9 +18,18 @@ impl Drop for ProfileUpdate<'_> {
 }
 impl Default for DirectorySizeService {
     fn default() -> Self { Self { core: Arc::new(Mutex::new(Core::default())), clock: Instant::now(),
-        started: AtomicBool::new(false), stopped: Arc::new(AtomicBool::new(false)), wake: Mutex::new(None) } }
+        started: AtomicBool::new(false), stopped: Arc::new(AtomicBool::new(false)), wake: Mutex::new(None), history_path: Mutex::new(None) } }
 }
 impl DirectorySizeService {
+    pub fn initialize_history(&self, path: std::path::PathBuf) {
+        if self.started.load(Ordering::SeqCst) || self.stopped.load(Ordering::SeqCst) { return; }
+        let budget = self.core.lock().unwrap().limits.cache_bytes;
+        let history = super::history::History::load(&path, budget).unwrap_or_else(|error| {
+            eprintln!("warning: directory size history ignored: {error:#}"); Default::default()
+        });
+        let mut core = self.core.lock().unwrap(); core.history = history; core.history_enabled = true;
+        *self.history_path.lock().unwrap() = Some(path);
+    }
     pub(super) fn now(&self) -> u64 { self.clock.elapsed().as_millis().min(u64::MAX as u128) as u64 }
     pub fn start(&self, sink: Weak<EventSink>) {
         if self.stopped.load(Ordering::Relaxed) || self.started.swap(true, Ordering::SeqCst) { return; }
@@ -80,14 +90,24 @@ impl DirectorySizeService {
     }
     pub fn lookup(&self, owner: &str, request: LookupDirectorySizesRequest) -> Result<DirectorySizeLookup, String> { self.core.lock().unwrap().lookup(owner, request, self.now()) }
     pub fn attach_listing_cache(&self, listing: &mut crate::domain::models::DirectoryListing) {
-        listing.directory_size_cache = self.core.lock().unwrap().listing_cache(listing, self.now());
+        let mut core = self.core.lock().unwrap();
+        listing.directory_size_cache = core.listing_display_cache(listing, self.now());
     }
     pub fn invalidate_profile(&self, id: &str) { self.core.lock().unwrap().invalidate_profile(id, self.now()); self.wake(); }
     pub fn profile_update(&self, id: &str) -> ProfileUpdate<'_> {
         self.core.lock().unwrap().begin_profile_update(id, self.now()); self.wake();
         ProfileUpdate { service: self, id: id.into() }
     }
-    pub fn shutdown(&self) { self.stopped.store(true, Ordering::SeqCst); self.core.lock().unwrap().shutdown(); self.wake(); }
+    pub fn shutdown(&self) {
+        if self.stopped.swap(true, Ordering::SeqCst) { return; }
+        let history = {
+            let mut core = self.core.lock().unwrap(); core.shutdown(); std::mem::take(&mut core.history)
+        };
+        self.wake();
+        if let Some(path) = self.history_path.lock().unwrap().as_ref() {
+            if let Err(error) = history.save(path) { eprintln!("warning: directory size history save failed: {error:#}"); }
+        }
+    }
 }
 impl Drop for DirectorySizeService { fn drop(&mut self) { self.shutdown(); } }
 
@@ -114,6 +134,13 @@ fn failed_result(reason: &str) -> ScanResult {
 
 struct NormalizedLocalSource;
 impl MetadataSource for NormalizedLocalSource {
+    fn open_directory(&mut self, path: &str, cancelled: &AtomicBool) -> Option<Result<super::scan::DirectoryCursor, String>> {
+        LocalMetadataSource.open_directory(path, cancelled).map(|result| result.map(|cursor| super::scan::DirectoryCursor {
+            created_at: cursor.created_at, entries: Box::new(cursor.entries.map(|mut entry| {
+                entry.directory_path = entry.directory_path.and_then(|path| normalize_local_path(&path).ok()); entry
+            }))
+        }))
+    }
     fn read_directory(&mut self, path: &str, cancelled: &AtomicBool, visit: &mut dyn FnMut(MetadataEntry) -> bool) -> Result<(), String> {
         LocalMetadataSource.read_directory(path, cancelled, &mut |mut entry| {
             entry.directory_path = entry.directory_path.and_then(|path| normalize_local_path(&path).ok());

@@ -4,6 +4,13 @@ use super::metadata::{ListingFingerprint, MetadataEntry, MetadataKind};
 pub(crate) trait MetadataSource {
     fn read_directory(&mut self, path: &str, cancelled: &AtomicBool, visit: &mut dyn FnMut(MetadataEntry) -> bool) -> Result<(), String>;
     fn incomplete_reason(&self) -> Option<&str> { None }
+    /// Local cursors permit bounded DFS; remote protocols keep their callback API.
+    fn open_directory(&mut self, _path: &str, _cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> { None }
+}
+
+pub(crate) struct DirectoryCursor {
+    pub entries: Box<dyn Iterator<Item = MetadataEntry>>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +22,7 @@ pub(crate) struct ScanLimits {
 }
 impl Default for ScanLimits {
     fn default() -> Self {
-        Self { max_directories: 100_000, max_accounted_bytes: 32 * 1024 * 1024,
+        Self { max_directories: 100_000, max_accounted_bytes: 128 * 1024 * 1024,
             max_elapsed: Duration::from_secs(15 * 60), progress_interval: Duration::from_millis(200) }
     }
 }
@@ -39,11 +46,12 @@ pub(crate) struct DirectorySize {
     pub complete: bool,
     pub fingerprint: Option<String>,
     pub stats: ScanStats,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl DirectorySize {
     pub fn visited(&self) -> bool { self.stats.directories != 0 }
-    fn unvisited() -> Self { Self { bytes: 0, complete: false, fingerprint: None, stats: ScanStats::default() } }
+    fn unvisited() -> Self { Self { bytes: 0, complete: false, fingerprint: None, stats: ScanStats::default(), created_at: None } }
 }
 
 #[derive(Debug)]
@@ -57,7 +65,7 @@ pub(crate) struct ScanResult {
 
 // Conservative allowance for vector growth, hash buckets, Arc/string headers,
 // fingerprints and the final map conversion peak. No file record is retained.
-const NODE_ACCOUNT_BYTES: usize = 640;
+pub(super) const NODE_ACCOUNT_BYTES: usize = 640;
 
 struct Node {
     path: Arc<str>,
@@ -69,6 +77,9 @@ pub(crate) fn scan_directory(
     root: &str, source: &mut dyn MetadataSource, cancelled: &AtomicBool,
     limits: ScanLimits, mut progress: impl FnMut(&ScanStats),
 ) -> ScanResult {
+    if let Some(cursor) = source.open_directory(root, cancelled) {
+        return super::local_scan::scan(root, source, cursor, cancelled, limits, progress);
+    }
     let started = Instant::now();
     let mut last_progress = started;
     let mut stats = ScanStats::default();
@@ -155,7 +166,7 @@ pub(crate) fn scan_directory(
             message.get_or_insert_with(|| reason.chars().take(256).collect());
         }
         if cancelled.load(Ordering::Relaxed) { complete = false; halted = true; }
-        nodes[index].size = DirectorySize { bytes, complete, fingerprint: if complete { fingerprint.finish() } else { None },
+        nodes[index].size = DirectorySize { bytes, complete, fingerprint: if complete { fingerprint.finish() } else { None }, created_at: None,
             stats: ScanStats { files: stats.files - before.files, directories: 1, known_bytes: bytes,
                 skipped_links: stats.skipped_links - before.skipped_links, skipped_special: stats.skipped_special - before.skipped_special,
                 errors: stats.errors - before.errors } };

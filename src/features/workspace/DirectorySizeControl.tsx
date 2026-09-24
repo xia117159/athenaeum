@@ -6,8 +6,9 @@ import { decimalBytes, formatDirectoryBytes } from "./directorySizes";
 
 const stop = (event: SyntheticEvent) => event.stopPropagation();
 
-export function DirectorySizeControl({ statistics, locationKind, onAction }: {
+export function DirectorySizeControl({ statistics, locationKind, onAction, background = false }: {
   statistics?: DirectorySizeTabState; locationKind: DirectorySnapshot["location"]["kind"]; onAction: (intent: "calculate" | "cancel") => void;
+  background?: boolean;
 }) {
   const snapshot = statistics?.snapshot;
   const busy = statistics?.pending === true || snapshot?.phase === "queued" || snapshot?.phase === "scanning";
@@ -42,6 +43,6 @@ export function DirectorySizeControl({ statistics, locationKind, onAction }: {
       }} onKeyUp={stop}>
       <Icon size={13} aria-hidden="true" />
     </button>
-    {loading ? <span className="directory-size-control__status" role="status">正在计算目录大小…</span> : null}
+    {loading && !background ? <span className="directory-size-control__status" role="status">正在计算目录大小…</span> : null}
   </span>;
 }

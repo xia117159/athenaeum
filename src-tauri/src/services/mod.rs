@@ -92,6 +92,7 @@ impl AppState {
         let metadata_path = data_dir.join("metadata.json");
         let settings_path = data_dir.join("layout.toml");
         let operation_journal_path = data_dir.join("operation-journal.json");
+        self.directory_sizes.initialize_history(data_dir.join("directory-size-history.ndjson"));
 
         let mut metadata = MetadataStore::load_from(metadata_path.clone())?;
         for diagnostic in metadata.color_filter_recovery_diagnostics() {

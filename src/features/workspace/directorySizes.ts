@@ -129,20 +129,29 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   const rows = view?.rootPath === root && view.locationKind === tab.snapshot.location.kind ? view.rows : undefined;
   const surface = tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
     tab.columns.some((column) => column.id === "size" && column.visible);
-  const hints = new Map(currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab))?.directories.map((record) => [record.path, record]));
+  const cache = currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab));
+  const hints = new Map(cache?.directories.map((record) => [record.path, record]));
   return (entry: EntryViewModel): EntryViewModel => {
     if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
-    let display = project(entry);
+    const current = project(entry);
+    let display = current;
     const hint = hints.get(entry.path);
     const hintBytes = decimalBytes(hint?.bytes);
     if (display.bytes === null && hintBytes !== null && hint?.state !== "unknown" && entry.kind === "folder" &&
       !entry.attributes.includes("L") && supportsDirectorySizes(tab) && listingSizeIdentityIsReliable(tab, root)) {
+      const sizes = currentDirectorySizes(tab);
+      const phase = sizes?.snapshot;
+      const status = sizes?.paused || phase?.phase === "cancelled" ? "已取消刷新"
+        : phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
+        : phase?.phase === "complete" || phase?.phase === "partial" ? "统计已结束，此项暂无新结果"
+        : "后台刷新中";
+      const captured = hint?.cachedAt ? new Date(hint.cachedAt).toLocaleString() : "未知时间";
       display = { state: "stale", bytes: String(hintBytes), share: null,
         label: `${hint?.state === "partial" ? "≥" : ""}${formatDirectoryBytes(hintBytes)}`,
-        title: `上次结果（等待目录身份校验）；${hintBytes} 字节` };
+        title: cache?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
     }
     const old = rows?.[entry.path];
-    if (display.share === null && old && retainedSizeMatches(old, entry) &&
+    if ((cache?.historical ? current.bytes === null : display.share === null) && old && retainedSizeMatches(old, entry) &&
       listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
       const saved = mode === "folder-max" ? old.max : old.total;
       const phase = currentDirectorySizes(tab)?.snapshot;
