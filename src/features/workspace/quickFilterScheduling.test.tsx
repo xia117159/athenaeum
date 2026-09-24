@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import React, { act, useReducer } from "react";
 import ReactDOM from "react-dom/client";
 import { createWorkspaceState, workspaceReducer, type WorkspaceAction } from "./workspaceReducer";
-import { expansionEntry, expansionFixture } from "./folderExpansionTestSupport";
+import { expansionEntry, expansionFixture, expansionSnapshot } from "./folderExpansionTestSupport";
 import { useQuickFilterCompilationScheduler } from "./useQuickFilterCompilationScheduler";
 import { installDomEnvironment } from "./workspaceControllerTestHarness";
 import { evaluateQuickFilter } from "./quickFilterEvaluator";
@@ -104,10 +104,44 @@ export const completion = (async () => {
     await type("z");
     await pause();
     assert.equal(workers.length, 3, "settings role does not launch filter workers");
+
+    await type("sibling");
+    enabled = true;
+    await act(async () => root.render(<Harness />));
+    await pause();
+    await act(async () => workers.at(-1)!.reply());
+    await type("(");
+    await pause();
+    const leaving = workers.at(-1)!;
+    const lateNavigationReply = leaving.onmessage!;
+    const leavingMessage = leaving.messages.at(-1)!;
+    const savedSnapshot = state.panels["panel-1"].tabs[0].snapshot;
+    await send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: f.tabId, pushHistory: true,
+      snapshot: expansionSnapshot("C:\\other", []) } });
+    assert.equal(leaving.terminated, true, "navigation cancels the path's running evaluation");
+    assert.equal(state.quickFilter.byPath[f.path.toLowerCase()].regexEvaluation, undefined);
+    await act(async () => lateNavigationReply({ data: {
+      id: leavingMessage.id, result: evaluateQuickFilter(leavingMessage.request)
+    } } as MessageEvent));
+    assert.equal(state.quickFilter.byPath[f.path.toLowerCase()].regexEvaluation, undefined, "late reply cannot refill history");
+    const countWhileAway = workers.length;
+    await pause();
+    assert.equal(workers.length, countWhileAway, "historical paths do not restart work");
+    await send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: f.tabId, pushHistory: true,
+      snapshot: savedSnapshot } });
+    assert.equal(resolveQuickFilterProgram(state, f.path)?.isPending?.("sibling"), true);
+    await pause();
+    const returned = workers.at(-1)!;
+    assert.notEqual(returned, leaving);
+    assert.equal(returned.messages.at(-1)!.request.fallbackText, "sibling");
+    await act(async () => returned.reply());
+    assert.equal(resolveQuickFilterProgram(state, f.path)?.test("sibling-new"), true);
+    assert.equal(resolveQuickFilterProgram(state, f.path)?.isPending?.("sibling-new"), false);
+    assert.ok(state.quickFilter.byPath[f.path.toLowerCase()].error, "invalid text retains its diagnostic after rebuilding fallback matches");
   } finally {
     await act(async () => root.unmount());
     container.remove();
   }
   assert.ok(workers.every(worker => worker.terminated));
-  console.log("ok - Worker scheduling, modes, refresh, failure, clearing and settings role");
+  console.log("ok - Worker scheduling, modes, refresh, failure, clearing, settings role and navigation cancellation/rebuild");
 })();

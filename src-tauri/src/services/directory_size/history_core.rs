@@ -23,18 +23,4 @@ impl Core {
             self.history.capture(path, &size, at, budget);
         }
     }
-    pub(super) fn keep_result_paths(result: &mut ScanResult, paths: &[&str]) {
-        let mut directories = HashMap::new();
-        for path in paths { if let Some((path, value)) = result.directories.remove_entry(*path) { directories.insert(path, value); } }
-        result.accounted_bytes = directories.keys().map(|path| super::super::scan::NODE_ACCOUNT_BYTES + path.len()).sum();
-        result.directories = directories;
-    }
-    pub(super) fn compact_live_details(&mut self) {
-        for (key, root) in &mut self.roots {
-            if root.guard.is_some() { continue; }
-            let paths: Vec<_> = std::iter::once(root.target.path.as_str()).chain(self.leases.values()
-                .filter(|lease| lease.key == *key).map(|lease| lease.scope.path.as_str())).collect();
-            if let Some(result) = &mut root.result { Self::keep_result_paths(result, &paths); }
-        }
-    }
 }

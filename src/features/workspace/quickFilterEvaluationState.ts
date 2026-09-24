@@ -14,7 +14,7 @@ export function collectQuickFilterCorpora(state: WorkspaceState): Map<string, Qu
   const paths = new Map<string, { path: string; names: Set<string> }>();
   for (const panel of Object.values(state.panels)) {
     for (const tab of panel.tabs) {
-      if (!isDirectoryLikeTab(tab)) continue;
+      if (tab.id !== panel.activeTabId || !isDirectoryLikeTab(tab)) continue;
       const path = tab.snapshot.location.path;
       if (!path) continue;
       const key = getPathComparisonKey(path);

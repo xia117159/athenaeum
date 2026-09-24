@@ -16,7 +16,7 @@ import { getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./
 import { resolveActiveQuickFilterProgram } from "./quickFilterState";
 import { type QuickFilterMode, type QuickFilterSyntax } from "./quickFilterTypes";
 import { useQuickFilterCompilationScheduler } from "./useQuickFilterCompilationScheduler";
-import { decideQuickFilterTypeahead, type QuickFilterTypeaheadTarget } from "./useQuickFilterTypeahead";
+import { decideQuickFilterTypeahead, useQuickFilterTypeaheadClock, type QuickFilterTypeaheadTarget } from "./useQuickFilterTypeahead";
 import { useWorkspaceTreeController } from "./useWorkspaceTreeController";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
@@ -153,7 +153,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
   const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
   /** 键盘直输聚合状态（B15/B16）：`target` 是「面板:标签页:路径」身份键，变化即视为新聚合。 */
-  const quickFilterTypeaheadRef = useRef({ target: "", lastAt: 0 });
+  const quickFilterTypeaheadRef = useQuickFilterTypeaheadClock(state);
 
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,

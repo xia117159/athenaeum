@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { useWorkspaceController } from "./useWorkspaceController";
-import { expansionFixture, expansionInteractions } from "./folderExpansionTestSupport";
+import { expansionFixture, expansionInteractions, expansionSnapshot } from "./folderExpansionTestSupport";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { resolveQuickFilterEntry, resolveQuickFilterProgram } from "./quickFilterState";
 import { assertTest, createTestGateway, flushEffects, installDomEnvironment, waitFor } from "./workspaceControllerTestHarness";
@@ -52,6 +52,45 @@ export const completion = (async () => {
       )
     };
   }
+
+  await assertTest("a panel round trip resets typeahead without clearing its remembered filter", async () => {
+    const f = expansionFixture(); f.bootstrap.layoutMode = "dual";
+    const h = await mount(f.bootstrap);
+    try {
+      await key("a");
+      await act(async () => { h.controller.actions.focusPanel("panel-2"); await flushEffects(); });
+      await act(async () => { h.controller.actions.focusPanel("panel-1"); await flushEffects(); });
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "a");
+      await key("b");
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "b");
+      await act(async () => { h.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false); await flushEffects(); });
+      await key("c");
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "bc", "selection changes must not reset typing");
+    } finally { await h.close(); }
+  });
+
+  await assertTest("tab and path round trips also reset typeahead within the same aggregation window", async () => {
+    const f = expansionFixture();
+    const tab = f.bootstrap.panels["panel-1"].tabs[0];
+    f.bootstrap.panels["panel-1"].tabs.push({ ...tab, id: "alternate-tab" });
+    const h = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, path === f.path ? [f.parent, f.sibling] : []) });
+    try {
+      await key("a");
+      await act(async () => { h.controller.actions.activateTab("panel-1", "alternate-tab"); await flushEffects(); });
+      await act(async () => { h.controller.actions.activateTab("panel-1", f.tabId); await flushEffects(); });
+      await key("b");
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "b");
+      await act(async () => { h.controller.actions.navigateToPath("panel-1", "C:\\other"); await flushEffects(); });
+      await waitFor(() => h.tab.snapshot.location.path === "C:\\other", "navigate away");
+      await act(async () => { h.controller.actions.navigateToPath("panel-1", f.path); await flushEffects(); });
+      await waitFor(() => h.tab.snapshot.location.path === f.path, "navigate back");
+      await key("c");
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "c");
+      await act(async () => { h.controller.actions.refreshPanel("panel-1"); await flushEffects(); });
+      await key("d");
+      assert.equal(resolveQuickFilterEntry(h.controller.state, f.path).text, "cd", "same-path refresh keeps aggregation");
+    } finally { await h.close(); }
+  });
 
   await assertTest("keyboard typeahead aggregates printable keys into the active tab path", async () => {
     const f = expansionFixture();

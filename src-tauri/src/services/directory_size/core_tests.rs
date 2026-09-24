@@ -3,6 +3,8 @@ use crate::domain::{directory_sizes::*, models::{RemoteProfile, RemoteAuthKind, 
 use std::{collections::HashMap, sync::{Arc, atomic::{AtomicU8, Ordering}}};
 #[path = "rename_core_tests.rs"]
 mod rename_tests;
+#[path = "cache_budget_tests.rs"]
+mod cache_budget_tests;
 #[cfg(windows)]
 #[path = "rename_service_tests.rs"]
 mod rename_service_tests;
@@ -327,7 +329,7 @@ fn local_completed_totals_survive_full_leased_cache_by_shedding_details() {
     for (id, path) in [("a", "C:\\one"), ("b", "C:\\two"), ("c", "C:\\three")] {
         subscribe(&mut core, id, path, 0);
         let job = core.take_jobs(0).remove(0); monitored(&mut core, &job);
-        let mut completed = result(&job, 100); completed.accounted_bytes = 2400;
+        let completed = cache_budget_tests::chain(&job, 2);
         core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
         jobs.push(job);
     }

@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { QUICK_FILTER_TYPEAHEAD_TIMEOUT_MS } from "./quickFilterTypes";
 import { resolveQuickFilterEntry } from "./quickFilterState";
 import { isDirectoryLikeTab } from "./workspaceTabs";
@@ -44,6 +45,16 @@ function getActiveTabOf(state: WorkspaceState) {
   const panel = state.panels[state.activePanelId];
   if (!panel) return undefined;
   return panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[0];
+}
+
+/** Reset on committed navigation/focus transitions, even if no key was pressed
+ * at the intermediate target. Selection and same-path refresh keep the clock. */
+export function useQuickFilterTypeaheadClock(state: WorkspaceState) {
+  const tab = getActiveTabOf(state);
+  const identity = `${state.activePanelId}\u0000${tab?.id ?? ""}\u0000${tab?.snapshot.location.path ?? ""}`;
+  const clock = useRef({ target: identity, lastAt: 0 });
+  useLayoutEffect(() => { clock.current = { target: identity, lastAt: 0 }; }, [identity]);
+  return clock;
 }
 
 function isEditableTarget(target: QuickFilterTypeaheadTarget | null | undefined) {

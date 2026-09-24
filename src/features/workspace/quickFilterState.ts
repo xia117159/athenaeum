@@ -46,7 +46,10 @@ export function resolveQuickFilterProgram(state: WorkspaceState, path: string): 
   if (entry.appliedText.trim() === "") return null;
   if (state.quickFilter.syntax === "regex") {
     const evaluation = entry.regexEvaluation;
-    if (!evaluation || evaluation.text !== entry.appliedText) return null;
+    if (!evaluation || evaluation.text !== entry.appliedText) return {
+      mode: state.quickFilter.mode, text: entry.appliedText,
+      test: () => false, ranges: () => [], isPending: () => true
+    };
     return {
       mode: state.quickFilter.mode,
       text: evaluation.text,
@@ -97,30 +100,20 @@ export function resolveQuickFilterInput(
   return { text: entry.text, error: entry.error, mode: state.quickFilter.mode, syntax: state.quickFilter.syntax };
 }
 
-/**
- * 缓存淘汰（D5 + 评审需求 6）。
- *
- * 存活键集合 = 所有面板 × 所有 `isDirectoryLikeTab` 标签页的
- * **当前路径 ∪ 该标签页 `history` 中的全部路径**。
- *
- * 只取"当前路径并集"会把需求 6 破坏掉：用户在某目录输入过滤词 → 进入子文件夹 →
- * 返回上级时过滤词被静默清空，因为原路径在进入子文件夹的那一刻就不再被任何标签页停留。
- * 加入 `history` 后，"返回上级"能恢复过滤词，而真正离场的路径照旧淘汰。
- *
- * 有界性：`history` 是标签页自身的导航栈（`workspaceReducer.ts:1657` 在导航时截断前向分支），
- * 标签页关闭即随之释放，因此不引入新的全局容器，长会话下不会无界增长。
- *
- * 无删除时返回**同一引用**，以免破坏下游 memo。
- */
+/** Conditions follow navigation history; filename data belongs only to active tabs.
+ * Returning to a remembered path rebuilds its data in the Worker. Other panels
+ * displaying that path retain the shared data regardless of keyboard focus. */
 export function pruneQuickFilterCache(state: WorkspaceState): QuickFilterState {
   const current = state.quickFilter;
   const keys = Object.keys(current.byPath);
   if (keys.length === 0) return current;
   const live = new Set<string>();
+  const evaluated = new Set<string>();
   for (const panel of Object.values(state.panels)) {
     for (const tab of panel.tabs) {
       if (!isDirectoryLikeTab(tab)) continue;
       live.add(getPathComparisonKey(tab.snapshot.location.path));
+      if (tab.id === panel.activeTabId) evaluated.add(getPathComparisonKey(tab.snapshot.location.path));
       // 需求 6：标签页历史里的路径也算存活，返回上级时才不会丢过滤词。
       for (const historyPath of tab.history) {
         live.add(getPathComparisonKey(historyPath));
@@ -131,7 +124,11 @@ export function pruneQuickFilterCache(state: WorkspaceState): QuickFilterState {
   const byPath: Record<string, QuickFilterEntry> = {};
   for (const key of keys) {
     if (live.has(key)) {
-      byPath[key] = current.byPath[key];
+      const entry = current.byPath[key];
+      if (!evaluated.has(key) && (entry.regexEvaluation || entry.regexAttempt)) {
+        byPath[key] = { text: entry.text, appliedText: entry.appliedText, error: entry.error };
+        removed = true;
+      } else byPath[key] = entry;
     } else {
       removed = true;
     }

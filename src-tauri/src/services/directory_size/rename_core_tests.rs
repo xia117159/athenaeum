@@ -58,6 +58,26 @@ impl Fixture {
 }
 
 #[test]
+fn rename_guard_retains_deep_details_when_another_scan_needs_cache_space() {
+    let mut t = Fixture::new(); let token = t.begin();
+    let guarded_bytes = t.core.cache_bytes();
+    subscribe(&mut t.core, "other", "D:\\other", 2);
+    let job = t.core.take_jobs(2).remove(0); monitored(&mut t.core, &job);
+    t.core.limits.cache_bytes = guarded_bytes + crate::services::directory_size::scan::NODE_ACCOUNT_BYTES + job.target.path.len();
+    t.core.finished(&job, cache_budget_tests::chain(&job, 1), Some(RootIdentity([1,2,3,4])), 3);
+    assert_eq!(t.core.snapshot("other").unwrap().total_bytes.as_deref(), Some("100"));
+    assert_eq!(t.core.cache_bytes(), t.core.limits.cache_bytes);
+    t.register(token);
+    t.events(&[("old", ChangeKind::RenameOld), ("new", ChangeKind::RenameNew)]); t.confirm(token);
+    assert!(t.finish(token));
+    let snapshot = t.core.snapshot("parent").unwrap();
+    let lookup = t.core.lookup("main", LookupDirectorySizesRequest { consumer_id: "parent".into(),
+        generation: snapshot.generation, paths: vec!["C:\\root\\new\\deep".into()] }, 5).unwrap();
+    assert_eq!(lookup.directories[0].bytes.as_deref(), Some("60"));
+    assert_eq!(t.core.jobs_started, 2, "rename reuses the protected details without a rescan");
+}
+
+#[test]
 fn rename_cache_pairs_can_span_buffers_but_pending_old_and_drain_never_certify_results() {
     let mut t = Fixture::new(); let token = t.begin(); t.register(token);
     t.events(&[("old", ChangeKind::RenameOld)]); t.confirm(token);

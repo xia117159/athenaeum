@@ -1,5 +1,6 @@
 import { pinyin } from "pinyin-pro";
 import { compileLinearRegex } from "./regexEngine";
+import { compileGlob, matchGlob, type GlobProgram } from "./quickFilterGlob";
 import type {
   QuickFilterCompileResult,
   QuickFilterMode,
@@ -14,7 +15,7 @@ import type {
  * 三条硬性设计约束（详见 spec §6）：
  * 1. 匹配源只有 `entry.name`（D6）。本模块不接触路径、描述或标签。
  * 2. 拼音只在 `substring` 语法下叠加（D3），且 `pinyin-pro` **只在本模块**被引入（评审 Sug3）。
- * 3. 匹配不得存在可被用户输入触发的病态回溯：`wildcard` 与 `regex` **都走线性 NFA**。
+ * 3. regex 使用 RE2JS；wildcard 使用只回退最近星号的线性空间匹配。
  *    `regex` 原先用"结构性风险启发式 + 原生 RegExp"，评审 B-1/B-2 证明该方案同时漏判
  *    （`(.*a){3}$`、`([a-z]{1,10}){1,10}$` 冻结界面）与误拒（31% 的合理模式），
  *    因此改为 `regexEngine.compileLinearRegex`（spec §3.1/§3.3）。
@@ -56,11 +57,13 @@ const nameIndexCache = new Map<string, NameIndex>();
 const pinyinTablesCache = new Map<string, PinyinTables>();
 const compileCache = new Map<string, QuickFilterCompileResult>();
 
-/**
- * LRU 写入。原实现 `cache.clear()` 在达到上限时**整表清空**，导致刚形成的复用窗口
- * 在跨过 2048 条后瞬间归零（评审 S-1：n=2000 时复用率 52×，n=2100 时 ≈0×）。
- * `Map` 的插入顺序即访问顺序，删除最早一项即可。
- */
+/** Map insertion order tracks access order in each bounded cache. */
+function cacheGet<T>(cache: Map<string, T>, key: string): T | undefined {
+  const value = cache.get(key);
+  if (value !== undefined) { cache.delete(key); cache.set(key, value); }
+  return value;
+}
+
 function cacheSet<T>(cache: Map<string, T>, key: string, value: T, limit: number): T {
   if (cache.has(key)) cache.delete(key);
   while (cache.size >= limit) {
@@ -148,7 +151,7 @@ function splitClusters(name: string): Array<{ text: string; start: number }> {
  * cluster，区间就是该 code point 自身的 code unit 跨度，与修复前逐位一致。
  */
 function getNameIndex(name: string): NameIndex {
-  const cached = nameIndexCache.get(name);
+  const cached = cacheGet(nameIndexCache, name);
   if (cached) return cached;
 
   const nfcName = name.normalize("NFC");
@@ -216,7 +219,7 @@ function getNameIndex(name: string): NameIndex {
  * S-2：拼音表建立在**归一化后**的 code point 上（`index.points`），与匹配用的点位一致。
  */
 function getPinyinTables(name: string): PinyinTables {
-  const cached = pinyinTablesCache.get(name);
+  const cached = cacheGet(pinyinTablesCache, name);
   if (cached) return cached;
   const index = getNameIndex(name);
   const points = index.points;
@@ -335,164 +338,26 @@ function substringTest(name: string, query: string, queryPoints: string[]): bool
 }
 
 // ---------------------------------------------------------------------------
-// wildcard：锚定整名匹配的线性 NFA（不构造 RegExp，因此不存在病态回溯）
+// wildcard：锚定整名匹配，以线性空间记录字面位置
 // ---------------------------------------------------------------------------
 
-const KIND_LITERAL = 0;
-const KIND_ANY = 1;
-const KIND_STAR = 2;
-
-interface GlobProgram {
-  kinds: Uint8Array;
-  chars: string[];
-}
-
-/**
- * 编译通配符模式。S-2：模式先做 NFC 归一化，与名称一侧的归一化对齐，
- * 因此 `caf?` 能命中 `cafe\u0301`（归一化后是 4 个 code point）。
- */
-function compileGlob(pattern: string): GlobProgram {
-  const points = Array.from(pattern.normalize("NFC"));
-  const kinds = new Uint8Array(points.length);
-  const chars: string[] = new Array(points.length).fill("");
-  for (let position = 0; position < points.length; position += 1) {
-    if (points[position] === "*") {
-      kinds[position] = KIND_STAR;
-    } else if (points[position] === "?") {
-      kinds[position] = KIND_ANY;
-    } else {
-      kinds[position] = KIND_LITERAL;
-      chars[position] = points[position].toLowerCase();
-    }
-  }
-  return { kinds, chars };
-}
-
-/** `*` 允许零个字符，因此状态在第 j 位且第 j 位是 `*` 时可直接推进到 j+1。升序单趟即可收敛。 */
-function globClosure(states: Uint8Array, glob: GlobProgram) {
-  const total = glob.kinds.length;
-  for (let position = 0; position < total; position += 1) {
-    if (states[position] && glob.kinds[position] === KIND_STAR) states[position + 1] = 1;
-  }
-}
-
 function globTest(name: string, glob: GlobProgram): boolean {
-  const index = getNameIndex(name);
-  const total = glob.kinds.length;
-  let current = new Uint8Array(total + 1);
-  let next = new Uint8Array(total + 1);
-  current[0] = 1;
-  globClosure(current, glob);
-  for (const point of index.lowerPoints) {
-    next.fill(0);
-    for (let position = 0; position < total; position += 1) {
-      if (!current[position]) continue;
-      if (glob.kinds[position] === KIND_STAR) next[position] = 1;
-      else if (glob.kinds[position] === KIND_ANY) next[position + 1] = 1;
-      else if (glob.chars[position] === point) next[position + 1] = 1;
-    }
-    globClosure(next, glob);
-    const swap = current;
-    current = next;
-    next = swap;
-  }
-  return current[total] === 1;
+  return matchGlob(getNameIndex(name).lowerPoints, glob) !== null;
 }
 
-/**
- * 通配符命中区间：在 NFA 的可达状态图上做一次 BFS，回溯出一条从 `(0, 0)` 到
- * `(名末, 模式末)` 的路径，并把路径上**由字面记号消费掉**的 code point 合并成区间。
- *
- * 这样 `*.txt` 只高亮 `.txt`、`report?` 只高亮 `report`，而不是把整名点亮（评审 S-3）。
- * `*` 与 `?` 消费的字符不属于"字面命中"，因此不高亮 —— 这是刻意的：
- * 高亮要回答"我输入的哪些字被匹配到了"。
- */
+/** Map literal positions from the chosen glob match back to original UTF-16
+ * spans. Multiple normalized points can belong to one original cluster. */
 function globLiteralRanges(name: string, glob: GlobProgram): QuickFilterRange[] {
-  if (!globTest(name, glob)) return [];
   const index = getNameIndex(name);
-  const total = glob.kinds.length;
-  const pointCount = index.points.length;
-  const width = total + 1;
-  const size = (pointCount + 1) * width;
-  const id = (position: number, state: number) => position * width + state;
-
-  const previous = new Int32Array(size).fill(-1);
-  // 0 = ε 迁移（未消费字符），1 = 字面记号消费，2 = `*`/`?` 消费。
-  const kindOf = new Uint8Array(size);
-  const queue = new Int32Array(size);
-  let head = 0;
-  let tail = 0;
-  previous[id(0, 0)] = id(0, 0);
-  queue[tail] = id(0, 0);
-  tail += 1;
-
-  while (head < tail) {
-    const current = queue[head];
-    head += 1;
-    const position = Math.floor(current / width);
-    const state = current % width;
-    const candidates: number[] = [];
-    const kinds: number[] = [];
-    const push = (next: number, kind: number) => {
-      candidates.push(next);
-      kinds.push(kind);
-    };
-    // `*` 允许零个字符：同位置直接跳到下一状态。
-    if (state < total && glob.kinds[state] === KIND_STAR) push(id(position, state + 1), 0);
-    if (position < pointCount && state < total) {
-      const kind = glob.kinds[state];
-      const point = index.lowerPoints[position];
-      if (kind === KIND_STAR) push(id(position + 1, state), 2);
-      else if (kind === KIND_ANY) push(id(position + 1, state + 1), 2);
-      else if (glob.chars[state] === point) push(id(position + 1, state + 1), 1);
-    }
-    for (let index2 = 0; index2 < candidates.length; index2 += 1) {
-      const next = candidates[index2];
-      if (previous[next] !== -1) continue;
-      previous[next] = current;
-      kindOf[next] = kinds[index2];
-      queue[tail] = next;
-      tail += 1;
-    }
-  }
-
-  const goal = id(pointCount, total);
-  if (previous[goal] === -1) return [];
-  const literals = new Set<number>();
-  let cursor = goal;
-  while (cursor !== id(0, 0)) {
-    if (kindOf[cursor] === 1) literals.add(Math.floor(cursor / width) - 1);
-    cursor = previous[cursor];
-  }
-  if (literals.size === 0) return [];
-
+  const literals = matchGlob(index.lowerPoints, glob, true);
+  if (!literals?.length) return [];
   const ranges: QuickFilterRange[] = [];
-  let start = -1;
-  let end = -1;
-  for (let position = 0; position < pointCount; position += 1) {
-    if (!literals.has(position)) continue;
-    const pointStart = index.starts[position];
-    const pointEnd = pointStart + index.lengths[position];
-    if (start < 0) {
-      start = pointStart;
-      end = pointEnd;
-    } else if (pointStart === end) {
-      // 紧邻的下一个 code point：延长当前区间。
-      end = pointEnd;
-    } else if (pointStart < end) {
-      // IR2-F1（阻断级）：同一个簇里的**第二个** code point 与前一个共享完全相同的
-      // `starts`/`lengths`（S-2 的归一化会把一个簇折叠成多个 code point），因此
-      // `pointStart` 等于**当前区间的起点**而不是终点，`pointStart === end` 不成立。
-      // 若在此另起区间，就会得到 [[0,3],[0,3]] —— 渲染层把名称画两遍。
-      // 该 code point 已被当前区间覆盖，跳过即可。
-      continue;
-    } else {
-      ranges.push({ start, end });
-      start = pointStart;
-      end = pointEnd;
-    }
+  for (const position of literals) {
+    const start = index.starts[position], end = start + index.lengths[position];
+    const previous = ranges.at(-1);
+    if (previous && start <= previous.end) previous.end = Math.max(previous.end, end);
+    else ranges.push({ start, end });
   }
-  if (start >= 0) ranges.push({ start, end });
   return ranges;
 }
 
@@ -545,13 +410,7 @@ function compileSubstring(mode: QuickFilterMode, text: string): QuickFilterProgr
   );
 }
 
-/**
- * 通配符程序同时保留"线性 NFA 判定"与"字面记号命中区间"。
- *
- * 评审 S-3：原实现命中时返回整名区间 `[{0, name.length}]`，等于"命中即全名高亮"，
- * 与另两种语法的逐段高亮不一致。这里改为沿匹配路径回溯出**字面记号**在名称中的区间，
- * 使 `*.txt` 只高亮 `.txt`、`report?` 只高亮 `report` + 一个字符。
- */
+/** Wildcards consume characters, but only literal tokens receive highlights. */
 function compileWildcard(mode: QuickFilterMode, text: string): QuickFilterProgram {
   const glob = compileGlob(text);
   return createProgram(
@@ -645,7 +504,7 @@ export function compileQuickFilter(text: string, syntax: QuickFilterSyntax, mode
   // `mode` 参与键：`entryNameHighlight.tsx:16` 依据 `program.mode` 决定是否高亮，
   // 因此不同 mode 的程序不可互换（评审 S-1 修正）。
   const cacheKey = `${syntax}\u0000${mode}\u0000${applied}`;
-  const cached = compileCache.get(cacheKey);
+  const cached = cacheGet(compileCache, cacheKey);
   if (cached) return cached;
   if (applied === "") {
     return cacheSet(

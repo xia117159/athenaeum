@@ -10,6 +10,8 @@ mod rename;
 mod rename_commit;
 #[path = "history_core.rs"]
 mod history_core;
+#[path = "cache_budget.rs"]
+mod cache_budget;
 use rename::Maintenance;
 
 pub(super) trait SizeWatch: Send {
@@ -266,12 +268,10 @@ impl Core {
         self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
         while self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
             if !self.evict_unleased(Some(&job.target.key)) { break; }
+            self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
         }
         if job.target.profile.is_none() && self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
-            self.compact_live_details();
-            if self.cache_bytes().saturating_add(result.accounted_bytes) > self.limits.cache_bytes {
-                Self::keep_result_paths(&mut result, &[job.target.path.as_str()]);
-            }
+            self.compact_live_details(&mut result, &job.target);
             self.history.trim(self.limits.cache_bytes.saturating_sub(self.live_cache_bytes()).saturating_sub(result.accounted_bytes));
         }
         // Evicting an unleased root may have retired its result into history;

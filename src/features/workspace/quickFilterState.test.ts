@@ -53,9 +53,12 @@ test("resolveQuickFilterProgram compiles appliedText with the session syntax", (
   assert.equal(program.mode, "highlight");
   assert.equal(program.test("my_project"), true);
 
-  // 同一个 appliedText 在 regex 语法下按正则解释（`.` 变成任意字符）。
+  // Missing filename data must wait for the Worker, even with saved applied text.
   const asRegex: WorkspaceState = { ...substring, quickFilter: { ...substring.quickFilter, syntax: "regex" } };
-  assert.equal(resolveQuickFilterProgram(asRegex, path), null, "regex selectors never compile on the UI thread");
+  const pending = resolveQuickFilterProgram(asRegex, path);
+  assert.equal(pending?.isPending?.("pro"), true, "regex selectors never compile on the UI thread");
+  assert.equal(pending?.test("pro"), false);
+  assert.deepEqual(pending?.ranges("pro"), []);
   const committed = withEntry(asRegex, path, { text: "pro", appliedText: "pro", regexEvaluation: {
     text: "pro", matches: { pro: { matched: true, ranges: [{ start: 0, end: 3 }] } }
   } });
@@ -64,9 +67,9 @@ test("resolveQuickFilterProgram compiles appliedText with the session syntax", (
   assert.equal(regexProgram.test("pro"), true);
 });
 
-test("resolveQuickFilterProgram falls back to null when appliedText cannot compile under the current syntax", () => {
+test("resolveQuickFilterProgram returns null for an invalid regex with no previously applied text", () => {
   const { state, path } = createState();
-  const broken = withEntry(state, path, { text: "a(1", appliedText: "a(1" });
+  const broken = withEntry(state, path, { text: "a(1", error: "Invalid regular expression" });
   const asRegex: WorkspaceState = { ...broken, quickFilter: { ...broken.quickFilter, syntax: "regex" } };
   assert.equal(resolveQuickFilterProgram(asRegex, path), null, "an invalid regex must not filter the list");
 });
