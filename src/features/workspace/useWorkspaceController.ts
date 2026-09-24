@@ -353,6 +353,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
       fileListModel:
         current.templateRoot !== next.templateRoot ||
+        !hasSameJsonShape(current.fileAssociations, next.fileAssociations) ||
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
@@ -368,6 +369,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const persistedSettingsChanged = (current: SettingsModel, next: SettingsModel) =>
     current.templateRoot !== next.templateRoot ||
+    !hasSameJsonShape(current.fileAssociations, next.fileAssociations) ||
     !hasSameJsonShape(current.shortcuts, next.shortcuts) ||
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
@@ -597,6 +599,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }, [
     state.settings.model.columns,
     state.settings.model.templateRoot,
+    state.settings.model.fileAssociations,
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
     state.settings.model.treeAutoFollowEnabled,

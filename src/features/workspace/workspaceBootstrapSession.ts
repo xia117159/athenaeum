@@ -336,7 +336,12 @@ export async function mergeBootstrapWithSession(
     },
     activePanelId,
     panels: dedupedPanels,
-    settingsModel: normalizeSettingsModel({ ...session.settingsModel, treeAutoFollowEnabled:
-      base.source === "tauri" ? base.settingsModel.treeAutoFollowEnabled === true : session.settingsModel.treeAutoFollowEnabled === true })
+    settingsModel: normalizeSettingsModel({
+      ...session.settingsModel,
+      // Desktop rules are persisted by the backend; an older session must not erase or revive them.
+      fileAssociations: base.source === "tauri" ? base.settingsModel.fileAssociations : session.settingsModel.fileAssociations,
+      treeAutoFollowEnabled: base.source === "tauri"
+        ? base.settingsModel.treeAutoFollowEnabled === true : session.settingsModel.treeAutoFollowEnabled === true
+    })
   };
 }
