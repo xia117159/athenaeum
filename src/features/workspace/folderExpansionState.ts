@@ -89,6 +89,7 @@ export function alignFolderListing(tab: TabState, snapshot: DirectorySnapshot, e
     next = { ...tab, folderExpansion: { ...tab.folderExpansion, [getPathComparisonKey(path)]: {
       path, status: "ready", sizeFingerprint: snapshot.sizeFingerprint,
       sizeIdentityReliable: snapshot.sizeIdentityReliable,
+      directorySizeCache: snapshot.directorySizeCache,
       entries: snapshot.entries.filter((entry) => pathsEqual(entry.parentPath, path) &&
         !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path))
     } } };
@@ -145,7 +146,9 @@ export function reduceFolderExpansion(
   const updatedBranch: FolderExpansionBranch = action.type === "folderExpansionLoadFailed"
     ? { path: branch.path, entries: [], status: "error", errorMessage: action.payload.errorMessage }
     : { path: branch.path, status: "ready", sizeFingerprint: action.payload.snapshot.sizeFingerprint,
-      sizeIdentityReliable: action.payload.snapshot.sizeIdentityReliable, entries: action.payload.snapshot.entries.filter((entry) =>
+      sizeIdentityReliable: action.payload.snapshot.sizeIdentityReliable,
+      directorySizeCache: action.payload.snapshot.directorySizeCache,
+      entries: action.payload.snapshot.entries.filter((entry) =>
         pathsEqual(entry.parentPath, path) && !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path)) };
   let next: TabState = { ...tab, folderExpansion: { ...tab.folderExpansion, [key]: updatedBranch } };
   next = { ...next, folderExpansion: pruneBranches(next) };

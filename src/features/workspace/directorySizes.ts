@@ -1,4 +1,4 @@
-import type { DirectorySizeTabState, EntrySizeDisplay, RetainedEntrySize } from "./directorySizeTypes";
+import type { DirectorySizeCache, DirectorySizeTabState, EntrySizeDisplay, RetainedEntrySize } from "./directorySizeTypes";
 import type { EntryViewModel, SizeBarMode, TabState } from "./types";
 import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
 import { currentListingSizeCache } from "./directorySizeCache";
@@ -63,6 +63,35 @@ export function listingSizeFingerprint(tab: TabState, path: string): string | nu
 export function listingSizeIdentityIsReliable(tab: TabState, path: string): boolean {
   if (pathsEqual(path, tab.snapshot.location.path)) return tab.snapshot.sizeIdentityReliable !== false;
   return tab.folderExpansion?.[getPathComparisonKey(path)]?.sizeIdentityReliable !== false;
+}
+
+function branchDisplayCache(tab: TabState, branch: NonNullable<TabState["folderExpansion"]>[string], sizes: DirectorySizeTabState | undefined,
+  branchRoot?: EntryViewModel) {
+  const cache = branch.directorySizeCache;
+  if (!cache) return undefined;
+  const entries = new Map(branch.entries.filter((entry) => entry.kind === "folder" && !entry.attributes.includes("L"))
+    .map((entry) => [getPathComparisonKey(entry.path), entry]));
+  // The cache for an expanded listing also contains the listing root itself.
+  // `branch.entries` starts below that root, so include the parent row when
+  // validating a historical fallback; otherwise the root briefly loses its
+  // scalar/bar during a live scan and can flicker back when the scan advances.
+  if (branchRoot?.kind === "folder" && !branchRoot.attributes.includes("L") && pathsEqual(branchRoot.path, branch.path)) {
+    entries.set(getPathComparisonKey(branchRoot.path), branchRoot);
+  }
+  const identityDirectories = cache.directories.filter((record) => record.cachedAt && record.createdAt &&
+    entries.get(getPathComparisonKey(record.path))?.sizeCreatedAt === record.createdAt);
+  if (cache.historical) return identityDirectories.length ? { ...cache, directories: identityDirectories } : undefined;
+  const phase = sizes?.snapshot;
+  const fence = sizes?.cacheFence;
+  const live = sizes && pathsEqual(sizes.rootPath, tab.snapshot.location.path) && !sizes.paused && !sizes.forceRefresh &&
+    phase && phase.artifactRevision === cache.artifactRevision &&
+    cache.generation === phase.generation && cache.sequence <= phase.sequence &&
+    ["queued", "complete", "partial"].includes(phase.phase) &&
+    !(fence && (cache.generation < fence.generation || cache.generation === fence.generation && cache.sequence <= fence.sequence));
+  if (live) return cache;
+  const directories = cache.directories.filter((record) => record.cachedAt && record.createdAt &&
+    entries.get(getPathComparisonKey(record.path))?.sizeCreatedAt === record.createdAt);
+  return directories.length ? { ...cache, historical: true, directories } : undefined;
 }
 
 /** One denominator per listing projection, shared by roots and expanded rows. */
@@ -139,11 +168,27 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   const surface = tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
     tab.columns.some((column) => column.id === "size" && column.visible);
   const cache = currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab));
-  const hints = new Map(cache?.directories.map((record) => [record.path, record]));
+  type SizeHint = NonNullable<typeof cache>["directories"][number] & { historical?: boolean };
+  const hints = new Map<string, SizeHint>();
+  const addHints = (source: DirectorySizeCache | undefined) => {
+    for (const record of source?.directories ?? []) {
+      hints.set(getPathComparisonKey(record.path), source?.historical ? { ...record, historical: true } : record);
+    }
+  };
+  addHints(cache);
+  const sizes = currentDirectorySizes(tab);
+  const branchRoots = new Map<string, EntryViewModel>([
+    ...tab.snapshot.entries,
+    ...Object.values(tab.folderExpansion ?? {}).flatMap((branch) => branch.entries)
+  ].filter((entry) => entry.kind === "folder" && !entry.attributes.includes("L"))
+    .map((entry) => [getPathComparisonKey(entry.path), entry]));
+  for (const branch of Object.values(tab.folderExpansion ?? {})) {
+    addHints(branchDisplayCache(tab, branch, sizes, branchRoots.get(getPathComparisonKey(branch.path))));
+  }
   const rawDisplay = (entry: EntryViewModel): EntrySizeDisplay => {
     const current = project(entry);
     let display = current;
-    const hint = hints.get(entry.path);
+    const hint = hints.get(getPathComparisonKey(entry.path));
     const hintBytes = decimalBytes(hint?.bytes);
     if (display.bytes === null && hintBytes !== null && hint?.state !== "unknown" && entry.kind === "folder" &&
       !entry.attributes.includes("L") && supportsDirectorySizes(tab) && listingSizeIdentityIsReliable(tab, root)) {
@@ -156,7 +201,7 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
       const captured = hint?.cachedAt ? new Date(hint.cachedAt).toLocaleString() : "未知时间";
       display = { state: "stale", bytes: String(hintBytes), share: null, advisory: true,
         label: `${hint?.state === "partial" ? "≥" : ""}${formatDirectoryBytes(hintBytes)}`,
-        title: cache?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
+        title: hint?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
     }
     const old = rows?.[entry.path];
     if (old && (old.total.share !== null ? display.share === null || display.provisional === true && !old.total.advisory : current.bytes === null) && retainedSizeMatches(old, entry) &&
@@ -171,11 +216,12 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
     }
     const livePhase = currentDirectorySizes(tab)?.snapshot?.phase;
     const allowFileFallback = livePhase == null || !["complete", "partial"].includes(livePhase);
-    if (allowFileFallback && display.bytes === null && entry.kind !== "folder" && !entry.attributes.includes("L") &&
+    const branchCacheProvidesParent = hints.has(getPathComparisonKey(entry.parentPath));
+    if ((allowFileFallback || branchCacheProvidesParent) && display.bytes === null && entry.kind !== "folder" && !entry.attributes.includes("L") &&
       listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
       const bytes = exactSizeBytes(entry);
       if (bytes !== null) display = { state: "stale", bytes: String(bytes), share: null, provisional: true, label: entry.sizeLabel,
-        title: `${bytes} 字节` };
+        title: branchCacheProvidesParent ? `${bytes} 字节（展开目录缓存已提供父级范围）` : `${bytes} 字节` };
     }
     return display;
   };

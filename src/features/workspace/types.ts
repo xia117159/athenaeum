@@ -145,6 +145,8 @@ export interface FolderExpansionBranch {
   status: "idle" | "loading" | "ready" | "error";
   sizeFingerprint?: string | null;
   sizeIdentityReliable?: boolean;
+  /** Cache projection returned with this expanded directory listing. */
+  directorySizeCache?: import("./directorySizeTypes").DirectorySizeCache;
   requestId?: number;
   errorMessage?: string;
   selectionReplacements?: SelectionPathReplacement[];
