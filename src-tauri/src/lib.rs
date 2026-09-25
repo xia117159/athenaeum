@@ -9,7 +9,7 @@ use commands::{
     batch_rename::{create_batch_rename_session, preview_batch_rename, apply_batch_rename,
         close_batch_rename_session, get_batch_rename_functions, invalidate_batch_rename_preview},
     color_filter::{replace_color_rules, set_color_filter_enabled, validate_color_filter_rule},
-    directory_sizes::{subscribe_directory_sizes, release_directory_sizes, lookup_directory_sizes},
+    directory_sizes::{subscribe_directory_sizes, release_directory_sizes, lookup_directory_sizes, get_directory_size_diagnostics, lookup_directory_size_cache, update_directory_size_views},
     file_opening::{open_file, cancel_file_open, inspect_association_programs, choose_association_program},
     operations::{
         cancel_file_operation, clear_operation_records, copy_entries, create_directory,
@@ -51,21 +51,18 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 let state = window.state::<Arc<AppState>>();
+                if window.label() == "main" && !state.shutdown.finished() {
+                    state.directory_sizes.freeze_views();
+                    services::desktop_shutdown::begin(window.app_handle(), 0);
+                }
                 state.directory_sizes.close_owner(window.label());
                 state.file_open_jobs.close_owner(window.label());
                 state.batch_rename.close_owner(window.label());
-                if window.label() == "main" {
-                    state.directory_sizes.shutdown();
-                    state.file_open_jobs.begin_shutdown();
-                }
             }
             if window.label() == "main" {
-                if let WindowEvent::CloseRequested { .. } = event {
-                    for webview in window.app_handle().webview_windows().values() {
-                        if webview.label() != "main" {
-                            let _ = webview.close();
-                        }
-                    }
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let state = window.state::<Arc<AppState>>();
+                    if !state.shutdown.finished() { api.prevent_close(); services::desktop_shutdown::begin(window.app_handle(), 0); }
                 }
             }
         })
@@ -108,8 +105,11 @@ pub fn run() {
             initialize_workspace,
             list_directory,
             subscribe_directory_sizes,
+            update_directory_size_views,
+            lookup_directory_size_cache,
             release_directory_sizes,
             lookup_directory_sizes,
+            get_directory_size_diagnostics,
             list_drive_roots,
             set_workspace_watch_roots,
             get_item_properties,
@@ -193,22 +193,22 @@ pub fn run() {
     let sink: Arc<services::directory_size::EventSink> = Arc::new(move |owner, snapshot| {
         let _ = event_app.emit_to(owner, "directory_sizes_changed", snapshot);
     });
-    app.state::<Arc<AppState>>().directory_sizes.start(Arc::downgrade(&sink));
-    let mut waiting_for_file_open_cleanup = false;
+    let cache_app = app.handle().clone();
+    let cache_sink: Arc<services::directory_size::CacheEventSink> = Arc::new(move |owner, event| {
+        let _ = cache_app.emit_to(owner, "directory_size_cache_updated", event);
+    });
+    app.state::<Arc<AppState>>().directory_sizes.set_cache_sink(Arc::downgrade(&cache_sink));
+    let size_sink = Arc::downgrade(&sink);
     app.run(move |app, event| {
+        // Tauri executes .setup() when the runtime becomes Ready, after build().
+        // Starting before run() makes initialize_storage reject initialization.
+        if matches!(event, tauri::RunEvent::Ready) {
+            app.state::<Arc<AppState>>().directory_sizes.start(size_sink.clone());
+        }
         if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
-            let jobs = app.state::<Arc<AppState>>().file_open_jobs.clone();
-            if !jobs.begin_shutdown() && *code != Some(tauri::RESTART_EXIT_CODE) {
+            if !app.state::<Arc<AppState>>().shutdown.finished() {
                 api.prevent_exit();
-                if !waiting_for_file_open_cleanup {
-                    waiting_for_file_open_cleanup = true;
-                    let app = app.clone();
-                    let exit_code = code.unwrap_or(0);
-                    std::thread::spawn(move || {
-                        jobs.shutdown();
-                        app.exit(exit_code);
-                    });
-                }
+                services::desktop_shutdown::begin(app, code.unwrap_or(0));
             }
         }
         if matches!(event, tauri::RunEvent::Exit) {
@@ -218,4 +218,5 @@ pub fn run() {
         }
     });
     drop(sink);
+    drop(cache_sink);
 }

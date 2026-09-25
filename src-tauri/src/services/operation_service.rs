@@ -457,7 +457,7 @@ impl OperationStore {
         let (mut result, execution) = self.prepare_conflict_resolution(resolution)?;
         let task_id = execution.task_id.clone();
         let intent = execution.intent.clone();
-        let operation = execute_conflict_resolution(execution, app_data_dir);
+        let operation = execute_conflict_resolution(execution, app_data_dir, None);
         let mut finished = self
             .finish_operation(&task_id, &intent, operation)
             .context("conflict task disappeared before it could finish")?;
@@ -903,6 +903,19 @@ fn execute_undo_task_with_sizes(execution: OperationUndoExecution, sizes: Option
     }
 }
 
+fn size_change_paths(intent: &OperationIntent) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if matches!(intent.kind, OperationIntentKind::Move | OperationIntentKind::Delete) {
+        paths.extend(intent.sources.as_ref().into_iter().flatten().filter_map(|source| match source {
+            OperationPathRef::Local { path } => Some(PathBuf::from(path)), _ => None,
+        }));
+    }
+    if matches!(intent.kind, OperationIntentKind::Move | OperationIntentKind::Copy) {
+        if let Some(OperationPathRef::Local { path }) = &intent.destination { paths.push(PathBuf::from(path)); }
+    }
+    paths
+}
+
 fn execute_local_intent(
     task_id: &str,
     intent: &OperationIntent,
@@ -928,6 +941,9 @@ fn execute_local_intent(
             continuation: None,
         });
     }
+
+    let changed_paths = size_change_paths(intent);
+    let _size_change = (!changed_paths.is_empty()).then(|| sizes.map(|sizes| sizes.namespace_change(&changed_paths))).flatten();
 
     match intent.kind {
         OperationIntentKind::Copy => execute_copy_or_move(
@@ -1172,7 +1188,12 @@ fn conflict_execution(
 pub(crate) fn execute_conflict_resolution(
     execution: OperationConflictExecution,
     app_data_dir: Option<PathBuf>,
+    sizes: Option<&crate::services::directory_size::DirectorySizeService>,
 ) -> ExecutionResult {
+    // The conflict dialog can outlive a newly accepted scan. Fence again at
+    // the actual continuation; never replay the already completed entries.
+    let paths = size_change_paths(&execution.intent);
+    let _size_change = sizes.filter(|_| !paths.is_empty()).map(|sizes| sizes.namespace_change(&paths));
     execute_pending_conflict(
         &execution.task_id,
         &execution.intent,

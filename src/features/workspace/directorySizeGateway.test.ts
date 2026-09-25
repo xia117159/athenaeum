@@ -41,3 +41,16 @@ test("browser-only size gateway explicitly reports unavailable metadata, never c
   assert.equal(snapshot.totalBytes, null);
   assert.match(snapshot.reason ?? "", /桌面/);
 });
+
+test("cache diagnostics and slot release preserve the owner-bound IPC argument contract", async () => {
+  const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+  const gateway = createDirectorySizesGateway({ runtimeHost: { __TAURI_INTERNALS__: {} },
+    invoke: async <T>(command: string, args: Record<string, unknown>) => { calls.push({ command, args }); return {} as T; } });
+  assert.equal(typeof gateway.diagnostics, "function");
+  await gateway.diagnostics!("F:\\project");
+  await gateway.release("new", { slotId: "panel-1", slotRevision: 2, handoffFrom: "old" });
+  assert.deepEqual(calls, [
+    { command: "get_directory_size_diagnostics", args: { path: "F:\\project" } },
+    { command: "release_directory_sizes", args: { consumerId: "new", slotId: "panel-1", slotRevision: 2, handoffFrom: "old" } }
+  ]);
+});

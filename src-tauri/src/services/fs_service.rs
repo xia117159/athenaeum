@@ -153,12 +153,14 @@ fn entry_from_path(
     tag_names: Vec<String>,
     comment: Option<String>,
     size_fingerprint: &mut ListingFingerprint,
+    size_policy: &super::directory_size::artifacts::ListingPolicy,
 ) -> Result<EntryViewModel> {
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("failed to get metadata for {}", path.display()))?;
     let is_dir = metadata.is_dir();
     let size_kind = local_metadata_kind(&metadata);
-    size_fingerprint.add(path.file_name().and_then(|name| name.to_str()).unwrap_or_default(), size_kind);
+    let size_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    if !size_policy.excludes(size_name, size_kind) { size_fingerprint.add(size_name, size_kind); }
     let hidden = is_hidden(&path, Some(&metadata));
     let system = is_system(Some(&metadata));
     let read_only = metadata.permissions().readonly();
@@ -279,6 +281,7 @@ where
 
     let mut entries = Vec::new();
     let mut size_fingerprint = ListingFingerprint::default();
+    let size_policy = super::directory_size::artifacts::listing_policy(&canonical);
     for entry in fs::read_dir(&canonical)
         .with_context(|| format!("failed to read directory {}", canonical.display()))?
     {
@@ -291,6 +294,7 @@ where
             tags,
             comment,
             &mut size_fingerprint,
+            &size_policy,
         )?);
     }
 

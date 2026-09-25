@@ -125,6 +125,7 @@ pub(super) fn scan(root: &str, source: &mut dyn MetadataSource, cursor: Result<D
             frame.size.stats.known_bytes = frame.size.bytes;
             if let Some(parent) = frames.last_mut() { merge(&mut parent.size, &frame.size); }
             else { total_complete = frame.size.complete; stats = frame.size.stats.clone(); }
+            if !cancelled.load(Ordering::Relaxed) { source.directory_completed(&frame.path, &frame.size); }
             details.insert(frames.len(), frame, limits.max_accounted_bytes - working, limits.max_directories.max(1));
         }
         if last_progress.elapsed() >= limits.progress_interval { progress(&stats); last_progress = Instant::now(); }

@@ -9,7 +9,7 @@ fn start(service: &DirectorySizeService) -> (Arc<Mutex<Vec<DirectorySizeSnapshot
 }
 fn subscribe_path(service: &DirectorySizeService, id: &str, path: &std::path::Path, refresh: bool) {
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest { consumer_id: id.into(),
-        target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, refresh }, None).unwrap();
+        target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, refresh, handoff: None }, None).unwrap();
 }
 fn cache(service: &DirectorySizeService, path: &std::path::Path) -> Option<DirectorySizeCache> {
     let mut listing = crate::services::fs_service::list_directory(path, &[], |_| (vec![], None)).unwrap();
@@ -20,6 +20,181 @@ fn intent(source: &std::path::Path, new_name: &str) -> OperationIntent {
         kind: OperationIntentKind::Rename, sources: None, destination: None,
         source_path: Some(OperationPathRef::Local { path: source.to_str().unwrap().into() }), new_name: Some(new_name.into()),
         parent: None, name: None, undo_record_id: None, conflict_policy: None }
+}
+
+#[test]
+fn size_runtime_rename_proof_survives_own_cache_writes_but_rejects_external_changes() {
+    for external in [None, Some("ordinary"), Some("cache/unknown")] {
+        let root = TestRoot::new(); let old = root.0.join("old"); let new = root.0.join("new");
+        fs::create_dir_all(old.join("deep")).unwrap(); fs::write(old.join("deep/data"), [0; 60]).unwrap();
+        let service = DirectorySizeService::default(); service.initialize_storage(root.0.join("cache"));
+        let storage = service.storage.lock().unwrap().clone().unwrap(); storage.flush(Duration::from_secs(2)).unwrap();
+        let (events, _sink) = start(&service); subscribe_path(&service, "parent", &root.0, false);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !events.lock().unwrap().iter().any(|snapshot| snapshot.phase == DirectorySizePhase::Complete) {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(10));
+        }
+        service.update_views(service.owner_token("main").unwrap(), UpdateDirectorySizeViewsRequest { revision: 1,
+            owner_epoch: Some(service.owner_token("main").unwrap().epoch.to_string()), shutdown_nonce: None,
+            scopes: vec![DirectorySizeViewScope { path: root.0.to_string_lossy().into_owned(), priority: 0 }] }).unwrap();
+        storage.flush(Duration::from_secs(2)).unwrap();
+        let jobs = service.debug_counts().1;
+        let mut rename = service.begin_rename(&[(old.clone(), new.clone())], true);
+        storage.flush(Duration::from_secs(2)).unwrap(); // prepare plus checkpoint inside the monitored ancestor
+        if let Some(path) = external { fs::write(root.0.join(path), b"external").unwrap(); }
+        rename.step(&old, &new, || Ok(fs::rename(&old, &new)?)).unwrap();
+        let accepted = rename.finish(true); drop(rename);
+        assert_eq!(accepted, external.is_none(), "exact artifact classification must also govern rename proofs: {external:?}");
+        storage.flush(Duration::from_secs(2)).unwrap(); // authorize, shadow and startup summary
+        if external.is_none() {
+            std::thread::sleep(Duration::from_millis(350));
+            assert!(cache(&service, &new.join("deep")).is_some(), "{}", serde_json::to_string(&service.diagnostics(service.owner_token("main").unwrap(), new.join("deep").to_str().unwrap()).unwrap()).unwrap());
+            assert_eq!(service.debug_counts().1, jobs, "self-persistence cannot cause another scan");
+        }
+        service.shutdown();
+    }
+}
+
+#[test]
+fn size_runtime_known_shell_mutation_fences_persisted_selection() {
+    let root = TestRoot::new(); let path = root.0.join("data"); fs::create_dir_all(path.join("deep")).unwrap();
+    fs::write(path.join("deep/file"), [0; 60]).unwrap();
+    let service = DirectorySizeService::default(); service.initialize_storage(root.0.join("cache"));
+    let (events, _sink) = start(&service); subscribe_path(&service, "tree", &path, false); await_complete(&events, "tree", "60", 0);
+    let storage = service.storage.lock().unwrap().clone().unwrap(); storage.flush(Duration::from_secs(2)).unwrap();
+    service.release("main", "tree").unwrap();
+    crate::services::windows_shell::invoke_with_size_cache(&service, std::slice::from_ref(&path), Some("delete"), &mut || Ok(fs::remove_dir_all(&path)?)).unwrap();
+    storage.flush(Duration::from_secs(2)).unwrap();
+    assert!(storage.lookup(vec![path.join("deep").to_string_lossy().into_owned()], None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty());
+    service.shutdown();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while path.exists() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+    assert!(!path.exists());
+}
+
+#[test]
+fn size_runtime_template_undo_fences_persisted_copies() { template_namespace_change(false); }
+#[test]
+fn size_runtime_template_recovery_cleanup_fences_persisted_copies() { template_namespace_change(true); }
+fn template_namespace_change(cleanup: bool) {
+    let root = TestRoot::new(); fs::create_dir_all(root.0.join("library/project/deep")).unwrap();
+    fs::create_dir(root.0.join("destination")).unwrap(); fs::write(root.0.join("library/project/deep/data"), [0; 60]).unwrap();
+    let state = AppState::new(crate::services::metadata_store::MetadataStore::default(), crate::services::settings_store::SettingsStore::default());
+    *state.operations.lock().unwrap() = OperationStore::load_from(root.0.join("history.json")).unwrap();
+    let request = CreateTemplateItemsRequest { request_id: "create".into(), template_root: root.0.join("library").to_string_lossy().into_owned(),
+        relative_paths: vec!["project".into()], destination: root.0.join("destination").to_string_lossy().into_owned(), panel_id: None, tab_id: None };
+    let (queued, _) = state.operations.lock().unwrap().queue_template_creation(&request).unwrap();
+    operation_service::templates::execute_creation(&state, &queued.snapshot.task_id, request.clone(), &request.template_root, &|_| {}).unwrap();
+    let undo = || {
+        let (_, execution) = state.operations.lock().unwrap().prepare_undo_latest(uuid::Uuid::new_v4().to_string()).unwrap();
+        operation_service::execute_workspace_undo(&state, execution, &|_| {}).unwrap();
+    };
+    if cleanup { undo(); }
+    let path = if cleanup { PathBuf::from(&state.operations.lock().unwrap().list_history().records[0].recovery_items[0].recovery_path) }
+        else { root.0.join("destination/project") };
+    let service = &state.directory_sizes; service.initialize_storage(root.0.join("cache"));
+    let (events, _sink) = start(service); subscribe_path(service, "tree", &path, false); await_complete(&events, "tree", "60", 0);
+    let storage = service.storage.lock().unwrap().clone().unwrap(); storage.flush(Duration::from_secs(2)).unwrap();
+    service.release("main", "tree").unwrap();
+    let paths = vec![path.join("deep").to_string_lossy().into_owned()];
+    assert_eq!(storage.lookup(paths.clone(), None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().len(), 1);
+    if cleanup {
+        let mut operations = state.operations.lock().unwrap();
+        let confirmation = operations.clear_records_with_sizes(OperationClearRequest { scope: OperationClearScope::History, confirm_undo_loss: false, recovery_confirmation: None }, None, Some(service)).unwrap();
+        let result = operations.clear_records_with_sizes(OperationClearRequest { scope: OperationClearScope::History, confirm_undo_loss: true, recovery_confirmation: confirmation.recovery_confirmation }, None, Some(service)).unwrap();
+        assert_eq!(result.status, OperationClearStatus::Cleared);
+        assert!(result.cleanup_warnings.is_empty(), "{:?}", result.cleanup_warnings);
+    } else { undo(); }
+    storage.flush(Duration::from_secs(2)).unwrap();
+    assert!(storage.lookup(paths, None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty(), "removed template namespaces must retire persisted sizes");
+    service.shutdown();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while path.exists() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+    assert!(!path.exists());
+}
+
+#[test]
+fn size_runtime_conflict_continuation_fences_scans_saved_while_waiting() {
+    for kind in [OperationIntentKind::Move, OperationIntentKind::Copy] {
+        let root = TestRoot::new(); let data = root.0.join("data"); let old = data.join("old"); let dest = root.0.join("dest");
+        fs::create_dir_all(old.join("deep")).unwrap(); fs::create_dir_all(dest.join("old/deep")).unwrap();
+        fs::write(old.join("deep/data"), [0; 60]).unwrap(); fs::write(dest.join("old/deep/data"), [0; 20]).unwrap();
+        let service = DirectorySizeService::default(); service.initialize_storage(root.0.join("cache"));
+        let (events, _sink) = start(&service);
+        let storage = service.storage.lock().unwrap().clone().unwrap();
+        let mut request = intent(&old, "unused"); request.kind = kind.clone(); request.source_path = None; request.new_name = None;
+        request.sources = Some(vec![OperationPathRef::Local { path: old.to_string_lossy().into_owned() }]);
+        request.destination = Some(OperationPathRef::Local { path: dest.to_string_lossy().into_owned() });
+        let mut store = OperationStore::load_from(root.0.join("journal.json")).unwrap(); let (queued, _) = store.queue_operation(request.clone());
+        let task = &queued.snapshot.task_id;
+        let initial = operation_service::execute_operation_task_with_sizes(task, &request, Some(root.0.clone()), Arc::new(AtomicBool::new(false)), None, Some(&service));
+        let waiting = store.finish_operation(task, &request, initial).unwrap();
+        assert_eq!(waiting.snapshot.status, OperationTaskStatus::WaitingConflict);
+        subscribe_path(&service, "source", &data, true); await_complete(&events, "source", "60", 0);
+        subscribe_path(&service, "destination", &dest, true); await_complete(&events, "destination", "20", 0);
+        storage.flush(Duration::from_secs(2)).unwrap();
+        let paths = if kind == OperationIntentKind::Move { vec![old.join("deep"), dest.join("old/deep")] } else { vec![dest.join("old/deep")] };
+        let paths: Vec<_> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+        assert_eq!(storage.lookup(paths.clone(), None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().len(), paths.len());
+        service.release("main", "source".into()).unwrap(); service.release("main", "destination".into()).unwrap();
+        let (_, execution) = store.prepare_conflict_resolution(OperationConflictResolution { conflict_id: waiting.conflict.unwrap().conflict_id,
+            resolution: ConflictResolutionKind::Replace, apply_to_all: false, new_name: None }).unwrap();
+        let operation = operation_service::execute_conflict_resolution(execution, Some(root.0.clone()), Some(&service));
+        let terminal = store.finish_operation(task, &request, operation).unwrap();
+        assert_eq!(terminal.snapshot.status, OperationTaskStatus::Succeeded, "{:?}", terminal.snapshot);
+        assert!(dest.join("old/deep/data").exists()); assert_eq!(old.exists(), kind == OperationIntentKind::Copy);
+        storage.flush(Duration::from_secs(2)).unwrap();
+        assert!(storage.lookup(paths, None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty(),
+            "continuation must fence the newer scan accepted while the conflict dialog was open");
+        service.shutdown();
+    }
+}
+
+#[test]
+fn size_runtime_move_and_delete_tasks_retire_persistent_source_namespaces() {
+    for kind in [OperationIntentKind::Move, OperationIntentKind::Delete] {
+        let root = TestRoot::new(); let data = root.0.join("data"); let old = data.join("old"); let destination = root.0.join("dest");
+        fs::create_dir_all(old.join("deep")).unwrap(); fs::create_dir(&destination).unwrap(); fs::write(old.join("deep/data"), [0; 60]).unwrap();
+        let service = DirectorySizeService::default(); service.initialize_storage(root.0.join("cache"));
+        let (events, _sink) = start(&service); subscribe_path(&service, "parent", &data, false); await_complete(&events, "parent", "60", 0);
+        service.storage.lock().unwrap().as_ref().unwrap().flush(Duration::from_secs(2)).unwrap();
+        let mut request = intent(&old, "unused"); request.kind = kind.clone(); request.source_path = None; request.new_name = None;
+        request.sources = Some(vec![OperationPathRef::Local { path: old.to_string_lossy().into_owned() }]);
+        request.destination = Some(OperationPathRef::Local { path: destination.to_string_lossy().into_owned() });
+        let mut store = OperationStore::load_from(root.0.join("journal.json")).unwrap(); let (queued, _) = store.queue_operation(request.clone());
+        let execution = operation_service::execute_operation_task_with_sizes(&queued.snapshot.task_id, &request, Some(root.0.clone()), Arc::new(AtomicBool::new(false)), None, Some(&service));
+        let result = store.finish_operation(&queued.snapshot.task_id, &request, execution).unwrap();
+        assert_eq!(result.snapshot.status, OperationTaskStatus::Succeeded, "{:?}", result.snapshot);
+        service.storage.lock().unwrap().as_ref().unwrap().flush(Duration::from_secs(2)).unwrap();
+        let hits = service.storage.lock().unwrap().as_ref().unwrap().lookup(vec![old.join("deep").to_string_lossy().into_owned()], None).unwrap()
+            .recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+        assert!(hits.is_empty(), "{kind:?} must fence old durable records and late writes");
+        if kind == OperationIntentKind::Delete {
+            let trash = root.0.join("operation-trash");
+            let mut directories = vec![trash.clone()]; let mut saved = None;
+            while let Some(directory) = directories.pop() {
+                for entry in fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+                    if entry.file_type().unwrap().is_dir() {
+                        if entry.file_name() == "deep" { saved = Some(entry.path()); }
+                        directories.push(entry.path());
+                    }
+                }
+            }
+            let saved = saved.expect("delete retains its undo payload");
+            subscribe_path(&service, "trash", &trash, false); await_complete(&events, "trash", "60", 0);
+            let storage = service.storage.lock().unwrap().clone().unwrap(); storage.flush(Duration::from_secs(2)).unwrap();
+            service.release("main", "trash").unwrap();
+            let paths = vec![saved.to_string_lossy().into_owned()];
+            assert_eq!(storage.lookup(paths.clone(), None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().len(), 1);
+            let result = store.clear_records_with_sizes(OperationClearRequest { scope: OperationClearScope::History,
+                confirm_undo_loss: true, recovery_confirmation: None }, Some(&trash), Some(&service)).unwrap();
+            assert_eq!(result.status, OperationClearStatus::Cleared); assert!(result.cleanup_warnings.is_empty());
+            storage.flush(Duration::from_secs(2)).unwrap();
+            assert!(storage.lookup(paths, None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty(),
+                "cleaned ordinary undo payloads must retire their persistent sizes");
+        }
+        service.shutdown();
+    }
 }
 
 #[test]

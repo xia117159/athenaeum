@@ -88,6 +88,7 @@ import { reduceWorkspaceMenus, reconcileWorkspaceMenus, type WorkspaceMenuAction
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | { type: "directorySizeViewsFrozen" }
   | WorkspaceMenuAction
   | TemplateCreationAction
   | BatchRenameAction
@@ -1280,6 +1281,8 @@ function updateColumnsForSettingsAndTab(
 }
 
 export function workspaceReducer(initialState: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+  if (action.type === "directorySizeViewsFrozen") return { ...initialState, directorySizeViewsFrozen: true };
+  if (initialState.directorySizeViewsFrozen) return initialState;
   const state = prepareSelectionInteraction(initialState, action);
   const next = reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceTree(state, action) ?? reduceWorkspaceMenus(state, action)
     ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
@@ -1838,6 +1841,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       );
 
     case "directorySizeRequested":
+    case "directorySizeCacheReceived":
     case "directorySizeLeaseStarted":
     case "directorySizeReleased":
     case "directorySizeSnapshotReceived":

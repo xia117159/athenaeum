@@ -1,4 +1,27 @@
 use super::{DirectorySizeService, EventSink};
+
+#[test]
+fn history_rejected_admission_keeps_existing_display_and_evicts_oldest_peer() {
+    use super::history::{History, HistoricalSize};
+    let size = HistoricalSize { bytes: 12, complete: true, created_at: chrono::DateTime::UNIX_EPOCH,
+        cached_at: chrono::Utc::now(), artifact_capture: None };
+    let mut history = History::default();
+    history.prioritize(std::collections::HashMap::from([("C:\\visible".into(), 0)]));
+    history.insert("C:\\visible".into(), size.clone(), 1600);
+    history.insert("C:\\cold\\a".into(), size.clone(), 1600);
+    let before = history.bytes;
+    let expensive = format!("C:\\cold\\{}", "x".repeat(50));
+    history.insert(expensive.clone().into(), size.clone(), before);
+    assert_eq!(history.bytes, before, "rejected admission cannot partially evict existing values");
+    assert!(history.get("C:\\cold\\a").is_some());
+    assert!(history.get(&expensive).is_none());
+
+    let mut history = History::default();
+    for path in ["C:\\a", "C:\\b", "C:\\c"] { history.insert(path.into(), size.clone(), 2 * (384 + 4)); }
+    assert!(history.get("C:\\a").is_none(), "least recent peer yields first");
+    assert!(history.get("C:\\b").is_some());
+    assert!(history.get("C:\\c").is_some());
+}
 use crate::domain::directory_sizes::*;
 use std::{fs, path::PathBuf, sync::{Arc, Mutex}, time::{Duration, Instant}};
 
@@ -10,6 +33,19 @@ impl TestRoot {
     }
 }
 impl Drop for TestRoot { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+
+#[test]
+fn history_versions_use_acceptance_order_even_if_the_clock_moves_backwards() {
+    use super::history::{History, HistoricalSize, HistoryRank};
+    let path: Arc<str> = Arc::from("C:\\root");
+    let mut history = History::default();
+    let size = HistoricalSize { bytes: 60, complete: true, created_at: chrono::DateTime::UNIX_EPOCH, cached_at: chrono::Utc::now(), artifact_capture: None };
+    history.insert_ranked(path.clone(), size.clone(), HistoryRank::Accepted(1), 4096);
+    history.insert_ranked(path.clone(), HistoricalSize { bytes: 120, cached_at: chrono::DateTime::UNIX_EPOCH, ..size.clone() }, HistoryRank::Accepted(2), 4096);
+    history.insert_ranked(path.clone(), size.clone(), HistoryRank::Stored(1, 100), 4096);
+    history.insert_ranked(path.clone(), size, HistoryRank::Accepted(1), 4096);
+    assert_eq!(history.get(&path).unwrap().bytes, 120, "late disk reads and retired roots cannot roll back newer accepted data");
+}
 fn start(service: &DirectorySizeService) -> (Arc<Mutex<Vec<DirectorySizeSnapshot>>>, Arc<EventSink>) {
     let events = Arc::new(Mutex::new(vec![])); let observed = events.clone();
     let sink: Arc<EventSink> = Arc::new(move |_, event| observed.lock().unwrap().push(event));
@@ -17,7 +53,7 @@ fn start(service: &DirectorySizeService) -> (Arc<Mutex<Vec<DirectorySizeSnapshot
 }
 fn subscribe(service: &DirectorySizeService, root: &std::path::Path) {
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "history".into(), target: DirectorySizeTarget::Local { path: root.to_str().unwrap().into() }, refresh: false,
+        consumer_id: "history".into(), target: DirectorySizeTarget::Local { path: root.to_str().unwrap().into() }, refresh: false, handoff: None,
     }, None).unwrap();
 }
 fn await_size(events: &Mutex<Vec<DirectorySizeSnapshot>>, bytes: &str) {
@@ -79,7 +115,7 @@ fn sparse_live_listing_preserves_history_for_evicted_child_details() {
         let mut core = service.core.lock().unwrap();
         core.history_enabled = true;
         core.history.insert(Arc::from(normalize_local_path(&child.path).unwrap()), HistoricalSize {
-            bytes: 50, complete: true, created_at: child.created_at.unwrap(), cached_at: chrono::DateTime::UNIX_EPOCH,
+            bytes: 50, complete: true, created_at: child.created_at.unwrap(), cached_at: chrono::DateTime::UNIX_EPOCH, artifact_capture: None,
         }, 4096);
         let job = core.take_jobs(0).remove(0);
         let identity = Some(RootIdentity([1, 2, 3, 4]));
@@ -100,7 +136,7 @@ fn history_stream_limits_identity_and_atomic_failure_keep_bounded_valid_data() {
     use super::{history::{History, HistoricalSize}, target::normalize_local_path};
     let root = TestRoot::new(); let cache = root.0.join("sizes.ndjson");
     let path = normalize_local_path(root.0.join("child").to_str().unwrap()).unwrap();
-    let size = HistoricalSize { bytes: 12, complete: true, created_at: chrono::DateTime::UNIX_EPOCH, cached_at: chrono::Utc::now() };
+    let size = HistoricalSize { bytes: 12, complete: true, created_at: chrono::DateTime::UNIX_EPOCH, cached_at: chrono::Utc::now(), artifact_capture: None };
     let mut history = History::default();
     for i in 0..1000 { history.insert(Arc::from(format!("{path}\\d{i}")), size.clone(), 4096); }
     assert!(history.bytes <= 4096);

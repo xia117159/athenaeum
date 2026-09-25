@@ -547,7 +547,7 @@ mod tests {
             host: "example.invalid".into(), port: 22, username: "user".into(), root_path: "/".into(),
             auth_kind: RemoteAuthKind::Password, private_key_path: None, passive_mode: true, ignore_host_key: false,
             connect_timeout_secs: 10, command_timeout_secs: 20, credential_target: None, password: None };
-        let request = SubscribeDirectorySizesRequest { consumer_id: "size-test".into(), refresh: false,
+        let request = SubscribeDirectorySizesRequest { consumer_id: "size-test".into(), refresh: false, handoff: None,
             target: DirectorySizeTarget::Remote { profile_id: profile.id.clone(), path: "/".into() } };
         let token = state.directory_sizes.owner_token("main").unwrap();
         let before = state.directory_sizes.subscribe(token.clone(), request.clone(), Some(profile.clone())).unwrap();

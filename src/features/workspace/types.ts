@@ -703,6 +703,7 @@ export interface WorkspaceBootstrap {
 }
 
 export interface WorkspaceState {
+  directorySizeViewsFrozen?: boolean;
   treeState: WorkspaceTreeState;
   status: "loading" | "ready";
   source: DataSource;

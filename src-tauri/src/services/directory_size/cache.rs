@@ -13,7 +13,6 @@ impl Core {
         let mut records: HashMap<_, _> = history.directories.into_iter().map(|record| (record.path.clone(), record)).collect();
         for record in live.directories {
             if record.cached_at.is_none() || record.created_at.is_none() { continue; }
-            if records.get(&record.path).is_some_and(|old| old.cached_at > record.cached_at) { continue; }
             records.insert(record.path.clone(), record);
         }
         history.directories = records.into_values().collect();
@@ -25,12 +24,9 @@ impl Core {
     pub fn listing_cache(&mut self, listing: &DirectoryListing, now: u64) -> Option<DirectorySizeCache> {
         if self.stopped || listing.location.kind != LocationKind::Local { return None; }
         self.tick(now);
-        let scope = normalize_target(&DirectorySizeTarget::Local { path: listing.location.path.clone() }, None, 0).ok()?;
-        let key = self.reusable_root(&scope)?;
+        let (key, scope) = self.listing_live_root(listing).ok()?;
         let root = &self.roots[&key];
         let result = root.result.as_ref()?;
-        let fingerprint = listing.size_fingerprint.as_ref()?;
-        if result.directories.get(scope.path.as_str())?.fingerprint.as_ref() != Some(fingerprint) { return None; }
         let paths = std::iter::once(listing.location.path.as_str()).chain(listing.entries.iter()
             .filter(|entry| entry.kind == EntryKind::Directory && !entry.is_symlink).map(|entry| entry.path.as_str()));
         let directories = paths.filter_map(|path| {
@@ -38,9 +34,10 @@ impl Core {
             if normalized != scope.path && std::path::Path::new(&normalized).parent() != Some(std::path::Path::new(&scope.path)) { return None; }
             let size = result.directories.get(normalized.as_str()).filter(|size| size.visited())?;
             Some(DirectorySizeRecord { path: path.into(), state: if size.complete { DirectorySizeRecordState::Complete } else { DirectorySizeRecordState::Partial },
-                bytes: Some(size.bytes.to_string()), size_fingerprint: size.fingerprint.clone(), cached_at: root.captured_at, created_at: size.created_at })
+                bytes: Some(size.bytes.saturating_add(self.artifacts.contribution(&normalized).bytes).to_string()), size_fingerprint: size.fingerprint.clone(), cached_at: root.captured_at, created_at: size.created_at })
         }).collect();
-        Some(DirectorySizeCache { generation: root.generation, sequence: root.sequence, directories, historical: false })
+        Some(DirectorySizeCache { generation: root.generation, sequence: root.sequence, directories, historical: self.artifacts.pending(&scope.path),
+            revision: self.cache_revision.to_string(), artifact_revision: self.artifacts.revision.to_string() })
     }
 
     pub fn historical_listing(&self, listing: &DirectoryListing) -> Option<DirectorySizeCache> {
@@ -50,10 +47,11 @@ impl Core {
                 let key = super::super::target::normalize_local_path(&entry.path).ok()?;
                 let saved = self.history.get(&key)?;
                 if entry.created_at != Some(saved.created_at) { return None; }
-                Some(DirectorySizeRecord { path: entry.path.clone(), bytes: Some(saved.bytes.to_string()),
+                Some(DirectorySizeRecord { path: entry.path.clone(), bytes: Some(saved.display_bytes(&key, &self.artifacts).to_string()),
                     state: if saved.complete { DirectorySizeRecordState::Complete } else { DirectorySizeRecordState::Partial },
                     size_fingerprint: None, cached_at: Some(saved.cached_at), created_at: Some(saved.created_at) })
             }).collect();
-        (!directories.is_empty()).then_some(DirectorySizeCache { generation: 0, sequence: 0, directories, historical: true })
+        (!directories.is_empty()).then_some(DirectorySizeCache { generation: 0, sequence: 0, directories, historical: true,
+            revision: self.cache_revision.to_string(), artifact_revision: self.artifacts.revision.to_string() })
     }
 }

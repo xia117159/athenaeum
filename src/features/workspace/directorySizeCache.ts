@@ -12,9 +12,17 @@ export function currentListingSizeCache(snapshot: DirectorySnapshot, sizes?: Dir
   if (!cache || !sizes || !pathsEqual(sizes.rootPath, snapshot.location.path)) return cache;
   const phase = sizes.snapshot;
   const fence = sizes.cacheFence;
-  if (sizes.paused || sizes.forceRefresh || fence && (cache.generation < fence.generation ||
+  if (sizes.paused || sizes.forceRefresh || phase && phase.artifactRevision !== cache.artifactRevision || fence && (cache.generation < fence.generation ||
     cache.generation === fence.generation && cache.sequence <= fence.sequence) || phase &&
-    (phase.generation !== cache.generation || !["queued", "complete", "partial"].includes(phase.phase))) return undefined;
+    (phase.generation !== cache.generation || !["queued", "complete", "partial"].includes(phase.phase))) {
+    // Invalidating live proof must not erase the last displayed scalar. Retain
+    // only records tied to an ordinary directory in this authoritative listing.
+    const entries = new Map(snapshot.entries.filter((entry) => entry.kind === "folder" && !entry.attributes.includes("L"))
+      .map((entry) => [getPathComparisonKey(entry.path), entry]));
+    const directories = cache.directories.filter((record) => record.cachedAt && record.createdAt &&
+      entries.get(getPathComparisonKey(record.path))?.sizeCreatedAt === record.createdAt);
+    return directories.length ? { ...cache, historical: true, directories } : undefined;
+  }
   const directories = cache.directories.filter((record) => !sizes.records[getPathComparisonKey(record.path)]);
   if (!directories.length) return undefined;
   return directories.length === cache.directories.length ? cache : { ...cache, directories };

@@ -208,8 +208,10 @@ pub async fn show_native_context_menu(
     y: i32,
     shortcuts: NativeSelectionContextMenuShortcuts,
     window: Window,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<NativeSelectionContextMenuResult, String> {
-    windows_shell::show_native_context_menu(paths, x, y, shortcuts, &window)
+    let handler = native_size_handler(state.inner().clone(), paths.iter().map(std::path::PathBuf::from).collect());
+    windows_shell::show_native_context_menu(paths, x, y, shortcuts, &window, handler)
         .await
         .map_err(|error| error.to_string())
 }
@@ -221,10 +223,16 @@ pub async fn show_native_background_context_menu(
     y: i32,
     options: NativeBackgroundContextMenuOptions,
     window: Window,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<NativeBackgroundContextMenuResult, String> {
-    windows_shell::show_native_background_context_menu(directory_path, x, y, options, &window)
+    let handler = native_size_handler(state.inner().clone(), vec![directory_path.clone().into()]);
+    windows_shell::show_native_background_context_menu(directory_path, x, y, options, &window, handler)
         .await
         .map_err(|error| error.to_string())
+}
+
+fn native_size_handler(state: Arc<AppState>, paths: Vec<std::path::PathBuf>) -> windows_shell::NativeCommandHandler {
+    Box::new(move |verb, invoke| windows_shell::invoke_with_size_cache(&state.directory_sizes, &paths, verb, invoke))
 }
 
 #[tauri::command]
@@ -274,7 +282,13 @@ pub async fn start_system_file_drag(
 pub async fn perform_system_file_operation(
     request: SystemFileOperationRequest,
     window: Window,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let mut paths: Vec<std::path::PathBuf> = if request.operation == crate::domain::models::SystemFileOperationKind::Move {
+        request.sources.iter().map(Into::into).collect()
+    } else { vec![] };
+    paths.push(std::path::PathBuf::from(&request.destination));
+    let _size_change = state.directory_sizes.namespace_change(&paths);
     windows_shell::perform_system_file_operation(request, &window)
         .await
         .map_err(|error| error.to_string())

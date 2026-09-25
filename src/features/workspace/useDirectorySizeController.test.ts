@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
-import { sizeSnapshot, withQuickFilterText } from "./directorySizeTestSupport";
+import { sizeRecord, sizeSnapshot, withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { assertTest, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { WorkspaceState } from "./types";
-import type { DirectorySizeSnapshot, SubscribeDirectorySizesRequest } from "./directorySizeTypes";
+import type { DirectorySizeLookup, DirectorySizeSnapshot, LookupDirectorySizesRequest, SubscribeDirectorySizesRequest } from "./directorySizeTypes";
 
 function changeTab(state: WorkspaceState, patch: Partial<WorkspaceState["panels"]["panel-1"]["tabs"][0]>) {
   const panel = state.panels["panel-1"];
@@ -39,6 +39,56 @@ export const completion = (async () => {
       } finally { await h.close(); }
       assert.equal(wire.listeners.size, 0);
       assert.equal(wire.released.length, 2);
+    });
+
+    for (const outcome of ["success", "error"] as const) await assertTest(`a replaced listing fences a late lookup ${outcome} and can query again`, async () => {
+      const f = controllerFixture();
+      f.parent.sizeCreatedAt = null as unknown as string;
+      const pending: Array<{ request: LookupDirectorySizesRequest; resolve(value: DirectorySizeLookup): void; reject(error: Error): void }> = [];
+      const wire = sizeTransport({ lookup: (request) => new Promise((resolve, reject) => pending.push({ request, resolve, reject })) });
+      const h = await mountSizes(f.state, wire.gateway);
+      const complete = (index: number, bytes: string) => {
+        const { request, resolve } = pending[index];
+        resolve({ ...request, sequence: 2, stale: false, directories: request.paths.map((path) => ({
+          ...sizeRecord(path, path === f.path ? "100" : bytes, path === f.path ? "root-stamp" : "parent-stamp"), createdAt: null
+        })) });
+      };
+      try {
+        assert.equal(pending.length, 1);
+        await h.dispatch({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: f.tab.id, pushHistory: false,
+          snapshot: { ...h.tab.snapshot, entries: h.tab.snapshot.entries.map((entry) => ({ ...entry })) } } });
+        await act(async () => {
+          if (outcome === "error") pending[0].reject(new Error("old listing failed")); else complete(0, "60");
+          await flushEffects();
+        });
+        assert.equal(h.tab.directorySizes?.snapshot?.phase, "complete", "old failures cannot stop the current listing");
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.bytes, null, "old replies cannot populate a replaced entry");
+        assert.equal(pending.length, 2, "same generation can query the new listing without another scan");
+        await act(async () => { complete(1, "80"); await flushEffects(); });
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeLabel, "80 B");
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .666666); // 80 / (80 + 30 + 10)
+        assert.equal(wire.subscribed.length, 1);
+      } finally { await h.close(); }
+    });
+
+    for (const generation of [1, 2]) await assertTest(`an older lookup error cannot stop newer statistics (${generation}:3)`, async () => {
+      const f = controllerFixture();
+      let rejectOld!: (error: Error) => void;
+      const wire = sizeTransport(); const lookup = wire.gateway.lookup; let calls = 0;
+      wire.gateway.lookup = (request) => ++calls === 1 ? new Promise((_resolve, reject) => { rejectOld = reject; }) :
+        lookup(request).then((result) => ({ ...result, sequence: 3 }));
+      const h = await mountSizes(f.state, wire.gateway);
+      try {
+        await act(async () => {
+          wire.emit(sizeSnapshot({ consumerId: h.tab.directorySizes!.consumerId!, generation, sequence: 3 }));
+          await flushEffects();
+        });
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
+        await act(async () => { rejectOld(new Error("old version failed")); await flushEffects(); });
+        assert.equal(h.tab.directorySizes?.snapshot?.phase, "complete");
+        assert.equal(h.tab.directorySizes?.paused, false);
+        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
+      } finally { await h.close(); }
     });
 
     for (const kind of ["ftp", "sftp"] as const) await assertTest(`${kind} is manual, maps only bounded remote paths, and never resumes recursion on view changes`, async () => {
@@ -145,7 +195,7 @@ export const completion = (async () => {
       }
     });
 
-    await assertTest("navigation releases a slow subscription and its late result cannot populate the new root", async () => {
+    await assertTest("navigation hands off a slow subscription and its late result cannot populate the new root", async () => {
       const f = controllerFixture();
       const requests: SubscribeDirectorySizesRequest[] = [];
       let finishOld!: (snapshot: DirectorySizeSnapshot) => void;
@@ -159,16 +209,17 @@ export const completion = (async () => {
         const oldConsumer = requests[0].consumerId;
         const destination = { ...f.tab.snapshot, location: { ...f.tab.snapshot.location, path: "C:\\next-root" }, entries: [] };
         await h.dispatch({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: f.tab.id, snapshot: destination, pushHistory: true } });
-        assert.equal(requests.length, 2);
-        assert.equal(wire.released.includes(oldConsumer), true);
+        assert.equal(requests.length, 1, "initial acquire settles before the latest navigation is handed off");
+        assert.equal(wire.released.includes(oldConsumer), false);
         await act(async () => {
           const late = sizeSnapshot({ consumerId: oldConsumer, generation: 999, totalBytes: "999" });
           wire.emit(late); finishOld(late); await flushEffects();
         });
         assert.equal(h.tab.snapshot.location.path, destination.location.path);
+        assert.equal(requests.length, 2);
         assert.equal(h.tab.directorySizes?.consumerId, requests[1].consumerId);
         assert.equal(h.tab.directorySizes?.snapshot?.totalBytes, "100");
-        assert.equal(wire.released.filter((id) => id === oldConsumer).length, 2);
+        assert.equal(wire.released.filter((id) => id === oldConsumer).length, 1);
       } finally { await h.close(); }
     });
   } finally { dom.window.close(); }

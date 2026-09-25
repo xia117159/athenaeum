@@ -35,6 +35,48 @@ test("navigation's first committed listing displays cached grandchildren before 
   assert.notEqual(row.sizeDisplay?.retained, true);
 });
 
+test("a new tab retains an identified listing hint while a new scan starts, fails or is cancelled", () => {
+  for (const phase of ["scanning", "failed", "cancelled", "stale", "queued"] as const) {
+    const f = fixture();
+    const createdAt = "2026-06-10T15:46:28.468277800Z";
+    Object.assign(f.raw.entries[0], { createdAt });
+    Object.assign(f.raw.directorySizeCache.directories[1], { createdAt, cachedAt: "2026-09-24T12:00:00Z" });
+    const tab = f.commit();
+    f.f.state.panels["panel-1"].tabs[0] = tab;
+    const payload = { panelId: "panel-1" as const, tabId: tab.id, rootPath: f.path, consumerId: "next", requestVersion: 0 };
+    let state = workspaceReducer(f.f.state, { type: "directorySizeLeaseStarted", payload });
+    state = workspaceReducer(state, { type: "directorySizeSnapshotReceived", payload: { ...payload,
+      snapshot: sizeSnapshot({ consumerId: "next", generation: 8, sequence: 1, phase, totalBytes: null }) } });
+    const next = state.panels["panel-1"].tabs[0];
+    const row = projectEntrySize(next, next.snapshot.entries[0]);
+    assert.equal(row.sizeLabel, "60 B", phase);
+    assert.equal(row.sizeDisplay?.share, null, "display history never restores a live denominator");
+    assert.equal(exactSizeBytes(row), null);
+  }
+});
+
+test("an identified first-listing hint survives an ordinary refresh without a cache payload, but never object replacement", () => {
+  const f = fixture();
+  const createdAt = "2026-06-10T15:46:28.468277800Z";
+  Object.assign(f.raw.entries[0], { createdAt });
+  Object.assign(f.raw.directorySizeCache.directories[1], { createdAt, cachedAt: "2026-09-24T12:00:00Z" });
+  let state = workspaceReducer(f.f.state, { type: "tabSnapshotCommitted", payload: {
+    panelId: "panel-1", tabId: f.f.tab.id, snapshot: mapDirectoryListingToSnapshot(f.raw), pushHistory: true
+  } });
+  for (const replaced of [false, true]) {
+    const raw: DirectoryListing = { ...f.raw, directorySizeCache: undefined,
+      entries: f.raw.entries.map((entry) => ({ ...entry, createdAt: replaced ? "2026-09-25T00:00:00Z" : createdAt })) };
+    state = workspaceReducer(state, { type: "tabSnapshotCommitted", payload: {
+      panelId: "panel-1", tabId: f.f.tab.id, snapshot: mapDirectoryListingToSnapshot(raw), pushHistory: false
+    } });
+    const tab = state.panels["panel-1"].tabs[0];
+    const row = projectEntrySize(tab, tab.snapshot.entries[0]);
+    assert.equal(row.sizeLabel, replaced ? "--" : "60 B");
+    assert.equal(exactSizeBytes(row), null);
+    assert.equal(row.sizeDisplay?.share, null);
+  }
+});
+
 test("cache hints reject mismatched fingerprints and unreliable listing identity", () => {
   for (const change of ["fingerprint", "identity"] as const) {
     const f = fixture();

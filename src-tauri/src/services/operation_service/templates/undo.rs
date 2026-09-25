@@ -239,6 +239,8 @@ pub(in crate::services::operation_service) fn execute_undo(
         .templates()
         .context("模板撤销清单不存在")?
         .to_vec();
+    let changed_paths: Vec<_> = trees.iter().flat_map(|tree| [tree.path.clone(), tree.recovery_path.clone()]).collect();
+    let _size_change = state.directory_sizes.namespace_change(&changed_paths);
     let result = owned::remove(
         &mut trees,
         &cancel,

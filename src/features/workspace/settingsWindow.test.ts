@@ -226,10 +226,13 @@ export const completion = (async () => {
 
   await assertTest("Tauri runtime closes the settings window when the main window closes", () => {
     const libSource = fs.readFileSync(path.join(process.cwd(), "src-tauri/src/lib.rs"), "utf8");
+    const shutdownSource = fs.readFileSync(path.join(process.cwd(), "src-tauri/src/services/desktop_shutdown.rs"), "utf8");
 
     assert.equal(libSource.includes("WindowEvent::CloseRequested"), true);
     assert.equal(libSource.includes('window.label() == "main"'), true);
-    assert.equal(libSource.includes('webview.label() != "main"'), true);
-    assert.equal(libSource.includes("webview.close()"), true);
+    assert.equal(libSource.includes("api.prevent_close()"), true);
+    assert.equal(libSource.includes("desktop_shutdown::begin(window.app_handle()"), true);
+    assert.equal(shutdownSource.includes("app.exit(code)"), true, "exit closes all child windows after collecting final manifests");
+    assert.ok(shutdownSource.indexOf("directory_sizes.freeze_views()") < shutdownSource.indexOf("app.exit(code)"));
   });
 })();

@@ -1,6 +1,8 @@
 export type DirectorySizeTarget = { kind: "local"; path: string } | { kind: "remote"; profileId: string; path: string };
 export type DirectorySizePhase = "queued" | "scanning" | "complete" | "partial" | "failed" | "cancelled" | "stale";
 export interface DirectorySizeSnapshot {
+  cacheRevision?: string;
+  artifactRevision?: string;
   consumerId: string;
   generation: number;
   sequence: number;
@@ -24,12 +26,15 @@ export interface DirectorySizeRecord {
   cachedAt?: string | null;
   createdAt?: string | null;
 }
-export interface SubscribeDirectorySizesRequest { consumerId: string; target: DirectorySizeTarget; refresh: boolean }
+export interface DirectorySizeHandoff { slotId: string; slotRevision: number; handoffFrom?: string }
+export interface SubscribeDirectorySizesRequest extends Partial<DirectorySizeHandoff> { consumerId: string; target: DirectorySizeTarget; refresh: boolean }
 export interface LookupDirectorySizesRequest { consumerId: string; generation: number; paths: string[] }
 export interface DirectorySizeLookup {
   consumerId: string; generation: number; sequence: number; stale: boolean; directories: DirectorySizeRecord[];
 }
 export interface DirectorySizeCache {
+  revision?: string;
+  artifactRevision?: string;
   generation: number;
   sequence: number;
   directories: DirectorySizeRecord[];
@@ -57,6 +62,8 @@ export interface EntrySizeDisplay {
   title: string;
   /** Last displayed value, never evidence that the current scan is valid. */
   retained?: boolean;
+  /** A cached scalar that has never been verified in this tab's live result. */
+  advisory?: boolean;
 }
 export interface RetainedEntrySize {
   path: string;
@@ -77,8 +84,13 @@ export interface DirectorySizePresentation {
   history: DirectorySizePresentationView[];
 }
 export interface DirectorySizesGateway {
+  updateViews?(request: import("./directorySizeViewsTypes").UpdateDirectorySizeViewsRequest): Promise<import("./directorySizeViewsTypes").DirectorySizeViewsAck>;
+  listenViewsFlush?(listener: (event: import("./directorySizeViewsTypes").DirectorySizeViewsFlushRequested) => void): Promise<() => void>;
+  lookupCache?(request: import("./directorySizeCacheTypes").LookupDirectorySizeCacheRequest): Promise<import("./directorySizeCacheTypes").DirectorySizeCacheLookup>;
+  listenCache?(listener: (event: import("./directorySizeCacheTypes").DirectorySizeCacheUpdated) => void): Promise<() => void>;
+  diagnostics?(path: string): Promise<import("./directorySizeDiagnostics").DirectorySizeDiagnostics>;
   subscribe(request: SubscribeDirectorySizesRequest): Promise<DirectorySizeSnapshot>;
-  release(consumerId: string): Promise<void>;
+  release(consumerId: string, handoff?: DirectorySizeHandoff): Promise<void>;
   lookup(request: LookupDirectorySizesRequest): Promise<DirectorySizeLookup>;
   listen(listener: (snapshot: DirectorySizeSnapshot) => void): Promise<() => void>;
 }

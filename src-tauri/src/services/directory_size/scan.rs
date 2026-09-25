@@ -6,6 +6,8 @@ pub(crate) trait MetadataSource {
     fn incomplete_reason(&self) -> Option<&str> { None }
     /// Local cursors permit bounded DFS; remote protocols keep their callback API.
     fn open_directory(&mut self, _path: &str, _cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> { None }
+    /// Publish a provisional subtree before the bounded detail map may discard it.
+    fn directory_completed(&mut self, _path: &str, _size: &DirectorySize) {}
 }
 
 pub(crate) struct DirectoryCursor {
@@ -27,7 +29,7 @@ impl Default for ScanLimits {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ScanStats {
     pub files: u64,
     pub directories: u64,
@@ -40,7 +42,7 @@ pub(crate) struct ScanStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanOutcome { Complete, Partial, Failed, Cancelled }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DirectorySize {
     pub bytes: u64,
     pub complete: bool,

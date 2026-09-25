@@ -72,7 +72,7 @@ for (const kind of ["ftp", "sftp"] as const) test(`${kind} partial null fingerpr
   h.navigate({ ...h.tab.snapshot, sizeFingerprint: null });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ generation: 2, sequence: 3, phase: "partial", totalBytes: null, freshness: "snapshot" }) } });
-  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, lookup: {
+  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.current.snapshot, expectedExpansion: h.current.folderExpansion, lookup: {
     consumerId: "size-test", generation: 2, sequence: 3, stale: false, directories: [
       { ...sizeRecord(h.path, "80", "", "partial"), sizeFingerprint: null },
       { ...sizeRecord(h.parent.path, "40", "", "partial"), sizeFingerprint: null }
@@ -115,7 +115,7 @@ test("history is bounded and excluded from persisted sessions", () => {
     const payload = { ...h.payload, rootPath: path };
     h.send({ type: "directorySizeLeaseStarted", payload });
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...payload, snapshot: sizeSnapshot() } });
-    h.send({ type: "directorySizeLookupReceived", payload: { ...payload, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
+    h.send({ type: "directorySizeLookupReceived", payload: { ...payload, expectedRoot: h.current.snapshot, expectedExpansion: h.current.folderExpansion, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
       directories: [sizeRecord(path, "10", "stamp")] } } });
   }
   assert.ok(h.current.directorySizePresentation!.history.length <= 7);
@@ -139,7 +139,7 @@ test("deleting a folder invalidates previously visited descendant views", () => 
   const payload = { ...h.payload, rootPath: h.parent.path };
   h.send({ type: "directorySizeLeaseStarted", payload });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...payload, snapshot: sizeSnapshot() } });
-  h.send({ type: "directorySizeLookupReceived", payload: { ...payload, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
+  h.send({ type: "directorySizeLookupReceived", payload: { ...payload, expectedRoot: h.current.snapshot, expectedExpansion: h.current.folderExpansion, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
     directories: [sizeRecord(h.parent.path, "60", "parent-stamp")] } } });
   h.navigate(h.tab.snapshot);
   h.navigate({ ...h.tab.snapshot, entries: [h.a, h.b] });

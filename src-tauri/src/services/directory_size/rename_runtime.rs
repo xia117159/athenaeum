@@ -3,7 +3,8 @@ use super::{DirectorySizeService, rename_proof::{self as proof, ObjectProof}, re
 
 /// Internal capability held only by the actual operation worker. Cache failure
 /// never changes the outcome of the underlying filesystem operation.
-pub(crate) struct RenameSession<'a> { service: &'a DirectorySizeService, token: Option<u64>, handoff: Handoff }
+pub(crate) struct RenameSession<'a> { service: &'a DirectorySizeService, token: Option<u64>, handoff: Handoff,
+    persistence: Option<super::operation_persistence::Persistence> }
 impl DirectorySizeService {
     pub(crate) fn begin_rename(&self, paths: &[(PathBuf, PathBuf)], optimize: bool) -> RenameSession<'_> {
         let scopes: Vec<_> = paths.iter().flat_map(|(from, to)| [from, to]).filter_map(|path| proof::normalize(path)).collect();
@@ -17,8 +18,9 @@ impl DirectorySizeService {
         }
         let token = self.core.lock().unwrap().begin_rename(preparation, scopes, items, &roots_proof, self.now());
         self.wake();
+        let persistence = super::operation_persistence::Persistence::begin(self, paths);
         let handoff = Handoff::prepare(self, token, paths);
-        RenameSession { service: self, token, handoff }
+        RenameSession { service: self, token, handoff, persistence }
     }
     pub(crate) fn rename_file(&self, from: &Path, to: &Path, optimize: bool) -> anyhow::Result<()> {
         self.rename_with(from, to, optimize, || Ok(std::fs::rename(from, to)?))
@@ -37,6 +39,7 @@ impl DirectorySizeService {
 impl RenameSession<'_> {
     pub(crate) fn abandon(&mut self) { if let Some(token) = self.token { self.service.core.lock().unwrap().abandon_rename(token); } }
     pub(crate) fn step<T>(&mut self, from: &Path, to: &Path, action: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+        if let Some(persistence) = &mut self.persistence { persistence.step(from, to); }
         let paths = proof::normalize(from).zip(proof::normalize(to));
         if let (Some(token), Some((from, to))) = (self.token, paths.as_ref()) {
             let before = proof::read_proof(from);
@@ -54,7 +57,10 @@ impl RenameSession<'_> {
         result
     }
     pub(crate) fn finish(&mut self, success: bool) -> bool {
-        let Some(token) = self.token.take() else { return false; };
+        let Some(token) = self.token.take() else {
+            if let Some(persistence) = &mut self.persistence { persistence.finish(self.service, false); }
+            return false;
+        };
         let mut success = success;
         let deadline = Instant::now() + Duration::from_secs(2);
         if success { success = self.handoff.restore(self.service, token, deadline); }
@@ -89,6 +95,7 @@ impl RenameSession<'_> {
         let mut core = self.service.core.lock().unwrap();
         let result = core.finish_rename(token, success && self.handoff.quiet(), &proofs, revision, self.service.now());
         drop(core);
+        if let Some(persistence) = &mut self.persistence { persistence.finish(self.service, result); }
         self.service.wake(); result
     }
 }

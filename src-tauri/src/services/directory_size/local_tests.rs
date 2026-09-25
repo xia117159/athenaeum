@@ -12,6 +12,31 @@ impl TestRoot {
 impl Drop for TestRoot { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
 
 #[test]
+fn local_size_streams_completed_subtrees_even_when_memory_retains_only_the_root() {
+    use super::scan::{DirectoryCursor, DirectorySize, MetadataSource};
+    struct RecordingSource { records: Vec<(String, u64)> }
+    impl MetadataSource for RecordingSource {
+        fn read_directory(&mut self, _: &str, _: &AtomicBool, _: &mut dyn FnMut(super::metadata::MetadataEntry) -> bool) -> Result<(), String> { unreachable!() }
+        fn open_directory(&mut self, path: &str, cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> {
+            LocalMetadataSource.open_directory(path, cancelled)
+        }
+        fn directory_completed(&mut self, path: &str, size: &DirectorySize) {
+            self.records.push((path.into(), size.bytes));
+        }
+    }
+    let root = TestRoot::new(); fs::create_dir_all(root.0.join("child/deep")).unwrap();
+    fs::write(root.0.join("child/deep/payload"), [0_u8; 60]).unwrap();
+    let mut source = RecordingSource { records: vec![] };
+    let result = scan_directory(root.0.to_str().unwrap(), &mut source, &AtomicBool::new(false),
+        ScanLimits { max_directories: 1, ..Default::default() }, |_| {});
+    assert_eq!(result.outcome, ScanOutcome::Complete);
+    assert_eq!(result.directories.len(), 1);
+    assert_eq!(source.records.len(), 3);
+    assert!(source.records.iter().all(|(_, bytes)| *bytes == 60));
+    assert_eq!(source.records.last().unwrap().0, root.0.to_str().unwrap());
+}
+
+#[test]
 fn local_size_scan_matches_raw_listing_fingerprint_and_includes_hidden_and_empty() {
     let root = TestRoot::new();
     fs::create_dir(root.0.join("folder")).unwrap();

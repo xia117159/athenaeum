@@ -5,6 +5,9 @@ pub mod batch_rename;
 pub mod color_filter;
 pub mod drive_service;
 pub mod directory_size;
+pub mod desktop_shutdown;
+#[cfg(test)]
+mod desktop_shutdown_tests;
 pub mod file_watcher;
 #[cfg(windows)]
 pub(crate) mod watch_registry;
@@ -45,6 +48,7 @@ use self::{
 use crate::domain::models::SystemIconBitmap;
 
 pub struct AppState {
+    pub shutdown: desktop_shutdown::Shutdown,
     pub metadata: RwLock<MetadataStore>,
     pub settings: RwLock<SettingsStore>,
     pub app_data_dir: RwLock<Option<PathBuf>>,
@@ -61,6 +65,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(metadata: MetadataStore, settings: SettingsStore) -> Self {
         Self {
+            shutdown: desktop_shutdown::Shutdown::default(),
             metadata: RwLock::new(metadata),
             settings: RwLock::new(settings),
             app_data_dir: RwLock::new(None),
@@ -92,7 +97,7 @@ impl AppState {
         let metadata_path = data_dir.join("metadata.json");
         let settings_path = data_dir.join("layout.toml");
         let operation_journal_path = data_dir.join("operation-journal.json");
-        self.directory_sizes.initialize_history(data_dir.join("directory-size-history.ndjson"));
+        self.directory_sizes.initialize_storage(data_dir.join("directory-size-cache-v2"));
 
         let mut metadata = MetadataStore::load_from(metadata_path.clone())?;
         for diagnostic in metadata.color_filter_recovery_diagnostics() {

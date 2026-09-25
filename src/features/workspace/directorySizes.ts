@@ -27,18 +27,22 @@ export function formatDirectoryBytes(bytes: bigint): string {
 /** Never promote rounded labels or unsafe JS numbers to precise aggregate bytes. */
 export function exactSizeBytes(entry: EntryViewModel): bigint | null {
   if (entry.kind === "folder" && !entry.driveInfo) {
-    return entry.sizeDisplay && (entry.sizeDisplay.state === "complete" || entry.sizeDisplay.state === "partial" || entry.sizeDisplay.retained)
+    return entry.sizeDisplay && !entry.sizeDisplay.advisory && (entry.sizeDisplay.state === "complete" || entry.sizeDisplay.state === "partial" || entry.sizeDisplay.retained)
       ? decimalBytes(entry.sizeDisplay.bytes)
       : null;
   }
   return typeof entry.sizeBytes === "number" && Number.isSafeInteger(entry.sizeBytes) && entry.sizeBytes >= 0 ? BigInt(entry.sizeBytes) : null;
 }
 
-function knownEntryBytes(entry: EntryViewModel, sizes: DirectorySizeTabState): bigint | null {
+function recordMatchesEntry(entry: EntryViewModel, record: DirectorySizeTabState["records"][string] | undefined, local: boolean) {
+  return !local || record?.createdAt == null || record.createdAt === entry.sizeCreatedAt;
+}
+
+function knownEntryBytes(entry: EntryViewModel, sizes: DirectorySizeTabState, local: boolean): bigint | null {
   if (entry.attributes.includes("L")) return null;
   if (entry.kind !== "folder" || entry.driveInfo) return exactSizeBytes(entry);
   const record = sizes.records[getPathComparisonKey(entry.path)];
-  if (!record || (record.state !== "complete" && record.state !== "partial")) return null;
+  if (!record || !recordMatchesEntry(entry, record, local) || (record.state !== "complete" && record.state !== "partial")) return null;
   return decimalBytes(record.bytes);
 }
 
@@ -66,18 +70,19 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
   const sizes = currentDirectorySizes(tab);
   const snapshot = sizes?.snapshot;
   const root = tab.snapshot.location.path;
+  const local = tab.snapshot.location.kind === "local";
   const supported = supportsDirectorySizes(tab);
   const rootRecord = sizes?.records[getPathComparisonKey(root)];
   const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
   const terminal = supported && !!sizes && !!snapshot && !sizes.paused && !sizes.pending && (snapshot.phase === "complete" || snapshot.phase === "partial");
   const denominatorReady = terminal && !!rootRecord && rootAligned && listingSizeIdentityIsReliable(tab, root) &&
     tab.snapshot.entries.every((entry) => entry.kind !== "folder" || entry.attributes.includes("L") ||
-      !!sizes.records[getPathComparisonKey(entry.path)]);
+      !!sizes.records[getPathComparisonKey(entry.path)] && recordMatchesEntry(entry, sizes.records[getPathComparisonKey(entry.path)], local));
   let denominator: bigint | null = null;
   if (denominatorReady) {
     denominator = 0n;
     for (const sibling of tab.snapshot.entries) {
-      const bytes = knownEntryBytes(sibling, sizes);
+      const bytes = knownEntryBytes(sibling, sizes, local);
       if (bytes !== null) denominator = mode === "folder-max" ? (bytes > denominator ? bytes : denominator) : denominator + bytes;
     }
   }
@@ -102,6 +107,7 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
     }
 
     const record = sizes.records[getPathComparisonKey(entry.path)];
+    if (entry.kind === "folder" && !recordMatchesEntry(entry, record, local)) return base;
     const bytes = entry.kind === "folder" ? decimalBytes(record?.bytes) : exactSizeBytes(entry);
     if (bytes === null || (entry.kind === "folder" && record?.state === "unknown")) return base;
 
@@ -118,8 +124,9 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
   };
 }
 
-export function retainedSizeMatches(row: RetainedEntrySize, entry: EntryViewModel) {
-  return row.path === entry.path && row.kind === entry.kind && row.createdAt === entry.sizeCreatedAt && !entry.attributes.includes("L");
+export function retainedSizeMatches(row: RetainedEntrySize, entry: EntryViewModel, requireIdentity = false) {
+  return (!requireIdentity || typeof row.createdAt === "string" && row.createdAt.length > 0) && row.path === entry.path && row.kind === entry.kind &&
+    row.createdAt === entry.sizeCreatedAt && !entry.attributes.includes("L");
 }
 
 export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "folder-total") {
@@ -146,12 +153,12 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
         : phase?.phase === "complete" || phase?.phase === "partial" ? "统计已结束，此项暂无新结果"
         : "后台刷新中";
       const captured = hint?.cachedAt ? new Date(hint.cachedAt).toLocaleString() : "未知时间";
-      display = { state: "stale", bytes: String(hintBytes), share: null,
+      display = { state: "stale", bytes: String(hintBytes), share: null, advisory: true,
         label: `${hint?.state === "partial" ? "≥" : ""}${formatDirectoryBytes(hintBytes)}`,
         title: cache?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
     }
     const old = rows?.[entry.path];
-    if ((cache?.historical ? current.bytes === null : display.share === null) && old && retainedSizeMatches(old, entry) &&
+    if (old && (old.total.share !== null ? display.share === null : current.bytes === null) && retainedSizeMatches(old, entry) &&
       listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
       const saved = mode === "folder-max" ? old.max : old.total;
       const phase = currentDirectorySizes(tab)?.snapshot;

@@ -5,17 +5,20 @@ import { currentDirectorySizes } from "./directorySizes";
 import { reconcileListingSizeCache } from "./directorySizeCache";
 import { alignFolderListing } from "./folderExpansionState";
 import { getPathComparisonKey, isSameOrDescendantPath, pathsEqual } from "./workspacePathRelations";
+import { enrichDirectorySizes, type DirectorySizeCacheReceived } from "./directorySizeEnrichment";
+import { matchesDirectorySizeLookupListing, type DirectorySizeLookupListing } from "./directorySizeLookupFence";
 
 type Target = { panelId: PanelId; tabId: string; rootPath: string };
 export type DirectorySizeLeaseTarget = Target & { consumerId: string; requestVersion: number };
 type LeaseTarget = DirectorySizeLeaseTarget;
 export type DirectorySizeAction =
+  | DirectorySizeCacheReceived
   | { type: "directorySizeRequested"; payload: Target & { intent: "calculate" | "cancel" | "refresh" } }
   | { type: "directorySizeLeaseStarted"; payload: LeaseTarget }
   | { type: "directorySizeReleased"; payload: LeaseTarget }
   | { type: "directorySizeSnapshotReceived"; payload: LeaseTarget & { snapshot: DirectorySizeSnapshot } }
-  | { type: "directorySizeLookupReceived"; payload: LeaseTarget & { lookup: DirectorySizeLookup } }
-  | { type: "directorySizeFailed"; payload: LeaseTarget & { message: string } }
+  | { type: "directorySizeLookupReceived"; payload: LeaseTarget & DirectorySizeLookupListing & { lookup: DirectorySizeLookup } }
+  | { type: "directorySizeFailed"; payload: LeaseTarget & { message: string; lookupFence?: DirectorySizeLookupListing & { generation: number; sequence: number } } }
   | { type: "directorySizeListingAlignmentFailed"; payload: SizeAlignmentTarget & { message: string } }
   | { type: "directorySizeListingAligned"; payload: LeaseTarget & { generation: number; snapshot: DirectorySnapshot; expectedRoot: DirectorySnapshot; expectedBranch?: FolderExpansionBranch } };
 
@@ -45,6 +48,7 @@ export function reduceDirectorySizes(tab: TabState, action: DirectorySizeAction)
 }
 
 function reduceDirectorySizeState(tab: TabState, action: DirectorySizeAction): TabState {
+  if (action.type === "directorySizeCacheReceived") return enrichDirectorySizes(tab, action);
   const payload = action.payload;
   if (tab.id !== payload.tabId || tab.kind !== "directory" || !pathsEqual(tab.snapshot.location.path, payload.rootPath)) return tab;
   const sizes = currentDirectorySizes(tab) ?? initialSizes(payload.rootPath);
@@ -71,6 +75,9 @@ function reduceDirectorySizeState(tab: TabState, action: DirectorySizeAction): T
   }
   if (sizes.paused) return tab;
   if (action.type === "directorySizeFailed") {
+    const fence = action.payload.lookupFence;
+    if (fence && (!matchesDirectorySizeLookupListing(tab, fence) || sizes.snapshot?.generation !== fence.generation ||
+      sizes.snapshot?.sequence !== fence.sequence)) return tab;
     return { ...tab, directorySizes: { ...sizes, pending: false, paused: true, requested: false, records: {},
       snapshot: unavailable(sizes, "failed", action.payload.message) } };
   }
@@ -79,13 +86,15 @@ function reduceDirectorySizeState(tab: TabState, action: DirectorySizeAction): T
     const previous = sizes.snapshot;
     if (snapshot.consumerId !== sizes.consumerId || previous && (snapshot.generation < previous.generation ||
       snapshot.generation === previous.generation && snapshot.sequence <= previous.sequence)) return tab;
-    const keepRecords = snapshot.generation === previous?.generation && (snapshot.phase === "complete" || snapshot.phase === "partial");
+    const keepRecords = snapshot.generation === previous?.generation && snapshot.artifactRevision === previous?.artifactRevision &&
+      (snapshot.phase === "complete" || snapshot.phase === "partial");
     return { ...tab, directorySizes: { ...sizes, pending: false, snapshot, records: keepRecords ? sizes.records : {} } };
   }
   const snapshot = sizes.snapshot;
   if (!snapshot || (snapshot.phase !== "complete" && snapshot.phase !== "partial")) return tab;
   if (action.type === "directorySizeLookupReceived") {
     const { lookup } = action.payload;
+    if (!matchesDirectorySizeLookupListing(tab, action.payload)) return tab;
     if (lookup.consumerId !== sizes.consumerId || lookup.generation !== snapshot.generation || lookup.sequence !== snapshot.sequence) return tab;
     if (lookup.stale) return { ...tab, directorySizes: { ...sizes, records: {}, snapshot: unavailable(sizes, "stale", "大小统计缓存已失效，请重新计算") } };
     const records = { ...sizes.records };

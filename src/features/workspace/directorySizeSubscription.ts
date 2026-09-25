@@ -8,7 +8,10 @@ export function openDirectorySizeSubscription(gateway: DirectorySizesGateway, re
   let unlisten: (() => void) | undefined;
   let latest: DirectorySizeSnapshot | undefined;
   const release = () => {
-    void gateway.release(request.consumerId).catch((error) => { if (!closed) onError(error); });
+    const handoff = request.slotId && request.slotRevision ? {
+      slotId: request.slotId, slotRevision: request.slotRevision, handoffFrom: request.handoffFrom
+    } : undefined;
+    void gateway.release(request.consumerId, handoff).catch((error) => { if (!closed) onError(error); });
   };
   const receive = (snapshot: DirectorySizeSnapshot) => {
     if (closed || snapshot.consumerId !== request.consumerId || latest && (snapshot.generation < latest.generation ||
@@ -16,22 +19,24 @@ export function openDirectorySizeSubscription(gateway: DirectorySizesGateway, re
     latest = snapshot;
     if (ready) onSnapshot(snapshot);
   };
-  void (async () => {
+  const settled = (async () => {
     try {
       unlisten = await gateway.listen(receive);
-      if (closed) { disposeQuietly(unlisten); unlisten = undefined; return; }
+      if (closed) { disposeQuietly(unlisten); unlisten = undefined; return false; }
       invoked = true;
       const snapshot = await gateway.subscribe(request);
-      if (closed) { release(); return; }
+      if (closed) { release(); return false; }
       receive(snapshot);
       ready = true;
       if (latest) onSnapshot(latest);
+      return true;
     } catch (error) {
       if (invoked) release();
       if (!closed) onError(error);
+      return false;
     }
   })();
-  return { close() {
+  return { settled, close() {
     if (closed) return;
     closed = true;
     disposeQuietly(unlisten); unlisten = undefined;

@@ -42,10 +42,11 @@ pub(super) fn emit_operation_result(
 }
 
 #[tauri::command]
-pub fn copy_entries(request: FileOperationRequest) -> Result<OperationResult, String> {
+pub fn copy_entries(request: FileOperationRequest, state: State<'_, Arc<AppState>>) -> Result<OperationResult, String> {
     let destination_root = request
         .destination
         .ok_or_else(|| "destination is required for copy".to_string())?;
+    let _size_change = state.directory_sizes.namespace_change(&[destination_root.clone().into()]);
 
     let mut affected_paths = Vec::new();
     for source in request.sources {
@@ -64,7 +65,10 @@ pub fn copy_entries(request: FileOperationRequest) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub fn move_entries(request: FileOperationRequest) -> Result<OperationResult, String> {
+pub fn move_entries(request: FileOperationRequest, state: State<'_, Arc<AppState>>) -> Result<OperationResult, String> {
+    let mut changed_paths: Vec<std::path::PathBuf> = request.sources.iter().map(Into::into).collect();
+    changed_paths.extend(request.destination.as_ref().map(std::path::PathBuf::from));
+    let _size_change = state.directory_sizes.namespace_change(&changed_paths);
     let destination_root = request
         .destination
         .ok_or_else(|| "destination is required for move".to_string())?;
@@ -86,7 +90,8 @@ pub fn move_entries(request: FileOperationRequest) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub fn delete_entries(request: FileOperationRequest) -> Result<OperationResult, String> {
+pub fn delete_entries(request: FileOperationRequest, state: State<'_, Arc<AppState>>) -> Result<OperationResult, String> {
+    let _size_change = state.directory_sizes.namespace_change(&request.sources.iter().map(Into::into).collect::<Vec<_>>());
     for source in &request.sources {
         fs_service::delete_entry(Path::new(source)).map_err(|error| error.to_string())?;
     }
@@ -247,7 +252,7 @@ pub fn resolve_file_operation_conflict(
         let operation = if intent.kind == crate::domain::models::OperationIntentKind::Rename {
             execute_operation_task_with_sizes(&task_id, &intent, app_data_dir, execution.cancellation,
                 Some(execution.resolution), Some(&app_state.directory_sizes))
-        } else { execute_conflict_resolution(execution, app_data_dir) };
+        } else { execute_conflict_resolution(execution, app_data_dir, Some(&app_state.directory_sizes)) };
         let finished = {
             let mut operations = app_state
                 .operations
@@ -286,7 +291,7 @@ pub fn clear_operation_records(
             .lock()
             .expect("operation store lock poisoned");
         operations
-            .clear_records(request, trash_root.as_deref())
+            .clear_records_with_sizes(request, trash_root.as_deref(), Some(&state.directory_sizes))
             .map_err(|error| error.to_string())?
     };
     if matches!(outcome.status, OperationClearStatus::Cleared)

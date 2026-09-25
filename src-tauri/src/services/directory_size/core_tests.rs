@@ -5,6 +5,10 @@ use std::{collections::HashMap, sync::{Arc, atomic::{AtomicU8, Ordering}}};
 mod rename_tests;
 #[path = "cache_budget_tests.rs"]
 mod cache_budget_tests;
+#[path = "diagnostics_tests.rs"]
+mod diagnostics_tests;
+#[path = "lease_handoff_tests.rs"]
+mod lease_handoff_tests;
 #[cfg(windows)]
 #[path = "rename_service_tests.rs"]
 mod rename_service_tests;
@@ -18,7 +22,7 @@ fn profile() -> RemoteProfile {
 fn request(id: &str, path: &str) -> SubscribeDirectorySizesRequest {
     SubscribeDirectorySizesRequest { consumer_id: id.into(), target: if path.starts_with('/') {
         DirectorySizeTarget::Remote { profile_id: "remote".into(), path: path.into() }
-    } else { DirectorySizeTarget::Local { path: path.into() } }, refresh: false }
+    } else { DirectorySizeTarget::Local { path: path.into() } }, refresh: false, handoff: None }
 }
 fn core() -> Core { let mut core = Core::default(); core.open_owner("main"); core.open_owner("settings"); core }
 fn subscribe(core: &mut Core, id: &str, path: &str, now: u64) -> DirectorySizeSnapshot {
@@ -40,6 +44,18 @@ fn monitored(core: &mut Core, job: &ScanJob) -> Arc<AtomicU8> {
     flag
 }
 fn finish(core: &mut Core, job: &ScanJob, now: u64) { core.finished(job, result(job, 100), Some(RootIdentity([1, 2, 3, 4])), now); }
+
+#[test]
+fn size_artifact_core_rejects_out_of_order_snapshot_delivery() {
+    let mut core = core();
+    let mut old = super::artifacts::Snapshot::default(); old.policy = "same-registry".into(); old.revision = 1;
+    let mut new = old.clone(); new.revision = 2;
+    core.set_artifacts(Arc::new(new), 1);
+    let revision = core.cache_revision;
+    core.set_artifacts(Arc::new(old), 2);
+    assert_eq!(core.artifacts.revision, 2, "completed samplers may acquire Core in reverse order");
+    assert_eq!(core.cache_revision, revision, "rejected snapshots cannot notify consumers");
+}
 
 #[test]
 fn size_service_entering_scanned_child_reuses_ancestor_without_a_job() {

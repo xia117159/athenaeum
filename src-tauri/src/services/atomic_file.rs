@@ -17,7 +17,7 @@ enum AtomicWriteFault {
 }
 
 #[cfg(windows)]
-fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::{
         core::PCWSTR,
@@ -47,7 +47,7 @@ fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
     fs::rename(temp_path, destination).context("failed to atomically replace file")
 }
 

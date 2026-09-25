@@ -25,7 +25,10 @@ impl Maintenance {
                 self.proof_revision += 1;
                 continue;
             }
-            if root.expected.pop_front() != Some((event.path, event.kind)) { self.valid = false; break; }
+            let expected = root.expected.pop_front();
+            if expected != Some((event.path.clone(), event.kind)) {
+                self.valid = false; break;
+            }
         }
     }
 }

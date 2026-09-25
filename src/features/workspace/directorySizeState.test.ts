@@ -10,7 +10,7 @@ import type { DirectorySizeLookup } from "./directorySizeTypes";
 function target() {
   const fixture = sizeFixture();
   return { ...fixture, payload: { panelId: "panel-1" as const, tabId: fixture.tab.id, rootPath: fixture.path,
-    consumerId: "size-test", requestVersion: 0 } };
+    consumerId: "size-test", requestVersion: 0, expectedRoot: fixture.tab.snapshot, expectedExpansion: fixture.tab.folderExpansion } };
 }
 
 test("first remote calculate joins shared work while recalculate forces a new generation", () => {

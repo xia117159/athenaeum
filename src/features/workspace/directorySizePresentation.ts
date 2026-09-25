@@ -1,6 +1,7 @@
 import type { DirectorySizePresentation, DirectorySizePresentationView, RetainedEntrySize } from "./directorySizeTypes";
 import type { EntryViewModel, RemoteConnectionProfile, TabState, WorkspaceState } from "./types";
-import { createCurrentSizeProjector, listingSizeIdentityIsReliable, retainedSizeMatches } from "./directorySizes";
+import { createCurrentSizeProjector, createEntrySizeProjector, currentDirectorySizes, listingSizeIdentityIsReliable, retainedSizeMatches } from "./directorySizes";
+import { currentListingSizeCache } from "./directorySizeCache";
 import { directorySizeContext } from "./directorySizePlanning";
 import { getPathComparisonKey, isSameOrDescendantPath } from "./workspacePathRelations";
 
@@ -19,7 +20,7 @@ function viewScope(tab: TabState, view: DirectorySizePresentationView, profiles:
 }
 
 /** Capture display summaries only; current records and all IPC fences stay untouched. */
-function capture(tab: TabState, scope: string, previous?: DirectorySizePresentationView): DirectorySizePresentationView {
+function capture(tab: TabState, scope: string, previous?: DirectorySizePresentationView, before?: TabState): DirectorySizePresentationView {
   const entries = new Map<string, EntryViewModel>();
   const authoritative = new Map<string, Set<string>>();
   const visited = new Set<string>();
@@ -34,11 +35,17 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
     }
   };
   visit(tab.snapshot.location.path, tab.snapshot.entries, tab.status === "ready");
+  // Immutable entry references are usable within an unchanged listing, even
+  // if the filesystem omitted creation time. A replacement local listing needs
+  // creation identity; remote listings retain their existing connection and
+  // reliable-listing rules because FTP/SFTP can omit creation timestamps.
+  const unchanged = new Set([...before?.snapshot.entries ?? [], ...Object.values(before?.folderExpansion ?? {}).flatMap((branch) => branch.entries)]);
   const rows: Record<string, RetainedEntrySize> = {};
   const removed = new Set<string>();
   for (const row of Object.values(previous?.rows ?? {})) {
     const entry = entries.get(row.path);
-    if (authoritative.get(row.parentPath)?.has(row.path) === false || entry && !retainedSizeMatches(row, entry)) removed.add(row.path);
+    if (authoritative.get(row.parentPath)?.has(row.path) === false || entry &&
+      !retainedSizeMatches(row, entry, tab.snapshot.location.kind === "local" && !unchanged.has(entry))) removed.add(row.path);
   }
   const removedAncestor = (row: RetainedEntrySize) => {
     let ancestor: RetainedEntrySize | undefined = row;
@@ -81,14 +88,22 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
   }
   const total = createCurrentSizeProjector(tab);
   const max = createCurrentSizeProjector(tab, "folder-max");
+  const hints = new Map(currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab))?.directories.map((record) => [record.path, record]));
+  const advisory = createEntrySizeProjector({ ...tab, directorySizePresentation: undefined });
   for (const entry of entries.values()) {
-    const display = total(entry);
-    if (display.bytes === null || display.state !== "complete" && display.state !== "partial") continue;
-    // Preserve the existing live ratio policy. With restart history, retain new
-    // scalar values even when a bounded scan cannot supply the denominator.
-    if (display.share === null && rows[entry.path] && !tab.snapshot.directorySizeCache?.historical) continue;
+    let display = total(entry);
+    if (display.bytes === null || display.state !== "complete" && display.state !== "partial") {
+      const hint = hints.get(entry.path);
+      if (!hint?.cachedAt || !entry.sizeCreatedAt || entry.sizeCreatedAt !== hint.createdAt) continue;
+      const cached = advisory(entry).sizeDisplay;
+      if (!cached?.advisory || cached.bytes === null) continue;
+      display = cached;
+    }
+    // A displayed size/bar pair is replaced together. A scalar-only hint or
+    // incomplete lookup must not erase its denominator during a refresh.
+    if (display.share === null && rows[entry.path]?.total.share != null) continue;
     rows[entry.path] = { path: entry.path, parentPath: entry.parentPath, kind: entry.kind, createdAt: entry.sizeCreatedAt,
-      total: display, max: max(entry) };
+      total: display, max: display.advisory ? display : max(entry) };
   }
   return { rootPath: tab.snapshot.location.path, locationKind: tab.snapshot.location.kind, scope, rows };
 }
@@ -101,10 +116,35 @@ function trimHistory(views: DirectorySizePresentationView[]) {
   });
 }
 
+function fenceReplacedLocalRows(before: TabState | undefined, tab: TabState): TabState {
+  if (!before || tab.snapshot.location.kind !== "local" || before.snapshot.location.path !== tab.snapshot.location.path ||
+    !tab.directorySizes || before.snapshot === tab.snapshot && before.folderExpansion === tab.folderExpansion) return tab;
+  const entries = (view: TabState) => [...view.snapshot.entries, ...Object.values(view.folderExpansion ?? {}).flatMap((branch) => branch.entries)];
+  const previous = new Map(entries(before).map((entry) => [entry.path, entry]));
+  const changed = entries(tab).filter((entry) => {
+    const old = previous.get(entry.path);
+    return old !== entry && (!old || !entry.sizeCreatedAt || old.sizeCreatedAt !== entry.sizeCreatedAt ||
+      old.kind !== entry.kind || entry.attributes.includes("L"));
+  }).map((entry) => getPathComparisonKey(entry.path));
+  if (!changed.length) return tab;
+  const replaced = new Set(changed);
+  const records = Object.entries(tab.directorySizes.records).filter(([, record]) => {
+    const key = getPathComparisonKey(record.path);
+    if (replaced.has(key)) return false;
+    for (let index = key.indexOf("\\"); index >= 0; index = key.indexOf("\\", index + 1)) {
+      if (replaced.has(key.slice(0, index)) || replaced.has(key.slice(0, index + 1))) return false;
+    }
+    return true;
+  });
+  return records.length === Object.keys(tab.directorySizes.records).length ? tab :
+    { ...tab, directorySizes: { ...tab.directorySizes, records: Object.fromEntries(records) } };
+}
+
 function reconcileTab(before: TabState | undefined, after: TabState, oldProfiles: RemoteConnectionProfile[], profiles: RemoteConnectionProfile[]): TabState {
   if (before && before.snapshot === after.snapshot && before.directorySizes === after.directorySizes &&
     before.folderExpansion === after.folderExpansion && before.status === after.status && oldProfiles === profiles) return after;
-  if (!before?.directorySizes && !after.directorySizes && !before?.directorySizePresentation && !after.directorySizePresentation) return after;
+  if (!before?.directorySizes && !after.directorySizes && !before?.directorySizePresentation && !after.directorySizePresentation &&
+    !before?.snapshot.directorySizeCache && !after.snapshot.directorySizeCache) return after;
   const scope = scopeFor(after, profiles);
   const previousScope = before && scopeFor(before, oldProfiles);
   let presentation: DirectorySizePresentation = before?.directorySizePresentation ?? after.directorySizePresentation ?? { history: [] };
@@ -115,14 +155,14 @@ function reconcileTab(before: TabState | undefined, after: TabState, oldProfiles
     .filter((view, index, views) => views.findIndex((other) => other.scope === view.scope) === index && viewScope(after, view, profiles) === view.scope);
   const contextChanged = before && before.snapshot.location.path === after.snapshot.location.path && previousScope !== scope;
   // A changed remote connection must not expose its predecessor's live statistics even for one render.
-  const tab = contextChanged ? { ...after, directorySizes: undefined } : after;
+  const tab = contextChanged ? { ...after, directorySizes: undefined } : fenceReplacedLocalRows(before, after);
   const previous = candidates.find((view) => view.scope === scope);
   const phase = tab.directorySizes?.snapshot?.phase;
   const newResults = (phase === "complete" || phase === "partial") && before?.directorySizes?.records !== tab.directorySizes?.records;
   const sameListing = previous && before?.snapshot === tab.snapshot && before.folderExpansion === tab.folderExpansion;
   // Progress/lease events change freshness, not the rows being displayed. Avoid
   // copying thousands of retained summaries on every scan progress notification.
-  const current = scope ? (sameListing && !newResults ? previous : capture(tab, scope, previous)) : undefined;
+  const current = scope ? (sameListing && !newResults ? previous : capture(tab, scope, previous, before)) : undefined;
   const removedPaths = current && current !== previous ? Object.keys(previous?.rows ?? {}).filter((path) => !current.rows[path]) : [];
   const history = candidates.filter((view) => view.scope !== scope &&
     !removedPaths.some((path) => isSameOrDescendantPath(path, view.rootPath)));

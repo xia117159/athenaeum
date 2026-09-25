@@ -52,7 +52,7 @@ test("current exact bytes supersede history even before the ratio denominator ar
   h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence: 1 }) } });
-  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, lookup: {
+  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
     consumerId: "history", generation: 1, sequence: 1, stale: false, directories: [
       sizeRecord(h.path, "80", "new-contents"), sizeRecord(h.child, "80", "new-child")
     ] } } });
@@ -73,7 +73,7 @@ test("history never attaches to a replaced directory or a link", () => {
   }
 });
 
-test("successive bounded refreshes retain the newest scalar when sibling details are missing", () => {
+test("successive bounded refreshes retain a complete size/bar pair until sibling details arrive", () => {
   const h = fixture();
   const tab = h.f.state.panels["panel-1"].tabs[0];
   const sibling = `${h.path}\\sibling`;
@@ -82,17 +82,41 @@ test("successive bounded refreshes retain the newest scalar when sibling details
   for (const generation of [1, 2]) {
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
       snapshot: sizeSnapshot({ consumerId: "history", generation, sequence: 1 }) } });
-    h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, lookup: {
+    h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
       consumerId: "history", generation, sequence: 1, stale: false, directories: [
         sizeRecord(h.path, "100", "new-contents"), sizeRecord(h.child, generation === 1 ? "80" : "90", "child"),
         ...(generation === 1 ? [sizeRecord(sibling, "20", "sibling")] : [])
       ] } } });
-    assert.equal(h.display().sizeLabel, generation === 1 ? "80 B" : "90 B");
+    assert.equal(h.display().sizeLabel, "80 B");
+    assert.equal(h.display().sizeDisplay?.share, .8);
   }
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ consumerId: "history", generation: 3, sequence: 1, phase: "scanning" }) } });
+  assert.equal(h.display().sizeLabel, "80 B");
+  assert.equal(h.display().sizeDisplay?.share, .8, "keep the previous numerator and proportion together while refreshing");
+  h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
+    snapshot: sizeSnapshot({ consumerId: "history", generation: 3, sequence: 2 }) } });
+  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
+    consumerId: "history", generation: 3, sequence: 2, stale: false, directories: [
+      sizeRecord(h.path, "100", "new-contents"), sizeRecord(h.child, "90", "child"), sizeRecord(sibling, "10", "sibling")
+    ] } } });
   assert.equal(h.display().sizeLabel, "90 B");
-  assert.equal(h.display().sizeDisplay?.share, null, "a missing denominator must not reuse an old proportion for new bytes");
+  assert.equal(h.display().sizeDisplay?.share, .9, "aligned new results replace both parts together");
+});
+
+test("a scalar with no previous proportion may update while sibling details are still missing", () => {
+  const h = fixture();
+  const tab = h.f.state.panels["panel-1"].tabs[0];
+  tab.snapshot.entries.push({ ...tab.snapshot.entries[0], path: `${h.path}\\missing`, id: "missing", name: "missing" });
+  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
+    snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence: 1 }) } });
+  h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
+    consumerId: "history", generation: 1, sequence: 1, stale: false,
+    directories: [sizeRecord(h.path, "100", "new-contents"), sizeRecord(h.child, "80", "child")]
+  } } });
+  assert.equal(h.display().sizeLabel, "80 B");
+  assert.equal(h.display().sizeDisplay?.share, null);
 });
 
 test("history tooltip distinguishes a finished scan with missing details from a running refresh", () => {

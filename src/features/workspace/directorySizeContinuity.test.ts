@@ -11,18 +11,67 @@ import type { EntryViewModel } from "./types";
 
 function fixture() {
   const f = sizeFixture();
+  for (const entry of [...f.tab.snapshot.entries, f.child]) entry.sizeCreatedAt = "2026-09-20T00:00:00Z";
   let state = f.state;
   const payload = { panelId: "panel-1" as const, tabId: f.tab.id, rootPath: f.path, consumerId: "size-test", requestVersion: 0 };
   return { ...f, payload, get current() { return state.panels["panel-1"].tabs[0]; },
     send(action: Parameters<typeof workspaceReducer>[1]) { state = workspaceReducer(state, action); },
     size(type: DirectorySizeAction["type"], extra: object = {}) {
-      state = workspaceReducer(state, { type, payload: { ...payload, ...extra } } as DirectorySizeAction);
+      const tab = state.panels["panel-1"].tabs[0];
+      const listing = type === "directorySizeLookupReceived" ? { expectedRoot: tab.snapshot, expectedExpansion: tab.folderExpansion } : {};
+      state = workspaceReducer(state, { type, payload: { ...payload, ...listing, ...extra } } as DirectorySizeAction);
     },
     display(entry = f.parent, mode: "folder-total" | "folder-max" = "folder-total") {
       return projectEntrySize(state.panels["panel-1"].tabs[0], entry, mode).sizeDisplay!;
     }
   };
 }
+
+for (const identity of [undefined, null, ""] as const) for (const refresh of [false, true]) test(`unknown creation identity (${String(identity)}, refresh: ${refresh}) cannot cross a new listing`, () => {
+  const h = fixture(); h.parent.sizeCreatedAt = identity as string | undefined; // Rust Option is null on the wire.
+  if (refresh) h.size("directorySizeRequested", { intent: "refresh" });
+  assert.equal(h.display().label, "60 B"); assert.equal(h.display().share, .6);
+  const replacement = { ...h.parent };
+  h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
+    snapshot: { ...h.tab.snapshot, entries: [replacement, h.a, h.b], sizeFingerprint: "new-listing" } } });
+  assert.equal(h.display(replacement).bytes, null, "undefined creation times cannot prove this is the previous directory object");
+  assert.equal(h.display(replacement).share, null);
+});
+
+for (const staleFirst of [false, true]) test(`replaced local objects cannot recapture old live sizes (stale first: ${staleFirst})`, () => {
+  const h = fixture();
+  h.tab.directorySizes!.records[getPathComparisonKey(h.parent.path)].createdAt = h.parent.sizeCreatedAt;
+  const stale = () => h.size("directorySizeSnapshotReceived", { snapshot: sizeSnapshot({ phase: "stale", generation: 2, sequence: 3 }) });
+  if (staleFirst) stale();
+  const replacement = { ...h.parent, sizeCreatedAt: "2026-09-25T00:00:00Z" };
+  h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
+    snapshot: { ...h.tab.snapshot, entries: [replacement, h.a, h.b] } } });
+  assert.equal(h.display(replacement).bytes, null, "same name/fingerprint must not re-certify another object's old size");
+  assert.equal(h.display(replacement).share, null);
+  if (!staleFirst) {
+    h.size("directorySizeLookupReceived", { lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
+      directories: [{ ...sizeRecord(h.parent.path, "60", "parent-stamp"), createdAt: h.parent.sizeCreatedAt }] } });
+    assert.equal(h.display(replacement).bytes, null, "a delayed old-object lookup must remain rejected");
+  }
+  if (!staleFirst) stale();
+  assert.equal(h.display(replacement).bytes, null); assert.equal(h.display(replacement).share, null);
+});
+
+for (const createdAt of [null, "2026-09-25T00:00:00Z"]) test(`late lookup without identity is fenced by its listing (${String(createdAt)})`, () => {
+  const h = fixture(); h.parent.sizeCreatedAt = null;
+  h.tab.directorySizes!.records[getPathComparisonKey(h.parent.path)].createdAt = null;
+  const expectedRoot = h.tab.snapshot; const expectedExpansion = h.tab.folderExpansion;
+  const replacement = { ...h.parent, sizeCreatedAt: createdAt };
+  h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
+    snapshot: { ...h.tab.snapshot, entries: [replacement, h.a, h.b] } } });
+  assert.equal(h.display(replacement).bytes, null);
+  h.size("directorySizeLookupReceived", { expectedRoot, expectedExpansion,
+    lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
+      directories: [{ ...sizeRecord(h.parent.path, "60", "parent-stamp"), createdAt: null }] } });
+  assert.equal(h.display(replacement).bytes, null); assert.equal(h.display(replacement).share, null);
+  h.size("directorySizeSnapshotReceived", { snapshot: sizeSnapshot({ phase: "stale", generation: 2, sequence: 3 }) });
+  assert.equal(h.display(replacement).bytes, null);
+});
 
 test("known folder values and all bars survive release, resubscribe and split cached lookup", () => {
   const h = fixture();
@@ -58,6 +107,21 @@ test("filesystem invalidation, cancel and failures retain known values and both 
     if (reason === "failed") assert.match(h.display().title, /permission denied/);
     if (reason === "cancel") assert.match(h.display().title, /取消/);
   }
+});
+
+test("refresh listings with advisory cache hints preserve the displayed size and both bar modes", () => {
+  const h = fixture();
+  const createdAt = "2026-09-20T00:00:00Z";
+  h.parent.sizeCreatedAt = createdAt;
+  h.size("directorySizeRequested", { intent: "refresh" });
+  h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
+    snapshot: { ...h.tab.snapshot, directorySizeCache: { generation: 0, sequence: 0, historical: true, directories: [
+      { ...sizeRecord(h.parent.path, "65", "parent-stamp"), createdAt, cachedAt: "2026-09-24T00:00:00Z" }
+    ] } } } });
+  assert.equal(h.display().label, "60 B", "a scalar-only hint must not replace a complete display pair");
+  assert.equal(h.display().share, .6);
+  assert.equal(h.display(h.parent, "folder-max").share, 1);
+  assert.equal(h.display(h.a, "folder-max").share, .5);
 });
 
 test("returning to a previously displayed directory reuses its own values without active statistics", () => {

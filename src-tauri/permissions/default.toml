@@ -15,6 +15,9 @@ permissions = [
   "allow-subscribe-directory-sizes",
   "allow-release-directory-sizes",
   "allow-lookup-directory-sizes",
+  "allow-get-directory-size-diagnostics",
+  "allow-lookup-directory-size-cache",
+  "allow-update-directory-size-views",
   "allow-set-workspace-watch-roots",
   "allow-get-item-properties",
   "allow-get-tree-children",
@@ -184,6 +187,21 @@ commands.allow = ["release_directory_sizes"]
 identifier = "allow-lookup-directory-sizes"
 description = "Allows bounded generation-fenced directory size lookups."
 commands.allow = ["lookup_directory_sizes"]
+
+[[permission]]
+identifier = "allow-get-directory-size-diagnostics"
+description = "Allows bounded read-only local size cache diagnostics for the invoking window."
+commands.allow = ["get_directory_size_diagnostics"]
+
+[[permission]]
+identifier = "allow-lookup-directory-size-cache"
+description = "Allows bounded directory size display enrichment for the invoking workspace."
+commands.allow = ["lookup_directory_size_cache"]
+
+[[permission]]
+identifier = "allow-update-directory-size-views"
+description = "Allows the workspace to update its owner-bound open-directory manifest."
+commands.allow = ["update_directory_size_views"]
 
 [[permission]]
 identifier = "allow-get-item-properties"

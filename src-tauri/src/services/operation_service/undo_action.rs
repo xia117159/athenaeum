@@ -5,6 +5,7 @@ pub(super) fn apply_undo_action(action: &UndoAction, sizes: Option<&crate::servi
         UndoAction::TemplateCreation { .. } => bail!("模板副本必须通过专用撤销执行器处理"),
         UndoAction::BatchRename { .. } => bail!("批量重命名必须通过批次撤销执行器处理"),
         UndoAction::DeleteCreated { path } => {
+            let _size_change = sizes.map(|sizes| sizes.namespace_change(std::slice::from_ref(path)));
             remove_path(path)?;
             Ok(OperationEntryResult {
                 entry_result_id: Uuid::new_v4().to_string(),

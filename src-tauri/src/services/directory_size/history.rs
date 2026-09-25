@@ -1,8 +1,12 @@
 //! Advisory local size history. Never used as a live scan/freshness certificate.
-use std::{collections::{BTreeMap, HashMap}, fs::File, io::{BufRead, BufReader, BufWriter, Read, Write}, path::Path, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, io::{BufWriter, Write}, path::Path, sync::Arc};
+#[cfg(test)]
+use std::{fs::File, io::{BufRead, BufReader, Read}};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use super::{scan::DirectorySize, target::normalize_local_path};
+use super::scan::DirectorySize;
+#[cfg(test)]
+use super::target::normalize_local_path;
 
 const ENTRY_ACCOUNT_BYTES: usize = 384;
 const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
@@ -13,20 +17,52 @@ const HEADER: &[u8] = b"{\"directorySizeHistoryVersion\":1}\n";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct HistoricalSize {
     pub bytes: u64, pub complete: bool, pub created_at: DateTime<Utc>, pub cached_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_capture: Option<super::artifacts::Capture>,
+}
+impl HistoricalSize {
+    pub fn display_bytes(&self, path: &str, snapshot: &super::artifacts::Snapshot) -> u64 {
+        self.bytes.saturating_add(self.artifact_capture.as_ref().map_or(0, |capture| {
+            if capture.policy == snapshot.policy { snapshot.contribution(path).bytes } else { capture.contribution.bytes }
+        }))
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record { path: String, size: HistoricalSize }
-struct Entry { size: HistoricalSize, order: (usize, u64) }
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum HistoryRank {
+    #[cfg(test)] Legacy(DateTime<Utc>),
+    Stored(u8, u64), Accepted(u64),
+}
+struct Entry { size: HistoricalSize, order: (usize, u64), rank: HistoryRank }
 
 #[derive(Default)]
 pub(super) struct History {
     values: HashMap<Arc<str>, Entry>,
     order: BTreeMap<(usize, u64), Arc<str>>,
     next: u64,
+    scopes: HashMap<String, u8>,
     pub bytes: usize,
 }
 impl History {
+    fn priority(&self, path: &str) -> usize {
+        let cold = 7 + path.bytes().filter(|byte| matches!(byte, b'/' | b'\\')).count();
+        let exact = self.scopes.get(path).map_or(cold, |priority| *priority as usize);
+        let direct = Path::new(path).parent().and_then(Path::to_str).and_then(|parent| self.scopes.get(parent))
+            .filter(|priority| **priority < 3).map_or(cold, |priority| 3 + *priority as usize);
+        exact.min(direct)
+    }
+    pub fn prioritize(&mut self, scopes: HashMap<String, u8>) {
+        if scopes == self.scopes { return; }
+        self.scopes = scopes;
+        let priorities: Vec<_> = self.values.keys().map(|path| (path.clone(), self.priority(path))).collect();
+        self.order.clear();
+        for (path, priority) in priorities {
+            let entry = self.values.get_mut(&path).unwrap(); entry.order.0 = priority;
+            self.order.insert(entry.order, path);
+        }
+    }
     pub fn get(&self, path: &str) -> Option<&HistoricalSize> { self.values.get(path).map(|entry| &entry.size) }
     pub fn trim(&mut self, budget: usize) {
         while self.bytes > budget {
@@ -34,27 +70,47 @@ impl History {
             self.values.remove(&path); self.bytes -= ENTRY_ACCOUNT_BYTES + path.len();
         }
     }
+    #[cfg(test)]
     pub fn insert(&mut self, path: Arc<str>, size: HistoricalSize, budget: usize) {
-        if self.get(&path).is_some_and(|old| old.cached_at > size.cached_at) { return; }
-        let depth = path.bytes().filter(|byte| matches!(byte, b'/' | b'\\')).count();
+        let rank = HistoryRank::Legacy(size.cached_at);
+        self.insert_ranked(path, size, rank, budget);
+    }
+    pub fn insert_ranked(&mut self, path: Arc<str>, size: HistoricalSize, rank: HistoryRank, budget: usize) {
+        if self.values.get(&path).is_some_and(|old| old.rank >= rank) { return; }
+        let depth = self.priority(&path);
         let cost = ENTRY_ACCOUNT_BYTES + path.len();
         if cost > budget { return; }
+        // Decide admission before changing any existing display record. A
+        // rejected long row must not first evict a smaller cold row and then
+        // discover that the remaining high-priority rows cannot yield space.
+        let replaced = self.values.get(&path).map_or(0, |_| cost);
+        let needed = self.bytes.saturating_sub(replaced).saturating_add(cost).saturating_sub(budget);
+        let mut reclaimed = 0;
+        let mut victims = Vec::new();
+        for ((old_priority, _), old_path) in self.order.iter().rev() {
+            if reclaimed >= needed || *old_priority < depth { break; }
+            if old_path == &path { continue; }
+            reclaimed += ENTRY_ACCOUNT_BYTES + old_path.len();
+            victims.push(old_path.clone());
+        }
+        if reclaimed < needed { return; }
         if let Some(old) = self.values.remove(&path) {
             self.order.remove(&old.order); self.bytes -= cost;
         }
-        while self.bytes.saturating_add(cost) > budget {
-            if self.order.last_key_value().is_some_and(|((old_depth, _), _)| *old_depth < depth) { return; }
-            let Some((_, old)) = self.order.pop_last() else { return; };
-            self.values.remove(&old); self.bytes -= ENTRY_ACCOUNT_BYTES + old.len();
+        for path in victims {
+            let old = self.values.remove(&path).unwrap();
+            self.order.remove(&old.order); self.bytes -= ENTRY_ACCOUNT_BYTES + path.len();
         }
-        self.next += 1; let order = (depth, self.next);
-        self.bytes += cost; self.order.insert(order, path.clone()); self.values.insert(path, Entry { size, order });
+        self.next += 1; let order = (depth, u64::MAX - self.next);
+        self.bytes += cost; self.order.insert(order, path.clone()); self.values.insert(path, Entry { size, order, rank });
     }
-    pub fn capture(&mut self, path: Arc<str>, size: &DirectorySize, cached_at: DateTime<Utc>, budget: usize) {
+    pub fn capture_ranked(&mut self, path: Arc<str>, size: &DirectorySize, cached_at: DateTime<Utc>, rank: HistoryRank,
+        artifact_capture: Option<super::artifacts::Capture>, budget: usize) {
         if let Some(created_at) = size.created_at.filter(|_| size.visited()) {
-            self.insert(path, HistoricalSize { bytes: size.bytes, complete: size.complete, created_at, cached_at }, budget);
+            self.insert_ranked(path, HistoricalSize { bytes: size.bytes, complete: size.complete, created_at, cached_at, artifact_capture }, rank, budget);
         }
     }
+    #[cfg(test)]
     pub fn load(path: &Path, budget: usize) -> anyhow::Result<Self> {
         let file = match File::open(path) {
             Ok(file) => file, Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
