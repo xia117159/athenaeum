@@ -81,7 +81,7 @@ impl Database {
     }
     pub(super) fn write_blocked(&self, path: &str, header: &ScanHeader) -> Result<bool> {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM barriers b WHERE (?1=b.prefix OR substr(?1,1,length(b.prefix)+1)=b.prefix||char(92))
-            AND (b.state=0 OR ?2=0 OR (b.session=?3 AND b.generation>=?4)))", params![path,header.source,header.session,header.generation], |row| row.get(0))?)
+            AND (b.state=0 OR (b.session=?2 AND b.generation>=?3)))", params![path,header.session,header.generation], |row| row.get(0))?)
     }
     pub fn authorize_operation(&mut self, operation: &Operation) -> Result<()> {
         let json = operation.checked_json()?; self.admit()?;

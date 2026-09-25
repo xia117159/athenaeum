@@ -124,6 +124,31 @@ test("refresh listings with advisory cache hints preserve the displayed size and
   assert.equal(h.display(h.a, "folder-max").share, .5);
 });
 
+test("historical cache hints keep an advisory bar while a live lease is scanning", () => {
+  const h = fixture();
+  const createdAt = "2026-09-20T00:00:00Z";
+  h.parent.sizeCreatedAt = createdAt;
+  h.sizes.snapshot!.phase = "scanning";
+  h.tab.snapshot.directorySizeCache = { generation: 0, sequence: 0, historical: true, directories: [
+    { ...sizeRecord(h.parent.path, "60", "parent-stamp"), createdAt, cachedAt: "2026-09-24T00:00:00Z" }
+  ] };
+  const display = h.display(h.parent);
+  assert.equal(display.bytes, "60");
+  assert.equal(display.share, .6, "the cached folder must receive a known-size bar during a refresh");
+  assert.equal(h.display(h.a).bytes, "30");
+  assert.equal(h.display(h.a).share, .3, "ordinary file metadata keeps its bar during the same refresh");
+});
+
+test("active scans give ordinary file metadata the same provisional bar lifecycle without cache hints", () => {
+  const h = fixture();
+  h.sizes.snapshot!.phase = "scanning";
+  h.tab.snapshot.directorySizeCache = undefined;
+  assert.equal(h.display(h.a).bytes, "30");
+  assert.equal(h.display(h.a).share, .75);
+  assert.equal(h.display(h.b).share, .25);
+  assert.equal(h.display(h.a).provisional, true);
+});
+
 test("returning to a previously displayed directory reuses its own values without active statistics", () => {
   const h = fixture();
   h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id,
@@ -135,10 +160,10 @@ test("returning to a previously displayed directory reuses its own values withou
   assert.equal(h.current.directorySizes, undefined, "historical display must not create a valid lease or statistics");
 });
 
-test("a first lookup batch does not publish file-only proportions while folders are still missing", () => {
+test("a first lookup batch publishes advisory file proportions while folders are still missing", () => {
   const { tab, a, parent, sizes, path } = sizeFixture();
   sizes.records = { [getPathComparisonKey(path)]: sizeRecord(path, "100", "root-stamp") };
-  assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null);
+  assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, .75);
   sizes.records[getPathComparisonKey(parent.path)] = { ...sizeRecord(parent.path, null, "", "unknown"), sizeFingerprint: null };
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, .75, "an explicit unknown response completes lookup but adds no bytes");
 });
@@ -178,10 +203,10 @@ test("a newly known folder size survives invalidation before the remaining looku
   const h = fixture();
   h.tab.snapshot.entries.push({ ...h.parent, id: "missing", name: "missing", path: `${h.path}\\missing` });
   assert.equal(h.display().label, "60 B");
-  assert.equal(h.display().share, null);
+  assert.equal(h.display().share, .6);
   h.size("directorySizeSnapshotReceived", { snapshot: sizeSnapshot({ generation: 2, phase: "stale" }) });
   assert.equal(h.display().label, "60 B");
-  assert.equal(h.display().share, null);
+  assert.equal(h.display().share, .6);
 });
 
 test("a terminal unknown result retains its old row without entering the new denominator", () => {
@@ -197,5 +222,5 @@ test("a terminal unknown result retains its old row without entering the new den
   assert.equal(h.display().label, "60 B");
   assert.equal(h.display().share, .6);
   assert.equal(h.display().retained, true);
-  assert.equal(h.display(h.a).share, .75, "unknown folder bytes are excluded from the new file denominator");
+  assert.equal(h.display(h.a).share, .3, "the retained complete pair remains stable while folder details are unknown");
 });

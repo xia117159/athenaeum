@@ -78,9 +78,14 @@ export const completion = (async () => {
         assert.deepEqual(t.listings.map(({ path }) => path), [f.path, f.parent.path]);
         await t.replyListing(f.parent.path);
         assert.equal(h.tab.directorySizes?.snapshot?.phase, failed ? "failed" : "complete");
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null,
-          "branch work finishes, but a new proportion must await the root denominator");
+        if (failed) {
+          assert.notEqual(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
+          assert.notEqual(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null,
+            "failed refresh keeps advisory bars");
+        } else {
+          assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
+          assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null);
+        }
         const matched = h.state.panels["panel-2"].tabs[0];
         assert.equal(matched.snapshot, t.other.snapshot);
         assert.equal(matched.directorySizes?.snapshot?.phase, "complete");
@@ -101,7 +106,7 @@ export const completion = (async () => {
         assert.equal(h.tab.snapshot, newer); assert.equal(h.tab.folderExpansion, undefined);
         assert.deepEqual(h.tab.selectedEntryIds, [file.id]);
         assert.equal(h.tab.directorySizes?.snapshot?.phase, "complete");
-        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, null);
+          assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, null);
         assert.deepEqual(getFolderListingRows(h.state.panels["panel-2"].tabs[0]).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
         assert.equal(t.listings.length, 2); assert.equal(t.wire.subscribed.length, 2);
       } finally { await h.close(); }

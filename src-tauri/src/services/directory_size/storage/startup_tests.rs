@@ -15,7 +15,7 @@ fn size_startup_long_paths_across_many_scopes_have_a_bounded_working_set() {
     for index in 0..48 {
         let scope = format!("C:\\view{index:02}");
         let header = ScanHeader { id: format!("scan{index}"), session: "session".into(), root: scope.clone(), generation: 1,
-            source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+            captured_at: chrono::Utc::now(), policy_version: 2 };
         let rows: Vec<_> = (0..16).map(|child| record(&format!("{scope}\\{child:02}{}", "x".repeat(28_000)))).collect();
         for chunk in rows.chunks(8) { db.append(&header, chunk).unwrap(); }
         db.publish(&header.id, index + 1).unwrap(); scopes.push(DirectorySizeViewScope { path: scope, priority: 0 });
@@ -37,7 +37,7 @@ fn size_startup_fair_bounded_summary_contains_only_accepted_roots_and_direct_chi
     let mut db = Database::open(&root.0).unwrap();
     for (ticket, scope) in ["C:\\wide", "D:\\small"].iter().enumerate() {
         let header = ScanHeader { id: scope.to_string(), session: "session".into(), root: scope.to_string(),
-            generation: 1, source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+            generation: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
         let mut records = vec![record(scope), record(&format!("{scope}\\direct")), record(&format!("{scope}\\direct\\deep"))];
         if ticket == 0 { records.extend((0..100).map(|i| record(&format!("{scope}\\child{i:03}")))); }
         db.append(&header, &records).unwrap(); db.publish(&header.id, ticket as u64 + 1).unwrap();
@@ -73,4 +73,24 @@ fn size_startup_rejects_a_malicious_field_even_inside_the_file_budget() {
         captured_at: chrono::Utc::now(), policy_version: 2 };
     fs::write(root.0.join("startup.json"), serde_json::to_vec(&serde_json::json!({ "version": 1, "records": [hit] })).unwrap()).unwrap();
     assert!(startup::load(&root.0).is_err(), "bounded files still need individual record limits");
+}
+
+#[test]
+fn size_startup_summary_does_not_spend_traversal_on_inert_source_zero_children() {
+    let root = Root::new(); let mut db = Database::open(&root.0).unwrap();
+    let old = ScanHeader { id: "old".into(), session: "session".into(), root: "C:\\root".into(), generation: 1,
+        captured_at: chrono::Utc::now(), policy_version: 2 };
+    let old_rows: Vec<_> = (0..33_000).map(|index| record(&format!("C:\\root\\a{index:05}"))).collect();
+    for chunk in old_rows.chunks(1024) { db.append(&old, chunk).unwrap(); }
+    db.publish(&old.id, 1).unwrap();
+    db.connection.execute("UPDATE scans SET source=0 WHERE id='old'", []).unwrap();
+    let current = ScanHeader { id: "current".into(), session: "session".into(), root: "C:\\root".into(), generation: 2,
+        captured_at: chrono::Utc::now(), policy_version: 2 };
+    db.append(&current, &[record("C:\\root"), record("C:\\root\\z-current")]).unwrap();
+    db.publish(&current.id, 2).unwrap();
+    startup::save(&mut db, &root.0, &[DirectorySizeViewScope { path: "C:\\root".into(), priority: 0 }], startup::MAX_BYTES).unwrap();
+    let hits = startup::load(&root.0).unwrap();
+    let current_path = super::super::target::normalize_local_path("C:\\root\\z-current").unwrap();
+    assert!(hits.iter().any(|hit| hit.record.path == current_path),
+        "active source-1 child must survive legacy source-0 traversal: {:?}", hits.iter().map(|hit| &hit.record.path).collect::<Vec<_>>());
 }

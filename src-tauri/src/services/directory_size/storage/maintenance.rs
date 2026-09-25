@@ -67,6 +67,13 @@ impl Maintenance {
                 }
             }
         }
+        // Legacy imported scans are inert and must not consume the bounded
+        // per-path maintenance budget. Reclaim a small page independently.
+        tx.execute("DELETE FROM records WHERE (path,scan_id) IN
+            (SELECT r.path,r.scan_id FROM records r JOIN scans s ON s.id=r.scan_id
+                WHERE s.source=0 AND NOT EXISTS(SELECT 1 FROM operation_copies c JOIN cache_operations o ON o.id=c.operation_id
+                    WHERE (c.old_scan=r.scan_id OR c.shadow_scan=r.scan_id) AND o.state IN(0,1))
+                ORDER BY r.path,r.scan_id LIMIT 128)", [])?;
         let mut query = tx.prepare_cached("SELECT id FROM scans WHERE id>?1 ORDER BY id LIMIT 128")?;
         let scans = query.query_map([&self.scan_after], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         drop(query);

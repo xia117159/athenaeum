@@ -64,6 +64,8 @@ export interface EntrySizeDisplay {
   retained?: boolean;
   /** A cached scalar that has never been verified in this tab's live result. */
   advisory?: boolean;
+  /** The bytes are current, but the listing denominator is still incomplete. */
+  provisional?: boolean;
 }
 export interface RetainedEntrySize {
   path: string;

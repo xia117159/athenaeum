@@ -12,7 +12,7 @@ fn size_maintenance_pressure_reclaims_pinned_deep_rows_but_keeps_two_view_front_
     for (index, scope) in ["C:\\one", "D:\\two"].iter().enumerate() {
         let id = format!("scan{index}"); protection.scans.push(id.clone());
         let header = ScanHeader { id: id.clone(), session: "current".into(), root: (*scope).into(), generation: 1,
-            source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+            captured_at: chrono::Utc::now(), policy_version: 2 };
         let records: Vec<_> = [format!("{scope}\\child\\cold"), format!("{scope}\\child"), scope.to_string()].into_iter().map(|path| StoredDirectory {
             path: normalize_local_path(&path).unwrap(), artifact_capture: None,
             size: DirectorySize { bytes: 9, complete: true, fingerprint: None, created_at: None, stats: ScanStats::default() },
@@ -35,7 +35,7 @@ fn size_maintenance_reclaims_cancelled_scans_in_the_current_session() {
         size: DirectorySize { bytes: 1, complete: true, fingerprint: None, created_at: None, stats: ScanStats::default() } };
     for id in ["cancelled", "running"] {
         db.append(&ScanHeader { id: id.into(), session: "current".into(), root: "C:\\root".into(), generation: 1,
-            source: 1, captured_at: chrono::Utc::now(), policy_version: 2 }, &[record.clone()]).unwrap();
+            captured_at: chrono::Utc::now(), policy_version: 2 }, &[record.clone()]).unwrap();
     }
     let protection = Protection { session: "current".into(), scans: vec!["running".into()], ..Default::default() };
     let mut maintenance = Maintenance::default();
@@ -53,7 +53,7 @@ fn size_maintenance_retires_namespace_barriers_after_scrubbing_old_records() {
     let record = StoredDirectory { path: path.clone(), artifact_capture: None,
         size: DirectorySize { bytes: 1, complete: true, fingerprint: None, created_at: None, stats: ScanStats::default() } };
     db.append(&ScanHeader { id: "old".into(), session: "current".into(), root: "C:\\root".into(), generation: 1,
-        source: 1, captured_at: chrono::Utc::now(), policy_version: 2 }, &[record]).unwrap(); db.publish("old", 1).unwrap();
+        captured_at: chrono::Utc::now(), policy_version: 2 }, &[record]).unwrap(); db.publish("old", 1).unwrap();
     db.prepare_operation(&Operation { id: "delete".into(), session: "current".into(), generation: 2,
         paths: vec![RenamePath { from: path.clone(), to: path.clone() }], scans: vec![], patches: vec![] }).unwrap();
     db.abort_operation("delete").unwrap();
@@ -70,7 +70,7 @@ fn size_maintenance_keeps_two_versions_plus_live_reference_and_evicts_whole_path
         created_at: Some(chrono::Utc::now()), stats: ScanStats { directories: 1, ..Default::default() } } };
     for ticket in 1..=5 {
         let header = ScanHeader { id: format!("scan{ticket}"), session: "old".into(), root: "C:\\root".into(), generation: ticket,
-            source: u8::from(ticket > 1), captured_at: chrono::Utc::now(), policy_version: 2 };
+            captured_at: chrono::Utc::now(), policy_version: 2 };
         db.append(&header, &[record.clone()]).unwrap(); db.publish(&header.id, ticket).unwrap();
     }
     let mut protection = Protection { session: "new".into(), scans: vec!["scan2".into()], scopes: Arc::new(vec![]), hot: vec![], reclaim: None };

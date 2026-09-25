@@ -53,7 +53,8 @@ export const completion = (async () => {
         await reply(first);
         assert.equal(display().sizeLabel, "60 B", "an outstanding chunk retains its first-frame value");
         assert.equal(display().sizeDisplay?.state, "stale");
-        assert.equal(display().sizeDisplay?.share, null);
+        assert.notEqual(display().sizeDisplay?.share, null, "a cached size keeps an advisory bar while lookup chunks remain");
+        assert.match(display().sizeDisplay?.title ?? "", /已知/);
         assert.equal(exactSizeBytes(display()), null);
         await reply(1 - first);
         assert.equal(display().sizeDisplay?.state, "complete");

@@ -83,7 +83,8 @@ test("partial stale cancelled and unknown totals never look like exact shares", 
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .5);
   for (const phase of ["queued", "scanning", "failed", "stale", "cancelled"] as const) {
     sizes.snapshot!.phase = phase;
-    assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null, phase);
+    assert.equal(projectEntrySize(tab, a).sizeDisplay?.provisional, true, phase);
+    assert.notEqual(projectEntrySize(tab, a).sizeDisplay?.share, null, phase);
   }
   sizes.records = {};
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "--");

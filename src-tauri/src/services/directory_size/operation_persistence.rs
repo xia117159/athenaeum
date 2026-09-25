@@ -22,7 +22,8 @@ impl Persistence {
     pub fn finish(&mut self, service: &DirectorySizeService, accepted: bool) {
         for id in self.temporary.drain(..) { self.store.abort_operation(id); }
         if let Some(operation) = self.operation.take() {
-            if !accepted || !self.prepared || !service.core.lock().unwrap().accept_storage_operation(operation.clone()) {
+            let storage_accepted = self.prepared && service.core.lock().unwrap().accept_storage_operation(operation.clone());
+            if !accepted || !storage_accepted {
                 self.store.abort_operation(operation.id);
             }
         }

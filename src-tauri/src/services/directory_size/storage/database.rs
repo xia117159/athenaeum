@@ -9,7 +9,7 @@ use super::super::{scan::DirectorySize, target::normalize_local_path};
 #[derive(Clone, Debug)]
 pub(in crate::services::directory_size) struct ScanHeader {
     pub id: String, pub session: String, pub root: String, pub generation: u64,
-    pub source: u8, pub captured_at: DateTime<Utc>, pub policy_version: u32,
+    pub captured_at: DateTime<Utc>, pub policy_version: u32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::services::directory_size) struct StoredDirectory {
@@ -42,7 +42,7 @@ pub(super) const LOOKUP: &str = "SELECT r.payload,s.id,s.source,s.publication,s.
     FROM records r JOIN scans s ON s.id=r.scan_id WHERE r.path=?1 AND s.state=1
     AND s.source=1
     AND NOT EXISTS(SELECT 1 FROM barriers b WHERE (r.path=b.prefix OR substr(r.path,1,length(b.prefix)+1)=b.prefix||char(92))
-        AND (b.state=0 OR s.source=0 OR s.publication<=b.cutoff OR (s.session=b.session AND CAST(s.generation AS INTEGER)<=b.generation)))
+        AND (b.state=0 OR s.publication<=b.cutoff OR (s.session=b.session AND CAST(s.generation AS INTEGER)<=b.generation)))
     AND (?2 IS NULL OR s.id=?2) ORDER BY s.publication DESC LIMIT 1";
 
 impl Database {
@@ -125,7 +125,7 @@ impl Database {
     }
     pub fn append(&mut self, header: &ScanHeader, records: &[StoredDirectory]) -> Result<()> {
         self.admit()?;
-        ensure!(!header.id.is_empty() && header.id.len() <= 192 && !header.session.is_empty() && header.session.len() <= 192 && header.source <= 1, "invalid scan identity");
+        ensure!(!header.id.is_empty() && header.id.len() <= 192 && !header.session.is_empty() && header.session.len() <= 192, "invalid scan identity");
         ensure!(records.len() <= 1024, "cache batch is too large");
         let root = normalize_local_path(&header.root).map_err(anyhow::Error::msg)?;
         let mut encoded = Vec::with_capacity(records.len()); let mut total = 0;
@@ -140,8 +140,8 @@ impl Database {
             encoded.push((path, parent, record.size.created_at.map(|at| at.to_rfc3339()), payload));
         }
         let tx = self.connection.transaction()?;
-        tx.execute("INSERT OR IGNORE INTO scans(id,session,root_path,generation,source,captured_at,policy_version) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![header.id,header.session,root,header.generation.to_string(),header.source,header.captured_at.to_rfc3339(),header.policy_version])?;
+        tx.execute("INSERT OR IGNORE INTO scans(id,session,root_path,generation,source,captured_at,policy_version) VALUES(?1,?2,?3,?4,1,?5,?6)",
+            params![header.id,header.session,root,header.generation.to_string(),header.captured_at.to_rfc3339(),header.policy_version])?;
         let (state, session, saved_root): (u32, String, String) = tx.query_row("SELECT state,session,root_path FROM scans WHERE id=?1", [&header.id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
         ensure!(session == header.session && saved_root == root, "scan identity collision");
         if state == 0 {

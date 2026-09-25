@@ -53,6 +53,19 @@ test("retained directory sizes remain sortable, partial and zero are not erased"
   }
 });
 
+test("historical advisory captures keep independent total and max bars", () => {
+  const h = retainedFixture();
+  const createdAt = "2026-09-20T00:00:00Z";
+  h.parent.sizeCreatedAt = createdAt;
+  h.tab.directorySizes = undefined;
+  h.navigate({ ...h.tab.snapshot, directorySizeCache: { generation: 0, sequence: 0, historical: true, directories: [
+    { ...sizeRecord(h.parent.path, "60", "parent-stamp"), createdAt, cachedAt: "2026-09-24T00:00:00Z" }
+  ] } });
+  const row = h.current.directorySizePresentation?.current?.rows[h.parent.path];
+  assert.equal(row?.total.share, .6);
+  assert.equal(row?.max.share, 1, "max mode must use the largest visible sibling as denominator");
+});
+
 test("historical values cannot be overwritten by stale consumers or generations", () => {
   const h = retainedFixture(); h.stale();
   const before = h.current;
@@ -144,7 +157,8 @@ test("deleting a folder invalidates previously visited descendant views", () => 
   h.navigate(h.tab.snapshot);
   h.navigate({ ...h.tab.snapshot, entries: [h.a, h.b] });
   h.navigate({ ...expansionSnapshot(h.parent.path, [h.child]), sizeFingerprint: "parent-stamp" });
-  assert.equal(h.display(h.child).share, null, "a recreated path cannot resurrect a deleted descendant's cached proportion");
+  assert.equal(h.display(h.child).share, 1, "a recreated listing derives a new file bar from current metadata");
+  assert.notEqual(h.display(h.child).retained, true, "a deleted descendant's old proportion cannot return");
 });
 
 test("deleting an unknown-sized parent also invalidates retained descendant rows", () => {

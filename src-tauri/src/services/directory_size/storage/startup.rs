@@ -47,7 +47,7 @@ impl Database {
     /// Keyset pagination uses records_parent; a deep subtree is never traversed.
     fn summary_children(&self, path: &str, after: &str) -> Result<Vec<String>> {
         let mut query = self.connection.prepare_cached("SELECT DISTINCT r.path FROM records r
-            WHERE r.parent_path=?1 AND r.path>?2 AND EXISTS(SELECT 1 FROM scans s WHERE s.id=r.scan_id AND s.state=1)
+            WHERE r.parent_path=?1 AND r.path>?2 AND EXISTS(SELECT 1 FROM scans s WHERE s.id=r.scan_id AND s.state=1 AND s.source=1)
             ORDER BY r.path LIMIT 1")?;
         let paths = query.query_map(rusqlite::params![path,after], |row| row.get::<_, String>(0))?;
         let mut result = vec![]; let mut bytes = 0;

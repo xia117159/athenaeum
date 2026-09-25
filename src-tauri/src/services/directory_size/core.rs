@@ -277,7 +277,7 @@ impl Core {
             root.identity_expired = false;
             let storage = self.storage.as_ref().filter(|_| root.target.profile.is_none()).map(|_| super::storage::ScanHeader {
                 id: format!("{}:{}", self.session, root.generation), session: self.session.clone(), root: root.target.path.clone(),
-                generation: root.generation, source: 1, captured_at: chrono::Utc::now(), policy_version: 2,
+                generation: root.generation, captured_at: chrono::Utc::now(), policy_version: 2,
             });
             jobs.push(ScanJob { target: root.target.clone(), generation: root.generation, cancelled, storage });
             self.jobs_started = self.jobs_started.saturating_add(1);

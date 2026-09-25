@@ -37,7 +37,7 @@ fn size_runtime_diagnostics_distinguishes_exact_disk_hit_miss_pending_and_unavai
     await_disk("miss");
     let path = super::target::normalize_local_path(directory.to_str().unwrap()).unwrap();
     let header = ScanHeader { id: "persisted".into(), session: "session".into(), root: path.clone(), generation: 1,
-        source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+        captured_at: chrono::Utc::now(), policy_version: 2 };
     assert!(store.append(header.clone(), vec![StoredDirectory { path, artifact_capture: None, size: super::scan::DirectorySize {
         bytes: 73, complete: true, created_at: fs::metadata(&directory).unwrap().created().ok().map(Into::into), fingerprint: None,
         stats: super::scan::ScanStats { directories: 1, ..Default::default() } } }]));
@@ -128,7 +128,7 @@ fn size_runtime_cache_artifacts_count_actual_bytes_without_rescanning_on_commits
     for ticket in 1..=3 {
         let store = service.storage.lock().unwrap().clone().unwrap();
         let header = super::storage::ScanHeader { id: format!("other-scan-{ticket}"), session: "other-scans".into(),
-            root: "C:\\other".into(), generation: ticket, source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+            root: "C:\\other".into(), generation: ticket, captured_at: chrono::Utc::now(), policy_version: 2 };
         assert!(store.append(header.clone(), vec![super::storage::StoredDirectory { path: "C:\\other".into(), artifact_capture: None,
             size: super::scan::DirectorySize { bytes: ticket, complete: true, fingerprint: None, created_at: Some(chrono::Utc::now()),
                 stats: super::scan::ScanStats { directories: 1, ..Default::default() } } }]));

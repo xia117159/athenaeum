@@ -12,7 +12,7 @@ impl Root {
 impl Drop for Root { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
 fn header(id: &str) -> ScanHeader {
     ScanHeader { id: id.into(), session: "session".into(), root: "C:\\root".into(), generation: 1,
-        source: 1, captured_at: chrono::Utc::now(), policy_version: 1 }
+        captured_at: chrono::Utc::now(), policy_version: 1 }
 }
 fn record() -> StoredDirectory {
     StoredDirectory { path: "C:\\root\\child".into(), artifact_capture: None, size: DirectorySize { bytes: 60, complete: true,
@@ -53,77 +53,6 @@ fn size_storage_queue_rotates_the_first_page_between_visible_scopes() {
     assert!(store.accept(header("queued"), 1)); store.resume_for_test(root.0.clone()); let _ = store.flush(Duration::from_secs(2));
     let hits = store.lookup(vec![format!("{a}\\00"), format!("{b}\\00")], None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
     assert_eq!(hits.len(), 2); let _ = store.shutdown(Duration::from_secs(2));
-}
-
-#[cfg(any())]
-#[test]
-fn size_storage_exhausted_migration_retries_keep_fences_until_restart_import() {
-    use super::{operations::{Operation, RenamePath}, super::{history::{History, HistoricalSize}, target::normalize_local_path}};
-    let root = Root::new(); let legacy = root.0.join("history.ndjson"); let deleted = normalize_local_path("C:\\removed\\child").unwrap();
-    let at = chrono::Utc::now(); let mut history = History::default();
-    history.insert(std::sync::Arc::from(deleted.as_str()), HistoricalSize { bytes: 60, complete: true, created_at: at,
-        cached_at: at, artifact_capture: None }, 8192); history.save(&legacy).unwrap();
-    let directory = root.0.join("cache"); let mut db = Database::open(&directory).unwrap();
-    db.prepare_operation(&Operation { id: "deleted".into(), session: "operation-session".into(), generation: 2,
-        paths: vec![RenamePath { from: deleted.clone(), to: deleted.clone() }], scans: vec![], patches: vec![] }).unwrap();
-    db.abort_operation("deleted").unwrap();
-    // A real transaction error before the first migration cursor is committed.
-    db.connection.execute_batch("CREATE TRIGGER fail_legacy BEFORE INSERT ON scans WHEN NEW.source=0 BEGIN SELECT RAISE(ABORT,'legacy temporarily unavailable'); END").unwrap();
-    drop(db);
-    let store = Store::paused_for_test(65536, 4096); store.resume_legacy_with_retry_for_test(directory.clone(), legacy.clone());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while store.migration_steps_for_test() < 6 { assert!(Instant::now() < deadline, "migration did not exhaust its retry budget"); std::thread::sleep(Duration::from_millis(10)); }
-    // Allow ordinary maintenance to run after retries stop; reads keep the worker responsive.
-    let until = Instant::now() + Duration::from_millis(1100);
-    while Instant::now() < until {
-        store.lookup(vec![deleted.clone()], None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert_eq!(store.migration_steps_for_test(), 6, "protection must not restart an exhausted retry loop");
-    assert!(legacy.exists()); store.shutdown(Duration::from_secs(2)).unwrap();
-    let db = Database::open(&directory).unwrap();
-    assert_eq!(db.connection.query_row("SELECT count(*) FROM migrations", [], |row| row.get::<_, u32>(0)).unwrap(), 0);
-    db.connection.execute_batch("DROP TRIGGER fail_legacy").unwrap(); drop(db);
-    let reopened = Store::start_with_legacy(directory, Some(legacy.clone()), std::sync::Arc::new(|_, _, _| {}));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while legacy.exists() { assert!(Instant::now() < deadline, "restart migration did not finish"); std::thread::sleep(Duration::from_millis(10)); }
-    assert!(reopened.lookup(vec![deleted], None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty(),
-        "a failed migration must keep namespace fences for next startup");
-    reopened.shutdown(Duration::from_secs(2)).unwrap();
-}
-
-#[cfg(any())]
-#[test]
-fn size_storage_full_reclaim_preserves_namespace_fences_before_first_legacy_batch() {
-    use super::{operations::{Operation, RenamePath}, super::{history::{History, HistoricalSize}, target::normalize_local_path}};
-    let root = Root::new(); let legacy = root.0.join("history.ndjson"); let deleted = normalize_local_path("C:\\removed\\child").unwrap();
-    let at = chrono::Utc::now(); let mut history = History::default();
-    history.insert(std::sync::Arc::from(deleted.as_str()), HistoricalSize { bytes: 60, complete: true, created_at: at,
-        cached_at: at, artifact_capture: None }, 8192); history.save(&legacy).unwrap();
-    let directory = root.0.join("cache"); let mut db = Database::open(&directory).unwrap();
-    let mut scopes: Vec<_> = (0..16).map(|index| crate::domain::directory_sizes::DirectorySizeViewScope {
-        path: normalize_local_path(&format!("C:\\root\\tab{index:02}")).unwrap(), priority: 2,
-    }).collect();
-    let cold: Vec<_> = scopes.iter().flat_map(|scope| (0..16).map(move |index| StoredDirectory {
-        path: format!("{}\\{index:02}{}", scope.path, "x".repeat(600)), ..record()
-    })).collect();
-    db.append(&header("old"), &cold).unwrap(); db.publish("old", 1).unwrap();
-    db.prepare_operation(&Operation { id: "deleted".into(), session: "operation-session".into(), generation: 2,
-        paths: vec![RenamePath { from: deleted.clone(), to: deleted.clone() }], scans: vec![], patches: vec![] }).unwrap();
-    db.abort_operation("deleted").unwrap(); db.checkpoint().unwrap();
-    assert_eq!(db.connection.query_row("SELECT count(*) FROM migrations", [], |row| row.get::<_, u32>(0)).unwrap(), 0);
-    let pages: u32 = db.connection.query_row("PRAGMA page_count", [], |row| row.get(0)).unwrap(); drop(db);
-    let store = Store::paused_for_test(65536, 4096); store.protect("session", vec!["old".into()]);
-    let visible = normalize_local_path(&format!("C:\\root\\visible{}", "x".repeat(6000))).unwrap();
-    scopes.push(crate::domain::directory_sizes::DirectorySizeViewScope { path: visible.clone(), priority: 0 });
-    store.update_views(std::sync::Arc::new(scopes));
-    assert!(store.append(header("new"), vec![StoredDirectory { path: visible, ..record() }])); assert!(store.accept(header("new"), 2));
-    store.resume_legacy_with_page_limit_for_test(directory, legacy.clone(), pages); store.flush(Duration::from_secs(2)).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while legacy.exists() { assert!(Instant::now() < deadline, "legacy migration did not complete"); std::thread::sleep(Duration::from_millis(10)); }
-    assert!(store.lookup(vec![deleted], None).unwrap().recv_timeout(Duration::from_secs(2)).unwrap().unwrap().is_empty(),
-        "hard-full reclaim must not let legacy rows resurrect a deleted namespace");
-    store.shutdown(Duration::from_secs(2)).unwrap();
 }
 
 #[test]

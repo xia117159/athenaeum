@@ -13,7 +13,7 @@ fn size_storage_full_budget_benchmark() {
     let root = Root(std::env::temp_dir().join(format!("size-bench-{}", uuid::Uuid::new_v4())));
     let mut db = Database::open(&root.0).unwrap();
     let header = ScanHeader { id: "benchmark".into(), session: "bench".into(), root: "C:\\root".into(), generation: 1,
-        source: 1, captured_at: chrono::Utc::now(), policy_version: 2 };
+        captured_at: chrono::Utc::now(), policy_version: 2 };
     let created = chrono::DateTime::UNIX_EPOCH; let mut count = 0;
     let start = Instant::now();
     loop {

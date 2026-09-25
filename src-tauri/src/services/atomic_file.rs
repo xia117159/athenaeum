@@ -81,11 +81,6 @@ fn write_atomically_impl(
     write_stream_impl(destination, |file| file.write_all(bytes).context("failed to write persistence temp file"), fault)
 }
 
-/// Stream bounded records into the same atomic replacement protocol.
-pub fn write_atomically_stream(destination: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
-    write_stream_impl(destination, write, None)
-}
-
 fn write_stream_impl(destination: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>, fault: Option<AtomicWriteFault>) -> Result<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).context("failed to create persistence directory")?;

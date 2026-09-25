@@ -5,7 +5,7 @@ struct Root(PathBuf);
 impl Root { fn new() -> Self { let path = std::env::temp_dir().join(format!("size-op-{}", uuid::Uuid::new_v4())); fs::create_dir(&path).unwrap(); Self(path) } }
 impl Drop for Root { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
 fn header(id: &str, generation: u64) -> ScanHeader { ScanHeader { id: id.into(), session: "s".into(), root: "C:\\root".into(), generation,
-    source: 1, captured_at: chrono::Utc::now(), policy_version: 2 } }
+    captured_at: chrono::Utc::now(), policy_version: 2 } }
 fn record(path: &str, bytes: u64) -> StoredDirectory { StoredDirectory { path: normalize_local_path(path).unwrap(), artifact_capture: None,
     size: DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()), created_at: Some(chrono::Utc::now()), stats: ScanStats { directories: 1, ..Default::default() } } } }
 fn operation() -> Operation { Operation { id: "rename".into(), session: "s".into(), generation: 2, paths: vec![RenamePath {

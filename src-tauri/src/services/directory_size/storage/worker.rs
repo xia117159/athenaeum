@@ -165,7 +165,7 @@ impl Store {
             if !queue.protection.scans.contains(&header.id) { queue.protection.scans.push(header.id.clone()); }
         }
         if let Write::Append(header, _) | Write::Accept(header, _) = &work {
-            if queue.protection.session.is_empty() && header.source == 1 { queue.protection.session = header.session.clone(); }
+            if queue.protection.session.is_empty() { queue.protection.session = header.session.clone(); }
         } else { queue.draining = true; }
         queue.records += work.records(); queue.schedule.dirty(self.shared.clock.elapsed().as_millis() as u64);
         queue.writes.push_back(Pending { work, cost, attempts: 0, retry_at: 0 });

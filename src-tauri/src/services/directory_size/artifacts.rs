@@ -83,8 +83,8 @@ impl Registry {
         std::fs::create_dir_all(directory)?;
         let parent = normalize_local_path(directory.to_str().ok_or_else(|| anyhow::anyhow!("invalid cache directory"))?).map_err(anyhow::Error::msg)?;
         let identity = parent_fact(Path::new(&parent)).map_err(anyhow::Error::msg)?;
-        let mut parents = vec![(parent.clone(), identity)];
-        let mut paths = FILES.iter().map(|name| Path::new(&parent).join(name)).collect::<Vec<_>>();
+        let parents = vec![(parent.clone(), identity)];
+        let paths = FILES.iter().map(|name| Path::new(&parent).join(name)).collect::<Vec<_>>();
         let members: Vec<_> = paths.into_iter().map(|path| {
             let path = path.to_string_lossy().into_owned();
             Member { expected: file_fact(&path).map(|(identity, _)| identity), path, owned_absent: false, operation: 0 }

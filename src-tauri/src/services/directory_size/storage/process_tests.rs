@@ -8,7 +8,7 @@ impl Drop for Process { fn drop(&mut self) { let _ = self.child.kill(); let _ = 
 fn size_storage_child_process_entry() {
     let Some(path) = std::env::var_os("SFM_SIZE_CACHE_CHILD_PATH") else { return; };
     let directory = PathBuf::from(path); let mut db = Database::open(&directory).unwrap();
-    let header = ScanHeader { id: "scan".into(), session: "child".into(), root: "C:\\root".into(), generation: 1, source: 1,
+    let header = ScanHeader { id: "scan".into(), session: "child".into(), root: "C:\\root".into(), generation: 1,
         captured_at: chrono::Utc::now(), policy_version: 2 };
     db.append(&header, &[StoredDirectory { path: "C:\\root".into(), artifact_capture: None, size: DirectorySize { bytes: 91, complete: true,
         fingerprint: None, created_at: Some(chrono::Utc::now()), stats: ScanStats { directories: 1, ..Default::default() } } }]).unwrap();

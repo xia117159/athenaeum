@@ -31,21 +31,21 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
     for (const entry of children) {
       entries.set(entry.path, entry);
       const branch = tab.folderExpansion?.[getPathComparisonKey(entry.path)];
-      if (entry.kind === "folder" && branch) visit(branch.path, branch.entries, branch.status === "ready");
+      if (entry.kind === "folder" && branch && branch.status === "ready") visit(branch.path, branch.entries, true);
     }
   };
   visit(tab.snapshot.location.path, tab.snapshot.entries, tab.status === "ready");
-  // Immutable entry references are usable within an unchanged listing, even
-  // if the filesystem omitted creation time. A replacement local listing needs
-  // creation identity; remote listings retain their existing connection and
-  // reliable-listing rules because FTP/SFTP can omit creation timestamps.
-  const unchanged = new Set([...before?.snapshot.entries ?? [], ...Object.values(before?.folderExpansion ?? {}).flatMap((branch) => branch.entries)]);
+  // A local row without creation identity is safe only while the exact
+  // listing objects remain in place. Once a listing is committed again, the
+  // same path may refer to a newly created object and retained bytes must not
+  // cross that boundary.
+  const sameListingObjects = before?.snapshot === tab.snapshot && before?.folderExpansion === tab.folderExpansion;
   const rows: Record<string, RetainedEntrySize> = {};
   const removed = new Set<string>();
   for (const row of Object.values(previous?.rows ?? {})) {
     const entry = entries.get(row.path);
     if (authoritative.get(row.parentPath)?.has(row.path) === false || entry &&
-      !retainedSizeMatches(row, entry, tab.snapshot.location.kind === "local" && !unchanged.has(entry))) removed.add(row.path);
+      !retainedSizeMatches(row, entry, tab.snapshot.location.kind === "local" && !sameListingObjects)) removed.add(row.path);
   }
   const removedAncestor = (row: RetainedEntrySize) => {
     let ancestor: RetainedEntrySize | undefined = row;
@@ -90,6 +90,7 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
   const max = createCurrentSizeProjector(tab, "folder-max");
   const hints = new Map(currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab))?.directories.map((record) => [record.path, record]));
   const advisory = createEntrySizeProjector({ ...tab, directorySizePresentation: undefined });
+  const advisoryMax = createEntrySizeProjector({ ...tab, directorySizePresentation: undefined }, "folder-max");
   for (const entry of entries.values()) {
     let display = total(entry);
     if (display.bytes === null || display.state !== "complete" && display.state !== "partial") {
@@ -101,9 +102,14 @@ function capture(tab: TabState, scope: string, previous?: DirectorySizePresentat
     }
     // A displayed size/bar pair is replaced together. A scalar-only hint or
     // incomplete lookup must not erase its denominator during a refresh.
-    if (display.share === null && rows[entry.path]?.total.share != null) continue;
+    const live = currentDirectorySizes(tab);
+    const phase = live?.snapshot?.phase;
+    const refreshing = !phase || phase !== "complete" && phase !== "partial" || live?.forceRefresh === true || live?.pending === true || live?.paused === true;
+    if ((display.advisory === true || display.share === null || display.provisional === true) && rows[entry.path]?.total.share != null &&
+      (!rows[entry.path]?.total.advisory || refreshing)) continue;
+    const maxDisplay = display.advisory ? advisoryMax(entry).sizeDisplay ?? max(entry) : max(entry);
     rows[entry.path] = { path: entry.path, parentPath: entry.parentPath, kind: entry.kind, createdAt: entry.sizeCreatedAt,
-      total: display, max: display.advisory ? display : max(entry) };
+      total: display, max: maxDisplay ?? display };
   }
   return { rootPath: tab.snapshot.location.path, locationKind: tab.snapshot.location.kind, scope, rows };
 }
