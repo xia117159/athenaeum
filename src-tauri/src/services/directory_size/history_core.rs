@@ -34,6 +34,7 @@ impl Core {
         let budget = self.limits.cache_bytes.saturating_sub(self.live_cache_bytes());
         let mut changed = false;
         for hit in hits {
+            if hit.source != 1 { continue; }
             let previous = self.history.get(&hit.record.path).map(|size| (size.bytes, size.created_at, size.cached_at));
             self.history.capture_ranked(Arc::from(hit.record.path.as_str()), &hit.record.size, hit.captured_at,
                 super::super::history::HistoryRank::Stored(hit.source, hit.publication), hit.record.artifact_capture.clone(), budget);

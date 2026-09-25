@@ -34,11 +34,13 @@ export const completion = (async () => {
   try {
     await act(async () => { root.render(<Harness />); await flushEffects(); });
     assert.equal(container.querySelector(".size-share-label")?.textContent, "60 B");
+    assert.ok(container.querySelector(".size-share-track"), "historical size has a first-render bar");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
     assert.equal(Boolean(container.querySelector('[role="status"]')), false, "cached display refreshes silently");
     assert.match(container.querySelector(".size-share-value")!.getAttribute("title")!, /2026.*后台刷新/);
     await act(async () => { wire.emit(sizeSnapshot({ consumerId, generation: 2, sequence: 3, phase: "failed", reason: "offline" })); await flushEffects(); });
     assert.equal(container.querySelector(".size-share-label")?.textContent, "60 B");
+    assert.ok(container.querySelector(".size-share-track"), "failed refresh keeps the bar with its size");
     assert.match(container.querySelector(".size-share-value")!.getAttribute("title")!, /刷新失败.*offline/);
     console.log("ok - restored sizes render through live background refresh without a loading banner");
   } finally { await act(async () => root.unmount()); container.remove(); dom.window.close(); }

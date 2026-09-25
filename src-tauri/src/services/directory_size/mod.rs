@@ -28,5 +28,3 @@ mod runtime_tests;
 
 #[cfg(test)]
 mod local_tests;
-#[cfg(test)]
-mod history_tests;

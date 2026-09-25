@@ -79,7 +79,6 @@ struct Queue {
     protection: super::maintenance::Protection,
     pending_fences: Vec<(String, String)>, reads_disabled: bool,
     ready: bool, read_only: bool, physical_bytes: u64, capacity_pressure: bool,
-    #[cfg(test)] migration_steps: usize,
 }
 impl Queue {
     fn new(max_bytes: usize, reserved: usize) -> Self {
@@ -90,7 +89,7 @@ impl Queue {
             summary_schedule: Schedule::default(), summary_pending: false, summary_retry: 0, summary_attempts: 0,
             protection: super::maintenance::Protection::default(), pending_fences: vec![], reads_disabled: false,
             ready: false, read_only: false, physical_bytes: 0, capacity_pressure: false,
-            #[cfg(test)] migration_steps: 0 }
+            }
     }
     fn finished_write(&mut self, pending: &Pending) {
         self.bytes -= pending.cost;
@@ -102,9 +101,8 @@ impl Queue {
         self.reads_disabled || paths.iter().any(|path| self.pending_fences.iter().any(|(prefix, _)|
             super::super::rename_proof::contains(prefix, path)))
     }
-    fn protection_snapshot(&self, migrating: bool, active: Option<&Write>) -> super::maintenance::Protection {
+    fn protection_snapshot(&self, active: Option<&Write>) -> super::maintenance::Protection {
         let mut protection = self.protection.clone();
-        protection.migrating = migrating;
         for work in active.into_iter().chain(self.writes.iter().map(|pending| &pending.work)) {
             if let Write::Append(header, _) | Write::Accept(header, _) = work {
                 if !protection.scans.contains(&header.id) { protection.scans.push(header.id.clone()); }
@@ -118,20 +116,16 @@ struct Shared { queue: Mutex<Queue>, changed: Condvar, clock: Instant }
 pub(in crate::services::directory_size) struct Store { shared: Arc<Shared> }
 impl Store {
     #[cfg(test)]
-    pub fn start(directory: PathBuf) -> Self {
-        Self::start_with_reads(directory, Arc::new(|_, _, _| {}))
-    }
-    #[cfg(test)]
-    pub fn start_with_reads(directory: PathBuf, on_read: Arc<ReadSink>) -> Self {
-        Self::start_with_legacy(directory, None, on_read)
-    }
-    pub fn start_with_legacy(directory: PathBuf, legacy: Option<PathBuf>, on_read: Arc<ReadSink>) -> Self {
+    pub fn start_for_test(directory: PathBuf) -> Self { Self::start_with_sink(directory, Arc::new(|_, _, _| {})) }
+    pub fn start_with_sink(directory: PathBuf, on_read: Arc<ReadSink>) -> Self {
         let store = Self::new(QUEUE_BYTES, CONTROL_BYTES);
         let shared = store.shared.clone();
-        thread::Builder::new().name("directory-size-store".into()).spawn(move || run(shared, directory, legacy, on_read, RETRY_MS, None))
+        thread::Builder::new().name("directory-size-store".into()).spawn(move || run(shared, directory, on_read, RETRY_MS, None))
             .expect("start directory size storage worker");
         store
     }
+    #[cfg(test)]
+    pub fn start(directory: PathBuf) -> Self { Self::start_with_sink(directory, Arc::new(|_, _, _| {})) }
     fn new(max_bytes: usize, reserved: usize) -> Self {
         Self { shared: Arc::new(Shared { queue: Mutex::new(Queue::new(max_bytes, reserved)), changed: Condvar::new(), clock: Instant::now() }) }
     }
@@ -143,22 +137,12 @@ impl Store {
     }
     #[cfg(test)]
     pub fn resume_with_retry_for_test(&self, directory: PathBuf, retry_ms: [u64; 5]) {
-        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, None, Arc::new(|_, _, _| {}), retry_ms, None));
+        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, Arc::new(|_, _, _| {}), retry_ms, None));
     }
     #[cfg(test)]
     pub fn resume_with_page_limit_for_test(&self, directory: PathBuf, pages: u32) {
-        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, None, Arc::new(|_, _, _| {}), RETRY_MS, Some(pages)));
+        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, Arc::new(|_, _, _| {}), RETRY_MS, Some(pages)));
     }
-    #[cfg(test)]
-    pub fn resume_legacy_with_page_limit_for_test(&self, directory: PathBuf, legacy: PathBuf, pages: u32) {
-        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, Some(legacy), Arc::new(|_, _, _| {}), RETRY_MS, Some(pages)));
-    }
-    #[cfg(test)]
-    pub fn resume_legacy_with_retry_for_test(&self, directory: PathBuf, legacy: PathBuf) {
-        let shared = self.shared.clone(); thread::spawn(move || run(shared, directory, Some(legacy), Arc::new(|_, _, _| {}), [1, 2, 5, 10, 30], None));
-    }
-    #[cfg(test)]
-    pub fn migration_steps_for_test(&self) -> usize { self.shared.queue.lock().unwrap().migration_steps }
     #[cfg(test)]
     pub fn queued_bytes(&self) -> usize { self.shared.queue.lock().unwrap().bytes }
     pub fn diagnostics(&self) -> DirectorySizeStorageDiagnostics {
@@ -268,9 +252,8 @@ impl Drop for Store {
     }
 }
 
-fn run(shared: Arc<Shared>, directory: PathBuf, mut legacy: Option<PathBuf>, on_read: Arc<ReadSink>, retry_ms: [u64; 5], page_limit: Option<u32>) {
+fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms: [u64; 5], page_limit: Option<u32>) {
     let mut database = None; let mut open_at = 0; let mut open_attempt = 0;
-    let mut migrate_at = 0; let mut migration_attempt = 0; let mut migration_stopped = false;
     let mut maintenance = super::maintenance::Maintenance::default(); let mut maintain_at = 0;
     let mut operations_pending = false; let mut operation_retry = 0; let mut operation_attempts = 0;
     let mut sample_at = 0;
@@ -336,7 +319,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, mut legacy: Option<PathBuf>, on_
         }
         let force = queue.stopping || !queue.flushes.is_empty();
         if (!force || !queue.writes.is_empty()) && now >= maintain_at && database.as_ref().is_some_and(Database::writable) {
-            let protection = queue.protection_snapshot(legacy.is_some(), None);
+            let protection = queue.protection_snapshot(None);
             drop(queue);
             let db = database.as_mut().unwrap();
             let pressure = super::maintenance::Maintenance::pressure(db).unwrap_or(false);
@@ -351,7 +334,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, mut legacy: Option<PathBuf>, on_
         if queue.draining && database.is_some() && queue.writes.front().is_some_and(|pending| now >= pending.retry_at || force) {
             let mut pending = queue.writes.pop_front().unwrap();
             let priority = match &pending.work { Write::Append(header, records) => records.iter().map(|row| queue.priority(header, row)).min().unwrap_or(2), _ => 0 };
-            let protection = queue.protection_snapshot(legacy.is_some(), Some(&pending.work));
+            let protection = queue.protection_snapshot(Some(&pending.work));
             drop(queue);
             let db = database.as_mut().unwrap();
             let mut result = pending.work.apply(db);
@@ -451,26 +434,6 @@ fn run(shared: Arc<Shared>, directory: PathBuf, mut legacy: Option<PathBuf>, on_
             queue.done = stopping;
             for reply in queue.flushes.drain(..) { let _ = reply.try_send(result.clone()); }
             if stopping { return; }
-            continue;
-        }
-        if !force && !migration_stopped && queue.writes.is_empty() && queue.reads.is_empty() && now >= migrate_at
-            && legacy.is_some() && database.as_ref().is_some_and(Database::writable) {
-            #[cfg(test)] { queue.migration_steps += 1; }
-            drop(queue);
-            match super::migration::step(database.as_mut().unwrap(), legacy.as_ref().unwrap()) {
-                Ok(done) => {
-                    migration_attempt = 0; migrate_at = now + 50; if done { legacy = None; }
-                    let mut queue = shared.queue.lock().unwrap();
-                    if !queue.views.is_empty() { queue.summary_pending = true; queue.summary_schedule.dirty(now); }
-                }
-                Err(error) => {
-                    shared.queue.lock().unwrap().last_error = Some(error.to_string());
-                    // Stopping retries does not finish the source. Keep namespace
-                    // fences until a future successful import, including restart.
-                    if migration_attempt >= RETRY_MS.len() { migration_stopped = true; }
-                    else { migrate_at = now + retry_ms[migration_attempt]; migration_attempt += 1; }
-                }
-            }
             continue;
         }
         let _ = shared.changed.wait_timeout(queue, Duration::from_millis(50)).unwrap();

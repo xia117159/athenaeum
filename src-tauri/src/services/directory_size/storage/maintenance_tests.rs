@@ -73,7 +73,7 @@ fn size_maintenance_keeps_two_versions_plus_live_reference_and_evicts_whole_path
             source: u8::from(ticket > 1), captured_at: chrono::Utc::now(), policy_version: 2 };
         db.append(&header, &[record.clone()]).unwrap(); db.publish(&header.id, ticket).unwrap();
     }
-    let mut protection = Protection { session: "new".into(), scans: vec!["scan2".into()], scopes: Arc::new(vec![]), hot: vec![], migrating: false, reclaim: None };
+    let mut protection = Protection { session: "new".into(), scans: vec!["scan2".into()], scopes: Arc::new(vec![]), hot: vec![], reclaim: None };
     let mut maintenance = Maintenance::default();
     for _ in 0..3 { maintenance.step(&mut db, &protection, false).unwrap(); }
     let count: u64 = db.connection.query_row("SELECT count(*) FROM records", [], |row| row.get(0)).unwrap(); assert_eq!(count, 3);

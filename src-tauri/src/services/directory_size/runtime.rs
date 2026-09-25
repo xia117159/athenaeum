@@ -8,7 +8,6 @@ pub type CacheEventSink = dyn Fn(&str, DirectorySizeCacheUpdated) + Send + Sync;
 pub struct DirectorySizeService {
     pub(super) core: Arc<Mutex<Core>>, clock: Instant, started: AtomicBool,
     stopped: Arc<AtomicBool>, wake: Mutex<Option<SyncSender<Message>>>,
-    history_path: Mutex<Option<std::path::PathBuf>>,
     pub(super) storage: Mutex<Option<super::storage::Store>>,
     cache_sink: Mutex<Option<Weak<CacheEventSink>>>,
     artifacts: Mutex<Option<Arc<super::artifacts::Registry>>>,
@@ -22,15 +21,14 @@ impl Drop for ProfileUpdate<'_> {
 }
 impl Default for DirectorySizeService {
     fn default() -> Self { Self { core: Arc::new(Mutex::new(Core::default())), clock: Instant::now(),
-        started: AtomicBool::new(false), stopped: Arc::new(AtomicBool::new(false)), wake: Mutex::new(None), history_path: Mutex::new(None), storage: Mutex::new(None), cache_sink: Mutex::new(None), artifacts: Mutex::new(None) } }
+        started: AtomicBool::new(false), stopped: Arc::new(AtomicBool::new(false)), wake: Mutex::new(None), storage: Mutex::new(None), cache_sink: Mutex::new(None), artifacts: Mutex::new(None) } }
 }
 impl DirectorySizeService {
     pub fn initialize_storage(&self, directory: std::path::PathBuf) {
         if self.started.load(Ordering::SeqCst) || self.stopped.load(Ordering::SeqCst) { return; }
         let mut slot = self.storage.lock().unwrap();
         if slot.is_some() { return; }
-        let legacy = super::storage::legacy_path(&directory);
-        let artifacts = match super::artifacts::Registry::register(&directory, legacy.as_deref()) {
+        let artifacts = match super::artifacts::Registry::register(&directory) {
             Ok(artifacts) => artifacts,
             Err(error) => { eprintln!("warning: size cache membership initialization failed: {error}"); return; }
         };
@@ -38,7 +36,7 @@ impl DirectorySizeService {
         *self.artifacts.lock().unwrap() = Some(artifacts.clone());
         let weak_core = Arc::downgrade(&self.core);
         let clock = self.clock;
-        let store = super::storage::Store::start_with_legacy(directory.clone(), legacy, Arc::new(move |paths, scan, result| {
+        let store = super::storage::Store::start_with_sink(directory.clone(), Arc::new(move |paths, scan, result| {
             if let Some(core) = weak_core.upgrade() { core.lock().unwrap().stored_read_finished(paths, scan, result, clock.elapsed().as_millis() as u64); }
         }));
         let mut core = self.core.lock().unwrap();
@@ -60,16 +58,6 @@ impl DirectorySizeService {
         });
         // Slow or damaged storage must not hold the Ready event indefinitely.
         let _ = loaded.recv_timeout(Duration::from_millis(25));
-    }
-    #[cfg(test)]
-    pub fn initialize_history(&self, path: std::path::PathBuf) {
-        if self.started.load(Ordering::SeqCst) || self.stopped.load(Ordering::SeqCst) { return; }
-        let budget = self.core.lock().unwrap().limits.cache_bytes;
-        let history = super::history::History::load(&path, budget).unwrap_or_else(|error| {
-            eprintln!("warning: directory size history ignored: {error:#}"); Default::default()
-        });
-        let mut core = self.core.lock().unwrap(); core.history = history; core.history_enabled = true;
-        *self.history_path.lock().unwrap() = Some(path);
     }
     pub(super) fn now(&self) -> u64 { self.clock.elapsed().as_millis().min(u64::MAX as u128) as u64 }
     pub fn set_cache_sink(&self, sink: Weak<CacheEventSink>) { *self.cache_sink.lock().unwrap() = Some(sink); }
@@ -216,20 +204,16 @@ impl DirectorySizeService {
     }
     pub fn shutdown_with_timeout(&self, timeout: Duration) {
         if self.stopped.swap(true, Ordering::SeqCst) { return; }
-        let history = {
+        {
             let mut core = self.core.lock().unwrap_or_else(|error| error.into_inner());
             let scopes = core.views.freeze();
             if let Some(store) = &core.storage { store.update_views(scopes); }
-            core.shutdown(); std::mem::take(&mut core.history)
+            core.shutdown();
         };
         self.wake();
         let storage = self.storage.lock().unwrap_or_else(|error| error.into_inner()).clone();
         if let Some(store) = storage {
             if let Err(error) = store.shutdown(timeout) { eprintln!("warning: directory size cache flush failed: {error}"); }
-        }
-        let history_path = self.history_path.lock().unwrap_or_else(|error| error.into_inner()).clone();
-        if let Some(path) = history_path {
-            if let Err(error) = history.save(&path) { eprintln!("warning: directory size history save failed: {error:#}"); }
         }
     }
 }

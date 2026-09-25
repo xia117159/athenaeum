@@ -33,7 +33,7 @@ fn size_startup_long_paths_across_many_scopes_have_a_bounded_working_set() {
 
 #[test]
 fn size_startup_fair_bounded_summary_contains_only_accepted_roots_and_direct_children() {
-    let root = Root::new(); let registry = Registry::register(&root.0, None).unwrap();
+    let root = Root::new(); let registry = Registry::register(&root.0).unwrap();
     let mut db = Database::open(&root.0).unwrap();
     for (ticket, scope) in ["C:\\wide", "D:\\small"].iter().enumerate() {
         let header = ScanHeader { id: scope.to_string(), session: "session".into(), root: scope.to_string(),

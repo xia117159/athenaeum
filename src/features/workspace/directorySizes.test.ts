@@ -22,6 +22,32 @@ test("size shares keep one root denominator for 60/30/10 and expanded descendant
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
 });
 
+test("first listing file sizes and cached folder sizes share a known-size denominator before a lease", () => {
+  const { tab, parent, a, b } = sizeFixture();
+  tab.directorySizes = undefined;
+  tab.snapshot.directorySizeCache = { generation: 0, sequence: 0, historical: true, directories: [
+    { ...sizeRecord(parent.path, "60"), createdAt: parent.sizeCreatedAt, cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  const rows = [parent, a, b].map((entry) => projectEntrySize(tab, entry));
+  assert.deepEqual(rows.map((entry) => entry.sizeDisplay?.share), [.6, .3, .1]);
+  assert.ok(rows.every((entry) => entry.sizeDisplay?.title.includes("已知")));
+  assert.equal(projectEntrySize(tab, parent, "folder-max").sizeDisplay?.share, 1);
+  assert.equal(projectEntrySize(tab, a, "folder-max").sizeDisplay?.share, .5);
+});
+
+test("known-size bars survive incomplete siblings and positive expanded rows with a zero root", () => {
+  const { tab, sizes, parent, a, child } = sizeFixture();
+  sizes.records = { [getPathComparisonKey(tab.snapshot.location.path)]: sizeRecord(tab.snapshot.location.path, "100", "root-stamp"),
+    [getPathComparisonKey(parent.path)]: sizeRecord(parent.path, "60", "parent-stamp") };
+  tab.snapshot.entries.push(expansionEntry(tab.snapshot.location.path, "unknown", "folder"));
+  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
+  assert.match(projectEntrySize(tab, parent).sizeDisplay!.title, /已知/);
+  tab.snapshot.entries = [expansionEntry(tab.snapshot.location.path, "zero", "file", { sizeBytes: 0, sizeLabel: "0 B" })];
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, 1);
+  assert.match(projectEntrySize(tab, child).sizeDisplay!.title, /已知/);
+  assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, 1);
+});
+
 test("size-bar modes use the current listing root and exclude links or unknown values", () => {
   const { tab, sizes, parent, a, b, child } = sizeFixture();
   const link = expansionEntry(parent.path, "link", "file", { sizeBytes: 900, attributes: ["L"] });

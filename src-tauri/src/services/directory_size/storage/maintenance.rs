@@ -7,7 +7,6 @@ use crate::domain::directory_sizes::DirectorySizeViewScope;
 #[derive(Clone, Default)]
 pub(super) struct Protection {
     pub session: String, pub scans: Vec<String>, pub scopes: Arc<Vec<DirectorySizeViewScope>>, pub hot: Vec<String>,
-    pub migrating: bool,
     pub reclaim: Option<Reclaim>,
 }
 #[derive(Clone, Copy)]
@@ -32,7 +31,7 @@ impl Maintenance {
         let tx = database.connection.transaction()?;
         for path in paths {
             let mut query = tx.prepare_cached("SELECT r.scan_id FROM records r JOIN scans s ON s.id=r.scan_id
-                WHERE r.path=?1 AND s.state=1 ORDER BY s.source DESC,s.publication DESC LIMIT 2")?;
+                WHERE r.path=?1 AND s.state=1 AND s.source=1 ORDER BY s.publication DESC LIMIT 2")?;
             let latest = query.query_map([&path], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<HashSet<_>>>()?;
             drop(query);
             let root = protect.scopes.iter().any(|scope| path == scope.path);
@@ -57,8 +56,7 @@ impl Maintenance {
             let records = query.query_map([&path], |row| Ok((row.get::<_, String>(0)?,row.get::<_, u32>(1)?,row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let whole_path_fits = records.len() < 128;
             drop(query);
-            // Under pressure remove older versions first; never leave legacy visible
-            // after removing the normal version which previously shadowed it.
+            // Under pressure remove older versions first.
             let evict = pressure && !protected;
             for (id, state, _) in records {
                 if pins.contains(id.as_str()) && !evict { continue; }

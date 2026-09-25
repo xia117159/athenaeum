@@ -79,20 +79,12 @@ pub(super) fn file_fact(path: &str) -> Option<(RootIdentity, u64)> {
     #[cfg(not(any(windows, unix)))] { None }
 }
 impl Registry {
-    pub fn register(directory: &Path, legacy: Option<&Path>) -> anyhow::Result<Arc<Self>> {
+    pub fn register(directory: &Path) -> anyhow::Result<Arc<Self>> {
         std::fs::create_dir_all(directory)?;
         let parent = normalize_local_path(directory.to_str().ok_or_else(|| anyhow::anyhow!("invalid cache directory"))?).map_err(anyhow::Error::msg)?;
         let identity = parent_fact(Path::new(&parent)).map_err(anyhow::Error::msg)?;
         let mut parents = vec![(parent.clone(), identity)];
         let mut paths = FILES.iter().map(|name| Path::new(&parent).join(name)).collect::<Vec<_>>();
-        if let Some(legacy) = legacy {
-            let legacy = normalize_local_path(legacy.to_str().ok_or_else(|| anyhow::anyhow!("invalid legacy cache path"))?).map_err(anyhow::Error::msg)?;
-            let parent = Path::new(&legacy).parent().ok_or_else(|| anyhow::anyhow!("invalid legacy parent"))?;
-            if !parents.iter().any(|(path, _)| Path::new(path) == parent) {
-                parents.push((parent.to_string_lossy().into_owned(), parent_fact(parent).map_err(anyhow::Error::msg)?));
-            }
-            paths.push(legacy.into());
-        }
         let members: Vec<_> = paths.into_iter().map(|path| {
             let path = path.to_string_lossy().into_owned();
             Member { expected: file_fact(&path).map(|(identity, _)| identity), path, owned_absent: false, operation: 0 }
@@ -280,7 +272,7 @@ mod tests {
         for replace in [false, true] {
             let root = Root::new(); let cache = root.0.join("cache"); fs::create_dir(&cache).unwrap();
             fs::write(cache.join("startup.json"), b"saved").unwrap();
-            let registry = Registry::register(&cache, None).unwrap(); let before = registry.cached();
+            let registry = Registry::register(&cache).unwrap(); let before = registry.cached();
             let scope = normalize_local_path(root.0.to_str().unwrap()).unwrap();
             assert!(before.suppress_parent_modified(&scope, "cache"));
             assert!(!before.suppress(&scope, "cache/unknown"));
@@ -308,7 +300,7 @@ mod tests {
         let file = fs::OpenOptions::new().write(true).open(&destination).unwrap();
         unsafe { SetFileTime(HANDLE(file.as_raw_handle()), Some(&FILETIME { dwLowDateTime: 0, dwHighDateTime: 29_000_000 }), None, None).unwrap(); }
         drop(file);
-        let registry = Registry::register(&root.0, None).unwrap();
+        let registry = Registry::register(&root.0).unwrap();
         let creation = Creation::begin(&source); fs::write(&source, b"new summary").unwrap(); creation.finish();
         let receipt = Replacement::begin(&source, &destination);
         crate::services::atomic_file::replace_file(&source, &destination).unwrap(); receipt.finish();
@@ -319,7 +311,7 @@ mod tests {
     #[test]
     fn size_artifact_sampling_does_not_join_facts_from_different_objects() {
         let root = Root::new(); let path = root.0.join("startup.json"); fs::write(&path, [0_u8; 100]).unwrap();
-        let registry = Registry::register(&root.0, None).unwrap();
+        let registry = Registry::register(&root.0).unwrap();
         let scope = normalize_local_path(root.0.to_str().unwrap()).unwrap();
         let sampled = registry.sample_with(|name| {
             let old = file_fact(name);
@@ -338,7 +330,7 @@ mod tests {
     fn size_artifact_old_sample_cannot_overwrite_registered_replacement_or_newer_sample() {
         for replace in [false, true] {
             let root = Root::new(); let path = root.0.join("startup.json"); fs::write(&path, [0_u8; 100]).unwrap();
-            let registry = Registry::register(&root.0, None).unwrap();
+            let registry = Registry::register(&root.0).unwrap();
             let scope = normalize_local_path(root.0.to_str().unwrap()).unwrap();
             let before = registry.cached();
             let once = AtomicBool::new(false);
@@ -362,7 +354,7 @@ mod tests {
     #[test]
     fn size_artifact_sampling_failure_keeps_last_contribution_pending_until_recovered() {
         let root = Root::new(); let path = root.0.join("sizes.sqlite3"); fs::write(&path, [0_u8; 100]).unwrap();
-        let registry = Registry::register(&root.0, None).unwrap();
+        let registry = Registry::register(&root.0).unwrap();
         let scope = normalize_local_path(root.0.to_str().unwrap()).unwrap();
         let blocked = registry.sample_with(|_| None);
         assert_eq!(blocked.contribution(&scope).bytes, 100);
@@ -376,7 +368,7 @@ mod tests {
         let root = Root::new(); let cache = root.0.join("cache"); fs::create_dir(&cache).unwrap();
         fs::write(cache.join("sizes.sqlite3"), [0_u8; 100]).unwrap();
         fs::write(cache.join("ordinary"), [0_u8; 20]).unwrap();
-        let registry = Registry::register(&cache, None).unwrap();
+        let registry = Registry::register(&cache).unwrap();
         let path = normalize_local_path(cache.to_str().unwrap()).unwrap();
         let scan = || scan_directory(&path, &mut LocalMetadataSource, &AtomicBool::new(false), ScanLimits::default(), |_| {});
         let first = scan();

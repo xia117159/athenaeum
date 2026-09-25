@@ -75,9 +75,7 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
   const rootRecord = sizes?.records[getPathComparisonKey(root)];
   const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
   const terminal = supported && !!sizes && !!snapshot && !sizes.paused && !sizes.pending && (snapshot.phase === "complete" || snapshot.phase === "partial");
-  const denominatorReady = terminal && !!rootRecord && rootAligned && listingSizeIdentityIsReliable(tab, root) &&
-    tab.snapshot.entries.every((entry) => entry.kind !== "folder" || entry.attributes.includes("L") ||
-      !!sizes.records[getPathComparisonKey(entry.path)] && recordMatchesEntry(entry, sizes.records[getPathComparisonKey(entry.path)], local));
+  const denominatorReady = terminal && !!rootRecord && rootAligned && listingSizeIdentityIsReliable(tab, root);
   let denominator: bigint | null = null;
   if (denominatorReady) {
     denominator = 0n;
@@ -86,6 +84,9 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
       if (bytes !== null) denominator = mode === "folder-max" ? (bytes > denominator ? bytes : denominator) : denominator + bytes;
     }
   }
+  const knownEntries = sizes ? tab.snapshot.entries.filter((entry) => entry.attributes.includes("L") ||
+    knownEntryBytes(entry, sizes, local) !== null).length : 0;
+  const denominatorAdvisory = denominatorReady && knownEntries < tab.snapshot.entries.length;
   return (entry: EntryViewModel): EntrySizeDisplay => {
     const base: EntrySizeDisplay = {
       state: "unknown", bytes: null, share: null,
@@ -119,7 +120,7 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
       bytes: String(bytes),
       share,
       label: partial ? `≥${formatDirectoryBytes(bytes)}` : entry.kind === "folder" ? formatDirectoryBytes(bytes) : entry.sizeLabel,
-      title: `${bytes} 字节${share === null ? "，分母不完整" : `，占当前文件夹 ${(share * 100).toFixed(2)}%`}${partial ? "（统计不完整，下限）" : ""}${suffix}`
+      title: `${bytes} 字节${share === null ? "，分母不完整" : denominatorAdvisory ? `，占已知大小 ${(share * 100).toFixed(2)}%` : `，占当前文件夹 ${(share * 100).toFixed(2)}%`}${partial ? "（统计不完整，下限）" : ""}${suffix}`
     };
   };
 }
@@ -138,8 +139,7 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
     tab.columns.some((column) => column.id === "size" && column.visible);
   const cache = currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab));
   const hints = new Map(cache?.directories.map((record) => [record.path, record]));
-  return (entry: EntryViewModel): EntryViewModel => {
-    if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
+  const rawDisplay = (entry: EntryViewModel): EntrySizeDisplay => {
     const current = project(entry);
     let display = current;
     const hint = hints.get(entry.path);
@@ -158,7 +158,7 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
         title: cache?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
     }
     const old = rows?.[entry.path];
-    if (old && (old.total.share !== null ? display.share === null : current.bytes === null) && retainedSizeMatches(old, entry) &&
+    if (old && (old.total.share !== null ? display.share === null || display.title.includes("占已知大小") : current.bytes === null) && retainedSizeMatches(old, entry) &&
       listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
       const saved = mode === "folder-max" ? old.max : old.total;
       const phase = currentDirectorySizes(tab)?.snapshot;
@@ -167,6 +167,36 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
       display = { ...saved, state: "stale", retained: true,
         label: entry.kind === "folder" ? saved.label : entry.sizeLabel,
         title: `上次结果（${reason}）；${saved.title}` };
+    }
+    if (!currentDirectorySizes(tab) && display.bytes === null && entry.kind !== "folder" && !entry.attributes.includes("L") &&
+      listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
+      const bytes = exactSizeBytes(entry);
+      if (bytes !== null) display = { state: "complete", bytes: String(bytes), share: null, label: entry.sizeLabel,
+        title: `${bytes} 字节` };
+    }
+    return display;
+  };
+  let denominator = 0n;
+  let known = 0;
+  const canUseAdvisory = !currentDirectorySizes(tab);
+  for (const sibling of canUseAdvisory ? tab.snapshot.entries : []) {
+    if (sibling.attributes.includes("L")) continue;
+    const bytes = decimalBytes(rawDisplay(sibling).bytes);
+    if (bytes === null) continue;
+    known++;
+    denominator = mode === "folder-max" ? (bytes > denominator ? bytes : denominator) : denominator + bytes;
+  }
+  const incomplete = known < tab.snapshot.entries.filter((entry) => !entry.attributes.includes("L")).length;
+  return (entry: EntryViewModel): EntryViewModel => {
+    if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
+    let display = rawDisplay(entry);
+    if (canUseAdvisory && display.bytes !== null && display.share === null) {
+      const bytes = decimalBytes(display.bytes);
+      if (bytes !== null) {
+        const share = denominator === 0n && bytes > 0n ? 1 : ratioFromBigInt(bytes, denominator);
+        if (share !== null) display = { ...display, share,
+          title: `${display.title}；${denominator === 0n && bytes > 0n ? "暂无其他已知大小，占已知大小 100%" : `占已知大小 ${(share * 100).toFixed(2)}%`}${incomplete ? "（列表尚未全部完成）" : ""}` };
+      }
     }
     return { ...entry, sizeLabel: display.label, sizeDisplay: display };
   };

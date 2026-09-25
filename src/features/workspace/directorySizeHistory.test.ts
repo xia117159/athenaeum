@@ -33,6 +33,7 @@ function fixture() {
 test("restart history displays before subscribe despite changed contents and survives background lifecycle", () => {
   const h = fixture();
   assert.equal(h.display().sizeLabel, "60 B");
+  assert.equal(h.display().sizeDisplay?.share, 1);
   assert.equal(exactSizeBytes(h.display()), null, "historical display never certifies a live result");
   assert.match(h.display().sizeDisplay!.title, /2026/);
   h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
@@ -40,6 +41,7 @@ test("restart history displays before subscribe despite changed contents and sur
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
       snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence, phase, reason: "test failure" }) } });
     assert.equal(h.display().sizeLabel, "60 B", phase);
+    assert.equal(h.display().sizeDisplay?.share, 1, phase);
   }
   assert.match(h.display().sizeDisplay!.title, /失败/);
   h.send({ type: "directorySizeRequested", payload: { ...h.payload, intent: "cancel" } });
@@ -116,7 +118,7 @@ test("a scalar with no previous proportion may update while sibling details are 
     directories: [sizeRecord(h.path, "100", "new-contents"), sizeRecord(h.child, "80", "child")]
   } } });
   assert.equal(h.display().sizeLabel, "80 B");
-  assert.equal(h.display().sizeDisplay?.share, null);
+  assert.equal(h.display().sizeDisplay?.share, 1);
 });
 
 test("history tooltip distinguishes a finished scan with missing details from a running refresh", () => {

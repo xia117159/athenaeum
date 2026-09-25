@@ -30,7 +30,7 @@ test("navigation's first committed listing displays cached grandchildren before 
   const row = projectEntrySize(tab, tab.snapshot.entries[0]);
   assert.equal(row.sizeLabel, "60 B");
   assert.equal(row.sizeDisplay?.state, "stale");
-  assert.equal(row.sizeDisplay?.share, null);
+  assert.equal(row.sizeDisplay?.share, 1, "a cached scalar draws an advisory bar on the first listing");
   assert.equal(exactSizeBytes(row), null, "unverified hints cannot drive precise sorting");
   assert.notEqual(row.sizeDisplay?.retained, true);
 });
@@ -50,7 +50,7 @@ test("a new tab retains an identified listing hint while a new scan starts, fail
     const next = state.panels["panel-1"].tabs[0];
     const row = projectEntrySize(next, next.snapshot.entries[0]);
     assert.equal(row.sizeLabel, "60 B", phase);
-    assert.equal(row.sizeDisplay?.share, null, "display history never restores a live denominator");
+    assert.equal(row.sizeDisplay?.share, 1, "display history gets an advisory known-size denominator");
     assert.equal(exactSizeBytes(row), null);
   }
 });
@@ -73,7 +73,7 @@ test("an identified first-listing hint survives an ordinary refresh without a ca
     const row = projectEntrySize(tab, tab.snapshot.entries[0]);
     assert.equal(row.sizeLabel, replaced ? "--" : "60 B");
     assert.equal(exactSizeBytes(row), null);
-    assert.equal(row.sizeDisplay?.share, null);
+    assert.equal(row.sizeDisplay?.share, replaced ? null : 1);
   }
 });
 

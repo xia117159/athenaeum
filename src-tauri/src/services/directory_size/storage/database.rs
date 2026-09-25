@@ -40,9 +40,10 @@ pub(super) struct Database {
 const MAX_RECORD_BYTES: usize = 128 << 10;
 pub(super) const LOOKUP: &str = "SELECT r.payload,s.id,s.source,s.publication,s.captured_at,s.policy_version
     FROM records r JOIN scans s ON s.id=r.scan_id WHERE r.path=?1 AND s.state=1
+    AND s.source=1
     AND NOT EXISTS(SELECT 1 FROM barriers b WHERE (r.path=b.prefix OR substr(r.path,1,length(b.prefix)+1)=b.prefix||char(92))
         AND (b.state=0 OR s.source=0 OR s.publication<=b.cutoff OR (s.session=b.session AND CAST(s.generation AS INTEGER)<=b.generation)))
-    AND (?2 IS NULL OR s.id=?2) ORDER BY s.source DESC,s.publication DESC LIMIT 1";
+    AND (?2 IS NULL OR s.id=?2) ORDER BY s.publication DESC LIMIT 1";
 
 impl Database {
     pub fn open(directory: &Path) -> Result<Self> {
@@ -99,7 +100,6 @@ impl Database {
                 created_at TEXT, payload TEXT NOT NULL, PRIMARY KEY(path,scan_id)) WITHOUT ROWID;
             CREATE INDEX records_scan ON records(scan_id);
             CREATE INDEX records_parent ON records(parent_path,path);
-            CREATE TABLE migrations(source_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL, complete INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;
             CREATE TABLE barriers(prefix TEXT PRIMARY KEY, operation_id TEXT NOT NULL, state INTEGER NOT NULL,
                 cutoff INTEGER NOT NULL, session TEXT NOT NULL, generation INTEGER NOT NULL) WITHOUT ROWID;
             CREATE TABLE cache_operations(id TEXT PRIMARY KEY, state INTEGER NOT NULL, spec TEXT NOT NULL, publication INTEGER) WITHOUT ROWID;

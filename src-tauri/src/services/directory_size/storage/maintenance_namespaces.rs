@@ -5,11 +5,6 @@ use super::super::rename_proof::overlaps;
 
 impl Maintenance {
     pub(super) fn cleanup_namespaces(&mut self, db: &mut Database, protect: &Protection) -> Result<()> {
-        // A legacy source may still supply old names. Keep its fences until its
-        // cursor reaches a committed completion marker, including across restart.
-        if protect.migrating || db.connection.query_row("SELECT EXISTS(SELECT 1 FROM migrations WHERE complete=0)", [], |row| row.get::<_, bool>(0))? {
-            return Ok(());
-        }
         let barrier: Option<(String, String, u64)> = db.connection.query_row(
             "SELECT prefix,session,generation FROM barriers WHERE prefix>?1 AND state=1 ORDER BY prefix LIMIT 1",
             [&self.barrier_after], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?;
@@ -29,7 +24,7 @@ impl Maintenance {
             SELECT r.path,r.scan_id FROM records r JOIN scans s ON s.id=r.scan_id JOIN barriers b ON b.prefix=?1
             WHERE r.path>=?1 AND r.path<?1||char(1114111)
             AND (r.path=b.prefix OR substr(r.path,1,length(b.prefix)+1)=b.prefix||char(92))
-            AND (s.source=0 OR s.publication<=b.cutoff OR (s.session=b.session AND CAST(s.generation AS INTEGER)<=b.generation))
+            AND s.source=1 AND (s.publication<=b.cutoff OR (s.session=b.session AND CAST(s.generation AS INTEGER)<=b.generation))
             LIMIT 64)", [&prefix])?;
         if removed < 64 { tx.execute("DELETE FROM barriers WHERE prefix=?1", [&prefix])?; }
         // Retain a small replay window; older terminal specs and copy cursors have
