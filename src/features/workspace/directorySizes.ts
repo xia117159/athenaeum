@@ -3,9 +3,14 @@ import type { EntryViewModel, SizeBarMode, TabState } from "./types";
 import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
 import { currentListingSizeCache } from "./directorySizeCache";
 
+/** 详情视图中可见的大小列；`supportsDirectorySizes` 在此基础上还要求列表已就绪。 */
+function hasVisibleSizeColumn(tab: TabState) {
+  return tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
+    tab.columns.some((column) => column.id === "size" && column.visible);
+}
+
 export function supportsDirectorySizes(tab: TabState) {
-  return tab.kind === "directory" && tab.status === "ready" && tab.viewMode === "details" &&
-    tab.snapshot.location.kind !== "virtual" && tab.columns.some((column) => column.id === "size" && column.visible);
+  return tab.status === "ready" && hasVisibleSizeColumn(tab);
 }
 
 export function currentDirectorySizes(tab: TabState): DirectorySizeTabState | undefined {
@@ -101,6 +106,23 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
   const root = tab.snapshot.location.path;
   const local = tab.snapshot.location.kind === "local";
   const supported = supportsDirectorySizes(tab);
+  const rootReliable = listingSizeIdentityIsReliable(tab, root);
+  const parents = new Map<string, {
+    reliable: boolean;
+    fingerprint: string | null | undefined;
+    record: DirectorySizeTabState["records"][string] | undefined;
+  }>();
+  const parentInfo = (path: string) => {
+    const cached = parents.get(path);
+    if (cached) return cached;
+    const value = {
+      reliable: path === root ? rootReliable : listingSizeIdentityIsReliable(tab, path),
+      fingerprint: path === root ? tab.snapshot.sizeFingerprint : listingSizeFingerprint(tab, path),
+      record: sizes?.records[getPathComparisonKey(path)]
+    };
+    parents.set(path, value);
+    return value;
+  };
   const rootRecord = sizes?.records[getPathComparisonKey(root)];
   const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
   const terminal = supported && !!sizes && !!snapshot && !sizes.paused && !sizes.pending && (snapshot.phase === "complete" || snapshot.phase === "partial");
@@ -122,21 +144,22 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
       label: entry.kind === "folder" ? "--" : entry.sizeLabel,
       title: "尚未计算目录大小"
     };
-    if (!listingSizeIdentityIsReliable(tab, root) || !listingSizeIdentityIsReliable(tab, entry.parentPath)) return { ...base, title: "列表路径无法可靠区分条目，目录大小不可用" };
+    const parent = parentInfo(entry.parentPath);
+    if (!rootReliable || !parent.reliable) return { ...base, title: "列表路径无法可靠区分条目，目录大小不可用" };
     if (entry.attributes.includes("L")) return { ...base, state: "excluded", title: "链接不参与递归大小统计" };
     if (!supported || !sizes || !snapshot || sizes.paused || sizes.pending) return base;
     if (snapshot.phase !== "complete" && snapshot.phase !== "partial") {
       return { ...base, state: snapshot.phase === "stale" ? "stale" : "unknown", title: snapshot.reason ?? "目录大小尚未就绪" };
     }
 
-    const fingerprint = listingSizeFingerprint(tab, entry.parentPath);
-    const parentRecord = sizes.records[getPathComparisonKey(entry.parentPath)];
+    const fingerprint = parent.fingerprint;
+    const parentRecord = parent.record;
     if (!parentRecord) return base;
     if (fingerprint && parentRecord.sizeFingerprint && fingerprint !== parentRecord.sizeFingerprint) {
       return { ...base, state: "stale", title: "列表与大小统计已过期" };
     }
 
-    const record = sizes.records[getPathComparisonKey(entry.path)];
+    const record = entry.kind === "folder" ? sizes.records[getPathComparisonKey(entry.path)] : undefined;
     if (entry.kind === "folder" && !recordMatchesEntry(entry, record, local)) return base;
     const bytes = entry.kind === "folder" ? decimalBytes(record?.bytes) : exactSizeBytes(entry);
     if (bytes === null || (entry.kind === "folder" && record?.state === "unknown")) return base;
@@ -161,12 +184,12 @@ export function retainedSizeMatches(row: RetainedEntrySize, entry: EntryViewMode
 }
 
 export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "folder-total") {
+  if (!hasVisibleSizeColumn(tab)) return (entry: EntryViewModel): EntryViewModel =>
+    entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
   const project = createCurrentSizeProjector(tab, mode);
   const view = tab.directorySizePresentation?.current;
   const root = tab.snapshot.location.path;
   const rows = view?.rootPath === root && view.locationKind === tab.snapshot.location.kind ? view.rows : undefined;
-  const surface = tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
-    tab.columns.some((column) => column.id === "size" && column.visible);
   const cache = currentListingSizeCache(tab.snapshot, currentDirectorySizes(tab));
   type SizeHint = NonNullable<typeof cache>["directories"][number] & { historical?: boolean };
   const hints = new Map<string, SizeHint>();
@@ -177,6 +200,26 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   };
   addHints(cache);
   const sizes = currentDirectorySizes(tab);
+  const sizesSupported = supportsDirectorySizes(tab);
+  const rootReliable = listingSizeIdentityIsReliable(tab, root);
+  const parentReliability = new Map<string, boolean>();
+  const reliableParent = (path: string) => {
+    if (path === root) return rootReliable;
+    const cached = parentReliability.get(path);
+    if (cached !== undefined) return cached;
+    const reliable = listingSizeIdentityIsReliable(tab, path);
+    parentReliability.set(path, reliable);
+    return reliable;
+  };
+  const parentHintPresence = new Map<string, boolean>();
+  const hasParentHint = (path: string) => {
+    if (hints.size === 0) return false;
+    const cached = parentHintPresence.get(path);
+    if (cached !== undefined) return cached;
+    const present = hints.has(getPathComparisonKey(path));
+    parentHintPresence.set(path, present);
+    return present;
+  };
   const branchRoots = new Map<string, EntryViewModel>([
     ...tab.snapshot.entries,
     ...Object.values(tab.folderExpansion ?? {}).flatMap((branch) => branch.entries)
@@ -185,14 +228,14 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   for (const branch of Object.values(tab.folderExpansion ?? {})) {
     addHints(branchDisplayCache(tab, branch, sizes, branchRoots.get(getPathComparisonKey(branch.path))));
   }
-  const rawDisplay = (entry: EntryViewModel): EntrySizeDisplay => {
+  const displayCache = new WeakMap<EntryViewModel, EntrySizeDisplay>();
+  const computeRawDisplay = (entry: EntryViewModel): EntrySizeDisplay => {
     const current = project(entry);
     let display = current;
-    const hint = hints.get(getPathComparisonKey(entry.path));
+    const hint = entry.kind === "folder" ? hints.get(getPathComparisonKey(entry.path)) : undefined;
     const hintBytes = decimalBytes(hint?.bytes);
     if (display.bytes === null && hintBytes !== null && hint?.state !== "unknown" && entry.kind === "folder" &&
-      !entry.attributes.includes("L") && supportsDirectorySizes(tab) && listingSizeIdentityIsReliable(tab, root)) {
-      const sizes = currentDirectorySizes(tab);
+      !entry.attributes.includes("L") && sizesSupported && rootReliable) {
       const phase = sizes?.snapshot;
       const status = sizes?.paused || phase?.phase === "cancelled" ? "已取消刷新"
         : phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
@@ -205,29 +248,36 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
     }
     const old = rows?.[entry.path];
     if (old && (old.total.share !== null ? display.share === null || display.provisional === true && !old.total.advisory : current.bytes === null) && retainedSizeMatches(old, entry) &&
-      listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
+      rootReliable && reliableParent(entry.parentPath)) {
       const saved = mode === "folder-max" ? old.max : old.total;
-      const phase = currentDirectorySizes(tab)?.snapshot;
+      const phase = sizes?.snapshot;
       const reason = phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
         : phase?.phase === "cancelled" ? "已取消刷新" : "等待刷新结果";
       display = { ...saved, state: "stale", retained: true,
         label: entry.kind === "folder" ? saved.label : entry.sizeLabel,
         title: `上次结果（${reason}）；${saved.title}` };
     }
-    const livePhase = currentDirectorySizes(tab)?.snapshot?.phase;
+    const livePhase = sizes?.snapshot?.phase;
     const allowFileFallback = livePhase == null || !["complete", "partial"].includes(livePhase);
-    const branchCacheProvidesParent = hints.has(getPathComparisonKey(entry.parentPath));
+    const branchCacheProvidesParent = hasParentHint(entry.parentPath);
     if ((allowFileFallback || branchCacheProvidesParent) && display.bytes === null && entry.kind !== "folder" && !entry.attributes.includes("L") &&
-      listingSizeIdentityIsReliable(tab, root) && listingSizeIdentityIsReliable(tab, entry.parentPath)) {
+      rootReliable && reliableParent(entry.parentPath)) {
       const bytes = exactSizeBytes(entry);
       if (bytes !== null) display = { state: "stale", bytes: String(bytes), share: null, provisional: true, label: entry.sizeLabel,
         title: branchCacheProvidesParent ? `${bytes} 字节（展开目录缓存已提供父级范围）` : `${bytes} 字节` };
     }
     return display;
   };
+  const rawDisplay = (entry: EntryViewModel): EntrySizeDisplay => {
+    const cached = displayCache.get(entry);
+    if (cached) return cached;
+    const display = computeRawDisplay(entry);
+    displayCache.set(entry, display);
+    return display;
+  };
   let denominator = 0n;
   let known = 0;
-  const canUseAdvisory = !currentDirectorySizes(tab);
+  const canUseAdvisory = !sizes;
   for (const sibling of tab.snapshot.entries) {
     if (sibling.attributes.includes("L")) continue;
     const display = rawDisplay(sibling);
@@ -238,7 +288,6 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   }
   const incomplete = known < tab.snapshot.entries.filter((entry) => !entry.attributes.includes("L")).length;
   return (entry: EntryViewModel): EntryViewModel => {
-    if (!surface) return entry.sizeDisplay ? { ...entry, sizeDisplay: undefined } : entry;
     let display = rawDisplay(entry);
     if ((canUseAdvisory || display.advisory || display.provisional) && display.bytes !== null && display.share === null) {
       const bytes = decimalBytes(display.bytes);

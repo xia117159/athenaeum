@@ -99,3 +99,12 @@ test("stale or incompatible generation clears a hint so it cannot return on a la
     assert.equal(projectEntrySize(next, next.snapshot.entries[0]).sizeLabel, "--");
   }
 });
+
+test("cache hints stay hidden while the tab listing is not ready", () => {
+  const { commit } = fixture(); const ready = commit();
+  assert.equal(projectEntrySize(ready, ready.snapshot.entries[0]).sizeLabel, "60 B", "the ready listing shows the hint");
+  for (const status of ["loading", "reconnect-required"] as const) {
+    const tab = { ...ready, status };
+    assert.equal(projectEntrySize(tab, tab.snapshot.entries[0]).sizeLabel, "--", status);
+  }
+});

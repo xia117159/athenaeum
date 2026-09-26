@@ -27,6 +27,10 @@ function getPanelActiveTab(panel: PanelState | undefined) {
   return panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[0];
 }
 
+const evaluatedRegexPrograms = new WeakMap<NonNullable<QuickFilterEntry["regexEvaluation"]>,
+  Partial<Record<QuickFilterMode, QuickFilterProgram>>>();
+const pendingRegexPrograms = new Map<string, QuickFilterProgram>();
+
 /** 该路径的条目（不存在时返回 undefined）。 */
 export function getQuickFilterEntry(state: WorkspaceState, path: string): QuickFilterEntry | undefined {
   return state.quickFilter.byPath[getPathComparisonKey(path)];
@@ -45,18 +49,32 @@ export function resolveQuickFilterProgram(state: WorkspaceState, path: string): 
   const entry = resolveQuickFilterEntry(state, path);
   if (entry.appliedText.trim() === "") return null;
   if (state.quickFilter.syntax === "regex") {
-    const evaluation = entry.regexEvaluation;
-    if (!evaluation || evaluation.text !== entry.appliedText) return {
+    const evaluation = entry.regexEvaluation?.text === entry.appliedText ? entry.regexEvaluation : undefined;
+    if (evaluation) {
+      const variants = evaluatedRegexPrograms.get(evaluation) ?? {};
+      const cached = variants[state.quickFilter.mode];
+      if (cached) return cached;
+      const program: QuickFilterProgram = {
+        mode: state.quickFilter.mode,
+        text: evaluation.text,
+        test: (name) => Object.hasOwn(evaluation.matches, name) && evaluation.matches[name].matched,
+        ranges: (name) => Object.hasOwn(evaluation.matches, name) ? evaluation.matches[name].ranges : [],
+        isPending: (name) => !Object.hasOwn(evaluation.matches, name)
+      };
+      variants[state.quickFilter.mode] = program;
+      evaluatedRegexPrograms.set(evaluation, variants);
+      return program;
+    }
+    const key = JSON.stringify([state.quickFilter.mode, entry.appliedText]);
+    const cached = pendingRegexPrograms.get(key);
+    if (cached) return cached;
+    const program: QuickFilterProgram = {
       mode: state.quickFilter.mode, text: entry.appliedText,
       test: () => false, ranges: () => [], isPending: () => true
     };
-    return {
-      mode: state.quickFilter.mode,
-      text: evaluation.text,
-      test: (name) => Object.hasOwn(evaluation.matches, name) && evaluation.matches[name].matched,
-      ranges: (name) => Object.hasOwn(evaluation.matches, name) ? evaluation.matches[name].ranges : [],
-      isPending: (name) => !Object.hasOwn(evaluation.matches, name)
-    };
+    if (pendingRegexPrograms.size >= 128) pendingRegexPrograms.delete(pendingRegexPrograms.keys().next().value!);
+    pendingRegexPrograms.set(key, program);
+    return program;
   }
   const result = compileQuickFilter(entry.appliedText, state.quickFilter.syntax, state.quickFilter.mode);
   return result.ok ? result.program : null;

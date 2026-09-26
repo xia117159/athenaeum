@@ -134,6 +134,20 @@
   gap: 6px;
 }
 
+.file-listing__virtual-content {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.file-listing__marquee {
+  position: fixed;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 1000;
+  border: 1px solid #0078d4;
+  background: rgba(0, 120, 212, 0.1);
+}
+
 .file-listing__body.is-empty {
   place-content: center;
 }

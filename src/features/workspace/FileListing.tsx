@@ -7,10 +7,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from "react";
+import { useFileListingVirtualizer } from "./useFileListingVirtualizer";
+import { isScrollbarPointer, useListingMarquee } from "./fileListingMarquee";
+import { FileDetailsRow, FileIconCard, type RowRenderState } from "./fileListingRows";
 import { clearEntryDrag, hasEntryDragPayload, readEntryDragPayload } from "./entryDrag";
 import { DetailsListBase } from "./DetailsListBase";
 import { getDetailsAutoFitColumnWidth } from "./detailsColumnAutoFit";
@@ -39,7 +43,7 @@ import {
   renderTagStack,
   sortEntries
 } from "./fileListingPresentation";
-import { EntryTooltip, useEntryTooltip } from "./fileListingTooltip";
+import { EntryTooltipLayer, useEntryTooltip } from "./fileListingTooltip";
 import type {
   ColumnDefinition,
   ColumnId,
@@ -72,17 +76,6 @@ function lookupGitStatus(gitStatus: Record<string, GitFileStatus> | undefined, p
 const ENTRY_POINTER_DRAG_THRESHOLD_PX = 4;
 const ENTRY_DRAG_FOLLOWER_OFFSET_PX = 12;
 const PANEL_IDS: PanelId[] = ["panel-1", "panel-2", "panel-3", "panel-4"];
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function clampClientPointToRect(clientX: number, clientY: number, rect: DOMRect) {
-  return {
-    x: clamp(clientX, rect.left, rect.right),
-    y: clamp(clientY, rect.top, rect.bottom)
-  };
-}
 
 function isPointOutsideViewport(clientX: number, clientY: number) {
   if (typeof window === "undefined") {
@@ -135,14 +128,6 @@ type EntryDragFollower = {
   y: number;
   entry: Pick<EntryViewModel, "kind" | "path" | "extension" | "name"> | null;
   count: number;
-};
-
-type MarqueeSelection = {
-  active: boolean;
-  startX: number;
-  startY: number;
-  currentX: number;
-  currentY: number;
 };
 
 type EntryPointerDropTarget = {
@@ -341,7 +326,11 @@ export function FileListingShell({
   gitStatus,
   selectionCursorId,
   quickFilter,
-  colorFilterEnabled = true
+  colorFilterEnabled = true,
+  entriesAreProjected = false,
+  onRowRender,
+  initialScrollTop = 0,
+  onScrollTopChange
 }: {
   panelId: PanelId;
   tabId: string;
@@ -392,20 +381,49 @@ export function FileListingShell({
   /** 快速过滤程序；仅 `highlight` 模式会产生局部高亮（§6.7 / D7 / B21）。 */
   quickFilter?: QuickFilterProgram | null;
   colorFilterEnabled?: boolean;
+  entriesAreProjected?: boolean;
+  /** Test-only render probe for visible row isolation. */
+  onRowRender?: (entryId: string) => void;
+  initialScrollTop?: number;
+  onScrollTopChange?: (top: number) => void;
 }) {
-  const visibleColumns = columns.filter((column) => column.visible);
-  const inlineCreateEntry = createInlineCreateEntry(inlineEdit);
+  const visibleColumns = useMemo(() => columns.filter((column) => column.visible), [columns]);
+  const inlineCreateEntry = useMemo(() => createInlineCreateEntry(inlineEdit), [inlineEdit]);
   const hasSizeAccessory = viewMode === "details" && Boolean(sizeHeaderAccessory);
   const headerMinWidth = (column: ColumnDefinition) => getColumnHeaderMinWidth(column, hasSizeAccessory);
   const headerPixelWidth = (column: ColumnDefinition) => getColumnPixelWidth(column, hasSizeAccessory);
   const treeRows = viewMode === "details" ? folderRows : undefined;
-  const rowsById = new Map(treeRows?.map((row) => [row.entry.id, row]));
-  const orderedEntries = treeRows ? treeRows.map((row) => row.entry) : sortEntries(entries, sort, currentPath);
-  const sortedEntries: ListingEntry[] = inlineCreateEntry ? [inlineCreateEntry, ...orderedEntries] : orderedEntries;
-  const treeNameAllowance = treeRows?.reduce((max, row) => Math.max(max, row.depth * FOLDER_INDENT_PX + FOLDER_TOGGLE_PX), 0) ?? 0;
+  const rowsById = useMemo(() => new Map(treeRows?.map((row) => [row.entry.id, row])), [treeRows]);
+  const orderedEntries = useMemo(() => treeRows ? treeRows.map((row) => row.entry) :
+    entriesAreProjected ? entries : sortEntries(entries, sort, currentPath),
+  [treeRows, entriesAreProjected, entries, sort, currentPath]);
+  const sortedEntries: ListingEntry[] = useMemo(() => inlineCreateEntry ? [inlineCreateEntry, ...orderedEntries] : orderedEntries,
+    [inlineCreateEntry, orderedEntries]);
+  const treeNameAllowance = useMemo(() => treeRows?.reduce((max, row) => Math.max(max, row.depth * FOLDER_INDENT_PX + FOLDER_TOGGLE_PX), 0) ?? 0,
+    [treeRows]);
+  const editingEntryIndex = useMemo(() => sortedEntries.findIndex((entry) => Boolean(inlineEdit && (
+    ((inlineEdit.mode === "create-folder" || inlineEdit.mode === "create-file") && entry.inlineCreate) ||
+    (inlineEdit.mode === "rename" && inlineEdit.entryId === entry.id)
+  ))), [sortedEntries, inlineEdit]);
+  const shouldVirtualize = sortedEntries.length > 100;
+  const itemKeys = useMemo(() => sortedEntries.map((entry) => entry.id), [sortedEntries]);
+  const { scrollContainerRef, virtualizer, cardColumns, cardGap, isGridView, virtualRowCount } = useFileListingVirtualizer({
+    viewMode, count: sortedEntries.length, detailsRowHeight, iconSize: getInlineIconSpec(viewMode).displaySize, editingEntryIndex,
+    itemKeys, initialScrollTop
+  });
+  const { overlayRef: marqueeOverlayRef, begin: beginMarquee } = useListingMarquee();
+  useLayoutEffect(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = initialScrollTop;
+  }, []);
+  useLayoutEffect(() => {
+    if (editingEntryIndex < 0) return;
+    const scroll = scrollContainerRef.current;
+    if (!scroll || !scroll.ownerDocument.defaultView?.requestAnimationFrame) return;
+    virtualizer.getVirtualItems();
+    virtualizer.scrollToIndex(isGridView ? Math.floor(editingEntryIndex / cardColumns) : editingEntryIndex, { align: "auto" });
+  }, [editingEntryIndex, cardColumns, viewMode]);
 
   const prevKeyboardNavTokenRef = useRef<symbol | undefined>(undefined);
-
   // 键盘令牌变化时滚动到焦点项
   // 直接从 selectedEntryIds 计算焦点，避免 focusEntryId state 的异步更新时序问题
   useEffect(() => {
@@ -417,31 +435,40 @@ export function FileListingShell({
     if (!focusId) {
       return;
     }
-    const element = document.getElementById(`entry-${focusId}`) as HTMLElement | null;
     const scrollContainer = scrollContainerRef.current;
-    if (!element || !scrollContainer) {
+    const index = sortedEntries.findIndex((entry) => entry.id === focusId);
+    if (index < 0 || !scrollContainer) {
       return;
     }
     releaseFolderExpansionControlFocus(scrollContainer);
     // 手动计算滚动位置以考虑 sticky header 的遮挡
-    const containerRect = scrollContainer.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    const stickyHeader = scrollContainer.querySelector(".file-listing__header") as HTMLElement | null;
-    const headerHeight = stickyHeader ? stickyHeader.getBoundingClientRect().height : 0;
-    const marginTop = headerHeight + 2;
-    const marginBottom = 2;
-    const elementTop = elementRect.top - containerRect.top;
-    const elementBottom = elementRect.bottom - containerRect.top;
-    if (elementTop < marginTop) {
-      scrollContainer.scrollTop -= marginTop - elementTop;
-    } else if (elementBottom > containerRect.height - marginBottom) {
-      scrollContainer.scrollTop += elementBottom - (containerRect.height - marginBottom);
+    const targetIndex = isGridView ? Math.floor(index / cardColumns) : index;
+    const runtimeWindow = scrollContainer.ownerDocument.defaultView;
+    if (runtimeWindow && typeof runtimeWindow.requestAnimationFrame === "function") {
+      virtualizer.getVirtualItems();
+      virtualizer.scrollToIndex(targetIndex, { align: "auto" });
+    } else {
+      const rowSize = viewMode === "details" ? detailsRowHeight : viewMode === "list" ? 42 : 76;
+      scrollContainer.scrollTop = Math.max(0, targetIndex * rowSize);
     }
   }, [keyboardNavToken, selectedEntryIds]);
   // 选择命中用 Set：点击选择的重绘路径避免 O(n) 数组扫描（V2 选择延迟修复）。
   const selectedIdSet = useMemo(() => new Set(selectedEntryIds), [selectedEntryIds]);
-  const selectedPaths = entries.filter((entry) => selectedIdSet.has(entry.id)).map((entry) => entry.path);
-  const cutPathSet = new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []);
+  const entryPositionsById = useMemo(() => {
+    const positions = new Map<string, Array<{ index: number; path: string }>>();
+    entries.forEach((entry, index) => {
+      const matches = positions.get(entry.id);
+      if (matches) matches.push({ index, path: entry.path });
+      else positions.set(entry.id, [{ index, path: entry.path }]);
+    });
+    return positions;
+  }, [entries]);
+  const selectedPaths = useMemo(() => Array.from(selectedIdSet)
+    .flatMap((id) => entryPositionsById.get(id) ?? [])
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.path), [selectedIdSet, entryPositionsById]);
+  const cutPathSet = useMemo(() => new Set(clipboard?.mode === "cut" ? clipboard.paths.map((path) => path.toLowerCase()) : []),
+    [clipboard]);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dropOperation, setDropOperation] = useState<DropOperation>("move");
   const [isListingDropTarget, setIsListingDropTarget] = useState(false);
@@ -452,13 +479,6 @@ export function FileListingShell({
   const suppressNextEntryClickRef = useRef<string | null>(null);
   const inlineIconSpec = getInlineIconSpec(viewMode);
   const compactIconSpec = getInlineIconSpec("list");
-  const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection>({
-    active: false,
-    startX: 0,
-    startY: 0,
-    currentX: 0,
-    currentY: 0
-  });
   const [entryDragFollower, setEntryDragFollower] = useState<EntryDragFollower>({
     visible: false,
     x: 0,
@@ -467,8 +487,6 @@ export function FileListingShell({
     count: 0
   });
   const lastClickedEntryIdRef = useRef<string | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     suppressNextInlineBlurRef.current = false;
     const input = inlineInputRef.current;
@@ -492,12 +510,12 @@ export function FileListingShell({
   // keydown 监听器，并按 state.activePanelId 路由到激活面板的激活标签页，避免每个面板实例各挂
   // 一个 window 监听器导致“多面板下 Ctrl+A 对所有面板同时生效”的 BUG。
 
-  const visibleOrderedEntryIds = sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id);
-  const detailsGridMetrics = getDetailsGridMetrics(visibleColumns, hasSizeAccessory);
-  const gridStyle = {
+  const visibleOrderedEntryIds = useMemo(() => sortedEntries.filter((entry) => !entry.inlineCreate).map((entry) => entry.id), [sortedEntries]);
+  const detailsGridMetrics = useMemo(() => getDetailsGridMetrics(visibleColumns, hasSizeAccessory), [visibleColumns, hasSizeAccessory]);
+  const gridStyle = useMemo(() => ({
     gridTemplateColumns: detailsGridMetrics.gridTemplateColumns,
     width: `${detailsGridMetrics.width}px`
-  } as CSSProperties;
+  } as CSSProperties), [detailsGridMetrics]);
   const listingStyle = {
     "--details-row-height": `${detailsRowHeight}px`
   } as CSSProperties;
@@ -622,13 +640,7 @@ export function FileListingShell({
     );
   };
 
-  const {
-    entryTooltip,
-    entryTooltipPosition,
-    entryTooltipRef,
-    hideEntryTooltip,
-    buildEntryTooltipHandlers
-  } = useEntryTooltip({
+  const { layerRef, hideEntryTooltip, buildEntryTooltipHandlers } = useEntryTooltip({
     tooltipHoverDelayMs,
     isDisabled: isInlineEditingEntry
   });
@@ -1001,16 +1013,63 @@ export function FileListingShell({
         : undefined
     };
   };
-
-
+  const latestHandlersRef = useRef(buildEntryHandlers);
+  latestHandlersRef.current = buildEntryHandlers;
+  const latestToggleRef = useRef(onToggleFolderExpansion);
+  latestToggleRef.current = onToggleFolderExpansion;
+  const latestRetryRef = useRef(onRetryFolderExpansion);
+  latestRetryRef.current = onRetryFolderExpansion;
+  const stableToggleExpansion = useMemo(() => (path: string) => latestToggleRef.current?.(path), []);
+  const stableRetryExpansion = useMemo(() => (path: string) => latestRetryRef.current?.(path), []);
+  const stableEntryHandlers = useMemo(() => (entry: ListingEntry) => {
+    const invoke = (name: string, event?: unknown) => {
+      const handler = (latestHandlersRef.current(entry) as unknown as Record<string, unknown>)[name];
+      if (typeof handler === "function") (handler as (event?: unknown) => void)(event);
+    };
+    return {
+      draggable: false,
+      onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => invoke("onMouseEnter", event),
+      onMouseMove: (event: ReactMouseEvent<HTMLElement>) => invoke("onMouseMove", event),
+      onMouseLeave: (event: ReactMouseEvent<HTMLElement>) => invoke("onMouseLeave", event),
+      onClick: (event: ReactMouseEvent<HTMLElement>) => invoke("onClick", event),
+      onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => invoke("onDoubleClick", event),
+      onContextMenu: (event: ReactMouseEvent<HTMLElement>) => invoke("onContextMenu", event),
+      onPointerDown: (event: ReactPointerEvent<HTMLElement>) => invoke("onPointerDown", event),
+      onDragStart: (event: ReactDragEvent<HTMLElement>) => invoke("onDragStart", event),
+      onDragEnd: (event: ReactDragEvent<HTMLElement>) => invoke("onDragEnd", event),
+      onDragOver: (event: ReactDragEvent<HTMLElement>) => invoke("onDragOver", event),
+      onDragLeave: (event: ReactDragEvent<HTMLElement>) => invoke("onDragLeave", event),
+      onDrop: (event: ReactDragEvent<HTMLElement>) => invoke("onDrop", event)
+    };
+  }, []);
+  const createRowState = (entry: ListingEntry, render: RowRenderState["render"]): RowRenderState => {
+    const editing = isInlineEditingEntry(entry);
+    const dropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
+    return {
+      entry,
+      selected: selectedIdSet.has(entry.id),
+      dropTarget,
+      dropOperation: dropTarget ? dropOperation : undefined,
+      editing,
+      editValue: editing ? inlineEdit?.value : undefined,
+      cut: isCutEntry(entry),
+      gitStatus: lookupGitStatus(gitStatus, entry.path),
+      folderRow: rowsById.get(entry.id),
+      columns: visibleColumns,
+      gridStyle,
+      quickFilter,
+      colorFilterEnabled,
+      sizeBarLow,
+      sizeBarHigh,
+      currentPath,
+      viewMode,
+      render,
+      onRender: onRowRender
+    };
+  };
   const renderEmptyState = () => <div className="file-listing__empty">当前目录为空</div>;
-
-  const renderDetailsRows = () =>
-    sortedEntries.map((entry) => {
-      const isSelected = selectedIdSet.has(entry.id);
-      const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
-      const isEditing = isInlineEditingEntry(entry);
-      const isCut = isCutEntry(entry);
+  const renderDetailsEntry = ({ entry, selected: isSelected, dropTarget: isDropTarget, dropOperation: rowDropOperation,
+    editing: isEditing, cut: isCut, gitStatus: rowGitStatus, folderRow }: RowRenderState) => {
       const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
@@ -1023,9 +1082,9 @@ export function FileListingShell({
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
-          data-drop-operation={isDropTarget ? dropOperation : undefined}
+          data-drop-operation={rowDropOperation}
           {...entryClipboardAttrs(entry)}
-          {...buildEntryHandlers(entry)}
+          {...stableEntryHandlers(entry)}
         >
           <div className="file-row__grid" style={gridStyle}>
             {visibleColumns.map((column) => (
@@ -1035,9 +1094,10 @@ export function FileListingShell({
                 data-cell-column-id={column.id}
                 onContextMenu={column.id === "comment" ? (event) => openCommentContextMenu(event, entry) : undefined}
               >
-                <FolderExpansionNameCell row={column.id === "name" ? rowsById.get(entry.id) : undefined}
-                  onToggle={onToggleFolderExpansion} onRetry={onRetryFolderExpansion}>
-                  {renderDetailsCell(entry, column.id, currentPath, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path), sizeBarLow, sizeBarHigh)}
+                <FolderExpansionNameCell row={column.id === "name" ? folderRow : undefined}
+                  onToggle={stableToggleExpansion} onRetry={stableRetryExpansion}>
+                  {renderDetailsCell(entry, column.id, currentPath,
+                    column.id === "name" ? renderEntryNameContent(entry) : null, rowGitStatus, sizeBarLow, sizeBarHigh)}
                 </FolderExpansionNameCell>
               </div>
             ))}
@@ -1045,14 +1105,14 @@ export function FileListingShell({
           {entry.driveInfo && renderDriveInfo(entry.driveInfo)}
         </div>
       );
-    });
-
-  const renderIconCards = () =>
-    sortedEntries.map((entry) => {
-      const isSelected = selectedIdSet.has(entry.id);
-      const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
-      const isEditing = isInlineEditingEntry(entry);
-      const isCut = isCutEntry(entry);
+  };
+  const detailsRendererRef = useRef(renderDetailsEntry);
+  detailsRendererRef.current = renderDetailsEntry;
+  const stableDetailsRenderer = useMemo(() => (state: RowRenderState) => detailsRendererRef.current(state), []);
+  const renderDetailsRows = (source = sortedEntries) => source.map((entry) =>
+    <FileDetailsRow key={`entry-${entry.id}`} {...createRowState(entry, stableDetailsRenderer)} />);
+  const renderIconEntry = ({ entry, selected: isSelected, dropTarget: isDropTarget, dropOperation: rowDropOperation,
+    editing: isEditing, cut: isCut, gitStatus: rowGitStatus }: RowRenderState) => {
       const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
@@ -1065,19 +1125,20 @@ export function FileListingShell({
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
-          data-drop-operation={isDropTarget ? dropOperation : undefined}
+          data-drop-operation={rowDropOperation}
           {...entryClipboardAttrs(entry)}
-          {...buildEntryHandlers(entry)}
+          {...stableEntryHandlers(entry)}
         >
           <div className="file-card__hero">
             <FileSystemIcon
               kind={entry.kind}
               path={entry.path}
               extension={entry.extension}
+              modifiedAt={entry.modifiedAt}
               size={inlineIconSpec.displaySize}
               imageList={inlineIconSpec.imageList}
               hidden={entry.isHidden}
-              gitStatus={lookupGitStatus(gitStatus, entry.path)}
+              gitStatus={rowGitStatus}
             />
           </div>
           <div className="file-card__title file-card__title--multiline" title={entry.name}>
@@ -1085,14 +1146,14 @@ export function FileListingShell({
           </div>
         </div>
       );
-    });
-
-  const renderListRows = () =>
-    sortedEntries.map((entry) => {
-      const isSelected = selectedIdSet.has(entry.id);
-      const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
-      const isEditing = isInlineEditingEntry(entry);
-      const isCut = isCutEntry(entry);
+  };
+  const iconRendererRef = useRef(renderIconEntry);
+  iconRendererRef.current = renderIconEntry;
+  const stableIconRenderer = useMemo(() => (state: RowRenderState) => iconRendererRef.current(state), []);
+  const renderIconCards = (source = sortedEntries) => source.map((entry) =>
+    <FileIconCard key={entry.id} {...createRowState(entry, stableIconRenderer)} />);
+  const renderListEntry = ({ entry, selected: isSelected, dropTarget: isDropTarget, dropOperation: rowDropOperation,
+    editing: isEditing, cut: isCut, gitStatus: rowGitStatus }: RowRenderState) => {
       const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
@@ -1105,22 +1166,22 @@ export function FileListingShell({
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
-          data-drop-operation={isDropTarget ? dropOperation : undefined}
+          data-drop-operation={rowDropOperation}
           {...entryClipboardAttrs(entry)}
-          {...buildEntryHandlers(entry)}
+          {...stableEntryHandlers(entry)}
         >
-          {renderNameCell(entry, compactIconSpec, "entry-name--compact", renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+          {renderNameCell(entry, compactIconSpec, "entry-name--compact", renderEntryNameContent(entry), rowGitStatus)}
         </div>
       );
-    });
-
-  const renderTileCards = () => {
+  };
+  const listRendererRef = useRef(renderListEntry);
+  listRendererRef.current = renderListEntry;
+  const stableListRenderer = useMemo(() => (state: RowRenderState) => listRendererRef.current(state), []);
+  const renderListRows = (source = sortedEntries) => source.map((entry) =>
+    <FileIconCard key={entry.id} {...createRowState(entry, stableListRenderer)} />);
+  const renderTileEntry = ({ entry, selected: isSelected, dropTarget: isDropTarget, dropOperation: rowDropOperation,
+    editing: isEditing, cut: isCut, gitStatus: rowGitStatus }: RowRenderState) => {
     const tileIcon = inlineIconSpec;
-    return sortedEntries.map((entry) => {
-      const isSelected = selectedIdSet.has(entry.id);
-      const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
-      const isEditing = isInlineEditingEntry(entry);
-      const isCut = isCutEntry(entry);
       const di = entry.driveInfo;
       const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       const drivePct = di?.totalBytes != null ? Math.min(100, Math.round(((di.totalBytes - (di.availableBytes ?? 0)) / di.totalBytes) * 100)) : null;
@@ -1135,14 +1196,14 @@ export function FileListingShell({
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
-          data-drop-operation={isDropTarget ? dropOperation : undefined}
+          data-drop-operation={rowDropOperation}
           {...entryClipboardAttrs(entry)}
-          {...buildEntryHandlers(entry)}
+          {...stableEntryHandlers(entry)}
         >
           <div className="file-card__tile-icon">
-            <FileSystemIcon kind={entry.kind} path={entry.path} extension={entry.extension}
+            <FileSystemIcon kind={entry.kind} path={entry.path} extension={entry.extension} modifiedAt={entry.modifiedAt}
               size={tileIcon.displaySize} imageList={tileIcon.imageList} hidden={entry.isHidden}
-              gitStatus={lookupGitStatus(gitStatus, entry.path)} />
+              gitStatus={rowGitStatus} />
           </div>
           <div className="file-card__tile-info">
             <span className="file-card__tile-name" title={entry.name}>{renderEntryNameContent(entry)}</span>
@@ -1163,15 +1224,14 @@ export function FileListingShell({
           </div>
         </div>
       );
-    });
   };
-
-  const renderContentRows = () =>
-    sortedEntries.map((entry) => {
-      const isSelected = selectedIdSet.has(entry.id);
-      const isDropTarget = entry.kind === "folder" && dropTargetPath === entry.path;
-      const isEditing = isInlineEditingEntry(entry);
-      const isCut = isCutEntry(entry);
+  const tileRendererRef = useRef(renderTileEntry);
+  tileRendererRef.current = renderTileEntry;
+  const stableTileRenderer = useMemo(() => (state: RowRenderState) => tileRendererRef.current(state), []);
+  const renderTileCards = (source = sortedEntries) => source.map((entry) =>
+    <FileIconCard key={entry.id} {...createRowState(entry, stableTileRenderer)} />);
+  const renderContentEntry = ({ entry, selected: isSelected, dropTarget: isDropTarget, dropOperation: rowDropOperation,
+    editing: isEditing, cut: isCut, gitStatus: rowGitStatus }: RowRenderState) => {
       const color = getFileColorRowAttributes(entry, colorFilterEnabled);
       return (
         <div
@@ -1184,12 +1244,12 @@ export function FileListingShell({
           data-entry-drop-kind={entry.kind === "folder" ? "folder" : undefined}
           data-entry-drop-path={entry.kind === "folder" ? entry.path : undefined}
           data-inline-edit={isEditing ? "true" : undefined}
-          data-drop-operation={isDropTarget ? dropOperation : undefined}
+          data-drop-operation={rowDropOperation}
           {...entryClipboardAttrs(entry)}
-          {...buildEntryHandlers(entry)}
+          {...stableEntryHandlers(entry)}
         >
           <div className="file-content-item__main">
-            {renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry), lookupGitStatus(gitStatus, entry.path))}
+            {renderNameCell(entry, compactIconSpec, undefined, renderEntryNameContent(entry), rowGitStatus)}
             <p>{entry.description}</p>
             {entry.contentText ? <p className="file-content-item__snippet">{entry.contentText}</p> : null}
             {renderTagStack(entry)}
@@ -1202,31 +1262,63 @@ export function FileListingShell({
           </div>
         </div>
       );
-    });
+  };
+  const contentRendererRef = useRef(renderContentEntry);
+  contentRendererRef.current = renderContentEntry;
+  const stableContentRenderer = useMemo(() => (state: RowRenderState) => contentRendererRef.current(state), []);
+  const renderContentRows = (source = sortedEntries) => source.map((entry) =>
+    <FileIconCard key={entry.id} {...createRowState(entry, stableContentRenderer)} />);
 
   const renderBody = () => {
     if (sortedEntries.length === 0) {
       return renderEmptyState();
     }
-
-    if (ICON_VIEW_MODES.includes(viewMode)) {
-      return renderIconCards();
+    if (!shouldVirtualize) {
+      if (viewMode === "details") return renderDetailsRows();
+      if (viewMode === "content") return renderContentRows();
+      if (viewMode === "list") return renderListRows();
+      return ICON_VIEW_MODES.includes(viewMode) ? renderIconCards() : renderTileCards();
     }
-
-    switch (viewMode) {
-      case "list":
-        return renderListRows();
-      case "details":
-        return renderDetailsRows();
-      case "tiles":
-        return renderTileCards();
-      case "content":
-        return renderContentRows();
-      default:
-        return renderDetailsRows();
-    }
+    const measuredVirtualItems = virtualizer.getVirtualItems();
+    const virtualItems: Array<{ key: string | number | bigint; index: number; start: number; size: number }> = measuredVirtualItems.length > 0
+      ? measuredVirtualItems
+      : Array.from({ length: Math.min(virtualRowCount, 24) }, (_, index) => ({
+          key: index,
+          index,
+          start: index * virtualizer.options.estimateSize(index),
+          size: virtualizer.options.estimateSize(index)
+        }));
+    const renderRow = (index: number) => {
+      if (viewMode === "details") return renderDetailsRows(sortedEntries.slice(index, index + 1));
+      if (viewMode === "content") return renderContentRows(sortedEntries.slice(index, index + 1));
+      if (viewMode === "list") return renderListRows(sortedEntries.slice(index, index + 1));
+      const start = index * cardColumns;
+      const rowEntries = sortedEntries.slice(start, start + cardColumns);
+      return ICON_VIEW_MODES.includes(viewMode) ? renderIconCards(rowEntries) : renderTileCards(rowEntries);
+    };
+    return (
+      <div className="file-listing__virtual-content" style={{ height: virtualizer.getTotalSize(), position: "relative", width: viewMode === "details" ? `${detailsGridMetrics.width}px` : undefined }}>
+        {virtualItems.map((item) => (
+          <div
+            key={item.key}
+            ref={virtualizer.measureElement}
+            data-index={item.index}
+            className="file-listing__virtual-row"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${item.start - virtualizer.options.scrollMargin}px)`,
+              ...(isGridView ? { display: "grid", gridTemplateColumns: `repeat(${cardColumns}, minmax(0, 1fr))`, gap: `${cardGap}px` } : {})
+            }}
+          >
+            {renderRow(item.index)}
+          </div>
+        ))}
+      </div>
+    );
   };
-
   const openBlankContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     if (getRequestedContextMenu(event) === "custom") {
       openCustomContextMenu(event, "panel");
@@ -1247,7 +1339,6 @@ export function FileListingShell({
       screenY: event.screenY
     });
   };
-
   const handleBlankContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest("[data-entry-path]")) {
       return;
@@ -1255,7 +1346,6 @@ export function FileListingShell({
 
     openBlankContextMenu(event);
   };
-
   const handleListingDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
     if (isExternalFileDrag(event.dataTransfer)) {
       event.preventDefault();
@@ -1288,7 +1378,6 @@ export function FileListingShell({
     setIsListingDropTarget(true);
     setDropOperation(nextOperation);
   };
-
   const handleListingDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
@@ -1369,6 +1458,11 @@ export function FileListingShell({
       return;
     }
 
+    // 拖动滚动条时目标就是滚动容器本身，不能当作空白区域开始框选或清空选择。
+    if (target === scrollContainerRef.current && isScrollbarPointer(target, event.clientX, event.clientY)) {
+      return;
+    }
+
     // 排除点击在具体文件项或输入框上的情况
     if (target.closest("[data-entry-path]") || target.closest(".inline-edit-input")) {
       devLog("[FileListing] Ignoring click on entry or input");
@@ -1399,91 +1493,12 @@ export function FileListingShell({
       return;
     }
 
-    const rect = scrollContainer.getBoundingClientRect();
-    const startPoint = clampClientPointToRect(event.clientX, event.clientY, rect);
-    const startX = startPoint.x;
-    const startY = startPoint.y;
-
-    setMarqueeSelection({
-      active: true,
-      startX,
-      startY,
-      currentX: startX,
-      currentY: startY
+    beginMarquee({
+      scrollElement: scrollContainer, clientX: event.clientX, clientY: event.clientY,
+      entries: sortedEntries, virtualizer, virtualized: shouldVirtualize,
+      columns: isGridView ? cardColumns : 1, gap: cardGap, details: viewMode === "details",
+      onSelect: (ids) => onSelectMultiple?.(ids)
     });
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      moveEvent.preventDefault();
-      const movePoint = clampClientPointToRect(
-        moveEvent.clientX,
-        moveEvent.clientY,
-        scrollContainer.getBoundingClientRect()
-      );
-      const currentX = movePoint.x;
-      const currentY = movePoint.y;
-      setMarqueeSelection({
-        active: true,
-        startX,
-        startY,
-        currentX,
-        currentY
-      });
-
-      // 计算框选矩形
-      const marqueeRect = {
-        left: Math.min(startX, currentX),
-        top: Math.min(startY, currentY),
-        right: Math.max(startX, currentX),
-        bottom: Math.max(startY, currentY)
-      };
-
-      // 找出与框选区域相交的条目
-      const selectedIds: string[] = [];
-      const entryElements = scrollContainer.querySelectorAll("[data-entry-path]");
-
-      entryElements.forEach((element) => {
-        const entryRect = element.getBoundingClientRect();
-        const intersects =
-          marqueeRect.left < entryRect.right &&
-          marqueeRect.right > entryRect.left &&
-          marqueeRect.top < entryRect.bottom &&
-          marqueeRect.bottom > entryRect.top;
-
-        if (intersects) {
-          const entryPath = (element as HTMLElement).dataset.entryPath;
-          const entry = sortedEntries.find((e) => e.path === entryPath);
-          if (entry && !entry.inlineCreate) {
-            selectedIds.push(entry.id);
-          }
-        }
-      });
-
-      // 更新选择
-      if (selectedIds.length > 0) {
-        devLog("[FileListing] Marquee selected IDs:", selectedIds);
-        if (onSelectMultiple) {
-          devLog("[FileListing] Calling onSelectMultiple with", selectedIds.length, "items");
-          onSelectMultiple(selectedIds);
-        } else {
-          devWarn("[FileListing] onSelectMultiple is undefined");
-        }
-      }
-    };
-
-    const handleMouseUp = () => {
-      setMarqueeSelection({
-        active: false,
-        startX: 0,
-        startY: 0,
-        currentX: 0,
-        currentY: 0
-      });
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
   };
 
   return (
@@ -1496,6 +1511,7 @@ export function FileListingShell({
       <div
         ref={scrollContainerRef}
         className={`file-listing__scroll${isListingDropTarget ? " is-drop-target" : ""}`}
+        onScroll={(event) => onScrollTopChange?.(event.currentTarget.scrollTop)}
         data-panel-id={panelId}
         data-entry-drop-kind="listing"
         data-entry-drop-path={currentPath}
@@ -1551,26 +1567,9 @@ export function FileListingShell({
           <div className={getViewBodyClassName(viewMode, sortedEntries.length === 0)}>{renderBody()}</div>
         )}
 
-        {/* 框选矩形 */}
-        {marqueeSelection.active && (
-          <div
-            className="file-listing__marquee"
-            style={{
-              position: "fixed",
-              left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
-              top: Math.min(marqueeSelection.startY, marqueeSelection.currentY),
-              width: Math.abs(marqueeSelection.currentX - marqueeSelection.startX),
-              height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY),
-              border: "1px solid #0078d4",
-              backgroundColor: "rgba(0, 120, 212, 0.1)",
-              boxSizing: "border-box",
-              pointerEvents: "none",
-              zIndex: 1000
-            }}
-          />
-        )}
+        <div ref={marqueeOverlayRef} className="file-listing__marquee" style={{ display: "none" }} />
       </div>
-      <EntryTooltip tooltip={entryTooltip} tooltipRef={entryTooltipRef} position={entryTooltipPosition} />
+      <EntryTooltipLayer ref={layerRef} />
       {entryDragFollower.visible && entryDragFollower.entry ? (
         <div
           className="entry-drag-follower"

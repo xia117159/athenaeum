@@ -1,42 +1,27 @@
 import {
   type MouseEvent as ReactMouseEvent,
-  type RefObject,
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState
 } from "react";
-import {
-  formatTooltipTags,
-  type ListingEntry
-} from "./fileListingPresentation";
+import { formatTooltipTags, type ListingEntry } from "./fileListingPresentation";
 
 const ENTRY_TOOLTIP_OFFSET_X = 14;
 const ENTRY_TOOLTIP_OFFSET_Y = 18;
 
-type EntryTooltipState = {
-  entry: ListingEntry;
-  x: number;
-  y: number;
-};
-
-function getEntryTooltipPosition(clientX: number, clientY: number, tooltipRect?: DOMRect) {
-  if (typeof window === "undefined") {
-    return {
-      left: clientX + ENTRY_TOOLTIP_OFFSET_X,
-      top: clientY + ENTRY_TOOLTIP_OFFSET_Y
-    };
-  }
-
+function getEntryTooltipPosition(clientX: number, clientY: number, tooltipSize?: { width: number; height: number }) {
+  if (typeof window === "undefined") return { left: clientX + ENTRY_TOOLTIP_OFFSET_X, top: clientY + ENTRY_TOOLTIP_OFFSET_Y };
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
   const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-  const width = tooltipRect?.width ?? 420;
-  const height = tooltipRect?.height ?? 220;
+  const width = tooltipSize?.width ?? 420;
+  const height = tooltipSize?.height ?? 220;
   const left = Math.max(8, Math.min(clientX + ENTRY_TOOLTIP_OFFSET_X, Math.max(8, viewportWidth - width - 8)));
   const preferredTop = clientY + ENTRY_TOOLTIP_OFFSET_Y;
   const flippedTop = clientY - height - ENTRY_TOOLTIP_OFFSET_Y;
   const top = preferredTop + height > viewportHeight - 8 ? Math.max(8, flippedTop) : Math.max(8, preferredTop);
-
   return { left, top };
 }
 
@@ -44,137 +29,113 @@ function normalizeTooltipDelay(value: number | undefined) {
   return Math.max(0, Math.min(5000, Math.round(Number.isFinite(value) ? value ?? 200 : 200)));
 }
 
-export function useEntryTooltip({
-  tooltipHoverDelayMs,
-  isDisabled
-}: {
+export type EntryTooltipLayerHandle = {
+  show: (entry: ListingEntry, x: number, y: number) => void;
+  move: (entryId: string, x: number, y: number) => void;
+  hide: () => void;
+};
+
+export const EntryTooltipLayer = forwardRef<EntryTooltipLayerHandle>(function EntryTooltipLayer(_, ref) {
+  const [entry, setEntry] = useState<ListingEntry | null>(null);
+  const entryRef = useRef<ListingEntry | null>(null);
+  const pointRef = useRef({ x: 0, y: 0 });
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const tooltipSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
+  const frameRef = useRef<number | null>(null);
+
+  const place = () => {
+    frameRef.current = null;
+    if (!tooltipRef.current) return;
+    const position = getEntryTooltipPosition(pointRef.current.x, pointRef.current.y, tooltipSizeRef.current);
+    tooltipRef.current.style.left = `${position.left}px`;
+    tooltipRef.current.style.top = `${position.top}px`;
+  };
+  const schedulePlace = () => {
+    if (frameRef.current !== null) return;
+    frameRef.current = typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame(place)
+      : window.setTimeout(place, 0);
+  };
+  useImperativeHandle(ref, () => ({
+    show(next, x, y) {
+      entryRef.current = next;
+      pointRef.current = { x, y };
+      setEntry(next);
+      schedulePlace();
+    },
+    move(entryId, x, y) {
+      if (entryRef.current?.id !== entryId) return;
+      pointRef.current = { x, y };
+      schedulePlace();
+    },
+    hide() {
+      entryRef.current = null;
+      setEntry(null);
+      if (frameRef.current !== null) {
+        if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(frameRef.current);
+        else window.clearTimeout(frameRef.current);
+      }
+      frameRef.current = null;
+    }
+  }));
+  useLayoutEffect(() => {
+    if (!entry) return;
+    const rect = tooltipRef.current?.getBoundingClientRect();
+    tooltipSizeRef.current = rect ? { width: rect.width, height: rect.height } : undefined;
+    place();
+  }, [entry]);
+  useEffect(() => () => {
+    if (frameRef.current === null) return;
+    if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(frameRef.current);
+    else window.clearTimeout(frameRef.current);
+  }, []);
+  if (!entry) return null;
+  return <div ref={tooltipRef} className="file-listing__tooltip" role="tooltip" style={{ left: 8, top: 8 }}>
+    <div>名称：{entry.name}</div>
+    <div>修改日期：{entry.modifiedLabel || "--"}</div>
+    <div>标签：{formatTooltipTags(entry)}</div>
+    <div className="file-listing__tooltip-comment">注释：{entry.comment || "--"}</div>
+  </div>;
+});
+
+export function useEntryTooltip({ tooltipHoverDelayMs, isDisabled }: {
   tooltipHoverDelayMs?: number;
   isDisabled: (entry: ListingEntry) => boolean;
 }) {
-  const entryTooltipRef = useRef<HTMLDivElement | null>(null);
-  const entryTooltipTimerRef = useRef<number | null>(null);
-  const pendingTooltipEntryRef = useRef<ListingEntry | null>(null);
-  const pendingTooltipPointRef = useRef({ x: 0, y: 0 });
-  const [entryTooltip, setEntryTooltip] = useState<EntryTooltipState | null>(null);
-  const [entryTooltipPosition, setEntryTooltipPosition] = useState({ left: 8, top: 8 });
-
-  const clearEntryTooltipTimer = () => {
-    if (entryTooltipTimerRef.current !== null) {
-      window.clearTimeout(entryTooltipTimerRef.current);
-      entryTooltipTimerRef.current = null;
-    }
+  const layerRef = useRef<EntryTooltipLayerHandle | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const pendingEntryRef = useRef<ListingEntry | null>(null);
+  const pendingPointRef = useRef({ x: 0, y: 0 });
+  const clearTimer = () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
   };
-
   const hideEntryTooltip = () => {
-    clearEntryTooltipTimer();
-    pendingTooltipEntryRef.current = null;
-    setEntryTooltip(null);
+    clearTimer();
+    pendingEntryRef.current = null;
+    layerRef.current?.hide();
   };
-
-  const showEntryTooltip = (entry: ListingEntry, clientX: number, clientY: number) => {
-    if (entry.inlineCreate || isDisabled(entry)) {
-      return;
-    }
-    setEntryTooltip({
-      entry,
-      x: clientX,
-      y: clientY
-    });
-    setEntryTooltipPosition(getEntryTooltipPosition(clientX, clientY));
-  };
-
-  const scheduleEntryTooltip = (entry: ListingEntry, event: ReactMouseEvent<HTMLElement>) => {
-    if (entry.inlineCreate || isDisabled(entry)) {
-      hideEntryTooltip();
-      return;
-    }
-    clearEntryTooltipTimer();
-    pendingTooltipEntryRef.current = entry;
-    pendingTooltipPointRef.current = { x: event.clientX, y: event.clientY };
-    const delay = normalizeTooltipDelay(tooltipHoverDelayMs);
-    if (delay === 0) {
-      showEntryTooltip(entry, event.clientX, event.clientY);
-      return;
-    }
-    entryTooltipTimerRef.current = window.setTimeout(() => {
-      entryTooltipTimerRef.current = null;
-      if (pendingTooltipEntryRef.current?.id !== entry.id) {
-        return;
-      }
-      showEntryTooltip(entry, pendingTooltipPointRef.current.x, pendingTooltipPointRef.current.y);
-    }, delay);
-  };
-
-  const moveEntryTooltip = (entry: ListingEntry, event: ReactMouseEvent<HTMLElement>) => {
-    pendingTooltipPointRef.current = { x: event.clientX, y: event.clientY };
-    if (entryTooltip?.entry.id !== entry.id) {
-      return;
-    }
-    setEntryTooltipPosition(getEntryTooltipPosition(event.clientX, event.clientY, entryTooltipRef.current?.getBoundingClientRect()));
-    setEntryTooltip({
-      ...entryTooltip,
-      x: event.clientX,
-      y: event.clientY
-    });
-  };
-
   const buildEntryTooltipHandlers = (entry: ListingEntry) => ({
-    onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => scheduleEntryTooltip(entry, event),
-    onMouseMove: (event: ReactMouseEvent<HTMLElement>) => moveEntryTooltip(entry, event),
-    onMouseLeave: () => hideEntryTooltip()
-  });
-
-  useEffect(
-    () => () => {
-      clearEntryTooltipTimer();
+    onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => {
+      if (entry.inlineCreate || isDisabled(entry)) { hideEntryTooltip(); return; }
+      clearTimer();
+      pendingEntryRef.current = entry;
+      pendingPointRef.current = { x: event.clientX, y: event.clientY };
+      const delay = normalizeTooltipDelay(tooltipHoverDelayMs);
+      if (delay === 0) { layerRef.current?.show(entry, event.clientX, event.clientY); return; }
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        if (pendingEntryRef.current?.id === entry.id) {
+          layerRef.current?.show(entry, pendingPointRef.current.x, pendingPointRef.current.y);
+        }
+      }, delay);
     },
-    []
-  );
-
-  useLayoutEffect(() => {
-    if (!entryTooltip) {
-      return;
-    }
-    const rect = entryTooltipRef.current?.getBoundingClientRect();
-    setEntryTooltipPosition(getEntryTooltipPosition(entryTooltip.x, entryTooltip.y, rect));
-  }, [entryTooltip]);
-
-  return {
-    entryTooltip,
-    entryTooltipPosition,
-    entryTooltipRef,
-    hideEntryTooltip,
-    buildEntryTooltipHandlers
-  };
-}
-
-export function EntryTooltip({
-  tooltip,
-  tooltipRef,
-  position
-}: {
-  tooltip: EntryTooltipState | null;
-  tooltipRef: RefObject<HTMLDivElement | null>;
-  position: { left: number; top: number };
-}) {
-  if (!tooltip) {
-    return null;
-  }
-
-  return (
-    <div
-      ref={tooltipRef}
-      className="file-listing__tooltip"
-      role="tooltip"
-      style={{
-        left: position.left,
-        top: position.top
-      }}
-    >
-      <div>名称：{tooltip.entry.name}</div>
-      <div>修改日期：{tooltip.entry.modifiedLabel || "--"}</div>
-      <div>标签：{formatTooltipTags(tooltip.entry)}</div>
-      <div className="file-listing__tooltip-comment">注释：{tooltip.entry.comment || "--"}</div>
-    </div>
-  );
+    onMouseMove: (event: ReactMouseEvent<HTMLElement>) => {
+      pendingPointRef.current = { x: event.clientX, y: event.clientY };
+      layerRef.current?.move(entry.id, event.clientX, event.clientY);
+    },
+    onMouseLeave: hideEntryTooltip
+  });
+  useEffect(() => () => { clearTimer(); }, []);
+  return { layerRef, hideEntryTooltip, buildEntryTooltipHandlers };
 }

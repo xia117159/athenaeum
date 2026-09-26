@@ -93,6 +93,7 @@ export interface DirectoryNode {
   isProtectedOperatingSystem?: boolean;
   expandable: boolean;
   loaded?: boolean;
+  treeLoadRequestId?: number;
   children: DirectoryNode[];
 }
 
@@ -109,6 +110,8 @@ export interface EntryViewModel {
   sizeCreatedAt?: string | null;
   createdLabel?: string;
   modifiedLabel: string;
+  /** Raw filesystem timestamp used to invalidate a path-specific system icon. */
+  modifiedAt?: string | null;
   accessedLabel?: string;
   extension: string;
   attributes: string[];

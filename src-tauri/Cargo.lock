@@ -4324,6 +4324,7 @@ dependencies = [
  "jiff",
  "pest",
  "pest_derive",
+ "png",
  "regex",
  "regex-automata",
  "rusqlite",

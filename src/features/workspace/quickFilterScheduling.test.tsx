@@ -7,6 +7,8 @@ import { useQuickFilterCompilationScheduler } from "./useQuickFilterCompilationS
 import { installDomEnvironment } from "./workspaceControllerTestHarness";
 import { evaluateQuickFilter } from "./quickFilterEvaluator";
 import { resolveQuickFilterProgram } from "./quickFilterState";
+import { getFolderListingEntries, getFolderListingRows } from "./folderExpansion";
+import { getPathComparisonKey } from "./workspacePathRelations";
 import type { QuickFilterWorkerEndpoint } from "./quickFilterWorkerClient";
 import type { QuickFilterEvaluationRequest } from "./quickFilterTypes";
 
@@ -143,5 +145,41 @@ export const completion = (async () => {
     container.remove();
   }
   assert.ok(workers.every(worker => worker.terminated));
+
+  const largeState = createWorkspaceState(f.bootstrap);
+  const largeTab = largeState.panels["panel-1"].tabs[0];
+  const base = largeTab.snapshot.entries[0];
+  assert.ok(base);
+  let nameReads = 0;
+  largeTab.snapshot = { ...largeTab.snapshot, entries: Array.from({ length: 20_000 }, (_, index) => {
+    const entry = { ...base, id: `large-${index}`, path: `${f.path}\\large-${index}.txt` };
+    Object.defineProperty(entry, "name", { get() { nameReads++; return `large-${index}.txt`; } });
+    return entry;
+  }) };
+  largeState.quickFilter = { ...largeState.quickFilter, syntax: "regex", byPath: {
+    [getPathComparisonKey(f.path)]: { text: "large", appliedText: "", error: null }
+  } };
+  let largeDispatch!: React.Dispatch<WorkspaceAction>;
+  function LargeHarness() {
+    const [current, dispatchCurrent] = useReducer(workspaceReducer, largeState);
+    largeDispatch = dispatchCurrent;
+    useQuickFilterCompilationScheduler({ state: current, dispatch: dispatchCurrent });
+    return null;
+  }
+  const largeRoot = ReactDOM.createRoot(document.createElement("div"));
+  try {
+    await act(async () => { largeRoot.render(<LargeHarness />); });
+    assert.ok(nameReads >= 20_000, "initial regex corpus includes the large listing");
+    getFolderListingEntries(getFolderListingRows(largeTab, largeState.fileVisibility,
+      resolveQuickFilterProgram(largeState, f.path), largeState.settings.model.folderExpansionEnabled === true,
+      largeState.settings.model.sizeBarMode));
+    nameReads = 0;
+    await act(async () => { largeDispatch({ type: "entrySelectionSet", payload: {
+      panelId: "panel-1", tabId: largeTab.id, entryIds: [largeTab.snapshot.entries[500].id]
+    } }); });
+    assert.equal(nameReads, 0, "selection alone must not rebuild the unchanged 20k-name corpus");
+  } finally {
+    await act(async () => { largeRoot.unmount(); });
+  }
   console.log("ok - Worker scheduling, modes, refresh, failure, clearing, settings role and navigation cancellation/rebuild");
 })();

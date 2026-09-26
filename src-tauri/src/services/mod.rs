@@ -30,7 +30,7 @@ pub mod windows_shell;
 pub(crate) mod windows_sta;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -47,13 +47,60 @@ use self::{
 };
 use crate::domain::models::SystemIconBitmap;
 
+pub struct IconBitmapCache {
+    entries: HashMap<String, SystemIconBitmap>,
+    order: VecDeque<String>,
+    png_entries: HashMap<String, Vec<u8>>,
+    png_order: VecDeque<String>,
+}
+
+impl Default for IconBitmapCache {
+    fn default() -> Self { Self { entries: HashMap::new(), order: VecDeque::new(), png_entries: HashMap::new(), png_order: VecDeque::new() } }
+}
+
+impl IconBitmapCache {
+    const CAPACITY: usize = 512;
+
+    pub fn get(&mut self, key: &str) -> Option<SystemIconBitmap> {
+        let value = self.entries.get(key).cloned()?;
+        self.order.retain(|item| item != key);
+        self.order.push_back(key.to_string());
+        Some(value)
+    }
+
+    pub fn insert(&mut self, key: String, value: SystemIconBitmap) {
+        self.entries.insert(key.clone(), value);
+        self.order.retain(|item| item != &key);
+        self.order.push_back(key);
+        while self.order.len() > Self::CAPACITY {
+            if let Some(oldest) = self.order.pop_front() { self.entries.remove(&oldest); }
+        }
+    }
+
+    pub fn get_png(&mut self, key: &str) -> Option<Vec<u8>> {
+        let value = self.png_entries.get(key).cloned()?;
+        self.png_order.retain(|item| item != key);
+        self.png_order.push_back(key.to_string());
+        Some(value)
+    }
+
+    pub fn insert_png(&mut self, key: String, value: Vec<u8>) {
+        self.png_entries.insert(key.clone(), value);
+        self.png_order.retain(|item| item != &key);
+        self.png_order.push_back(key);
+        while self.png_order.len() > Self::CAPACITY {
+            if let Some(oldest) = self.png_order.pop_front() { self.png_entries.remove(&oldest); }
+        }
+    }
+}
+
 pub struct AppState {
     pub shutdown: desktop_shutdown::Shutdown,
     pub metadata: RwLock<MetadataStore>,
     pub settings: RwLock<SettingsStore>,
     pub app_data_dir: RwLock<Option<PathBuf>>,
     pub search_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    pub system_icon_cache: Mutex<HashMap<String, SystemIconBitmap>>,
+    pub system_icon_cache: Mutex<IconBitmapCache>,
     pub operations: Mutex<OperationStore>,
     pub file_watcher: FileWatchService,
     pub directory_sizes: directory_size::DirectorySizeService,
@@ -70,7 +117,7 @@ impl AppState {
             settings: RwLock::new(settings),
             app_data_dir: RwLock::new(None),
             search_cancellations: Mutex::new(HashMap::new()),
-            system_icon_cache: Mutex::new(HashMap::new()),
+            system_icon_cache: Mutex::new(IconBitmapCache::default()),
             operations: Mutex::new(OperationStore::default()),
             file_watcher: FileWatchService::default(),
             directory_sizes: directory_size::DirectorySizeService::default(),
@@ -158,4 +205,37 @@ pub(crate) fn commit_color_rule_startup_migration(metadata: &mut MetadataStore) 
     }
     *metadata = staged;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IconBitmapCache;
+    use crate::domain::models::SystemIconBitmap;
+
+    #[test]
+    fn icon_bitmap_cache_evicts_oldest_entries_and_refreshes_lru_order() {
+        let mut cache = IconBitmapCache::default();
+        let bitmap = || SystemIconBitmap { width: 16, height: 16, rgba_base64: String::new() };
+        for index in 0..=IconBitmapCache::CAPACITY {
+            cache.insert(index.to_string(), bitmap());
+        }
+        assert!(cache.get("0").is_none());
+        assert!(cache.get("1").is_some());
+        cache.insert("new".into(), bitmap());
+        assert!(cache.get("1").is_some());
+        assert!(cache.get("2").is_none());
+    }
+
+    #[test]
+    fn icon_png_cache_evicts_oldest_entries_and_refreshes_lru_order() {
+        let mut cache = IconBitmapCache::default();
+        for index in 0..=IconBitmapCache::CAPACITY {
+            cache.insert_png(index.to_string(), vec![index as u8]);
+        }
+        assert!(cache.get_png("0").is_none());
+        assert!(cache.get_png("1").is_some());
+        cache.insert_png("new".into(), vec![1]);
+        assert!(cache.get_png("1").is_some());
+        assert!(cache.get_png("2").is_none());
+    }
 }

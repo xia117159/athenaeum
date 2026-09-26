@@ -101,8 +101,27 @@ fn unavailable(
     }
 }
 
+#[cfg(test)]
 fn apply_color_rules(
     path: &Path,
+    metadata: &fs::Metadata,
+    rules: &CompiledColorRules,
+) -> Option<ColorStyle> {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let path_display = path.to_string_lossy().into_owned();
+    let extension = (!metadata.is_dir()).then(|| extension_with_dot(path).unwrap_or_default());
+    apply_color_rules_for_entry(path, &name, &path_display, extension, metadata, rules)
+}
+
+fn apply_color_rules_for_entry(
+    path: &Path,
+    name: &str,
+    path_display: &str,
+    extension: Option<String>,
     metadata: &fs::Metadata,
     rules: &CompiledColorRules,
 ) -> Option<ColorStyle> {
@@ -120,13 +139,9 @@ fn apply_color_rules(
         (None, None, None)
     };
     rules.style_for(&EntryFacts {
-        name: path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .into(),
-        path: path.to_string_lossy().into_owned(),
-        extension: (!is_dir).then(|| extension_with_dot(path).unwrap_or_default()),
+        name: name.to_owned(),
+        path: path_display.to_owned(),
+        extension,
         kind: if is_dir {
             EntryKind::Directory
         } else {
@@ -149,14 +164,13 @@ fn apply_color_rules(
 
 fn entry_from_path(
     path: PathBuf,
+    metadata: fs::Metadata,
     color_rules: &CompiledColorRules,
     tag_names: Vec<String>,
     comment: Option<String>,
     size_fingerprint: &mut ListingFingerprint,
     size_policy: &super::directory_size::artifacts::ListingPolicy,
 ) -> Result<EntryViewModel> {
-    let metadata = fs::symlink_metadata(&path)
-        .with_context(|| format!("failed to get metadata for {}", path.display()))?;
     let is_dir = metadata.is_dir();
     let size_kind = local_metadata_kind(&metadata);
     let size_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
@@ -164,18 +178,28 @@ fn entry_from_path(
     let hidden = is_hidden(&path, Some(&metadata));
     let system = is_system(Some(&metadata));
     let read_only = metadata.permissions().readonly();
-    let color_style = apply_color_rules(&path, &metadata, color_rules);
+    let path_display = path.to_string_lossy().into_owned();
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let extension_with_dot = (!is_dir).then(|| extension_with_dot(&path).unwrap_or_default());
+    let color_style = apply_color_rules_for_entry(
+        &path,
+        &name,
+        &path_display,
+        extension_with_dot,
+        &metadata,
+        color_rules,
+    );
     let (foreground_color_hex, background_color_hex) = color_style
         .map(|style| (style.foreground_color_hex, style.background_color_hex))
         .unwrap_or((None, None));
 
     Ok(EntryViewModel {
-        path: path.to_string_lossy().into_owned(),
-        name: path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string(),
+        path: path_display.clone(),
+        name,
         extension: path
             .extension()
             .and_then(|value| value.to_str())
@@ -194,7 +218,7 @@ fn entry_from_path(
         is_protected_operating_system: is_protected_operating_system(Some(&metadata)),
         is_read_only: read_only,
         is_symlink: is_symlink(&metadata),
-        location: LocationDescriptor::local(path.to_string_lossy().into_owned()),
+        location: LocationDescriptor::local(path_display),
         decoration: EntryDecoration {
             foreground_color_hex,
             background_color_hex,
@@ -210,6 +234,30 @@ fn entry_from_path(
             archive: cfg!(windows),
         },
     })
+}
+
+fn entry_sort_key(entry: &EntryViewModel) -> (u8, String) {
+    (
+        if entry.kind == EntryKind::Directory { 0 } else { 1 },
+        entry.name.to_lowercase(),
+    )
+}
+
+fn metadata_for_entry(entry: &fs::DirEntry) -> Result<fs::Metadata> {
+    // `DirEntry::metadata` avoids a second stat for ordinary entries. Preserve
+    // the listing contract for links by using non-following metadata only when
+    // the directory entry itself is a link/reparse point.
+    if entry
+        .file_type()
+        .map(|file_type| file_type.is_symlink())
+        .unwrap_or(false)
+    {
+        return fs::symlink_metadata(entry.path())
+            .with_context(|| format!("failed to get metadata for {}", entry.path().display()));
+    }
+    entry
+        .metadata()
+        .with_context(|| format!("failed to get metadata for {}", entry.path().display()))
 }
 
 fn drive_infos_from_mask(mask: u32) -> Vec<DriveInfo> {
@@ -287,9 +335,11 @@ where
     {
         let entry = entry.context("failed to read directory entry")?;
         let entry_path = entry.path();
+        let entry_metadata = metadata_for_entry(&entry)?;
         let (tags, comment) = metadata_for_path(&entry_path.to_string_lossy());
         entries.push(entry_from_path(
             entry_path,
+            entry_metadata,
             &compiled_color_rules,
             tags,
             comment,
@@ -298,11 +348,7 @@ where
         )?);
     }
 
-    entries.sort_by(|left, right| match (&left.kind, &right.kind) {
-        (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Less,
-        (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Greater,
-        _ => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
-    });
+    entries.sort_by_cached_key(entry_sort_key);
 
     Ok(DirectoryListing {
         location: LocationDescriptor::local(canonical.to_string_lossy().into_owned()),
@@ -434,7 +480,7 @@ pub fn get_tree_children(path: &Path) -> Result<Vec<TreeNode>> {
     {
         let entry = entry.context("failed to read tree entry")?;
         let child_path = entry.path();
-        let metadata = fs::symlink_metadata(&child_path)
+        let metadata = metadata_for_entry(&entry)
             .with_context(|| format!("failed to get tree metadata for {}", child_path.display()))?;
         if !metadata.is_dir() {
             continue;
@@ -444,7 +490,7 @@ pub fn get_tree_children(path: &Path) -> Result<Vec<TreeNode>> {
             .ok()
             .map(|iter| {
                 iter.flatten().any(|item| {
-                    fs::symlink_metadata(item.path())
+                    metadata_for_entry(&item)
                         .map(|metadata| metadata.is_dir())
                         .unwrap_or(false)
                 })
@@ -679,18 +725,32 @@ fn remove_path(path: &Path) -> Result<()> {
 mod tests {
     use std::{
         fs,
+        path::Path,
+        time::Instant,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    #[ignore = "run with LISTING_BENCH_ROOT pointing to a generated fixture"]
+    fn listing_bench() {
+        let root = std::env::var("LISTING_BENCH_ROOT").expect("set LISTING_BENCH_ROOT");
+        for pass in ["cold", "warm"] {
+            let start = Instant::now();
+            let listing = list_directory(Path::new(&root), &[], |_| (Vec::new(), None)).unwrap();
+            println!("listing_bench {pass} entries={} elapsed_ms={}", listing.entries.len(), start.elapsed().as_millis());
+        }
+    }
 
     use super::{
         apply_color_rules, available_conflict_path, copy_recursively, create_file,
         drive_infos_from_mask, get_item_properties, get_tree_children, is_hidden,
         is_protected_operating_system, is_system, list_directory, move_entry, readable_drive_infos,
-        rename_entry, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM,
+        rename_entry, entry_sort_key, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM,
     };
     use crate::domain::color_filter::ColorRuleTarget;
     use crate::domain::models::{
-        ColorRule, DirectorySizeAvailability, DriveInfo, EntryKind, ItemPropertiesRequest,
+        ColorRule, DirectorySizeAvailability, DriveInfo, EntryAttributeAvailability, EntryDecoration,
+        EntryKind, EntryViewModel, ItemPropertiesRequest,
         ItemPropertiesTarget, ItemPropertyField, ItemPropertyFieldAvailability,
     };
     use crate::services::color_filter::compile_rules;
@@ -793,6 +853,45 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn entry_sort_key_precomputes_case_folded_name_once() {
+        let directory = EntryViewModel {
+            path: "C:\\Data\\Zeta".into(),
+            name: "Zeta".into(),
+            extension: None,
+            kind: EntryKind::Directory,
+            size: None,
+            created_at: None,
+            modified_at: None,
+            accessed_at: None,
+            is_hidden: false,
+            is_system: false,
+            is_protected_operating_system: false,
+            is_read_only: false,
+            is_symlink: false,
+            location: crate::domain::models::LocationDescriptor::local("C:\\Data\\Zeta"),
+            decoration: EntryDecoration::default(),
+            comment: None,
+            attribute_availability: EntryAttributeAvailability {
+                hidden: true,
+                system: false,
+                protected_system: false,
+                read_only: true,
+                symlink: true,
+                archive: false,
+            },
+        };
+        let file = EntryViewModel {
+            name: "alpha.txt".into(),
+            kind: EntryKind::File,
+            path: "C:\\Data\\alpha.txt".into(),
+            ..directory.clone()
+        };
+
+        assert!(entry_sort_key(&directory) < entry_sort_key(&file));
+        assert_eq!(entry_sort_key(&file).1, "alpha.txt");
+    }
+
     #[cfg(windows)]
     #[test]
     fn protected_operating_system_requires_windows_hidden_and_system_attributes() {
@@ -833,6 +932,64 @@ mod tests {
         assert!(!entry.is_hidden);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_directory_links_match_non_following_metadata_in_list_and_tree() {
+        use std::os::windows::fs::symlink_dir;
+        use std::process::Command;
+
+        let root = unique_temp_path("listing-reparse");
+        let target = root.join("target");
+        fs::create_dir_all(&target).expect("create target");
+        fs::create_dir_all(target.join("nested")).expect("create target child");
+
+        let symlink = root.join("symlink-dir");
+        let symlink_created = match symlink_dir(&target, &symlink) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied || error.raw_os_error() == Some(1314) => {
+                eprintln!("directory symlink fixture unavailable: {error}");
+                false
+            }
+            Err(error) => panic!("create directory symlink: {error}"),
+        };
+        let junction = root.join("junction-dir");
+        let junction_output = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .expect("run mklink for junction fixture");
+        let junction_created = junction_output.status.success();
+        if !junction_created {
+            eprintln!("directory junction fixture unavailable: {}", String::from_utf8_lossy(&junction_output.stderr));
+        }
+        assert!(symlink_created || junction_created, "neither Windows link fixture could be created");
+
+        let listing = list_directory(&root, &[], |_| (Vec::new(), None)).expect("list links");
+        let tree = get_tree_children(&root).expect("read tree links");
+        let canonical = root.canonicalize().expect("canonical root");
+        let mut legacy_fingerprint = super::ListingFingerprint::default();
+        let rules = compile_rules(&[], Utc::now());
+        let policy = super::super::directory_size::artifacts::listing_policy(&canonical);
+        for dir_entry in fs::read_dir(&canonical).expect("read fixture") {
+            let dir_entry = dir_entry.expect("directory entry");
+            let path = dir_entry.path();
+            let legacy_metadata = fs::symlink_metadata(&path).expect("non-following metadata");
+            let expected_kind = if legacy_metadata.is_dir() { EntryKind::Directory } else { EntryKind::File };
+            let listed = listing.entries.iter().find(|entry| entry.name == dir_entry.file_name().to_string_lossy()).expect("listed link");
+            assert_eq!(listed.kind, expected_kind, "{}", path.display());
+            assert_eq!(listed.is_symlink, legacy_metadata.file_type().is_symlink(), "{}", path.display());
+            assert_eq!(tree.iter().any(|child| child.name == listed.name), legacy_metadata.is_dir(), "{}", path.display());
+            super::entry_from_path(path, legacy_metadata, &rules, Vec::new(), None, &mut legacy_fingerprint, &policy)
+                .expect("legacy entry and fingerprint");
+        }
+        assert_eq!(listing.size_fingerprint, legacy_fingerprint.finish());
+
+        if symlink_created { fs::remove_dir(&symlink).expect("remove symlink"); }
+        if junction_created { fs::remove_dir(&junction).expect("remove junction"); }
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     #[test]

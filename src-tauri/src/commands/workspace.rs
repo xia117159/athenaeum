@@ -8,7 +8,8 @@ use crate::{
         NativeBackgroundContextMenuOptions, NativeBackgroundContextMenuResult,
         NativeSelectionContextMenuResult, NativeSelectionContextMenuShortcuts,
         NavigationTargetInfo, SystemFileClipboard, SystemFileClipboardMode,
-        SystemFileOperationRequest, SystemIconBitmap, SystemIconRequest,
+        SystemFileOperationRequest, SystemIconBitmap, SystemIconKeyResult, SystemIconKeysRequest,
+        SystemIconRequest,
         WindowsDragDropEnvironment, WorkspaceBootstrap, WorkspaceWatchRootsRequest,
     },
     services::{
@@ -18,67 +19,65 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<WorkspaceBootstrap, String> {
-    let drives = fs_service::list_drives();
-    let initial_path = drives
-        .first()
-        .map(|drive| drive.path.clone())
-        .unwrap_or_else(|| ".".to_string());
+pub async fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<WorkspaceBootstrap, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let drives = fs_service::list_drives();
+        let initial_path = drives
+            .first()
+            .map(|drive| drive.path.clone())
+            .unwrap_or_else(|| ".".to_string());
 
-    let metadata = {
-        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
-        metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
-        metadata.clone()
-    };
-    let settings = state
-        .settings
-        .read()
-        .expect("settings lock poisoned")
-        .clone();
-    let mut initial_listing =
-        fs_service::list_directory(Path::new(&initial_path), &metadata.color_rules, |path| {
-            (
-                metadata.tags_for_path(path),
-                metadata.comment_for_path(path),
+        let now = chrono::Utc::now();
+        if state.metadata.read().expect("metadata lock poisoned").has_expired_entry_metadata(now) {
+            state.metadata.write().expect("metadata lock poisoned").cleanup_expired_entry_metadata(|| now);
+        }
+        let settings = state.settings.read().expect("settings lock poisoned").clone();
+        let mut initial_listing = {
+            let metadata = state.metadata.read().expect("metadata lock poisoned");
+            fs_service::list_directory(
+                Path::new(&initial_path),
+                &metadata.color_rules,
+                |path| (metadata.tags_for_path(path), metadata.comment_for_path(path)),
             )
-        })
-        .map_err(|error| error.to_string())?;
-    state.directory_sizes.attach_listing_cache(&mut initial_listing);
-    let startup_diagnostics = state
-        .metadata
-        .write()
-        .expect("metadata lock poisoned")
-        .take_color_filter_recovery_diagnostics();
+            .map_err(|error| error.to_string())?
+        };
+        state.directory_sizes.attach_listing_cache(&mut initial_listing);
+        let startup_diagnostics = state
+            .metadata
+            .write()
+            .expect("metadata lock poisoned")
+            .take_color_filter_recovery_diagnostics();
 
-    let mut bootstrap = WorkspaceBootstrap {
-        drives,
-        initial_path,
-        initial_listing,
-        startup_diagnostics,
-        settings: metadata.to_settings_snapshot(
-            settings.layout,
-            settings.detail_columns,
-            settings.navigation_columns,
-            settings.details_row_height,
-            settings.size_bar_mode.clone(),
-            settings.tree_auto_follow_enabled,
-            settings.folder_expansion_enabled,
-            settings.folder_expansion_on_row_click,
-            settings.notifications_enabled,
-            settings.tooltip_hover_delay_ms,
-            settings.metadata_retention_hours,
-            settings.file_visibility,
-            settings.context_menu,
-            settings.theme,
-            settings.template_root,
-        ),
-    };
-
-    // Hydrate remote profile passwords from credential store
-    bootstrap.settings.remote_profiles =
-        super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
-
-    Ok(bootstrap)
+        let mut bootstrap = WorkspaceBootstrap {
+            drives,
+            initial_path,
+            initial_listing,
+            startup_diagnostics,
+            settings: state.metadata.read().expect("metadata lock poisoned").to_settings_snapshot(
+                settings.layout,
+                settings.detail_columns,
+                settings.navigation_columns,
+                settings.details_row_height,
+                settings.size_bar_mode.clone(),
+                settings.tree_auto_follow_enabled,
+                settings.folder_expansion_enabled,
+                settings.folder_expansion_on_row_click,
+                settings.notifications_enabled,
+                settings.tooltip_hover_delay_ms,
+                settings.metadata_retention_hours,
+                settings.file_visibility,
+                settings.context_menu,
+                settings.theme,
+                settings.template_root,
+            ),
+        };
+        bootstrap.settings.remote_profiles =
+            super::remote::hydrate_remote_profiles(bootstrap.settings.remote_profiles);
+        Ok(bootstrap)
+    })
+    .await
+    .map_err(|error| format!("workspace initialization task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -87,24 +86,28 @@ pub fn list_drive_roots() -> Result<Vec<DriveRoot>, String> {
 }
 
 #[tauri::command]
-pub fn list_directory(
+pub async fn list_directory(
     path: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<crate::domain::models::DirectoryListing, String> {
-    let metadata = {
-        let mut metadata = state.metadata.write().expect("metadata lock poisoned");
-        metadata.cleanup_expired_entry_metadata(chrono::Utc::now);
-        metadata.clone()
-    };
-    let mut listing = fs_service::list_directory(Path::new(&path), &metadata.color_rules, |entry_path| {
-        (
-            metadata.tags_for_path(entry_path),
-            metadata.comment_for_path(entry_path),
-        )
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = chrono::Utc::now();
+        if state.metadata.read().expect("metadata lock poisoned").has_expired_entry_metadata(now) {
+            state.metadata.write().expect("metadata lock poisoned").cleanup_expired_entry_metadata(|| now);
+        }
+        let mut listing = {
+            let metadata = state.metadata.read().expect("metadata lock poisoned");
+            fs_service::list_directory(Path::new(&path), &metadata.color_rules, |entry_path| {
+                (metadata.tags_for_path(entry_path), metadata.comment_for_path(entry_path))
+            })
+            .map_err(|error| error.to_string())?
+        };
+        state.directory_sizes.attach_listing_cache(&mut listing);
+        Ok(listing)
     })
-    .map_err(|error| error.to_string())?;
-    state.directory_sizes.attach_listing_cache(&mut listing);
-    Ok(listing)
+    .await
+    .map_err(|error| format!("directory listing task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -118,8 +121,12 @@ pub fn set_workspace_watch_roots(
 }
 
 #[tauri::command]
-pub fn get_tree_children(path: String) -> Result<Vec<crate::domain::models::TreeNode>, String> {
-    fs_service::get_tree_children(Path::new(&path)).map_err(|error| error.to_string())
+pub async fn get_tree_children(path: String) -> Result<Vec<crate::domain::models::TreeNode>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs_service::get_tree_children(Path::new(&path)).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("tree listing task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -175,30 +182,31 @@ pub async fn get_item_properties(
 }
 
 #[tauri::command]
-pub fn resolve_system_icon(
+pub async fn resolve_system_icon(
     request: SystemIconRequest,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SystemIconBitmap, String> {
-    let cache_key = icon_service::cache_key_for_request(&request);
-
-    if let Some(bitmap) = state
-        .system_icon_cache
-        .lock()
-        .expect("system icon cache lock poisoned")
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(bitmap);
-    }
-
-    let bitmap = icon_service::resolve_system_icon(&request).map_err(|error| error.to_string())?;
-    state
-        .system_icon_cache
-        .lock()
-        .expect("system icon cache lock poisoned")
-        .insert(cache_key, bitmap.clone());
-
-    Ok(bitmap)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cache_key = icon_service::cache_key_for_request(&request);
+        if let Some(bitmap) = state
+            .system_icon_cache
+            .lock()
+            .expect("system icon cache lock poisoned")
+            .get(&cache_key)
+        {
+            return Ok(bitmap);
+        }
+        let bitmap = icon_service::resolve_system_icon(&request).map_err(|error| error.to_string())?;
+        state
+            .system_icon_cache
+            .lock()
+            .expect("system icon cache lock poisoned")
+            .insert(cache_key, bitmap.clone());
+        Ok(bitmap)
+    })
+    .await
+    .map_err(|error| format!("system icon task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -231,18 +239,51 @@ pub async fn show_native_background_context_menu(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub async fn resolve_system_icon_keys(
+    request: SystemIconKeysRequest,
+) -> Result<Vec<SystemIconKeyResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        icon_service::resolve_system_icon_keys(&request).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("system icon key task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn resolve_system_icon_bitmap(
+    key: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<tauri::ipc::Response, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(bytes) = state.system_icon_cache.lock().expect("system icon cache lock poisoned").get_png(&key) {
+            return Ok(tauri::ipc::Response::new(bytes));
+        }
+        let bytes = icon_service::resolve_system_icon_bitmap(&key).map_err(|error| error.to_string())?;
+        state.system_icon_cache.lock().expect("system icon cache lock poisoned").insert_png(key, bytes.clone());
+        Ok(tauri::ipc::Response::new(bytes))
+    })
+    .await
+    .map_err(|error| format!("system icon bitmap task failed: {error}"))?
+}
+
 fn native_size_handler(state: Arc<AppState>, paths: Vec<std::path::PathBuf>) -> windows_shell::NativeCommandHandler {
     Box::new(move |verb, invoke| windows_shell::invoke_with_size_cache(&state.directory_sizes, &paths, verb, invoke))
 }
 
 #[tauri::command]
-pub fn resolve_navigation_targets(paths: Vec<String>) -> Result<Vec<NavigationTargetInfo>, String> {
-    paths
-        .iter()
-        .map(|path| {
-            windows_shell::resolve_navigation_target(path).map_err(|error| error.to_string())
-        })
-        .collect()
+pub async fn resolve_navigation_targets(paths: Vec<String>) -> Result<Vec<NavigationTargetInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|path| {
+                windows_shell::resolve_navigation_target(path).map_err(|error| error.to_string())
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| format!("navigation target task failed: {error}"))?
 }
 
 #[tauri::command]

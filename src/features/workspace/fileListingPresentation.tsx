@@ -162,6 +162,7 @@ export function renderNameCell(
         kind={entry.kind}
         path={entry.path}
         extension={entry.extension}
+        modifiedAt={entry.modifiedAt}
         size={iconSpec.displaySize}
         imageList={iconSpec.imageList}
         hidden={entry.isHidden}

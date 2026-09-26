@@ -48,6 +48,18 @@ test("known-size bars survive incomplete siblings and positive expanded rows wit
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, 1);
 });
 
+test("details size projection avoids per-file path normalization without file records", () => {
+  const { tab, a } = sizeFixture();
+  let pathReads = 0;
+  tab.snapshot = { ...tab.snapshot, entries: Array.from({ length: 3_000 }, (_, index) => {
+    const entry = { ...a, id: `file-${index}`, name: `file-${index}.txt` };
+    Object.defineProperty(entry, "path", { get() { pathReads++; return `${a.path}-${index}`; } });
+    return entry;
+  }) };
+  assert.equal(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, null, false).length, 3_000);
+  assert.equal(pathReads, 3_000, "each file path is read only when copying the projected entry");
+});
+
 test("expanded branch cache immediately supplies descendant folder sizes and bars", () => {
   const { tab, parent } = sizeFixture();
   const nested = expansionEntry(parent.path, "nested-folder", "folder", { sizeCreatedAt: "nested-created" });

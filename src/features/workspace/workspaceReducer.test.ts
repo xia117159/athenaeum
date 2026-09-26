@@ -19,7 +19,6 @@ import type {
 function createState() {
   return createWorkspaceState(createMockWorkspaceBootstrap());
 }
-
 /** 快速过滤文本按路径缓存（D4），因此断言需要激活面板激活标签页的当前路径。 */
 function currentPathOf(state: ReturnType<typeof createState>) {
   return getActiveTab(state.panels[state.activePanelId]).snapshot.location.path;
@@ -2234,6 +2233,22 @@ assertTest("workspaceReducer preserves pre-loaded children when treeChildrenLoad
   assert.ok(atlasNodeAfter);
   assert.equal(atlasNodeAfter!.loaded, true);
   assert.equal(atlasNodeAfter!.children.length, atlasNodeBefore!.children.length);
+});
+
+assertTest("workspaceReducer ignores a tree response from an obsolete load generation", () => {
+  const state = createState();
+  const path = "D:\\";
+  const started = workspaceReducer(state, { type: "treeNodeConnectionStarted", payload: { path, requestId: 41 } });
+  const replaced = workspaceReducer(started, { type: "treeNodeConnectionStarted", payload: { path, requestId: 42 } });
+  const stale = workspaceReducer(replaced, {
+    type: "treeChildrenLoaded", payload: { path, requestId: 41, children: [] }
+  });
+
+  assert.equal(stale, replaced);
+  const current = workspaceReducer(replaced, {
+    type: "treeChildrenLoaded", payload: { path, requestId: 42, children: [] }
+  });
+  assert.notEqual(current, replaced);
 });
 
 assertTest("workspaceReducer normalizes Windows verbatim paths when tree children are loaded", () => {

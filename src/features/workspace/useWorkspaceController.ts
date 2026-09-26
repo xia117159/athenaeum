@@ -120,6 +120,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   // still tell whether they belong to the tab's current directory.
   const latestNavigationIdRef = useRef<Map<string, number>>(new Map());
   const nextNavigationRequestIdRef = useRef(0);
+  // A navigation-target refresh is shared by multiple panels and can overlap
+  // with a live refresh. Only the latest response may update the navigation
+  // status or target records.
+  const nextNavigationTargetsRefreshIdRef = useRef(0);
   const nextSearchRequestIdRef = useRef(0);
   const nextPropertiesRequestIdRef = useRef(0);
   const activeSearchRef = useRef<{ requestId: number; searchId: string } | null>(null);
@@ -391,8 +395,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   // 用于 effect 依赖的比较键。改为只在信息面板真的展开在属性页时才计算 —— 那个 effect
   // 在其余情形下都会提前 return，因此提前返回时键值取空串不改变任何行为。
   //
-  // 真正的成本削减在 `getTabSelectedEntries` 内部：出厂默认（未展开 + 无过滤）下它走
-  // 选中项快路径，不再整趟投影全目录。
+  // 选择更新时 `getTabSelectedEntries` 复用已投影行的 ID 索引，不再逐项映射全目录。
   const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab) &&
     state.informationPanel.expanded && state.informationPanel.activeTab === "properties"
     ? getSelectedEntries(state, state.activePanelId).map((entry) => entry.id).join("|")
@@ -896,11 +899,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   );
 
   const refreshNavigationTargets = useEffectEvent(async () => {
+    const refreshId = ++nextNavigationTargetsRefreshIdRef.current;
     dispatch({ type: "navigationStatusSet", payload: "checking" });
     try {
       const infos = await workspaceGateway.resolveNavigationTargets(state.navigation.items.map((item) => item.path));
+      if (refreshId !== nextNavigationTargetsRefreshIdRef.current) return;
       dispatch({ type: "navigationTargetStatusUpdated", payload: infos });
     } catch (error) {
+      if (refreshId !== nextNavigationTargetsRefreshIdRef.current) return;
       dispatch({ type: "navigationStatusSet", payload: "idle" });
       pushNotification("danger", getErrorMessage(error, "无法刷新导航项目标状态。"));
     }

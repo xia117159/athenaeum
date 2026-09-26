@@ -203,6 +203,27 @@ export const completion = (async () => {
   });
 
   try {
+    await assertTest("selection changes reuse the unchanged 20k-entry folder summary", async () => {
+      let sizeReads = 0;
+      const activeEntries = Array.from({ length: 20_000 }, (_, index) => {
+        const entry = createEntry(`item-${index}.txt`, "1 B");
+        Object.defineProperty(entry, "sizeBytes", { get() { sizeReads++; return 1; } });
+        return entry;
+      });
+      const props = createPanelProps(searchState, { expanded: false });
+      await act(async () => {
+        root.render(<WorkspaceInformationPanel {...props} activeEntries={activeEntries} selectedEntries={[]} />);
+        await flushEffects();
+      });
+      assert.ok(sizeReads >= 20_000);
+      sizeReads = 0;
+      await act(async () => {
+        root.render(<WorkspaceInformationPanel {...props} activeEntries={activeEntries} selectedEntries={[activeEntries[500]]} />);
+        await flushEffects();
+      });
+      assert.ok(sizeReads < 10, `selecting a row read ${sizeReads} sizes from the unchanged directory`);
+    });
+
     await assertTest("§7:654 the panel wires quick-filter text, mode, syntax and clear to their own callbacks", async () => {
       // 该用例锁定"面板到回调"的接线。易错点：mode 与 syntax 两个回调写反时，
       // 控件级测试（QuickFilterControls.test.tsx 走自有 harness）无法发现，

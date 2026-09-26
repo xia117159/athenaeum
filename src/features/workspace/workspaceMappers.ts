@@ -397,6 +397,7 @@ function mapEntryViewModel(
     sizeLabel: entry.kind === "directory" ? "--" : formatFileSize(entry.size),
     createdLabel: formatDateLabel(entry.createdAt),
     modifiedLabel: formatDateLabel(entry.modifiedAt),
+    modifiedAt: entry.modifiedAt,
     accessedLabel: formatDateLabel(entry.accessedAt),
     extension,
     attributes,

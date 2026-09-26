@@ -7,6 +7,70 @@ import type { EntryViewModel, FileVisibilityState, FolderExpansionBranch, SizeBa
 
 export type FolderListingRow = { entry: EntryViewModel; depth: number; expansion?: FolderExpansionBranch };
 
+type ProjectionCache = {
+  snapshot: TabState["snapshot"];
+  entries: EntryViewModel[];
+  entryCount: number;
+  sort: TabState["sort"];
+  sortColumn: TabState["sort"]["columnId"];
+  sortDirection: TabState["sort"]["direction"];
+  folderExpansion: TabState["folderExpansion"];
+  expansionEntryCount: number;
+  expansionSignature: string;
+  inlineEdit: TabState["inlineEdit"];
+  directorySizes: TabState["directorySizes"];
+  directorySizePresentation: TabState["directorySizePresentation"];
+  columns: TabState["columns"];
+  kind: TabState["kind"];
+  viewMode: TabState["viewMode"];
+  status: TabState["status"];
+  visibility: FileVisibilityState;
+  quickFilter: QuickFilterProgram | null;
+  enabled: boolean;
+  sizeBarMode: SizeBarMode;
+  rows: FolderListingRow[];
+};
+
+// Selection changes clone TabState but keep the snapshot; retain a small set of
+// projections per snapshot for tabs with different view settings.
+const projectionCache = new WeakMap<TabState["snapshot"], ProjectionCache[]>();
+const projectedEntriesCache = new WeakMap<FolderListingRow[], {
+  entries: EntryViewModel[];
+  indexesById: Map<string, number[]>;
+}>();
+
+function getProjectedEntriesCache(rows: FolderListingRow[]) {
+  const cached = projectedEntriesCache.get(rows);
+  if (cached) return cached;
+  const entries: EntryViewModel[] = [];
+  const indexesById = new Map<string, number[]>();
+  for (const row of rows) {
+    const index = entries.length;
+    entries.push(row.entry);
+    const indexes = indexesById.get(row.entry.id);
+    if (indexes) indexes.push(index);
+    else indexesById.set(row.entry.id, [index]);
+  }
+  const projection = { entries, indexesById };
+  projectedEntriesCache.set(rows, projection);
+  return projection;
+}
+
+export function getFolderListingEntries(rows: FolderListingRow[]): EntryViewModel[] {
+  return getProjectedEntriesCache(rows).entries;
+}
+
+export function getSelectedEntriesFromRows(rows: FolderListingRow[], selectedEntryIds: string[]): EntryViewModel[] {
+  if (selectedEntryIds.length === 0) return [];
+  const { entries, indexesById } = getProjectedEntriesCache(rows);
+  const selectedIds = new Set(selectedEntryIds);
+  if (selectedIds.size > entries.length / 4) return entries.filter((entry) => selectedIds.has(entry.id));
+  const indexes: number[] = [];
+  for (const id of selectedIds) indexes.push(...(indexesById.get(id) ?? []));
+  indexes.sort((left, right) => left - right);
+  return indexes.map((index) => entries[index]);
+}
+
 export function supportsFolderExpansion(tab: TabState, enabled = true) {
   return enabled && tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual";
 }
@@ -33,19 +97,7 @@ export function getTabEntries(tab: TabState): EntryViewModel[] {
   return result;
 }
 
-/**
- * 行投影（纯函数）。
- *
- * 评审 S-6 记录了"同一次投影在同一帧内被重复计算"的放大问题。这里**刻意不做全局记忆化**：
- * 投影结果直接决定操作目标集（B23：删除/复制/Ctrl+A 的作用范围），而投影读取的输入里
- * 有多处会被**就地修改**而不更换引用——`snapshot.entries.push(...)`（7 个测试文件如此，
- * 如 `directorySizeAlignment.test.ts:70`）、`tab.sort.direction = "desc"`
- * （`folderExpansion.test.ts:29`）、`parent.isHidden = true`（`folderExpansion.test.ts:37`），
- * 以及 `tab.folderExpansion[key].entries` 的内容。
- * 任何基于引用的缓存键都无法可靠察觉这些变更，一旦读到陈旧行集，
- * 用户就会对错的文件执行删除/复制。因此把"去重"放在**调用侧**（同一状态只投影一次），
- * 而不是在纯函数里放一个可能失效的缓存。
- */
+/** Rows are shared while all projection inputs retain their immutable references. */
 export function getFolderListingRows(
   tab: TabState,
   visibility: FileVisibilityState = DEFAULT_FILE_VISIBILITY,
@@ -54,16 +106,31 @@ export function getFolderListingRows(
   sizeBarMode: SizeBarMode = "folder-total"
 ): FolderListingRow[] {
   if (tab.kind === "navigation") return [];
+  const candidates = projectionCache.get(tab.snapshot) ?? [];
+  const expansionEntryCount = Object.values(tab.folderExpansion ?? {}).reduce((sum, branch) => sum + branch.entries.length, 0);
+  const expansionSignature = Object.entries(tab.folderExpansion ?? {})
+    .map(([key, branch]) => `${key}:${branch.status}:${branch.entries.length}:${branch.errorMessage ?? ""}`)
+    .join("|");
+  const cached = candidates.find((candidate) => candidate.snapshot === tab.snapshot && candidate.entries === tab.snapshot.entries && candidate.entryCount === tab.snapshot.entries.length &&
+    candidate.sort === tab.sort && candidate.sortColumn === tab.sort.columnId && candidate.sortDirection === tab.sort.direction &&
+    candidate.folderExpansion === tab.folderExpansion && candidate.expansionEntryCount === expansionEntryCount && candidate.expansionSignature === expansionSignature && candidate.inlineEdit === tab.inlineEdit &&
+    candidate.directorySizes === tab.directorySizes && candidate.directorySizePresentation === tab.directorySizePresentation &&
+    candidate.columns === tab.columns && candidate.kind === tab.kind && candidate.viewMode === tab.viewMode &&
+    candidate.status === tab.status && candidate.visibility === visibility &&
+    candidate.quickFilter === quickFilter && candidate.enabled === enabled && candidate.sizeBarMode === sizeBarMode);
+  if (cached) {
+    return cached.rows;
+  }
   const treeEnabled = supportsFolderExpansion(tab, enabled);
   const seen = new Set<string>();
   const projectSize = createEntrySizeProjector(tab, sizeBarMode);
   const visit = (entries: EntryViewModel[], depth: number): FolderListingRow[] => {
     const rows: FolderListingRow[] = [];
     for (const entry of sortEntries(entries.map(projectSize), tab.sort, tab.snapshot.location.path)) {
-      const key = getPathComparisonKey(entry.path);
+      const key = treeEnabled ? getPathComparisonKey(entry.path) : "";
       const editing = tab.inlineEdit?.mode === "rename" && tab.inlineEdit.entryId === entry.id;
       if ((treeEnabled && seen.has(key)) || (!editing && !entryMatchesFileVisibility(entry, visibility))) continue;
-      seen.add(key);
+      if (treeEnabled) seen.add(key);
       // 匹配源只有 entry.name（D6/B1）。路径片段不再产生命中，这正是「输入 TEST 不该命中
       // …\A-TEST\123456.txt」的修复点：匹配的是名称，而不是完整路径。
       const pending = quickFilter?.isPending?.(entry.name) === true;
@@ -81,7 +148,33 @@ export function getFolderListingRows(
     }
     return rows;
   };
-  return visit(tab.snapshot.entries, 0);
+  const rows = visit(tab.snapshot.entries, 0);
+  candidates.push({
+    snapshot: tab.snapshot,
+    entries: tab.snapshot.entries,
+    entryCount: tab.snapshot.entries.length,
+    sort: tab.sort,
+    sortColumn: tab.sort.columnId,
+    sortDirection: tab.sort.direction,
+    folderExpansion: tab.folderExpansion,
+    expansionEntryCount,
+    expansionSignature,
+    inlineEdit: tab.inlineEdit,
+    directorySizes: tab.directorySizes,
+    directorySizePresentation: tab.directorySizePresentation,
+    columns: tab.columns,
+    kind: tab.kind,
+    viewMode: tab.viewMode,
+    status: tab.status,
+    visibility,
+    quickFilter,
+    enabled,
+    sizeBarMode,
+    rows
+  });
+  if (candidates.length > 4) candidates.shift();
+  projectionCache.set(tab.snapshot, candidates);
+  return rows;
 }
 
 export function getExpandedFolderPaths(tab: TabState) {
@@ -97,43 +190,6 @@ export function getTabSelectedEntries(
   enabled: boolean,
   sizeBarMode: SizeBarMode = "folder-total"
 ) {
-  // B23：操作目标集恒等于可见行集子集。这里不再存在「文件夹展开未生效 ⇒ 退回未过滤
-  // snapshot.entries」的分支，否则保留/排除过滤把行藏起来之后，Ctrl+A、删除、复制、
-  // 批量重命名仍会作用到不可见的行。
   if (tab.kind === "navigation" || tab.selectedEntryIds.length === 0) return [];
-  const selectedIds = new Set(tab.selectedEntryIds);
-
-  // S-7 快路径：出厂默认（展开关闭）且无快速过滤时，"廉价情形必须廉价"。
-  //
-  // 缺陷背景：基线在这里有一条 `!supportsFolderExpansion ⇒ tab.snapshot.entries` 的廉价分支，
-  // 它**违反 B23**（忽略可见性与过滤）因而被删除；但删除后即使不展开、无过滤，
-  // 每次调用也要整趟排序并逐条投影大小（2 万条目实测 284×–356× 回归）。
-  //
-  // 本快路径**不**恢复那条违规分支：它逐条套用与 `getFolderListingRows` **完全相同**的
-  // 判定（重命名中的行豁免可见性；`keep` 在 `quickFilter === null` 时恒真），只是把投影范围
-  // 从"全部条目"缩小到"被选中的条目"。
-  //
-  // 为什么等价：
-  // - 可见性是**逐条**谓词（`entryMatchesFileVisibility` 只读该条目自身），不含跨条目状态，
-  //   因此"先选后判"与"先判后选"结果相同；
-  // - `quickFilter === null` 时 `keep` 恒真，故行集就是全部通过可见性的条目；
-  // - `sortEntries` 使用**逐对**比较器（不依赖数组其余元素），故"先排序再筛"与"先筛再排序"
-  //   在选中项之间的相对顺序上完全一致；
-  // - `!supportsFolderExpansion` ⇒ `treeEnabled` 为假 ⇒ 不启用 `seen` 去重、不递归展开分支，
-  //   因此不存在"展开分支子条目"这一类需要保留的行。
-  // 由 `folderExpansion.test.ts` 的等价性用例（与慢路径逐项对照）锁定。
-  if (quickFilter === null && !supportsFolderExpansion(tab, enabled)) {
-    const projectSize = createEntrySizeProjector(tab, sizeBarMode);
-    const selected: EntryViewModel[] = [];
-    for (const entry of tab.snapshot.entries) {
-      if (!selectedIds.has(entry.id)) continue;
-      const editing = tab.inlineEdit?.mode === "rename" && tab.inlineEdit.entryId === entry.id;
-      if (!editing && !entryMatchesFileVisibility(entry, visibility)) continue;
-      selected.push(projectSize(entry));
-    }
-    return sortEntries(selected, tab.sort, tab.snapshot.location.path);
-  }
-
-  const entries = getFolderListingRows(tab, visibility, quickFilter, enabled, sizeBarMode).map((row) => row.entry);
-  return entries.filter((entry) => selectedIds.has(entry.id));
+  return getSelectedEntriesFromRows(getFolderListingRows(tab, visibility, quickFilter, enabled, sizeBarMode), tab.selectedEntryIds);
 }

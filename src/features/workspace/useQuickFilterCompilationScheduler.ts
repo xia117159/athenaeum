@@ -2,10 +2,50 @@ import { useEffect, useRef, type Dispatch } from "react";
 import { collectQuickFilterCorpora } from "./quickFilterEvaluationState";
 import { createQuickFilterWorkerClient, type QuickFilterWorkerClient } from "./quickFilterWorkerClient";
 import { QUICK_FILTER_REGEX_DEBOUNCE_MS, type QuickFilterEntry } from "./quickFilterTypes";
+import { getPathComparisonKey } from "./workspacePathRelations";
+import { isDirectoryLikeTab } from "./workspaceTabs";
 import type { WorkspaceAction } from "./workspaceReducer";
-import type { WorkspaceState } from "./types";
+import type { TabState, WorkspaceState } from "./types";
 
 type Work = { entry: QuickFilterEntry; corpusKey: string; controller: AbortController; timer: ReturnType<typeof setTimeout> };
+type CorpusInput = {
+  path: string;
+  entries: TabState["snapshot"]["entries"];
+  entryCount: number;
+  expansion: TabState["folderExpansion"];
+  expansionEntryCount: number;
+  kind: TabState["kind"];
+  viewMode: TabState["viewMode"];
+  locationKind: TabState["snapshot"]["location"]["kind"];
+  hasText: boolean;
+};
+
+function corpusInputs(state: WorkspaceState): CorpusInput[] {
+  const inputs: CorpusInput[] = [];
+  for (const panel of Object.values(state.panels)) {
+    const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    if (!tab || !isDirectoryLikeTab(tab) || !tab.snapshot.location.path) continue;
+    const path = tab.snapshot.location.path;
+    inputs.push({
+      path, entries: tab.snapshot.entries, entryCount: tab.snapshot.entries.length,
+      expansion: tab.folderExpansion,
+      expansionEntryCount: Object.values(tab.folderExpansion ?? {}).reduce((count, branch) => count + branch.entries.length, 0),
+      kind: tab.kind, viewMode: tab.viewMode, locationKind: tab.snapshot.location.kind,
+      hasText: Boolean(state.quickFilter.byPath[getPathComparisonKey(path)]?.text.trim())
+    });
+  }
+  return inputs;
+}
+
+function sameCorpusInputs(left: CorpusInput[], right: CorpusInput[]) {
+  return left.length === right.length && left.every((input, index) => {
+    const previous = right[index];
+    return input.path === previous.path && input.entries === previous.entries && input.entryCount === previous.entryCount &&
+      input.expansion === previous.expansion && input.expansionEntryCount === previous.expansionEntryCount &&
+      input.kind === previous.kind && input.viewMode === previous.viewMode && input.locationKind === previous.locationKind &&
+      input.hasText === previous.hasText;
+  });
+}
 
 /** Reconcile each path independently; unrelated renders never reset its debounce. */
 export function useQuickFilterCompilationScheduler({ state, dispatch, enabled = true }: {
@@ -13,6 +53,7 @@ export function useQuickFilterCompilationScheduler({ state, dispatch, enabled = 
 }) {
   const clientRef = useRef<QuickFilterWorkerClient | null>(null);
   const workRef = useRef(new Map<string, Work>());
+  const corporaRef = useRef<{ inputs: CorpusInput[]; corpora: ReturnType<typeof collectQuickFilterCorpora> } | null>(null);
 
   useEffect(() => {
     const work = workRef.current;
@@ -27,7 +68,12 @@ export function useQuickFilterCompilationScheduler({ state, dispatch, enabled = 
       for (const [key, item] of work) stop(key, item);
       return;
     }
-    const corpora = collectQuickFilterCorpora(state);
+    const inputs = corpusInputs(state);
+    const previous = corporaRef.current;
+    const corpora = previous && sameCorpusInputs(inputs, previous.inputs)
+      ? previous.corpora
+      : collectQuickFilterCorpora(state);
+    corporaRef.current = { inputs, corpora };
     for (const [key, item] of work) {
       if (state.quickFilter.byPath[key] !== item.entry || corpora.get(key)?.key !== item.corpusKey) stop(key, item);
     }

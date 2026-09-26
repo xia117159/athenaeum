@@ -21,7 +21,7 @@ import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
-import { getFolderListingRows, supportsFolderExpansion, type FolderListingRow } from "./folderExpansion";
+import { getFolderListingEntries, getFolderListingRows, getSelectedEntriesFromRows, getTabSelectedEntries, supportsFolderExpansion, type FolderListingRow } from "./folderExpansion";
 import { resolveActiveQuickFilterProgram, resolvePanelQuickFilter, resolveQuickFilterInput, resolveTabQuickFilter } from "./quickFilterState";
 import type { QuickFilterProgram } from "./quickFilterTypes";
 import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
@@ -63,34 +63,40 @@ function getUniqueRecentPaths(history: string[], currentPath: string) {
   return result;
 }
 
-function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: string[]) {
-  if (selectedEntryIds.length === 0) {
-    return [];
-  }
-
-  const selectedIds = new Set(selectedEntryIds);
-  return entries.filter((entry) => selectedIds.has(entry.id));
-}
-
 export function WorkspaceView() {
   const { state, actions } = useWorkspaceController();
   useDocumentMenuTheme(state.settings.model.theme);
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  // 本帧唯一的一次"激活面板行集"投影。刻意**不做跨组件缓存**：投影结果决定操作目标集
-  // （B23：删除/复制/Ctrl+A 的作用范围），而其输入会被就地修改（`snapshot.entries.push`、
-  // `tab.sort.direction`、`parent.isHidden`、测试里的 `state.quickFilter = …`），
-  // 任何引用/state 身份缓存都可能返回陈旧行集 —— 那意味着对看不见或已变化的行执行删除。
-  // 重复投影的消除改用"不重复传参"（`PanelSurface` 复用同一组入参）与 S-7 的选中项快路径。
   const folderExpansionEnabled = state.settings.model.folderExpansionEnabled === true;
   const sizeBarMode = state.settings.model.sizeBarMode;
-  const activeQuickFilter = resolveActiveQuickFilterProgram(state);
-  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, activeQuickFilter,
-    folderExpansionEnabled, sizeBarMode).map((row) => row.entry);
-  const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
+  const activeQuickFilter = useMemo(
+    () => resolveActiveQuickFilterProgram(state),
+    [state.quickFilter, activeTab.snapshot.location.path, state.activePanelId, activeTab.id]
+  );
+  const filteredActiveRows = useMemo(
+    () => getFolderListingRows(activeTab, state.fileVisibility, activeQuickFilter,
+      folderExpansionEnabled, sizeBarMode),
+    [activeTab, state.fileVisibility, activeQuickFilter, folderExpansionEnabled, sizeBarMode]
+  );
+  const filteredActiveEntries = getFolderListingEntries(filteredActiveRows);
+  const selectedEntries = getSelectedEntriesFromRows(filteredActiveRows, activeTab.selectedEntryIds);
   const contextTab = state.contextMenu
     ? state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId) : undefined;
+  const contextQuickFilter = useMemo(
+    () => state.contextMenu && contextTab
+      ? resolveTabQuickFilter(state, state.contextMenu.panelId, contextTab.id)
+      : null,
+    [state.quickFilter, state.contextMenu, contextTab]
+  );
+  const contextVisibleEntries = useMemo(
+    () => contextTab
+      ? getFolderListingEntries(getFolderListingRows(contextTab, state.fileVisibility, contextQuickFilter,
+        folderExpansionEnabled, sizeBarMode))
+      : [],
+    [contextTab, state.fileVisibility, contextQuickFilter, folderExpansionEnabled, sizeBarMode]
+  );
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -432,9 +438,7 @@ export function WorkspaceView() {
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
           tab={contextTab}
-          visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
-            resolveTabQuickFilter(state, state.contextMenu.panelId, contextTab.id),
-            folderExpansionEnabled, sizeBarMode).map((row) => row.entry) : []}
+          visibleEntries={contextVisibleEntries}
           clipboard={state.clipboard}
           actions={actions}
           layoutMode={state.layoutMode}
@@ -776,13 +780,25 @@ function PanelSurface({
 }) {
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
-  // S-7：`directoryContextEntries` 曾整趟重投影一次只为取选中项。`getTabSelectedEntries` 现在
-  // 在"未展开 + 无过滤"的出厂默认下走选中项快路径，因此这里不再需要单独优化。
-  const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, null, folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
-    : [];
-  const rows = getFolderListingRows(activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode);
-  const entries = rows.map((row) => row.entry);
+  const directoryContextEntries = useMemo(
+    () => directoryContextTab
+      ? getTabSelectedEntries(directoryContextTab, fileVisibility, null, folderExpansionEnabled, sizeBarMode)
+      : [],
+    [directoryContextTab, fileVisibility, folderExpansionEnabled, sizeBarMode]
+  );
+  const rows = useMemo(
+    () => getFolderListingRows(activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode),
+    [activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode]
+  );
+  const entries = getFolderListingEntries(rows);
+  const listingScrollPositions = useRef(new Map<string, number>());
+  const listingScrollKey = `${activeTab.id}:${activeTab.snapshot.location.path}:${activeTab.viewMode}`;
+  const rememberListingScroll = useCallback((top: number) => {
+    const positions = listingScrollPositions.current;
+    positions.delete(listingScrollKey);
+    positions.set(listingScrollKey, top);
+    if (positions.size > 128) positions.delete(positions.keys().next().value!);
+  }, [listingScrollKey]);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
   // Memoize selection callbacks to prevent useEffect re-registration in FileListing
@@ -871,10 +887,12 @@ function PanelSurface({
           />
         ) : (
           <WorkspaceFileListingShell
+            key={listingScrollKey}
             colorFilterEnabled={colorFilterEnabled}
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}
+            entriesAreProjected
             quickFilter={quickFilter}
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
             folderExpansionOnRowClick={folderExpansionOnRowClick}
@@ -888,6 +906,8 @@ function PanelSurface({
             currentPath={activeTab.snapshot.location.path}
             selectedEntryIds={activeTab.selectedEntryIds}
             viewMode={activeTab.viewMode}
+            initialScrollTop={listingScrollPositions.current.get(listingScrollKey) ?? 0}
+            onScrollTopChange={rememberListingScroll}
             inlineEdit={activeTab.inlineEdit}
             clipboard={clipboard}
             gitStatus={activeTab.gitStatus}

@@ -293,6 +293,28 @@ pub struct SystemIconBitmap {
     pub rgba_base64: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeyItem {
+    pub path: String,
+    pub kind: FileSystemIconKind,
+    pub extension: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeysRequest {
+    pub items: Vec<SystemIconKeyItem>,
+    pub size: u32,
+    pub image_list: Option<SystemIconImageList>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeyResult {
+    pub key: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum GitFileStatus {

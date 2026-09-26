@@ -132,10 +132,10 @@ export type WorkspaceAction =
     }
   | { type: "tabGitStatusUpdated"; payload: { panelId: PanelId; tabId: string; gitStatus: Record<string, GitFileStatus> | undefined } }
   | { type: "addressDraftChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
-  | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[] } }
-  | { type: "treeNodeConnectionStarted"; payload: { path: string } }
+  | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[]; requestId?: number } }
+  | { type: "treeNodeConnectionStarted"; payload: { path: string; requestId?: number } }
   | { type: "treeNodeConnectionSucceeded"; payload: { path: string } }
-  | { type: "treeNodeConnectionFailed"; payload: { path: string; message?: string } }
+  | { type: "treeNodeConnectionFailed"; payload: { path: string; message?: string; requestId?: number } }
   | { type: "treeNodeExpansionSet"; payload: { panelId: PanelId; tabId: string; path: string; expanded: boolean } }
   | { type: "tabReconnectRequired"; payload: { panelId: PanelId; tabId: string; path: string; profileId?: string; message?: string } }
   | { type: "tabReconnectStarted"; payload: { panelId: PanelId; tabId: string } }
@@ -861,6 +861,15 @@ function normalizeDirectoryNode(node: DirectoryNode): DirectoryNode {
     path: normalizedPath,
     children: node.children.map(normalizeDirectoryNode)
   };
+}
+
+function findTreeNodeForRequest(nodes: DirectoryNode[], path: string): DirectoryNode | undefined {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    const child = findTreeNodeForRequest(node.children, path);
+    if (child) return child;
+  }
+  return undefined;
 }
 
 function updateTreeNode(nodes: DirectoryNode[], targetPath: string, updater: (node: DirectoryNode) => DirectoryNode): DirectoryNode[] {
@@ -1748,6 +1757,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       );
 
     case "treeChildrenLoaded":
+      if (action.payload.requestId !== undefined &&
+        findTreeNodeForRequest(state.directoryTree, action.payload.path)?.treeLoadRequestId !== action.payload.requestId) return state;
       return {
         ...state,
         directoryTree: updateTreeNode(
@@ -1768,6 +1779,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         ...state,
         directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) => ({
           ...node,
+          treeLoadRequestId: action.payload.requestId,
           connectionState: "connecting",
           errorMessage: undefined
         }))
@@ -1784,6 +1796,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       };
 
     case "treeNodeConnectionFailed":
+      if (action.payload.requestId !== undefined &&
+        findTreeNodeForRequest(state.directoryTree, action.payload.path)?.treeLoadRequestId !== action.payload.requestId) return state;
       return {
         ...state,
         directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) =>

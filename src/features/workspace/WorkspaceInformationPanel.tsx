@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useRef } from "react";
+import { type FormEvent, type KeyboardEvent, useMemo, useRef } from "react";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { FileSystemIcon } from "./FileSystemIcon";
 import { OperationSummaryButton } from "./OperationTaskCenter";
@@ -534,8 +534,8 @@ export function WorkspaceInformationPanel({
   onSelectHistory: (index: number) => void;
   onDeleteHistory: (index: number) => void;
 }) {
-  const selectedSummary = summarizeEntrySizes(selectedEntries);
-  const folderSummary = summarizeEntrySizes(activeEntries);
+  const selectedSummary = useMemo(() => summarizeEntrySizes(selectedEntries), [selectedEntries]);
+  const folderSummary = useMemo(() => summarizeEntrySizes(activeEntries), [activeEntries]);
   const statusText = search.progress?.statusText ?? (search.loading ? "正在搜索..." : "就绪");
   const activeTab = informationPanel.activeTab;
   const contentId = `information-panel-content-${activeTab}`;

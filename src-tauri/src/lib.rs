@@ -35,7 +35,8 @@ use commands::{
         get_git_status, get_item_properties, get_tree_children, get_windows_drag_drop_environment,
         initialize_workspace, list_directory, list_drive_roots, open_path_with_system_default,
         perform_system_file_operation, read_system_file_clipboard, resolve_navigation_targets,
-        resolve_system_icon, set_system_file_clipboard, set_workspace_watch_roots,
+        resolve_system_icon, resolve_system_icon_keys, resolve_system_icon_bitmap,
+        set_system_file_clipboard, set_workspace_watch_roots,
         show_native_background_context_menu, show_native_context_menu, start_system_file_drag,
     },
 };
@@ -116,6 +117,8 @@ pub fn run() {
             get_tree_children,
             get_git_status,
             resolve_system_icon,
+            resolve_system_icon_keys,
+            resolve_system_icon_bitmap,
             copy_entries,
             move_entries,
             delete_entries,

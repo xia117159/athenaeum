@@ -1342,9 +1342,9 @@ export const completion = (async () => {
       const marquee = container.querySelector(".file-listing__marquee") as HTMLElement | null;
       assert.ok(marquee);
       assert.equal(marquee.style.left, "100px");
-      assert.equal(marquee.style.top, "40px");
+      assert.equal(marquee.style.top, "64px");
       assert.equal(marquee.style.width, "320px");
-      assert.equal(marquee.style.height, "160px");
+      assert.equal(marquee.style.height, "136px");
 
       await act(async () => {
         window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
@@ -1959,7 +1959,7 @@ export const completion = (async () => {
       assert.deepEqual(inlineCommits, ["commit"]);
       assert.deepEqual(inlineCommitValues, ["report-final.txt"]);
       assert.deepEqual(inlineCancels, []);
-      assert.equal(container.querySelector(".file-listing__marquee"), null);
+      assert.equal((container.querySelector(".file-listing__marquee") as HTMLElement | null)?.style.display, "none");
     });
 
     await assertTest("workspace details rename input fills the available name column width", async () => {

@@ -22,6 +22,8 @@ permissions = [
   "allow-get-item-properties",
   "allow-get-tree-children",
   "allow-resolve-system-icon",
+  "allow-resolve-system-icon-keys",
+  "allow-resolve-system-icon-bitmap",
   "allow-copy-entries",
   "allow-move-entries",
   "allow-delete-entries",
@@ -217,6 +219,16 @@ commands.allow = ["get_tree_children"]
 identifier = "allow-resolve-system-icon"
 description = "Allows resolving Windows shell icons for displayed entries."
 commands.allow = ["resolve_system_icon"]
+
+[[permission]]
+identifier = "allow-resolve-system-icon-keys"
+description = "Allows resolving Windows shell icon index keys for displayed entries."
+commands.allow = ["resolve_system_icon_keys"]
+
+[[permission]]
+identifier = "allow-resolve-system-icon-bitmap"
+description = "Allows rendering a Windows shell icon bitmap for a resolved icon key."
+commands.allow = ["resolve_system_icon_bitmap"]
 
 [[permission]]
 identifier = "allow-copy-entries"

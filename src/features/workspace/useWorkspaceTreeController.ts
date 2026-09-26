@@ -25,20 +25,22 @@ export function useWorkspaceTreeController({ state, dispatch, workspaceGateway, 
   enabled: boolean;
 }) {
   const pending = useRef(new Set<string>());
+  const nextLoadRequestId = useRef(0);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const load = useEffectEvent(async (path: string) => {
     if (pending.current.has(path)) return;
     pending.current.add(path);
-    dispatch({ type: "treeNodeConnectionStarted", payload: { path } });
+    const requestId = ++nextLoadRequestId.current;
+    dispatch({ type: "treeNodeConnectionStarted", payload: { path, requestId } });
     try {
       const children = await workspaceGateway.loadTreeChildren(path);
-      if (mounted.current) dispatch({ type: "treeChildrenLoaded", payload: { path, children } });
+      if (mounted.current) dispatch({ type: "treeChildrenLoaded", payload: { path, children, requestId } });
     } catch (error) {
       if (mounted.current) {
         const message = getErrorMessage(error, `无法展开 ${path}`);
         // Neither success nor failure can override newer manual expansion/focus choices.
-        dispatch({ type: "treeNodeConnectionFailed", payload: { path, message } });
+        dispatch({ type: "treeNodeConnectionFailed", payload: { path, message, requestId } });
         notify(message);
       }
     } finally {
