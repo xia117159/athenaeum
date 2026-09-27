@@ -38,6 +38,7 @@ unsafe extern "C" fn open(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, file:
         writable: flags & ffi::SQLITE_OPEN_READWRITE != 0,
         path: Box::into_raw(Box::new(path)), main: kind == 0,
         #[cfg(test)] fault_after: &ctx.fault_after,
+        #[cfg(test)] writes: std::sync::Arc::as_ptr(&ctx.writes),
     });
     ffi::SQLITE_OK
 }

@@ -30,6 +30,7 @@ impl Schedule {
         self.first.is_some_and(|first| records >= 1024 || bytes >= 1 << 20
             || now.saturating_sub(self.last) >= 2000 || now.saturating_sub(first) >= 10_000)
     }
+    fn deadline(&self) -> Option<u64> { self.first.map(|first| (first + 10_000).min(self.last + 2000)) }
 }
 enum Write {
     Append(ScanHeader, Vec<StoredDirectory>),
@@ -64,6 +65,12 @@ impl Write {
     }
 }
 struct Pending { work: Write, cost: usize, attempts: usize, retry_at: u64 }
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    iterations: u64, idle: bool, writes: Option<Arc<std::sync::atomic::AtomicU64>>,
+    fail_maintenance: bool, maintenance_attempts: u64, hold_operations: bool,
+}
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct ReadKey { paths: Vec<String>, scan: Option<String> }
 struct Readers { replies: Vec<mpsc::SyncSender<ReadReply>>, cost: usize }
@@ -77,8 +84,10 @@ struct Queue {
     views: Arc<Vec<DirectorySizeViewScope>>, views_version: u64,
     summary_schedule: Schedule, summary_pending: bool, summary_retry: u64, summary_attempts: usize,
     protection: super::maintenance::Protection,
+    requests: super::maintenance::Requests, views_evict_at: Option<u64>,
     pending_fences: Vec<(String, String)>, reads_disabled: bool,
     ready: bool, read_only: bool, physical_bytes: u64, capacity_pressure: bool,
+    #[cfg(test)] test: TestHooks,
 }
 impl Queue {
     fn new(max_bytes: usize, reserved: usize) -> Self {
@@ -87,9 +96,11 @@ impl Queue {
             draining: false, stopping: false, done: false, flushes: vec![], last_error: None,
             dropped_records: 0, last_commit: None, lost_write: None, views: Arc::new(vec![]), views_version: 0,
             summary_schedule: Schedule::default(), summary_pending: false, summary_retry: 0, summary_attempts: 0,
-            protection: super::maintenance::Protection::default(), pending_fences: vec![], reads_disabled: false,
+            protection: super::maintenance::Protection::default(),
+            requests: super::maintenance::Requests::default(), views_evict_at: None, pending_fences: vec![], reads_disabled: false,
             ready: false, read_only: false, physical_bytes: 0, capacity_pressure: false,
-            }
+            #[cfg(test)] test: TestHooks::default(),
+        }
     }
     fn finished_write(&mut self, pending: &Pending) {
         self.bytes -= pending.cost;
@@ -145,6 +156,24 @@ impl Store {
     }
     #[cfg(test)]
     pub fn queued_bytes(&self) -> usize { self.shared.queue.lock().unwrap().bytes }
+    #[cfg(test)]
+    pub fn iterations_for_test(&self) -> u64 { self.shared.queue.lock().unwrap().test.iterations }
+    #[cfg(test)]
+    pub fn idle_for_test(&self) -> bool { self.shared.queue.lock().unwrap().test.idle }
+    #[cfg(test)]
+    pub fn vfs_writes_for_test(&self) -> u64 {
+        self.shared.queue.lock().unwrap().test.writes.as_ref().map_or(0, |writes| writes.load(std::sync::atomic::Ordering::SeqCst))
+    }
+    #[cfg(test)]
+    pub fn fail_maintenance_for_test(&self, fail: bool) { self.shared.queue.lock().unwrap().test.fail_maintenance = fail; }
+    #[cfg(test)]
+    pub fn maintenance_attempts_for_test(&self) -> u64 { self.shared.queue.lock().unwrap().test.maintenance_attempts }
+    /// Holds authorized operations before their next copy step. Unlike release
+    /// builds, a flush or shutdown while held is acknowledged before the copy ends.
+    #[cfg(test)]
+    pub fn hold_operations_for_test(&self, hold: bool) {
+        self.shared.queue.lock().unwrap().test.hold_operations = hold; self.shared.changed.notify_all();
+    }
     pub fn diagnostics(&self) -> DirectorySizeStorageDiagnostics {
         let queue = self.shared.queue.lock().unwrap();
         DirectorySizeStorageDiagnostics { ready: queue.ready, read_only: queue.read_only, reads_disabled: queue.reads_disabled,
@@ -200,13 +229,27 @@ impl Store {
         let mut queue = self.shared.queue.lock().unwrap();
         if queue.stopping || queue.done || *queue.views == *views { return; }
         queue.protection.scopes = views.clone();
+        let now = self.shared.clock.elapsed().as_millis() as u64;
+        // Visible scopes change eviction tiers; restart an exhausted walk at most once a minute.
+        if queue.capacity_pressure && queue.views_evict_at.is_none_or(|at| now.saturating_sub(at) >= 60_000) {
+            queue.requests.evict = true; queue.views_evict_at = Some(now);
+        }
         queue.views = views; queue.views_version += 1; queue.summary_pending = true; queue.summary_attempts = 0;
         queue.summary_schedule.dirty(self.shared.clock.elapsed().as_millis() as u64);
         self.shared.changed.notify_one();
     }
+    /// Called every runtime tick; only an actual change of the pin set wakes the worker.
     pub fn protect(&self, session: &str, scans: Vec<String>) {
         let mut queue = self.shared.queue.lock().unwrap();
+        let mut next: Vec<&String> = scans.iter().collect(); next.sort(); next.dedup();
+        let mut old: Vec<&String> = queue.protection.scans.iter().collect(); old.sort(); old.dedup();
+        if queue.protection.session == session && old == next { return; }
+        let released: Vec<String> = old.into_iter().filter(|id| next.binary_search(id).is_err()).cloned().collect();
+        for id in released { queue.requests.probe(id); }
+        queue.requests.sweep = true; queue.requests.namespaces = true;
+        if queue.capacity_pressure { queue.requests.evict = true; }
         queue.protection.session = session.into(); queue.protection.scans = scans;
+        self.shared.changed.notify_one();
     }
     pub fn lookup(&self, paths: Vec<String>, scan: Option<String>) -> Result<mpsc::Receiver<ReadReply>, String> {
         if paths.len() > 256 || paths.iter().any(|path| path.len() > 65_536) { return Err("cache lookup path limit".into()); }
@@ -252,22 +295,31 @@ impl Drop for Store {
     }
 }
 
+fn disk_full(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<rusqlite::Error>().is_some_and(|error| error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull))
+}
 fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms: [u64; 5], page_limit: Option<u32>) {
+    use super::maintenance::{Kind, Maintenance};
     let mut database = None; let mut open_at = 0; let mut open_attempt = 0;
-    let mut maintenance = super::maintenance::Maintenance::default(); let mut maintain_at = 0;
+    let mut maintenance = Maintenance::default(); let mut maintain_at = 0;
     let mut operations_pending = false; let mut operation_retry = 0; let mut operation_attempts = 0;
-    let mut sample_at = 0;
+    let mut sample_at = 0; let mut sample_due = true;
     loop {
         let now = shared.clock.elapsed().as_millis() as u64;
+        #[cfg(test)] { shared.queue.lock().unwrap().test.iterations += 1; }
         if database.is_none() && now >= open_at {
             match Database::open(&directory) {
                 Ok(db) => {
                     if let Some(pages) = page_limit.filter(|_| db.writable()) {
                         db.connection.pragma_update(None, "max_page_count", pages).expect("test page limit");
                     }
+                    let pressure = db.writable() && Maintenance::pressure(&db).unwrap_or(false);
+                    if db.writable() { maintenance.opened(pressure); }
                     let mut queue = shared.queue.lock().unwrap(); queue.ready = true; queue.read_only = !db.writable();
+                    queue.capacity_pressure = pressure;
+                    #[cfg(test)] { queue.test.writes = Some(db.vfs_writes()); }
                     queue.last_error = queue.read_only.then(|| "目录大小缓存由其他进程持有，当前仅可读取".into());
-                    database = Some(db);
+                    database = Some(db); sample_due = true;
                 }
                 Err(error) => {
                     shared.queue.lock().unwrap().last_error = Some(error.to_string());
@@ -275,11 +327,12 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                 }
             }
         }
-        if now >= sample_at {
+        if sample_due && now >= sample_at {
             let bytes = ["sizes.sqlite3", "sizes.sqlite3-wal", "sizes.sqlite3-shm", "sizes.sqlite3-journal", "startup.json", "startup.next", "writer.lock"]
                 .iter().map(|name| std::fs::metadata(directory.join(name)).map_or(0, |meta| meta.len())).sum();
-            shared.queue.lock().unwrap().physical_bytes = bytes; sample_at = now + 1000;
+            shared.queue.lock().unwrap().physical_bytes = bytes; sample_at = now + 1000; sample_due = false;
         }
+        let writable = database.as_ref().is_some_and(Database::writable);
         let mut queue = shared.queue.lock().unwrap();
         if let Some(key) = queue.read_order.pop_front() {
             let blocked = queue.read_blocked(&key.paths);
@@ -315,20 +368,43 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
             drop(queue);
             if let Some(readers) = readers { for reply in readers.replies { let _ = reply.try_send(result.clone()); } }
             drop(result); // A last reply releases its budget outside the queue lock.
-            queue = shared.queue.lock().unwrap();
+            queue = shared.queue.lock().unwrap(); sample_due = true;
         }
-        let force = queue.stopping || !queue.flushes.is_empty();
-        if (!force || !queue.writes.is_empty()) && now >= maintain_at && database.as_ref().is_some_and(Database::writable) {
+        // Requests from other threads. Opening a writable database requests a
+        // full convergence, so requests seen before that carry nothing.
+        let requests = std::mem::take(&mut queue.requests);
+        if writable { maintenance.absorb(requests); }
+        let mut force = queue.stopping || !queue.flushes.is_empty();
+        // Flush and shutdown drop an unfinished shrink even before its next step is due.
+        if force { maintenance.abandon_shrink(); }
+        let kind = (writable && now >= maintain_at).then(|| maintenance.next(force, !queue.writes.is_empty())).flatten();
+        if let Some(kind) = kind {
             let protection = queue.protection_snapshot(None);
+            #[cfg(test)] let fail = { queue.test.maintenance_attempts += 1; queue.test.fail_maintenance };
             drop(queue);
             let db = database.as_mut().unwrap();
-            let pressure = super::maintenance::Maintenance::pressure(db).unwrap_or(false);
-            shared.queue.lock().unwrap().capacity_pressure = pressure;
-            if let Err(error) = maintenance.step(db, &protection, pressure) {
-                shared.queue.lock().unwrap().last_error = Some(error.to_string());
-                maintain_at = now + 1000;
-            } else { maintain_at = now + if pressure { 50 } else { 500 }; }
+            #[cfg(test)] let result = if fail { Err(anyhow::anyhow!("injected maintenance failure")) } else { maintenance.step(kind, db, &protection) };
+            #[cfg(not(test))] let result = maintenance.step(kind, db, &protection);
+            let pressure = result.as_ref().is_ok_and(|deleted| *deleted).then(|| Maintenance::pressure(db).ok()).flatten();
             queue = shared.queue.lock().unwrap();
+            match result {
+                Ok(_) => {
+                    maintenance.succeeded();
+                    if let Some(pressure) = pressure { maintenance.set_pressure(pressure); queue.capacity_pressure = pressure; }
+                    maintain_at = now + if kind == Kind::Evict { 50 } else { 500 };
+                }
+                Err(error) => {
+                    queue.last_error = Some(error.to_string());
+                    match maintenance.failed(kind, &retry_ms) {
+                        Some(delay) => maintain_at = now + delay,
+                        None => queue.requests = Default::default(),
+                    }
+                }
+            }
+            sample_due = true;
+            // The step ran unlocked; a flush or shutdown may have arrived meanwhile.
+            force = queue.stopping || !queue.flushes.is_empty();
+            if force { maintenance.abandon_shrink(); }
         }
         queue.draining |= force || queue.schedule.due(now, queue.records, queue.bytes);
         if queue.draining && database.is_some() && queue.writes.front().is_some_and(|pending| now >= pending.retry_at || force) {
@@ -338,11 +414,18 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
             drop(queue);
             let db = database.as_mut().unwrap();
             let mut result = pending.work.apply(db);
-            if db.writable() && result.as_ref().err().is_some_and(|error| error.downcast_ref::<rusqlite::Error>()
-                .is_some_and(|error| error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull))) {
+            let mut reclaimed = false;
+            if db.writable() && result.as_ref().err().is_some_and(disk_full) {
+                reclaimed = true;
                 result = maintenance.reclaim_for(db, &protection, priority, pending.cost).and_then(|_| pending.work.apply(db));
             }
+            // Pressure is sampled outside the queue lock after writes that grow the cache.
+            let grows = reclaimed || result.is_ok() && matches!(pending.work, Write::Append(..) | Write::Accept(..));
+            let pressure = (db.writable() && grows).then(|| Maintenance::pressure(db).ok()).flatten();
             let mut queue = shared.queue.lock().unwrap();
+            if let Some(pressure) = pressure { maintenance.set_pressure(pressure); queue.capacity_pressure = pressure; }
+            if reclaimed { maintenance.request_evict(true); }
+            sample_due = true;
             match result {
                 Ok(()) => {
                     match &pending.work {
@@ -350,8 +433,16 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                             queue.pending_fences.retain(|(_, id)| id != &operation.id);
                             let _ = reply.try_send(Ok(()));
                         }
-                        Write::Authorize(_) => { operations_pending = true; }
-                        _ => {},
+                        Write::Authorize(_) => { operations_pending = true; maintenance.request_sweep(); maintenance.request_namespaces(); }
+                        Write::Abort(_) => { maintenance.request_sweep(); maintenance.request_namespaces(); }
+                        Write::Append(..) => maintenance.request_evict(false),
+                        Write::Accept(header, _) => {
+                            maintenance.request_probe(header.id.clone()); maintenance.request_sweep(); maintenance.request_evict(true);
+                        }
+                    }
+                    // A write that lands after its scan lost its pin (cancelled) is garbage.
+                    if let Write::Append(header, _) | Write::Accept(header, _) = &pending.work {
+                        if !queue.protection.scans.contains(&header.id) { maintenance.request_sweep(); maintenance.request_namespaces(); }
                     }
                     queue.last_commit = Some(chrono::Utc::now());
                     if matches!(pending.work, Write::Accept(..)) && !queue.views.is_empty() {
@@ -361,9 +452,8 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                 }
                 Err(error) => {
                     queue.last_error = Some(error.to_string());
-                    let full = error.downcast_ref::<rusqlite::Error>().is_some_and(|error| error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull));
                     if db.writable() && !force && pending.attempts < RETRY_MS.len() {
-                        if full { maintain_at = 0; }
+                        if disk_full(&error) { maintain_at = 0; }
                         pending.retry_at = now + retry_ms[pending.attempts]; pending.attempts += 1;
                         queue.writes.push_front(pending);
                     } else {
@@ -375,35 +465,47 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
             }
             continue;
         }
-        if operations_pending && database.is_some() && (force || now >= operation_retry) {
+        #[cfg(test)] let held = queue.test.hold_operations;
+        #[cfg(not(test))] let held = false;
+        if operations_pending && !held && database.is_some() && (force || now >= operation_retry) {
             drop(queue);
-            match database.as_mut().unwrap().advance_operation() {
+            let db = database.as_mut().unwrap();
+            let result = db.advance_operation();
+            // Copies grow the cache like appends; a hard-full copy retries after eviction.
+            let pressure = db.writable().then(|| Maintenance::pressure(db).ok()).flatten();
+            let full = result.as_ref().err().is_some_and(disk_full);
+            let mut queue = shared.queue.lock().unwrap(); sample_due = true;
+            if let Some(pressure) = pressure { maintenance.set_pressure(pressure); queue.capacity_pressure = pressure; }
+            maintenance.request_evict(full);
+            if full { maintain_at = 0; }
+            match result {
                 Ok(pending) => {
                     operation_attempts = 0;
                     operations_pending = pending;
                     if !pending {
-                        let mut queue = shared.queue.lock().unwrap(); queue.summary_pending = true; queue.summary_schedule.dirty(now);
+                        // Completion retires source scans and barriers.
+                        maintenance.request_sweep(); maintenance.request_namespaces();
+                        queue.summary_pending = true; queue.summary_schedule.dirty(now);
                     }
                 }
                 Err(error) => {
-                    let mut queue = shared.queue.lock().unwrap(); queue.last_error = Some(error.to_string());
+                    queue.last_error = Some(error.to_string());
                     if force || operation_attempts >= retry_ms.len() {
                         operations_pending = false; queue.lost_write = Some(error.to_string()); drop(queue);
                         // Keep persistent fences if even abort cannot be committed.
                         // Startup recovery will discard every invisible shadow.
                         let _ = database.as_mut().unwrap().recover_operations();
+                        maintenance.request_sweep(); maintenance.request_namespaces();
                     } else { operation_retry = now + retry_ms[operation_attempts]; operation_attempts += 1; }
                 }
             }
-            if operations_pending && now < operation_retry { /* let ordinary reads/writes continue */ }
-            else { continue; }
-            queue = shared.queue.lock().unwrap();
+            continue;
         }
         if queue.summary_pending && database.is_some() && queue.writes.is_empty()
             && (force || now >= queue.summary_retry && queue.summary_schedule.due(now, 0, 0)) {
             let views = queue.views.clone(); let version = queue.views_version; drop(queue);
             let result = super::startup::save(database.as_mut().unwrap(), &directory, &views, super::startup::MAX_BYTES);
-            let mut queue = shared.queue.lock().unwrap();
+            let mut queue = shared.queue.lock().unwrap(); sample_due = true;
             match result {
                 Ok(()) if version == queue.views_version => { queue.summary_pending = false; queue.summary_schedule = Schedule::default(); queue.summary_attempts = 0; }
                 Ok(()) => {},
@@ -428,7 +530,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
             let result = database.as_ref().map(|db| if db.writable() { db.checkpoint().map_err(|error| error.to_string()) } else { Ok(()) })
                 .unwrap_or_else(|| Err("cache storage is not ready".into()));
             if stopping { drop(database.take()); }
-            let mut queue = shared.queue.lock().unwrap();
+            let mut queue = shared.queue.lock().unwrap(); sample_due = true;
             if let Err(error) = &result { queue.last_error = Some(error.clone()); }
             let result = queue.lost_write.clone().map_or(result, Err);
             queue.done = stopping;
@@ -436,6 +538,32 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
             if stopping { return; }
             continue;
         }
-        let _ = shared.changed.wait_timeout(queue, Duration::from_millis(50)).unwrap();
+        // Idle invariant: the pending-work and deadline decision is made under
+        // the same guard as the wait, so no notify between them can be lost.
+        if force || !queue.read_order.is_empty() || !queue.requests.is_empty() { continue; }
+        let mut deadline: Option<u64> = None;
+        let mut due = |at: u64| deadline = Some(deadline.map_or(at, |old: u64| old.min(at)));
+        if database.is_none() { due(open_at); }
+        // Queued writes wait for the database; only its open retry can wake them.
+        if let Some(front) = queue.writes.front().filter(|_| database.is_some()) {
+            if queue.draining { due(front.retry_at); } else if let Some(at) = queue.schedule.deadline() { due(at); }
+        }
+        if writable && maintenance.pending() { due(maintain_at); }
+        if operations_pending && !held { due(operation_retry); }
+        if queue.summary_pending && database.is_some() && queue.writes.is_empty() {
+            if let Some(at) = queue.summary_schedule.deadline() { due(at.max(queue.summary_retry)); }
+        }
+        if sample_due { due(sample_at); }
+        let now = shared.clock.elapsed().as_millis() as u64;
+        match deadline {
+            None => {
+                #[cfg(test)] { queue.test.idle = true; }
+                #[cfg_attr(not(test), allow(unused_mut))]
+                let mut _queue = shared.changed.wait(queue).unwrap();
+                #[cfg(test)] { _queue.test.idle = false; }
+            }
+            Some(at) if at > now => { let _ = shared.changed.wait_timeout(queue, Duration::from_millis(at - now)).unwrap(); }
+            Some(_) => {}
+        }
     }
 }

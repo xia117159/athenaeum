@@ -22,7 +22,7 @@ fn size_maintenance_pressure_reclaims_pinned_deep_rows_but_keeps_two_view_front_
     }
     protection.scopes = Arc::new(["C:\\one", "D:\\two"].iter().map(|path| DirectorySizeViewScope { path: normalize_local_path(path).unwrap(), priority: 0 }).collect());
     let mut maintenance = Maintenance::default();
-    for _ in 0..3 { maintenance.step(&mut db, &protection, true).unwrap(); }
+    maintenance.set_pressure(true); maintenance.request_evict(true); maintenance.run_until_idle(&mut db, &protection).unwrap();
     let paths: Vec<String> = db.connection.prepare("SELECT path FROM records ORDER BY path").unwrap().query_map([], |row| row.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
     assert_eq!(paths.len(), 4, "live scan identity must not pin cold descendants under pressure");
     assert!(!paths.iter().any(|path| path.ends_with("cold")));
@@ -39,7 +39,7 @@ fn size_maintenance_reclaims_cancelled_scans_in_the_current_session() {
     }
     let protection = Protection { session: "current".into(), scans: vec!["running".into()], ..Default::default() };
     let mut maintenance = Maintenance::default();
-    for _ in 0..3 { maintenance.step(&mut db, &protection, false).unwrap(); }
+    maintenance.request_sweep(); maintenance.run_until_idle(&mut db, &protection).unwrap();
     let ids = db.connection.prepare("SELECT id FROM scans ORDER BY id").unwrap()
         .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
     assert_eq!(ids, vec!["running"], "a cancelled scan must not remain pinned for the whole process lifetime");
@@ -58,7 +58,7 @@ fn size_maintenance_retires_namespace_barriers_after_scrubbing_old_records() {
         paths: vec![RenamePath { from: path.clone(), to: path.clone() }], scans: vec![], patches: vec![] }).unwrap();
     db.abort_operation("delete").unwrap();
     let mut maintenance = Maintenance::default(); let protection = Protection { session: "current".into(), ..Default::default() };
-    for _ in 0..5 { maintenance.step(&mut db, &protection, false).unwrap(); }
+    maintenance.request_namespaces(); maintenance.run_until_idle(&mut db, &protection).unwrap();
     assert_eq!(db.connection.query_row("SELECT count(*) FROM barriers", [], |row| row.get::<_, u32>(0)).unwrap(), 0);
     assert!(db.lookup(&[path], None).unwrap().is_empty(), "retiring the fence must not resurrect the deleted namespace");
 }
@@ -75,13 +75,13 @@ fn size_maintenance_keeps_two_versions_plus_live_reference_and_evicts_whole_path
     }
     let mut protection = Protection { session: "new".into(), scans: vec!["scan2".into()], scopes: Arc::new(vec![]), hot: vec![], reclaim: None };
     let mut maintenance = Maintenance::default();
-    for _ in 0..3 { maintenance.step(&mut db, &protection, false).unwrap(); }
+    maintenance.request_turnover("scan5".into()); maintenance.run_until_idle(&mut db, &protection).unwrap();
     let count: u64 = db.connection.query_row("SELECT count(*) FROM records", [], |row| row.get(0)).unwrap(); assert_eq!(count, 3);
     assert_eq!(db.lookup(&[path.clone()], Some("scan2")).unwrap().len(), 1);
     protection.scans.clear(); protection.scopes = Arc::new(vec![DirectorySizeViewScope { path: normalize_local_path("C:\\root").unwrap(), priority: 0 }]);
-    for _ in 0..3 { maintenance.step(&mut db, &protection, true).unwrap(); }
+    maintenance.set_pressure(true); maintenance.request_evict(true); maintenance.run_until_idle(&mut db, &protection).unwrap();
     assert_eq!(db.lookup(&[path.clone()], None).unwrap().len(), 1, "open direct children outrank cold history");
     protection.scopes = Arc::new(vec![]);
-    for _ in 0..3 { maintenance.step(&mut db, &protection, true).unwrap(); }
+    maintenance.request_evict(true); maintenance.run_until_idle(&mut db, &protection).unwrap();
     assert!(db.lookup(&[path], None).unwrap().is_empty(), "eviction must not reveal a previously shadowed legacy value");
 }

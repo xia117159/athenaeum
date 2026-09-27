@@ -110,6 +110,8 @@ impl Database {
         Ok(())
     }
     pub fn writable(&self) -> bool { self.owner.is_some() }
+    #[cfg(test)]
+    pub fn vfs_writes(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> { self.connection.write_counter() }
     pub fn checkpoint(&self) -> Result<()> {
         self.admit()?;
         let (busy, _, _): (u32, u32, u32) = self.connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;

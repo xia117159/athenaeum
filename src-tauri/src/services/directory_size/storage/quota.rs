@@ -15,6 +15,7 @@ pub(super) struct Quota { path: PathBuf, limits: Limits, inner: Arc<Registration
 struct Context {
     base: *mut ffi::sqlite3_vfs, paths: [(String, u64); 3], shm: u64, readonly: bool,
     #[cfg(test)] fault_after: std::sync::atomic::AtomicIsize,
+    #[cfg(test)] writes: Arc<std::sync::atomic::AtomicU64>,
 }
 struct Registration { vfs: Box<ffi::sqlite3_vfs>, _context: Box<Context>, name: CString }
 // Registration and Context are immutable after sqlite3_vfs_register. SQLite
@@ -25,6 +26,11 @@ impl Drop for Registration { fn drop(&mut self) { unsafe { ffi::sqlite3_vfs_unre
 pub(super) struct QuotaConnection { connection: Connection, _shm_guard: Option<std::fs::File>, _registration: Arc<Registration> }
 impl Deref for QuotaConnection { type Target = Connection; fn deref(&self) -> &Connection { &self.connection } }
 impl DerefMut for QuotaConnection { fn deref_mut(&mut self) -> &mut Connection { &mut self.connection } }
+#[cfg(test)]
+impl QuotaConnection {
+    /// Counts xWrite and xTruncate calls on every file of this registration.
+    pub fn write_counter(&self) -> Arc<std::sync::atomic::AtomicU64> { self._registration._context.writes.clone() }
+}
 impl Quota {
     pub fn register(path: &Path, limits: Limits) -> anyhow::Result<Self> {
         Self::register_mode(path, limits, false)
@@ -47,6 +53,7 @@ impl Quota {
             let mut context = Box::new(Context { base, paths: [(key.clone(), limits.database),
                 (format!("{key}-wal"), limits.wal), (format!("{key}-journal"), limits.journal)], shm: limits.shm, readonly,
                 #[cfg(test)] fault_after: std::sync::atomic::AtomicIsize::new(-1),
+                #[cfg(test)] writes: Arc::default(),
             });
             let mut vfs = Box::new(vfs::build(base, &mut *context, name.as_ptr()));
             anyhow::ensure!(ffi::sqlite3_vfs_register(&mut *vfs, 0) == ffi::SQLITE_OK, "quota VFS registration failed");

@@ -8,6 +8,7 @@ pub(super) struct File {
     pub limit: u64, pub shm: u64, pub writable: bool,
     pub path: *mut std::path::PathBuf, pub main: bool,
     #[cfg(test)] pub fault_after: *const std::sync::atomic::AtomicIsize,
+    #[cfg(test)] pub writes: *const std::sync::atomic::AtomicU64,
 }
 unsafe fn file(raw: *mut ffi::sqlite3_file) -> &'static mut File { &mut *raw.cast() }
 unsafe fn methods(file: &File) -> &ffi::sqlite3_io_methods { &*(*file.real).pMethods }
@@ -32,6 +33,7 @@ unsafe extern "C" fn write(raw: *mut ffi::sqlite3_file, data: *const c_void, amo
     if !fits(offset, amount, f.limit) { return ffi::SQLITE_FULL; }
     #[cfg(test)] {
         use std::sync::atomic::Ordering;
+        (*f.writes).fetch_add(1, Ordering::SeqCst);
         let fault = &*f.fault_after;
         if fault.load(Ordering::SeqCst) >= 0 && fault.fetch_sub(1, Ordering::SeqCst) == 0 {
             // A real partial OS write followed by failure, not a mock SQL error.
@@ -44,6 +46,7 @@ unsafe extern "C" fn write(raw: *mut ffi::sqlite3_file, data: *const c_void, amo
 unsafe extern "C" fn truncate(raw: *mut ffi::sqlite3_file, size: i64) -> c_int {
     let f = file(raw); if !f.writable { return ffi::SQLITE_READONLY; }
     if !fits(size, 0, f.limit) { return ffi::SQLITE_FULL; }
+    #[cfg(test)] (*f.writes).fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     (methods(f).xTruncate.unwrap())(f.real, size)
 }
 unsafe extern "C" fn sync(raw: *mut ffi::sqlite3_file, flags: c_int) -> c_int { let f = file(raw); (methods(f).xSync.unwrap())(f.real, flags) }

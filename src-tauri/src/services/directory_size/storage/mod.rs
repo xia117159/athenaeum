@@ -23,6 +23,10 @@ pub(super) use operations::{Operation, RenamePath};
 #[cfg(test)]
 mod worker_tests;
 #[cfg(test)]
+mod idle_tests;
+#[cfg(test)]
+mod maintenance_request_tests;
+#[cfg(test)]
 mod quota_tests;
 #[cfg(test)]
 mod database_tests;
