@@ -9,6 +9,12 @@ mod cache_budget_tests;
 mod diagnostics_tests;
 #[path = "lease_handoff_tests.rs"]
 mod lease_handoff_tests;
+#[path = "on_demand_tests.rs"]
+mod on_demand_tests;
+#[path = "stale_core_tests.rs"]
+mod stale_core_tests;
+#[path = "auto_schedule_tests.rs"]
+mod auto_schedule_tests;
 #[cfg(windows)]
 #[path = "rename_service_tests.rs"]
 mod rename_service_tests;
@@ -22,7 +28,7 @@ fn profile() -> RemoteProfile {
 fn request(id: &str, path: &str) -> SubscribeDirectorySizesRequest {
     SubscribeDirectorySizesRequest { consumer_id: id.into(), target: if path.starts_with('/') {
         DirectorySizeTarget::Remote { profile_id: "remote".into(), path: path.into() }
-    } else { DirectorySizeTarget::Local { path: path.into() } }, refresh: false, handoff: None }
+    } else { DirectorySizeTarget::Local { path: path.into() } }, intent: if path.starts_with('/') { DirectorySizeIntent::Start } else { DirectorySizeIntent::Auto }, retry_failed: false, handoff: None }
 }
 fn core() -> Core { let mut core = Core::default(); core.open_owner("main"); core.open_owner("settings"); core }
 fn subscribe(core: &mut Core, id: &str, path: &str, now: u64) -> DirectorySizeSnapshot {
@@ -83,7 +89,8 @@ fn size_service_entering_scanned_child_reuses_ancestor_without_a_job() {
     assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Complete);
     changed.store(1, Ordering::Relaxed);
     core.tick(5);
-    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Stale);
+    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Complete);
+    assert!(!core.snapshot("child").unwrap().invalidated, "a modification of the parent itself does not expire the child");
 }
 
 #[test]
@@ -117,7 +124,7 @@ fn size_service_complete_child_of_partial_tree_is_scoped_and_refresh_is_independ
     assert_eq!(unknown.directories[0].state, DirectorySizeRecordState::Unknown);
     assert_eq!(unknown.directories[0].bytes, None);
     core.release("main", "child", 4).unwrap();
-    let mut refresh = request("fresh-child", "C:\\root\\child"); refresh.refresh = true;
+    let mut refresh = request("fresh-child", "C:\\root\\child"); refresh.intent = DirectorySizeIntent::Calculate;
     let fresh = core.subscribe(core.owner_token("main").unwrap(), refresh, None, 4).unwrap();
     assert!(fresh.generation > child.generation);
     assert_eq!(core.snapshot("parent").unwrap().generation, child.generation);
@@ -179,22 +186,16 @@ fn size_service_late_worker_messages_cannot_change_a_finished_result() {
 }
 
 #[test]
-fn size_service_new_consumer_explicit_refresh_replaces_shared_running_generation() {
+fn size_service_new_consumer_explicit_calculation_shares_running_generation() {
     let mut core = core();
     let first = subscribe(&mut core, "a", "/root", 0);
     let old_job = core.take_jobs(0).remove(0);
-    let mut refresh = request("b", "/root");
-    refresh.refresh = true;
+    let mut refresh = request("b", "/root"); refresh.intent = DirectorySizeIntent::Calculate;
     let next = core.subscribe(core.owner_token("main").unwrap(), refresh, Some(profile()), 100).unwrap();
-    assert!(next.generation > first.generation);
-    assert_eq!(core.snapshot("a").unwrap().generation, next.generation);
-    assert!(old_job.cancelled.load(Ordering::Relaxed));
-    assert!(core.take_jobs(2000).is_empty(), "the cancelled traversal still owns its worker slot");
+    assert_eq!(next.generation, first.generation);
+    assert!(!old_job.cancelled.load(Ordering::Relaxed));
+    assert!(core.take_jobs(2000).is_empty());
     finish(&mut core, &old_job, 2001);
-    assert!(core.snapshot("a").unwrap().total_bytes.is_none());
-    let replacement = core.take_jobs(2001).remove(0);
-    assert_eq!(replacement.generation, next.generation);
-    finish(&mut core, &replacement, 2002);
     assert_eq!(core.snapshot("a").unwrap().total_bytes.as_deref(), Some("100"));
     assert_eq!(core.snapshot("b").unwrap().total_bytes.as_deref(), Some("100"));
 }
@@ -239,19 +240,16 @@ fn size_service_window_epochs_reject_late_subscribe_and_close_only_owner_leases(
 }
 
 #[test]
-fn size_service_deep_change_during_scan_invalidates_and_coalesces_without_late_resurrection() {
-    let mut core = core();
-    let first = subscribe(&mut core, "a", "C:\\root", 0);
-    let job = core.take_jobs(0).remove(0);
-    let change = monitored(&mut core, &job);
-    change.store(1, Ordering::Relaxed);
-    core.tick(100);
-    assert!(job.cancelled.load(Ordering::Relaxed));
-    assert!(core.snapshot("a").unwrap().generation > first.generation);
+fn size_service_change_during_scan_finishes_stale_and_auto_coalesces_after_cooldown() {
+    let mut core = core(); let first = subscribe(&mut core, "a", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0); let change = monitored(&mut core, &job);
+    change.store(1, Ordering::Relaxed); core.tick(100);
+    assert!(!job.cancelled.load(Ordering::Relaxed));
+    assert_eq!(core.snapshot("a").unwrap().generation, first.generation);
     finish(&mut core, &job, 101);
-    assert_eq!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Stale);
-    assert!(core.take_jobs(600).is_empty());
-    assert_eq!(core.take_jobs(2000).len(), 1);
+    assert!(core.snapshot("a").unwrap().invalidated);
+    assert!(core.take_jobs(30_100).is_empty());
+    core.tick(30_101); assert_eq!(core.take_jobs(30_101).len(), 1);
 }
 
 #[test]
@@ -291,10 +289,12 @@ fn size_service_root_replacement_monitor_loss_and_late_identity_never_restore_ol
     flag.store(2, Ordering::Relaxed);
     core.tick(2011);
     core.identity_finished(&identity, Ok(RootIdentity([1, 2, 3, 4])), 2012);
-    assert_eq!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Stale);
-    let replacement = core.take_jobs(2511).remove(0);
+    assert!(core.snapshot("a").unwrap().invalidated);
+    assert!(core.take_jobs(30_009).is_empty());
+    core.tick(30_010);
+    let replacement = core.take_jobs(30_010).remove(0);
     monitored(&mut core, &replacement);
-    core.finished(&replacement, result(&replacement, 999), Some(RootIdentity([9, 2, 3, 4])), 2520);
+    core.finished(&replacement, result(&replacement, 999), Some(RootIdentity([9, 2, 3, 4])), 30_020);
     assert_ne!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Complete);
     assert!(core.snapshot("a").unwrap().total_bytes.is_none());
 }
@@ -361,15 +361,15 @@ fn history_only_accepts_current_local_completions_and_shares_global_budget() {
     let mut completed = result(&job, 100);
     completed.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
     core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
-    let captured = core.history.get(&job.target.path).unwrap().cached_at;
+    assert!(core.history.get(&job.target.path).is_some());
     assert!(core.cache_bytes() <= 2500);
     changed.store(1, Ordering::Relaxed); core.tick(2);
-    assert_eq!(core.history.get(&job.target.path).unwrap().cached_at, captured);
+    assert!(core.history.get(&job.target.path).is_none());
     let mut obsolete = result(&job, 999);
     obsolete.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
     core.finished(&job, obsolete, Some(RootIdentity([1, 2, 3, 4])), 3);
-    assert_eq!(core.history.get(&job.target.path).unwrap().bytes, 100);
-    core.shutdown(); assert_eq!(core.history.get(&job.target.path).unwrap().cached_at, captured);
+    assert!(core.history.get(&job.target.path).is_none());
+    core.shutdown(); assert!(core.history.get(&job.target.path).is_none());
 }
 
 #[test]
@@ -469,22 +469,23 @@ fn size_service_successful_rescan_clears_obsolete_reasons_but_preserves_current_
     let mut core = core(); subscribe(&mut core, "a", "C:\\root", 0);
     let first = core.take_jobs(0).remove(0); let flag = monitored(&mut core, &first); finish(&mut core, &first, 10);
     flag.store(1, Ordering::Relaxed); core.tick(20);
-    assert!(core.snapshot("a").unwrap().reason.unwrap().contains("失效"));
-    let second = core.take_jobs(2000).remove(0); monitored(&mut core, &second); finish(&mut core, &second, 2001);
+    assert!(core.snapshot("a").unwrap().reason.unwrap().contains("过期"));
+    core.tick(30_010);
+    let second = core.take_jobs(30_010).remove(0); monitored(&mut core, &second); finish(&mut core, &second, 30_011);
     assert_eq!(core.snapshot("a").unwrap().reason, None);
 
-    let mut refresh = request("a", "C:\\root"); refresh.refresh = true;
-    core.subscribe(core.owner_token("main").unwrap(), refresh, None, 4000).unwrap();
-    let third = core.take_jobs(4000).remove(0); core.prepared(&third, None, None, 4000);
-    core.finished(&third, result(&third, 100), None, 4001);
+    let mut refresh = request("a", "C:\\root"); refresh.intent = DirectorySizeIntent::Calculate;
+    core.subscribe(core.owner_token("main").unwrap(), refresh, None, 32_010).unwrap();
+    let third = core.take_jobs(32_010).remove(0); core.prepared(&third, None, None, 32_010);
+    core.finished(&third, result(&third, 100), None, 32_011);
     assert!(core.snapshot("a").unwrap().reason.unwrap().contains("快照"));
 }
 
 #[test]
 fn size_service_refresh_event_and_return_agree_when_cancelled_work_still_blocks_the_queue() {
     let mut core = core(); subscribe(&mut core, "a", "/root", 0);
-    let old = core.take_jobs(0).remove(0); core.drain_events();
-    let mut refresh = request("b", "/root"); refresh.refresh = true;
+    let old = core.take_jobs(0).remove(0); core.release("main", "a", 1).unwrap(); core.drain_events();
+    let mut refresh = request("b", "/root"); refresh.intent = DirectorySizeIntent::Calculate;
     let returned = core.subscribe(core.owner_token("main").unwrap(), refresh, Some(profile()), 1).unwrap();
     assert!(old.cancelled.load(Ordering::Relaxed)); assert!(core.take_jobs(2000).is_empty());
     let event = core.drain_events().into_iter().find(|(_, event)| event.consumer_id == "b").unwrap().1;

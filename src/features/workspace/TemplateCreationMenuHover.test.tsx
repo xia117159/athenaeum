@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { mock } from "node:test";
 import React, { act } from "react";
 import { TemplateCreationMenu } from "./TemplateCreationMenu";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { expansionFixture, expansionInteractions } from "./folderExpansionTestSupport";
-import { createTestGateway, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
+import { createTestGateway, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { CreationTemplateEntry, CreationTemplateListing } from "../../app/templates";
 
 export const completion = (async () => {
   const dom = installDomEnvironment();
+  const realTimeout = globalThis.setTimeout;
+  // Event/React settling must not consume the 80ms portal-crossing allowance.
+  // Advance application timers explicitly; keep zero-delay effect flushing real.
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const flushEffects = async () => { await Promise.resolve(); await new Promise(resolve => realTimeout(resolve, 0)); };
   const style = document.createElement("style");
   style.textContent = ["workspace.context-menu.css", "templates.css", "workspace.menus.css"]
     .map(file => fs.readFileSync(path.join(process.cwd(), "src/features/workspace", file), "utf8")).join("\n")
@@ -49,7 +55,7 @@ export const completion = (async () => {
   }
   const root = createRoot(document.getElementById("root")!);
   const tick = async (fn: () => void) => act(async () => { fn(); await flushEffects(); await flushEffects(); });
-  const pause = async (ms = 230) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); await flushEffects(); });
+  const pause = async (ms = 230) => act(async () => { mock.timers.tick(ms); await flushEffects(); });
   let pointer: Element = document.body;
   const move = async (target: Element) => tick(() => {
     pointer.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: target }));
@@ -184,6 +190,7 @@ export const completion = (async () => {
   } finally {
     if (releaseNested) await tick(() => releaseNested!(listing(nested.relativePath)));
     await tick(() => root.unmount());
+    mock.timers.reset();
     style.remove();
   }
 })();

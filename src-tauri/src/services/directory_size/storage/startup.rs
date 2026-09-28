@@ -40,7 +40,8 @@ pub fn load(directory: &Path) -> Result<Vec<StoredHit>> {
     ensure!(bytes.len() <= MAX_BYTES, "startup summary grew beyond limit");
     let summary: Summary = serde_json::from_slice(&bytes)?;
     ensure!(summary.version == 1 && summary.records.len() <= MAX_ROWS, "unsupported startup summary");
-    Ok(summary.records.into_iter().filter(|hit| hit.source == 1).collect())
+    let fence = match super::forgetting::summary_fence(directory) { Ok(fence) => fence, Err(_) => return Ok(vec![]) };
+    Ok(summary.records.into_iter().filter(|hit| hit.source == 1 && !fence.blocks(&hit.record.path, hit.captured_at.timestamp_micros())).collect())
 }
 
 impl Database {

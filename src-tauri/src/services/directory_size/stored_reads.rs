@@ -6,7 +6,7 @@ impl Core {
         let Some(store) = &self.storage else { return; };
         let mut requests = std::collections::HashSet::new();
         let mut expired = std::collections::HashSet::new();
-        for lease in self.leases.values_mut().filter(|lease| !lease.detached && lease.disk_error.is_none()) {
+        for lease in self.leases.values_mut().filter(|lease| !lease.detached && !lease.unavailable && lease.disk_error.is_none()) {
             let Some(root) = self.roots.get(&lease.key).filter(|root| root.watch.is_some() && root.guard.is_none()
                 && matches!(root.phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial)) else { continue; };
             let Some(scan) = &root.persisted_scan else { continue; };
@@ -49,7 +49,7 @@ impl Core {
             let target = self.roots[&key].target.clone();
             let mut changed = false;
             for hit in hits.iter().filter(|hit| hit.scan_id == scan && hit.policy_version == 2 && hit.record.size.visited()) {
-                if lookup_path(&target, &hit.record.path).is_err() || self.roots[&key].result.as_ref()
+                if self.forgotten.blocks(&hit.record.path, hit.captured_at.timestamp_micros()) || lookup_path(&target, &hit.record.path).is_err() || self.roots[&key].result.as_ref()
                     .is_none_or(|result| result.directories.contains_key(hit.record.path.as_str())) { continue; }
                 let cost = super::super::scan::NODE_ACCOUNT_BYTES + hit.record.path.len();
                 let mut incoming = ScanResult { directories: [(Arc::from(hit.record.path.as_str()), hit.record.size.clone())].into(),
@@ -76,20 +76,13 @@ impl Core {
     }
     fn start_missed_scope(&mut self, consumer: &str, now: u64) {
         let Some(lease) = self.leases.get(consumer) else { return; };
-        let scope = lease.scope.clone(); let old_key = lease.key.clone();
-        if !self.roots.contains_key(&scope.key) {
-            while self.roots.len() >= self.limits.roots {
-                if !self.evict_unleased(None) {
-                    self.leases.get_mut(consumer).unwrap().disk_error = Some("目录统计已达到 8 个根目录上限".into());
-                    self.emit(&old_key); return;
-                }
-            }
-            self.generation += 1;
-            self.roots.insert(scope.key.clone(), Root::new(scope.clone(), self.generation, now));
+        if lease.mode == LeaseMode::Manual {
+            let old_key = lease.key.clone(); let lease = self.leases.get_mut(consumer).unwrap();
+            lease.unavailable = true; lease.disk_wait = None; lease.disk_error = None;
+            self.emit(&old_key);
+        } else {
+            self.reroot_auto(consumer, 500, now);
         }
-        let lease = self.leases.get_mut(consumer).unwrap();
-        lease.key = scope.key.clone(); lease.disk_wait = None; lease.disk_error = None; lease.verified = false;
-        self.emit(&scope.key);
     }
 }
 
@@ -104,7 +97,7 @@ mod tests {
         let mut core = Core::default(); core.open_owner("main");
         core.storage = Some(Store::paused_for_test(8192, 2048)); core.session = "session".into();
         let owner = core.owner_token("main").unwrap();
-        let request = |id: &str, path: &str| SubscribeDirectorySizesRequest { consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.into() }, refresh: false, handoff: None };
+        let request = |id: &str, path: &str| SubscribeDirectorySizesRequest { consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None };
         core.subscribe(owner.clone(), request("parent", "C:\\root"), None, 0).unwrap();
         let job = core.take_jobs(0).remove(0); let identity = Some(RootIdentity([1,2,3,4]));
         core.prepared(&job, identity, Some(Box::new(Quiet)), 0);
@@ -134,7 +127,7 @@ mod tests {
         let owner = core.owner_token("main").unwrap();
         for (id, path) in [("parent", "C:\\root"), ("child", "C:\\root\\child")] {
             core.subscribe(owner.clone(), SubscribeDirectorySizesRequest { consumer_id: id.into(),
-                target: DirectorySizeTarget::Local { path: path.into() }, refresh: false, handoff: None }, None, 0).unwrap();
+                target: DirectorySizeTarget::Local { path: path.into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None }, None, 0).unwrap();
             if id == "parent" {
                 let job = core.take_jobs(0).remove(0); let identity = Some(RootIdentity([1,2,3,4]));
                 core.prepared(&job, identity, Some(Box::new(Quiet)), 0);
@@ -155,7 +148,7 @@ mod tests {
         let mut core = Core::default(); core.open_owner("main");
         core.storage = Some(Store::paused_for_test(8192, 2048)); core.session = "session".into();
         let request = |id: &str, path: &str| SubscribeDirectorySizesRequest {
-            consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.into() }, refresh: false, handoff: None,
+            consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None,
         };
         let owner = core.owner_token("main").unwrap();
         core.subscribe(owner.clone(), request("parent", "C:\\root"), None, 0).unwrap();

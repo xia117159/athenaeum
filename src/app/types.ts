@@ -362,6 +362,8 @@ export interface SettingsSnapshot {
   folderExpansionEnabled?: boolean;
   folderExpansionOnRowClick?: boolean;
   notificationsEnabled?: boolean;
+  /** Normalized local/UNC roots whose folder sizes are calculated automatically; edited only by dedicated commands. */
+  autoDirectorySizePaths?: string[];
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
   fileVisibility?: FileVisibilitySettings;

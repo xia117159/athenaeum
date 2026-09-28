@@ -78,6 +78,19 @@ fn rename_guard_retains_deep_details_when_another_scan_needs_cache_space() {
 }
 
 #[test]
+fn size_demand_rename_preserves_stale_paths_at_their_new_names() {
+    let mut t = Fixture::new();
+    t.events(&[("old\\deep", ChangeKind::Modified)]); t.core.tick(2);
+    let token = t.begin(); t.register(token);
+    t.events(&[("old", ChangeKind::RenameOld), ("new", ChangeKind::RenameNew)]); t.confirm(token);
+    assert!(t.finish(token));
+    let snapshot = t.core.snapshot("parent").unwrap();
+    let lookup = t.core.lookup("main", LookupDirectorySizesRequest { consumer_id: "parent".into(), generation: snapshot.generation,
+        paths: vec!["C:\\root\\new\\deep".into()] }, 5).unwrap();
+    assert_eq!(lookup.directories[0].state, DirectorySizeRecordState::Stale);
+}
+
+#[test]
 fn rename_cache_pairs_can_span_buffers_but_pending_old_and_drain_never_certify_results() {
     let mut t = Fixture::new(); let token = t.begin(); t.register(token);
     t.events(&[("old", ChangeKind::RenameOld)]); t.confirm(token);
@@ -110,7 +123,9 @@ fn rename_cache_old_scope_is_stale_and_never_redirected_to_new_object() {
     t.core.identity_finished(&identity, Ok(RootIdentity([1, 2, 3, 4])), 2006);
     assert_eq!(t.core.snapshot("old-scope").unwrap().phase, DirectorySizePhase::Stale);
     t.events(&[("old", ChangeKind::Added)]); t.core.tick(2007);
-    let job = t.core.take_jobs(3000).remove(0);
+    assert!(t.core.take_jobs(3000).is_empty());
+    t.core.tick(30_001);
+    let job = t.core.take_jobs(30_001).remove(0);
     t.core.prepared(&job, Some(RootIdentity([1, 2, 3, 4])), Some(Box::new(Detailed(t.notify.clone()))), 3000);
     let mut replacement = result(&job, 999);
     replacement.directories.insert(t.item.from.clone().into(), replacement.directories[job.target.path.as_str()].clone());

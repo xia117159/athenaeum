@@ -56,6 +56,18 @@ impl Core {
         let mut installed = Vec::new();
         for (key, target, result) in candidates {
             let mut root = self.roots.remove(&key)?;
+            for item in &guard.items {
+                if item.proof.directory {
+                    let changed = root.stale.rewrite(&item.from, &item.to) | root.pending.rewrite(&item.from, &item.to);
+                    if changed { root.stale_revision += 1; }
+                    let entries: Vec<_> = self.forgotten.entries().filter_map(|(path, recursive, cutoff)| {
+                        let fence = if recursive { super::super::forget::ForgetItem::Prefix(path.into()) } else { super::super::forget::ForgetItem::Exact(path.into()) };
+                        super::super::forget::rewritten(&fence, &item.from, &item.to).map(|next| (next, cutoff))
+                    }).collect();
+                    for (item, cutoff) in entries { self.forgotten.insert(&[item], cutoff); }
+                    self.history.forget(&self.forgotten);
+                }
+            }
             for lease in self.leases.values_mut().filter(|lease| lease.key == key) {
                 lease.key = target.key.clone();
                 lease.detached |= guard.items.iter().any(|item| item.proof.directory && proof::contains(&item.from, &lease.scope.path));

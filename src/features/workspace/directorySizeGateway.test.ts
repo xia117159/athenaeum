@@ -17,7 +17,7 @@ test("directory size gateway uses typed requests, decimal bytes, dedicated event
       events.push(name); handler({ payload: sizeSnapshot() as T }); return () => events.push("disposed");
     }
   });
-  const request = { consumerId: "size-test", target: { kind: "remote" as const, profileId: "p1", path: "/home" }, refresh: true };
+  const request = { consumerId: "size-test", target: { kind: "remote" as const, profileId: "p1", path: "/home" }, intent: "calculate" as const };
   assert.equal((await gateway.subscribe(request)).totalBytes, "18446744073709551615");
   await gateway.release("size-test");
   const lookup = { consumerId: "size-test", generation: 1, paths: ["/home"] };
@@ -36,7 +36,7 @@ test("directory size gateway uses typed requests, decimal bytes, dedicated event
 
 test("browser-only size gateway explicitly reports unavailable metadata, never complete mock totals", async () => {
   const gateway = createDirectorySizesGateway({ runtimeHost: {} });
-  const snapshot = await gateway.subscribe({ consumerId: "browser", target: { kind: "local", path: "C:\\files" }, refresh: false });
+  const snapshot = await gateway.subscribe({ consumerId: "browser", target: { kind: "local", path: "C:\\files" }, intent: "resume" });
   assert.equal(snapshot.phase, "failed");
   assert.equal(snapshot.totalBytes, null);
   assert.match(snapshot.reason ?? "", /桌面/);

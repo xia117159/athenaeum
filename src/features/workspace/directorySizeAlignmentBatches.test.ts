@@ -9,8 +9,8 @@ import { assertTest, flushEffects, installDomEnvironment } from "./workspaceCont
 import type { DirectorySizeLookup, LookupDirectorySizesRequest } from "./directorySizeTypes";
 import type { DirectorySnapshot } from "./types";
 
-async function batchFixture(rootState: "old" | "matched" | "partial" = "old", expandBeforeLookup = false) {
-  const f = controllerFixture(); const wire = sizeTransport();
+async function batchFixture(rootState: "old" | "matched" | "partial" = "old", expandBeforeLookup = false, manual = false) {
+  const f = controllerFixture("local", { auto: !manual }); const wire = sizeTransport();
   const branchKey = getPathComparisonKey(f.parent.path);
   f.tab.snapshot.sizeFingerprint = rootState === "matched" ? "root-stamp" : "old-root";
   f.tab.snapshot.entries.push(...Array.from({ length: 260 }, (_, index) => expansionEntry(f.path, `folder${String(index).padStart(3, "0")}`)));
@@ -25,6 +25,7 @@ async function batchFixture(rootState: "old" | "matched" | "partial" = "old", ex
   const listings: Array<{ path: string; finish: (result: DirectorySnapshot) => void }> = [];
   const h = await mountSizes(f.state, wire.gateway, { expansions: true,
     resolveDirectory: (path) => new Promise((finish) => { listings.push({ path, finish }); }) });
+  if (manual) await h.request("calculate");
   assert.deepEqual(lookups.map(({ request }) => request.paths.length), [256, 6]);
   assert.ok(lookups[0].request.paths.includes(f.path));
   assert.ok(!lookups[0].request.paths.includes(f.parent.path));
@@ -106,7 +107,8 @@ export const completion = (async () => {
       } finally { await h.close(); }
     });
     await assertTest("cancel while awaiting root metadata prevents later lookup results from starting alignment", async () => {
-      const t = await batchFixture(); const { h } = t;
+      // Automatic roots have no cancel (D2); a manual calculation does.
+      const t = await batchFixture("old", false, true); const { h } = t;
       try {
         await t.replyLookup(1); assert.equal(t.listings.length, 0);
         await h.request("cancel"); await t.replyLookup(0);

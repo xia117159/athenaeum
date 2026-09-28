@@ -218,6 +218,16 @@ export function SettingsWindowView() {
     setErrorMessage(null);
   }, [state, settingsReady, dirty, colorRulesRawDraftDirty, applying]);
 
+  // The automatic size list is not editable in the draft (E7), so the latest persisted list always replaces it,
+  // even while other sections hold unsaved changes.
+  const persistedAutoDirectorySizePaths = state.settings.model.autoDirectorySizePaths;
+  useEffect(() => {
+    setDraftState((current) => current.settings.model.autoDirectorySizePaths === persistedAutoDirectorySizePaths ? current : {
+      ...current,
+      settings: { ...current.settings, model: { ...current.settings.model, autoDirectorySizePaths: persistedAutoDirectorySizePaths } }
+    });
+  }, [persistedAutoDirectorySizePaths]);
+
   useEffect(() => {
     if (!settingsReady || applying) return;
     const incomingRulesRevision = state.settings.model.colorRulesRevision ?? "0";
@@ -552,6 +562,9 @@ export function SettingsWindowView() {
         onChooseTemplateRoot={actions.chooseTemplateRoot}
         onChooseAssociationProgram={actions.chooseAssociationProgram}
         onInspectAssociationPrograms={actions.inspectAssociationPrograms}
+        onAddAutoDirectorySizePath={actions.addAutoDirectorySizePath}
+        onRemoveAutoDirectorySizePath={actions.removeAutoDirectorySizePath}
+        onChooseAutoDirectorySizeFolder={actions.chooseAutoDirectorySizeFolder}
         state={draftState}
         dirtySections={dirtySections}
         navigationVersion={navigationVersion}

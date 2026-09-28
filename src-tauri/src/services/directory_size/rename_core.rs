@@ -4,6 +4,7 @@ use super::super::{rename_proof::{self as proof, RenameItem, ObjectProof}, watch
 
 pub(crate) struct RootProbe {
     pub key: String, pub path: String, pub generation: u64, pub epoch: u64, pub ticket: u64,
+    pub stale_revision: u64,
 }
 pub(crate) struct RenamePreparation { pub ticket: u64, pub roots: Vec<RootProbe> }
 pub(super) struct GuardWatch {
@@ -40,6 +41,7 @@ impl Core {
         self.tick(now); self.rename_ticket += 1;
         let roots = self.roots.iter().filter(|(_, root)| root.target.profile.is_none() && paths.iter().any(|path| proof::overlaps(&root.target.path, path)))
             .map(|(key, root)| RootProbe { key: key.clone(), path: root.target.path.clone(), generation: root.generation,
+                stale_revision: root.stale_revision,
                 epoch: root.watch.as_ref().map_or(0, |watch| watch.epoch()), ticket: root.watch.as_ref().map_or(0, |watch| watch.request_drain()) }).collect();
         RenamePreparation { ticket: self.rename_ticket, roots }
     }
@@ -66,7 +68,7 @@ impl Core {
             let probe = preparation.roots.iter().find(|probe| probe.key == key);
             let eligible = root.guard.is_none() && root.running.is_none() && root.result.is_some() && !root.identity_expired
                 && matches!(root.phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial)
-                && probe.is_some_and(|probe| probe.generation == root.generation && probe.epoch != 0 && root.drained_ticket >= probe.ticket
+                && probe.is_some_and(|probe| probe.generation == root.generation && probe.stale_revision == root.stale_revision && probe.epoch != 0 && root.drained_ticket >= probe.ticket
                     && root.watch.as_ref().is_some_and(|watch| watch.epoch() == probe.epoch))
                 && roots_proof.get(&key).is_some_and(|proof| proof.directory && Some(proof.identity) == root.identity);
             valid &= eligible;

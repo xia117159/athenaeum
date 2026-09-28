@@ -2,6 +2,12 @@ use std::{collections::HashMap, sync::{Arc, atomic::{AtomicBool, Ordering}}};
 use crate::domain::{directory_sizes::*, models::RemoteProfile};
 use super::{scan::{ScanOutcome, ScanResult, ScanStats}, target::{ScanTarget, normalize_target, lookup_path}, watch::{RootIdentity, WatchPoll}};
 
+#[path = "intents.rs"]
+mod intents;
+#[path = "stale_core.rs"]
+mod stale_core;
+#[path = "auto_schedule.rs"]
+mod auto_schedule;
 #[path = "cache.rs"]
 mod cache;
 #[path = "diagnostics.rs"]
@@ -57,12 +63,19 @@ impl Default for ServiceLimits {
     fn default() -> Self { Self { roots: 8, leases: 32, workers: 2, remote_workers: 1, cache_bytes: 256 * 1024 * 1024 } }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeaseMode { Manual, Auto }
 struct Lease {
+    mode: LeaseMode, unavailable: bool, auto_reroot_at: Option<u64>,
     owner: OwnerToken, key: String, scope: ScanTarget, verified: bool, required_validation: u64, detached: bool,
     disk_wait: Option<u64>, disk_retry: u64, disk_error: Option<String>,
 }
 struct Running { generation: u64, cancelled: Arc<AtomicBool> }
 struct Root {
+    placeholder: bool,
+    scan_explicit: bool,
+    stale: super::stale::StaleSet, pending: super::stale::PendingStale, stale_revision: u64,
+    scan_started_at: Option<chrono::DateTime<chrono::Utc>>, auto_rescan_at: Option<u64>,
     target: ScanTarget,
     generation: u64,
     sequence: u64,
@@ -88,7 +101,7 @@ struct Root {
 }
 impl Root {
     fn new(target: ScanTarget, generation: u64, now: u64) -> Self {
-        Self { target, generation, sequence: 0, phase: DirectorySizePhase::Queued, stats: ScanStats::default(), result: None, captured_at: None, persisted_scan: None, acceptance: 0,
+        Self { placeholder: false, scan_explicit: false, stale: Default::default(), pending: Default::default(), stale_revision: 0, scan_started_at: None, auto_rescan_at: None, target, generation, sequence: 0, phase: DirectorySizePhase::Queued, stats: ScanStats::default(), result: None, captured_at: None, persisted_scan: None, acceptance: 0,
             watch: None, identity: None, last_identity_ok: None, identity_expired: false, needs_scan: true, due: now,
             last_start: None, last_progress: now, last_used: now, running: None, reason: None, guard: None, drained_ticket: 0 }
     }
@@ -97,6 +110,8 @@ impl Root {
 #[derive(Default)]
 pub(super) struct Core {
     pub limits: ServiceLimits,
+    forgotten: super::forget::ForgetFence,
+    auto_starts: HashMap<String, u64>, auto_finished: HashMap<String, u64>,
     roots: HashMap<String, Root>,
     leases: HashMap<String, Lease>,
     owners: HashMap<String, u64>,
@@ -157,9 +172,8 @@ impl Core {
         self.tick(now);
         let revision = profile.as_ref().and_then(|value| self.profile_revisions.get(&value.id)).copied().unwrap_or(0);
         let target = normalize_target(&request.target, profile, revision)?;
-        let key = if !request.refresh && target.profile.is_none() {
-            self.reusable_root(&target).unwrap_or_else(|| target.key.clone())
-        } else { target.key.clone() };
+        self.validate_intent(&request, &target)?;
+        let key = self.intent_key(&target, request.intent);
         let mut existing = false;
         if let Some(lease) = self.leases.get(&request.consumer_id) {
             if lease.owner.label != owner.label || lease.owner.epoch != owner.epoch { return Err("目录统计订阅不属于当前窗口".into()); }
@@ -167,30 +181,16 @@ impl Core {
             else { self.release(&owner.label, &request.consumer_id, now)?; }
         }
         if !existing && self.leases.len().saturating_sub(replacing) >= self.limits.leases { return Err("目录统计订阅已达到 32 个上限".into()); }
-        let new_root = !self.roots.contains_key(&key);
-        if new_root {
-            while self.roots.len() >= self.limits.roots {
-                if !self.evict_unleased(None) { return Err("目录统计已达到 8 个根目录上限".into()); }
-            }
-            self.generation += 1;
-            self.roots.insert(key.clone(), Root::new(target.clone(), self.generation, now));
-        }
+        self.prepare_intent_root(&key, &target, request.intent, 0, now)?;
         let root = self.roots.get_mut(&key).expect("inserted root");
         root.last_used = now;
-        let new_unmonitored_cache_lease = !existing && root.result.is_some() && root.target.profile.is_none() && root.watch.is_none();
-        let refresh = request.refresh && !new_root;
+        let mode = if request.intent == DirectorySizeIntent::Auto { LeaseMode::Auto } else { LeaseMode::Manual };
         if !existing {
-            self.leases.insert(request.consumer_id.clone(), Lease { owner, key: key.clone(), scope: target,
-                verified: root.target.profile.is_some() && root.result.is_some(),
+            self.leases.insert(request.consumer_id.clone(), Lease { owner, key: key.clone(), scope: target, mode, unavailable: false, auto_reroot_at: None,
+                verified: root.result.is_some() && (root.target.profile.is_some() || root.watch.is_none()),
                 required_validation: self.validation_ticket + 1, detached: false, disk_wait: None, disk_retry: 0, disk_error: None });
-        }
-        if new_unmonitored_cache_lease || refresh {
-            self.invalidate(&key, now, true, false, 0, "已请求重新统计");
-            self.roots.get_mut(&key).unwrap().phase = DirectorySizePhase::Queued;
-            self.emit(&key);
-        } else if self.roots[&key].phase == DirectorySizePhase::Cancelled {
-            self.invalidate(&key, now, true, true, 0, "重新订阅目录统计");
-        }
+        } else { self.leases.get_mut(&request.consumer_id).unwrap().mode = mode; }
+        self.apply_intent(&key, request.intent, request.retry_failed, 0, now);
         self.request_missing_scopes(now);
         self.snapshot(&request.consumer_id).ok_or_else(|| "目录统计订阅未建立".into())
     }
@@ -226,7 +226,7 @@ impl Core {
         let pending_verification = root.result.is_some() && !lease.verified && matches!(root.phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial | DirectorySizePhase::Failed);
         let scoped = root.result.as_ref().and_then(|result| result.directories.get(lease.scope.path.as_str())).filter(|size| size.visited());
         let derived = lease.scope.key != root.target.key;
-        let mut phase = if lease.detached || lookup_path(&root.target, &lease.scope.path).is_err() { DirectorySizePhase::Stale }
+        let mut phase = if lease.unavailable || lease.detached || lookup_path(&root.target, &lease.scope.path).is_err() { DirectorySizePhase::Stale }
             else if lease.disk_error.is_some() { DirectorySizePhase::Failed }
             else if lease.disk_wait.is_some() { DirectorySizePhase::Queued }
             else if pending_verification { DirectorySizePhase::Queued }
@@ -239,17 +239,19 @@ impl Core {
         let artifact_pending = self.artifacts.pending(&lease.scope.path);
         if artifact_pending && matches!(phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial) { phase = DirectorySizePhase::Queued; }
         if stats.known_bytes.checked_add(contribution.bytes).is_none() { phase = DirectorySizePhase::Partial; }
-        let total_bytes = (phase == DirectorySizePhase::Complete).then(|| scoped.filter(|size| size.complete)
+        let invalidated = root.stale.contains(&lease.scope.path);
+        let total_bytes = (phase == DirectorySizePhase::Complete && !invalidated).then(|| scoped.filter(|size| size.complete)
             .and_then(|size| size.bytes.checked_add(contribution.bytes)).map(|bytes| bytes.to_string())).flatten();
-        Some(DirectorySizeSnapshot { consumer_id: consumer.into(), generation: root.generation, sequence: root.sequence, phase,
+        Some(DirectorySizeSnapshot { invalidated, invalidation_revision: root.stale_revision.to_string(), stale_readable: self.stale_readable(lease, root), consumer_id: consumer.into(), generation: root.generation, sequence: root.sequence, phase,
             cache_revision: self.cache_revision.to_string(), artifact_revision: self.artifacts.revision.to_string(),
             known_bytes: stats.known_bytes.saturating_add(contribution.bytes).to_string(), total_bytes, files: stats.files.saturating_add(contribution.files), directories: stats.directories,
             skipped_links: stats.skipped_links, skipped_special: stats.skipped_special, errors: stats.errors,
             freshness: if root.watch.is_some() && root.identity.is_some() { DirectorySizeFreshness::Monitored } else { DirectorySizeFreshness::Snapshot },
-            reason: if let Some(error) = &lease.disk_error { Some(error.clone()) }
+            reason: if lease.unavailable { Some("该文件夹的明细已不可用，请重新计算".into()) }
+                else if let Some(error) = &lease.disk_error { Some(error.clone()) }
                 else if artifact_pending { Some("缓存文件大小暂不可读，保留上次结果等待更新".into()) }
                 else if lease.disk_wait.is_some() { Some("正在读取已完成的目录大小缓存".into()) }
-                else if pending_verification { Some("正在验证缓存对应的目录对象".into()) } else { root.reason.clone() } })
+                else if pending_verification { Some("正在验证缓存对应的目录对象".into()) } else { root.reason.clone().or_else(|| invalidated.then(|| "目录内容已变化，统计已过期".into())) } })
     }
     pub fn take_jobs(&mut self, now: u64) -> Vec<ScanJob> {
         if self.stopped || self.quiescing { return vec![]; }
@@ -262,11 +264,14 @@ impl Core {
         let mut jobs = vec![];
         for (_, _, key) in keys {
             if active >= self.limits.workers { break; }
+            if self.direct_auto(&key) { self.auto_starts.insert(key.clone(), now); }
             let root = self.roots.get_mut(&key).unwrap();
             if root.target.profile.is_some() && remote_active >= self.limits.remote_workers { continue; }
             let cancelled = Arc::new(AtomicBool::new(false));
             root.running = Some(Running { generation: root.generation, cancelled: cancelled.clone() });
             root.needs_scan = false;
+            root.pending = Default::default();
+            root.scan_started_at = Some(chrono::Utc::now());
             root.phase = DirectorySizePhase::Scanning;
             root.reason = None;
             root.last_start = Some(now);
@@ -277,7 +282,7 @@ impl Core {
             root.identity_expired = false;
             let storage = self.storage.as_ref().filter(|_| root.target.profile.is_none()).map(|_| super::storage::ScanHeader {
                 id: format!("{}:{}", self.session, root.generation), session: self.session.clone(), root: root.target.path.clone(),
-                generation: root.generation, captured_at: chrono::Utc::now(), policy_version: 2,
+                generation: root.generation, captured_at: root.scan_started_at.unwrap(), policy_version: 2,
             });
             jobs.push(ScanJob { target: root.target.clone(), generation: root.generation, cancelled, storage });
             self.jobs_started = self.jobs_started.saturating_add(1);
@@ -310,6 +315,9 @@ impl Core {
     pub fn finished(&mut self, job: &ScanJob, mut result: ScanResult, identity: Option<RootIdentity>, now: u64) {
         self.tick(now); // Poll pending subtree notifications before accepting any result.
         let current = self.job_current(job);
+        let ending = self.roots.get(&job.target.key).is_some_and(|root| root.running.as_ref().is_some_and(|run|
+            run.generation == job.generation && Arc::ptr_eq(&run.cancelled, &job.cancelled)));
+        if ending && self.auto_starts.contains_key(&job.target.key) { self.auto_finished.insert(job.target.key.clone(), now); }
         if let Some(root) = self.roots.get_mut(&job.target.key) {
             if root.running.as_ref().is_some_and(|running| running.generation == job.generation) { root.running = None; }
         }
@@ -317,7 +325,13 @@ impl Core {
             self.roots.remove(&job.target.key);
             return;
         }
-        if !current { return; }
+        if !current {
+            if let Some(root) = self.roots.get(&job.target.key).filter(|root| root.needs_scan && !root.scan_explicit) {
+                let due = self.scan_due(&job.target.key, now, 0, false).max(root.due);
+                self.roots.get_mut(&job.target.key).unwrap().due = due;
+            }
+            return;
+        }
         let root = &self.roots[&job.target.key];
         if root.target.profile.is_none() && root.identity.is_some() && root.identity != identity {
             self.invalidate(&job.target.key, now, true, true, 500, "根目录对象发生变化或无法验证，旧统计已失效");
@@ -347,9 +361,10 @@ impl Core {
         root.reason = result.message.clone().map(|message| message.chars().take(256).collect()).or_else(|| root.reason.take());
         root.last_identity_ok = identity.map(|_| now);
         root.last_used = now;
-        if fits && result.outcome != ScanOutcome::Cancelled { root.result = Some(result); root.captured_at = Some(chrono::Utc::now()); }
+        if fits && result.outcome != ScanOutcome::Cancelled { root.result = Some(result); root.captured_at = root.scan_started_at; }
         else if !fits { root.phase = DirectorySizePhase::Partial; root.reason = Some("统计缓存已达到 256 MiB 上限，无法保留目录明细".into()); }
         for lease in self.leases.values_mut().filter(|lease| lease.key == job.target.key && !lease.detached) { lease.verified = true; }
+        self.finish_pending_changes(&job.target.key, now);
         self.capture_live_history(&job.target.key);
         self.protect_stored_scans();
         self.emit(&job.target.key);
@@ -385,19 +400,13 @@ impl Core {
                     && !registry.as_ref().is_some_and(|registry| registry.suppress_in_flight(&root.target.path, &event.path)));
                 if let Some(guard) = root.guard.and_then(|id| self.maintenance.get_mut(&id)) {
                     guard.consume(key, external);
-                } else if external.lost {
-                    changes.push((key.clone(), true, "目录实时监控已失效"));
-                } else if !external.events.is_empty() {
-                    changes.push((key.clone(), false, "目录内容已变化，统计已失效"));
-                }
+                } else if external.lost || !external.events.is_empty() { changes.push((key.clone(), external)); }
             }
         }
         let abandoned: Vec<_> = self.maintenance.iter().filter(|(_, guard)| !guard.valid || now.saturating_sub(guard.started) > 30_000).map(|(id, _)| *id).collect();
         for id in abandoned { self.abandon_rename(id); }
-        for (key, lost, reason) in changes {
-            if !self.has_leases(&key) && self.roots[&key].running.is_none() { self.retire_result(&key); self.roots.remove(&key); }
-            else { self.invalidate(&key, now, true, lost, 500, reason); }
-        }
+        for (key, changes) in changes { self.apply_changes(&key, changes, now); }
+        self.tick_auto(now);
         let expired: Vec<_> = self.roots.iter().filter(|(key, root)| root.guard.is_none() && self.has_leases(key) && root.watch.is_some() && root.result.is_some()
             && !root.identity_expired && root.last_identity_ok.is_some_and(|last| now.saturating_sub(last) > 5000))
             .map(|(key, _)| key.clone()).collect();
@@ -438,6 +447,7 @@ impl Core {
             root.reason = root.result.as_ref().unwrap().message.clone();
         }
         for lease in self.leases.values_mut().filter(|lease| lease.key == job.key && !lease.detached && lease.required_validation <= job.ticket) { lease.verified = true; }
+        self.schedule_stale_auto(&job.key, now);
         self.emit(&job.key);
     }
     pub fn lookup(&mut self, owner: &str, request: LookupDirectorySizesRequest, now: u64) -> Result<DirectorySizeLookup, String> {
@@ -447,12 +457,12 @@ impl Core {
         if lease.owner.label != owner { return Err("目录统计订阅不属于当前窗口".into()); }
         let root = self.roots.get(&lease.key).ok_or_else(|| "目录统计缓存已失效".to_string())?;
         let paths: Vec<_> = request.paths.iter().map(|path| lookup_path(&lease.scope, path)).collect::<Result<_, _>>()?;
-        let stale = request.generation != root.generation || lease.detached || root.guard.is_some() || lookup_path(&root.target, &lease.scope.path).is_err() || !lease.verified || root.result.is_none()
-            || !matches!(root.phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial | DirectorySizePhase::Failed);
+        let stale = request.generation != root.generation || lease.unavailable || root.identity_expired || lease.detached || root.guard.is_some() || lookup_path(&root.target, &lease.scope.path).is_err() || !lease.verified || root.result.is_none()
+            || !(matches!(root.phase, DirectorySizePhase::Complete | DirectorySizePhase::Partial | DirectorySizePhase::Failed) || self.stale_readable(lease, root));
         let directories = if stale { vec![] } else {
             paths.iter().zip(&request.paths).map(|(key, path)| {
                 let size = root.result.as_ref().unwrap().directories.get(key.as_str()).filter(|size| size.visited());
-                DirectorySizeRecord { path: path.clone(), state: match size { Some(size) if size.complete => DirectorySizeRecordState::Complete,
+                DirectorySizeRecord { path: path.clone(), state: match size { Some(_) if root.stale.contains(key) => DirectorySizeRecordState::Stale, Some(size) if size.complete => DirectorySizeRecordState::Complete,
                     Some(_) => DirectorySizeRecordState::Partial, None => DirectorySizeRecordState::Unknown },
                     bytes: size.map(|size| size.bytes.saturating_add(self.artifacts.contribution(key).bytes).to_string()), size_fingerprint: size.and_then(|size| size.fingerprint.clone()), cached_at: None, created_at: size.and_then(|size| size.created_at) }
             }).collect()
@@ -538,6 +548,13 @@ impl Core {
     fn invalidate(&mut self, key: &str, now: u64, rescan: bool, drop_watch: bool, quiet: u64, reason: &str) {
         if let Some(guard) = self.roots.get(key).and_then(|root| root.guard).and_then(|id| self.maintenance.get_mut(&id)) { guard.valid = false; }
         let leased = self.has_leases(key);
+        let rescan = rescan && self.direct_auto(key);
+        self.invalidate_with_intent(key, now, rescan && leased, drop_watch, quiet, false, reason);
+        self.reroot_invalidated_auto(key, now);
+    }
+    fn invalidate_with_intent(&mut self, key: &str, now: u64, rescan: bool, drop_watch: bool, quiet: u64, explicit: bool, reason: &str) {
+        if self.roots.get(key).is_some_and(|root| root.running.is_some()) && self.auto_starts.contains_key(key) { self.auto_finished.insert(key.into(), now); }
+        let due = self.scan_due(key, now, quiet, explicit);
         self.retire_result(key);
         let Some(root) = self.roots.get_mut(key) else { return; };
         self.generation += 1;
@@ -549,13 +566,16 @@ impl Core {
         root.phase = DirectorySizePhase::Stale;
         root.reason = Some(reason.into());
         root.identity_expired = false;
-        root.needs_scan = rescan && leased;
-        root.due = now.saturating_add(quiet).max(root.last_start.map(|start| start.saturating_add(2000)).unwrap_or(now));
+        root.needs_scan = rescan;
+        root.scan_explicit = explicit;
+        root.stale = Default::default(); root.pending = Default::default(); root.stale_revision += 1;
+        root.auto_rescan_at = None;
+        root.due = due;
         if let Some(running) = &root.running { running.cancelled.store(true, Ordering::Relaxed); }
         if drop_watch { root.watch = None; root.identity = None; root.last_identity_ok = None; }
         for lease in self.leases.values_mut().filter(|lease| lease.key == key) {
             lease.verified = false; lease.required_validation = self.validation_ticket + 1;
-            lease.disk_wait = None; lease.disk_error = None;
+            lease.disk_wait = None; lease.disk_error = None; lease.unavailable = false; lease.auto_reroot_at = None;
         }
         self.emit(key);
     }

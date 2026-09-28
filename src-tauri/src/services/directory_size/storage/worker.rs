@@ -35,6 +35,7 @@ impl Schedule {
 enum Write {
     Append(ScanHeader, Vec<StoredDirectory>),
     Accept(ScanHeader, u64),
+    Forget(Vec<super::super::forget::ForgetItem>, i64),
     Prepare(Operation, mpsc::SyncSender<Result<(), String>>),
     Authorize(Operation),
     Abort(String),
@@ -44,6 +45,7 @@ impl Write {
         match self {
             Self::Append(header, records) => db.append(header, records),
             Self::Accept(header, ticket) => db.append(header, &[]).and_then(|_| db.publish(&header.id, *ticket)).map(|_| ()),
+            Self::Forget(items, cutoff) => db.forget(items, *cutoff),
             Self::Prepare(operation, _) => db.prepare_operation(operation),
             Self::Authorize(operation) => db.authorize_operation(operation),
             Self::Abort(id) => db.abort_operation(id),
@@ -53,6 +55,7 @@ impl Write {
     fn data(&self) -> bool { matches!(self, Self::Append(..)) }
     fn cost(&self) -> usize {
         let header = match self {
+            Self::Forget(items, _) => return 256 + items.iter().map(|item| item.path().len() + 64).sum::<usize>(),
             Self::Append(header, _) | Self::Accept(header, _) => header,
             Self::Prepare(operation, _) | Self::Authorize(operation) => return 1024 + operation.paths.iter().map(|pair| pair.from.capacity() + pair.to.capacity() + 128).sum::<usize>()
                 + operation.scans.iter().map(|scan| scan.capacity() + 64).sum::<usize>() + operation.patches.iter().map(|(path, fingerprint)| path.capacity() + fingerprint.as_ref().map_or(0, String::capacity) + 96).sum::<usize>(),
@@ -160,6 +163,11 @@ impl Store {
     pub fn iterations_for_test(&self) -> u64 { self.shared.queue.lock().unwrap().test.iterations }
     #[cfg(test)]
     pub fn idle_for_test(&self) -> bool { self.shared.queue.lock().unwrap().test.idle }
+    /// `(draining, lost_write)`: Forget must never force a drain or mark a lost write.
+    #[cfg(test)]
+    pub fn write_flags_for_test(&self) -> (bool, bool) {
+        let queue = self.shared.queue.lock().unwrap(); (queue.draining, queue.lost_write.is_some())
+    }
     #[cfg(test)]
     pub fn vfs_writes_for_test(&self) -> u64 {
         self.shared.queue.lock().unwrap().test.writes.as_ref().map_or(0, |writes| writes.load(std::sync::atomic::Ordering::SeqCst))
@@ -185,9 +193,14 @@ impl Store {
         let mut queue = self.shared.queue.lock().unwrap();
         let data = work.data();
         if queue.stopping || queue.done || queue.read_only {
+            if matches!(work, Write::Forget(..)) { queue.last_error = Some("cache forget rejected: storage is read-only or stopping".into()); return false; }
             queue.rejected(work.records(), "cache write rejected: storage is read-only or stopping"); return false;
         }
-        if !queue.admit(&mut work) { queue.rejected(work.records(), "cache write queue is full"); return false; }
+        if !queue.admit(&mut work) {
+            if matches!(work, Write::Forget(..)) { queue.last_error = Some("cache forget queue is full".into()); }
+            else { queue.rejected(work.records(), "cache write queue is full"); }
+            return false;
+        }
         let cost = work.cost();
         queue.bytes += cost; if data { queue.data_bytes += cost; }
         if let Write::Accept(header, _) = &work {
@@ -195,7 +208,7 @@ impl Store {
         }
         if let Write::Append(header, _) | Write::Accept(header, _) = &work {
             if queue.protection.session.is_empty() { queue.protection.session = header.session.clone(); }
-        } else { queue.draining = true; }
+        } else if !matches!(work, Write::Forget(..)) { queue.draining = true; }
         queue.records += work.records(); queue.schedule.dirty(self.shared.clock.elapsed().as_millis() as u64);
         queue.writes.push_back(Pending { work, cost, attempts: 0, retry_at: 0 });
         self.shared.changed.notify_one(); true
@@ -210,6 +223,12 @@ impl Store {
     }
     /// Called under Core's acceptance lock. Enqueue is bounded and never performs I/O.
     pub fn accept(&self, header: ScanHeader, ticket: u64) -> bool { self.enqueue(Write::Accept(header, ticket)) }
+    pub fn forget(&self, items: Vec<super::super::forget::ForgetItem>, cutoff: i64) -> bool {
+        if items.len() > 256 || items.iter().map(|item| item.path().len() + 64).sum::<usize>() > 1 << 20 {
+            self.shared.queue.lock().unwrap().last_error = Some("cache forget batch exceeds its limit".into()); return false;
+        }
+        self.enqueue(Write::Forget(items, cutoff))
+    }
     pub fn prepare_operation(&self, operation: Operation, timeout: Duration) -> Result<(), String> {
         let mut queue = self.shared.queue.lock().unwrap();
         let cost = operation.paths.iter().map(|pair| pair.from.len() + pair.to.len() + operation.id.len() * 2 + 128).sum::<usize>();
@@ -436,6 +455,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                         Write::Authorize(_) => { operations_pending = true; maintenance.request_sweep(); maintenance.request_namespaces(); }
                         Write::Abort(_) => { maintenance.request_sweep(); maintenance.request_namespaces(); }
                         Write::Append(..) => maintenance.request_evict(false),
+                        Write::Forget(..) => {},
                         Write::Accept(header, _) => {
                             maintenance.request_probe(header.id.clone()); maintenance.request_sweep(); maintenance.request_evict(true);
                         }
@@ -445,7 +465,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                         if !queue.protection.scans.contains(&header.id) { maintenance.request_sweep(); maintenance.request_namespaces(); }
                     }
                     queue.last_commit = Some(chrono::Utc::now());
-                    if matches!(pending.work, Write::Accept(..)) && !queue.views.is_empty() {
+                    if matches!(pending.work, Write::Accept(..) | Write::Forget(..)) && !queue.views.is_empty() {
                         queue.summary_pending = true; queue.summary_schedule.dirty(now);
                     }
                     queue.finished_write(&pending);
@@ -458,7 +478,7 @@ fn run(shared: Arc<Shared>, directory: PathBuf, on_read: Arc<ReadSink>, retry_ms
                         queue.writes.push_front(pending);
                     } else {
                         if let Write::Prepare(_, reply) = &pending.work { let _ = reply.try_send(Err(error.to_string())); }
-                        queue.lost_write = Some(error.to_string());
+                        if !matches!(pending.work, Write::Forget(..)) { queue.lost_write = Some(error.to_string()); }
                         queue.dropped_records += pending.work.records() as u64; queue.finished_write(&pending);
                     }
                 }

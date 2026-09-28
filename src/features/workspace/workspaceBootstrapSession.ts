@@ -340,6 +340,7 @@ export async function mergeBootstrapWithSession(
       ...session.settingsModel,
       // Desktop rules are persisted by the backend; an older session must not erase or revive them.
       fileAssociations: base.source === "tauri" ? base.settingsModel.fileAssociations : session.settingsModel.fileAssociations,
+      autoDirectorySizePaths: base.source === "tauri" ? base.settingsModel.autoDirectorySizePaths : session.settingsModel.autoDirectorySizePaths,
       treeAutoFollowEnabled: base.source === "tauri"
         ? base.settingsModel.treeAutoFollowEnabled === true : session.settingsModel.treeAutoFollowEnabled === true
     })

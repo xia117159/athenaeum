@@ -25,6 +25,7 @@ import { getFolderListingEntries, getFolderListingRows, getSelectedEntriesFromRo
 import { resolveActiveQuickFilterProgram, resolvePanelQuickFilter, resolveQuickFilterInput, resolveTabQuickFilter } from "./quickFilterState";
 import type { QuickFilterProgram } from "./quickFilterTypes";
 import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
+import { directorySizeAutoBadge, directorySizeMenuAction, directorySizeMenuState } from "./directorySizeMenu";
 import { DirectorySizeControl } from "./DirectorySizeControl";
 import { ReconnectPanel } from "./ReconnectPanel";
 import type {
@@ -62,6 +63,8 @@ function getUniqueRecentPaths(history: string[], currentPath: string) {
 
   return result;
 }
+
+const NO_AUTO_DIRECTORY_SIZE_PATHS: string[] = [];
 
 export function WorkspaceView() {
   const { state, actions } = useWorkspaceController();
@@ -444,6 +447,7 @@ export function WorkspaceView() {
           layoutMode={state.layoutMode}
           panelIds={getVisiblePanelIds(state.layoutMode)}
           templateMenuOpen={Boolean(state.templateMenu && !state.templateMenu.rootHidden)}
+          autoDirectorySizePaths={state.settings.model.autoDirectorySizePaths}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
@@ -617,6 +621,7 @@ function PanelLayout({
       dropHighlightFill={state.settings.model.theme.dropHighlightFill}
       dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
       sizeBarMode={state.settings.model.sizeBarMode}
+      autoDirectorySizePaths={state.settings.model.autoDirectorySizePaths ?? NO_AUTO_DIRECTORY_SIZE_PATHS}
       sizeBarLow={state.settings.model.theme.sizeBarLow}
       sizeBarHigh={state.settings.model.theme.sizeBarHigh}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
@@ -736,6 +741,7 @@ function PanelSurface({
   dropHighlightFill,
   dropHighlightBorder,
   sizeBarMode,
+  autoDirectorySizePaths,
   sizeBarLow,
   sizeBarHigh,
   tabMinWidth,
@@ -765,6 +771,7 @@ function PanelSurface({
   dropHighlightFill: string;
   dropHighlightBorder: string;
   sizeBarMode: WorkspaceState["settings"]["model"]["sizeBarMode"];
+  autoDirectorySizePaths: string[];
   sizeBarLow: string;
   sizeBarHigh: string;
   tabMinWidth: number;
@@ -898,7 +905,12 @@ function PanelSurface({
             folderExpansionOnRowClick={folderExpansionOnRowClick}
             sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
               statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind} background={activeTab.snapshot.directorySizeCache?.historical === true}
-              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}
+              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)}
+              auto={directorySizeAutoBadge(activeTab, autoDirectorySizePaths)} /> : undefined}
+            directorySizeAction={directorySizeMenuAction(directorySizeMenuState(activeTab, autoDirectorySizePaths), {
+              calculate: () => actions.requestDirectorySizes(panel.id, activeTab.id, "calculate"),
+              retry: () => actions.retryAutoDirectorySizes(panel.id, activeTab.id)
+            })}
             onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
             onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}
             columns={activeTab.columns ?? columns}

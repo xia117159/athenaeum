@@ -36,7 +36,7 @@ test("restart history displays before subscribe despite changed contents and sur
   assert.equal(h.display().sizeDisplay?.share, 1);
   assert.equal(exactSizeBytes(h.display()), null, "historical display never certifies a live result");
   assert.match(h.display().sizeDisplay!.title, /2026/);
-  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...h.payload, mode: "manual" } });
   for (const [sequence, phase] of [[1, "queued"], [2, "scanning"], [3, "stale"], [4, "failed"]] as const) {
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
       snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence, phase, reason: "test failure" }) } });
@@ -51,7 +51,7 @@ test("restart history displays before subscribe despite changed contents and sur
 
 test("current exact bytes supersede history even before the ratio denominator arrives", () => {
   const h = fixture();
-  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...h.payload, mode: "manual" } });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence: 1 }) } });
   h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
@@ -80,7 +80,7 @@ test("successive bounded refreshes retain a complete size/bar pair until sibling
   const tab = h.f.state.panels["panel-1"].tabs[0];
   const sibling = `${h.path}\\sibling`;
   tab.snapshot.entries.push({ ...tab.snapshot.entries[0], path: sibling, id: sibling, name: "sibling" });
-  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...h.payload, mode: "manual" } });
   for (const generation of [1, 2]) {
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
       snapshot: sizeSnapshot({ consumerId: "history", generation, sequence: 1 }) } });
@@ -110,7 +110,7 @@ test("a scalar with no previous proportion may update while sibling details are 
   const h = fixture();
   const tab = h.f.state.panels["panel-1"].tabs[0];
   tab.snapshot.entries.push({ ...tab.snapshot.entries[0], path: `${h.path}\\missing`, id: "missing", name: "missing" });
-  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...h.payload, mode: "manual" } });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence: 1 }) } });
   h.send({ type: "directorySizeLookupReceived", payload: { ...h.payload, expectedRoot: h.f.state.panels["panel-1"].tabs[0].snapshot, expectedExpansion: h.f.state.panels["panel-1"].tabs[0].folderExpansion, lookup: {
@@ -123,7 +123,7 @@ test("a scalar with no previous proportion may update while sibling details are 
 
 test("history tooltip distinguishes a finished scan with missing details from a running refresh", () => {
   const h = fixture();
-  h.send({ type: "directorySizeLeaseStarted", payload: h.payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...h.payload, mode: "manual" } });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...h.payload,
     snapshot: sizeSnapshot({ consumerId: "history", generation: 1, sequence: 1 }) } });
   assert.equal(h.display().sizeLabel, "60 B");

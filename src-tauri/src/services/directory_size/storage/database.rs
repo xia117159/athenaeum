@@ -36,6 +36,7 @@ impl StoredHit {
 pub(super) struct Database {
     // Connections close before the OS writer lock and the quota registration.
     pub(super) connection: QuotaConnection, owner: Option<File>, directory: PathBuf,
+    pub(super) forget_cache: std::cell::RefCell<(u64, super::super::forget::ForgetFence)>,
 }
 const MAX_RECORD_BYTES: usize = 128 << 10;
 pub(super) const LOOKUP: &str = "SELECT r.payload,s.id,s.source,s.publication,s.captured_at,s.policy_version
@@ -68,8 +69,8 @@ impl Database {
             rusqlite::ffi::sqlite3_limit(connection.handle(), rusqlite::ffi::SQLITE_LIMIT_ATTACHED, 0);
         }
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        ensure!(version <= 2, "unsupported directory size cache schema");
-        let mut db = Self { connection, owner, directory: directory.into() };
+        ensure!(version <= 3, "unsupported directory size cache schema");
+        let mut db = Self { connection, owner, directory: directory.into(), forget_cache: Default::default() };
         if db.writable() {
             if version == 0 {
                 let tables: u64 = db.connection.query_row("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], |row| row.get(0))?;
@@ -79,11 +80,13 @@ impl Database {
             db.connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
                 PRAGMA wal_autocheckpoint=0; PRAGMA max_page_count=53248;")?;
             if version == 1 { db.upgrade_operations()?; }
+            if version < 3 { db.upgrade_forgetting()?; }
             db.recover_operations()?;
         } else {
-            ensure!(version == 2, "cache writer is still initializing");
+            ensure!((2..=3).contains(&version), "cache writer is still initializing");
             db.connection.execute_batch("PRAGMA query_only=ON")?;
         }
+        *db.forget_cache.get_mut() = (db.connection.query_row("PRAGMA data_version", [], |row| row.get(0))?, super::forgetting::load_fence(&db.connection)?);
         Ok(db)
     }
     fn initialize(&mut self) -> Result<()> {
@@ -134,6 +137,7 @@ impl Database {
         for record in records {
             let path = normalize_local_path(&record.path).map_err(anyhow::Error::msg)?;
             ensure!(Path::new(&path).starts_with(&root), "record outside scan scope");
+            if self.forget_cache.borrow().1.blocks(&path, header.captured_at.timestamp_micros()) { continue; }
             if self.write_blocked(&path, header)? { continue; }
             let payload = serde_json::to_string(&StoredDirectory { path: path.clone(), ..record.clone() })?;
             total += path.len() * 2 + payload.len();
@@ -142,8 +146,8 @@ impl Database {
             encoded.push((path, parent, record.size.created_at.map(|at| at.to_rfc3339()), payload));
         }
         let tx = self.connection.transaction()?;
-        tx.execute("INSERT OR IGNORE INTO scans(id,session,root_path,generation,source,captured_at,policy_version) VALUES(?1,?2,?3,?4,1,?5,?6)",
-            params![header.id,header.session,root,header.generation.to_string(),header.captured_at.to_rfc3339(),header.policy_version])?;
+        tx.execute("INSERT OR IGNORE INTO scans(id,session,root_path,generation,source,captured_at,policy_version,captured_micros) VALUES(?1,?2,?3,?4,1,?5,?6,?7)",
+            params![header.id,header.session,root,header.generation.to_string(),header.captured_at.to_rfc3339(),header.policy_version,header.captured_at.timestamp_micros()])?;
         let (state, session, saved_root): (u32, String, String) = tx.query_row("SELECT state,session,root_path FROM scans WHERE id=?1", [&header.id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
         ensure!(session == header.session && saved_root == root, "scan identity collision");
         if state == 0 {
@@ -172,18 +176,28 @@ impl Database {
     }
     pub fn lookup(&self, paths: &[String], scan: Option<&str>) -> Result<Vec<StoredHit>> {
         ensure!(paths.len() <= 256, "cache lookup path limit");
+        let tx = self.connection.unchecked_transaction()?;
+        let version: u64 = tx.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let mut fences = self.forget_cache.borrow_mut();
+        // A read-only connection can outlive the writer that advanced a floor.
+        // Read its fences in the same transaction as the rows, without idle polling.
+        if !self.writable() || fences.0 != version { *fences = (version, super::forgetting::load_fence(&tx)?); }
         if let Some(scan) = scan {
-            let state: Option<u32> = self.connection.query_row("SELECT state FROM scans WHERE id=?1", [scan], |row| row.get(0)).optional()?;
+            let state: Option<u32> = tx.query_row("SELECT state FROM scans WHERE id=?1", [scan], |row| row.get(0)).optional()?;
             ensure!(state != Some(0), "cache scan publication is pending");
             // A scan still in the bounded writer queue has no database manifest yet.
             ensure!(state.is_some(), "cache scan publication is pending");
         }
-        let mut query = self.connection.prepare_cached(LOOKUP)?;
+        let schema: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let filtered = LOOKUP.replace("ORDER BY", "AND (?3 IS NULL OR s.captured_micros>?3) ORDER BY");
+        let mut query = tx.prepare_cached(if schema >= 3 { &filtered } else { LOOKUP })?;
         let mut output = Vec::new(); let mut decoded = 0;
         for path in paths {
             let path = normalize_local_path(path).map_err(anyhow::Error::msg)?;
-            let row = query.query_row(params![path,scan], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,
-                row.get::<_, u8>(2)?,row.get::<_, u64>(3)?,row.get::<_, String>(4)?,row.get::<_, u32>(5)?))).optional()?;
+            let decode = |row: &rusqlite::Row<'_>| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,
+                row.get::<_, u8>(2)?,row.get::<_, u64>(3)?,row.get::<_, String>(4)?,row.get::<_, u32>(5)?));
+            let row = if schema >= 3 { query.query_row(params![path,scan,fences.1.cutoff(&path)], decode) }
+                else { query.query_row(params![path,scan], decode) }.optional()?;
             if let Some((payload, scan_id, source, publication, captured_at, policy_version)) = row {
                 ensure!(payload.len() < MAX_RECORD_BYTES, "cache record decode limit");
                 let record: StoredDirectory = serde_json::from_str(&payload)?;
@@ -192,9 +206,10 @@ impl Database {
                     captured_at: DateTime::parse_from_rfc3339(&captured_at)?.with_timezone(&Utc), policy_version };
                 decoded += hit.checked_bytes()?;
                 ensure!(decoded <= 1 << 20, "cache lookup response byte limit");
-                output.push(hit);
+                if !fences.1.blocks(&hit.record.path, hit.captured_at.timestamp_micros()) { output.push(hit); }
             }
         }
+        drop(query); drop(fences); tx.commit()?;
         Ok(output)
     }
 }

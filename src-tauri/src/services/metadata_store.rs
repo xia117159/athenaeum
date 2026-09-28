@@ -237,12 +237,14 @@ impl MetadataStore {
         context_menu: ContextMenuSettings,
         theme: UiTheme,
         template_root: String,
+        auto_directory_size_paths: Vec<String>,
     ) -> SettingsSnapshot {
         // Hydrate passwords from credential store BEFORE redacting credential_target
         let hydrated_profiles =
             crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
 
         SettingsSnapshot {
+            auto_directory_size_paths,
             template_root,
             file_associations: self.file_associations.clone(),
             bookmarks: self.bookmarks.clone(),
@@ -800,6 +802,7 @@ mod tests {
             ContextMenuSettings::default(),
             UiTheme::default(),
             String::new(),
+            vec![],
         );
         assert_eq!(snapshot.bookmarks.len(), 1);
         assert_eq!(snapshot.bookmarks[0].name, "Docs");
@@ -840,6 +843,7 @@ mod tests {
             ContextMenuSettings::default(),
             UiTheme::default(),
             String::new(),
+            vec![],
         );
 
         assert!(reloaded.navigation_items.is_empty());

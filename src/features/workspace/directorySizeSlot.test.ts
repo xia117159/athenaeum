@@ -7,7 +7,7 @@ import type { DirectorySizeSnapshot, SubscribeDirectorySizesRequest } from "./di
 
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 function intent(id: string, fail: (error: unknown) => void = () => {}) {
-  return { request: { consumerId: id, target: { kind: "local" as const, path: "C:\\root" }, refresh: false }, receive: () => {}, fail };
+  return { request: { consumerId: id, target: { kind: "local" as const, path: "C:\\root" }, intent: "auto" as const }, receive: () => {}, fail };
 }
 
 test("rapid tab switches keep one handoff in flight and coalesce to the latest tab", async () => {

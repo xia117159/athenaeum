@@ -26,7 +26,7 @@ import { useTemplateCreationController } from "./useTemplateCreationController";
 import { captureRenameTarget } from "./renameTarget";
 import { captureTemplateTarget } from "./templateCreationState";
 import { currentListingEntry } from "./fileOpeningState";
-import { supportsDirectorySizes } from "./directorySizes";
+import { createDirectorySizeActions } from "./directorySizeActions";
 import { getTopLevelPaths } from "./workspacePathRelations";
 import { subscribeOperationEvents } from "./operationSubscriptions";
 import { useColorFilterController } from "./useColorFilterController";
@@ -918,9 +918,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshNavigationTargets();
       return;
     }
-    if (supportsDirectorySizes(activeTab)) dispatch({ type: "directorySizeRequested", payload: {
-      panelId, tabId: activeTab.id, rootPath: activeTab.snapshot.location.path, intent: "refresh"
-    } });
+    // F5 reloads the listing only; sizes follow their own lease and change tracking (D10).
     await commitNavigation(panelId, activeTab.snapshot.location.path, false, {
       tabId: activeTab.id,
       activatePanel: false,
@@ -1410,6 +1408,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
 
         const settingsModelChanged = persistedSettingsChanged(state.settings.model, payload.settingsModel);
+        // Saved by dedicated commands: only the list is replaced, so no settings save is echoed (E7).
+        if (!hasSameJsonShape(state.settings.model.autoDirectorySizePaths ?? [], payload.settingsModel.autoDirectorySizePaths ?? [])) {
+          dispatch({ type: "autoDirectorySizePathsSynced", payload: payload.settingsModel.autoDirectorySizePaths ?? [] });
+        }
         const navigationItemsChanged = !hasSameJsonShape(state.navigation.items, payload.navigationItems);
         const changed =
           navigationItemsChanged ||
@@ -3042,6 +3044,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       ...batchRename.actions,
       ...templateCreation.actions,
       chooseTemplateRoot: () => workspaceGateway.templates.chooseRoot(),
+      ...createDirectorySizeActions({ gateway: workspaceGateway.autoDirectorySizes, dispatch, findTab: (panelId, tabId) => findTab(state, panelId, tabId),
+        notifyError: (error, fallback) => pushNotification("danger", getErrorMessage(error, fallback)) }),
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3112,10 +3116,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "folderExpansionToggled", payload: { panelId, tabId, path } }),
       retryFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
         dispatch({ type: "folderExpansionRetryRequested", payload: { panelId, tabId, path } }),
-      requestDirectorySizes: (panelId: PanelId, tabId: string, intent: "calculate" | "cancel") => {
-        const tab = findTab(state, panelId, tabId);
-        if (tab && supportsDirectorySizes(tab)) dispatch({ type: "directorySizeRequested", payload: { panelId, tabId, rootPath: tab.snapshot.location.path, intent } });
-      },
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),

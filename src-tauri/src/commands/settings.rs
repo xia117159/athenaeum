@@ -72,6 +72,7 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         settings.context_menu,
         settings.theme,
         settings.template_root,
+        settings.auto_directory_size_paths,
     ))
 }
 

@@ -15,7 +15,7 @@ fn size_handoff_malformed_optional_fields_cannot_fall_back_to_legacy_subscriptio
 
 fn slotted(id: &str, from: Option<&str>, revision: u64) -> SubscribeDirectorySizesRequest {
     serde_json::from_value(serde_json::json!({"consumerId": id, "target": {"kind":"local", "path":"C:\\root"},
-        "refresh":false, "slotId":"panel-1", "slotRevision":revision, "handoffFrom":from})).unwrap()
+        "intent":"auto", "slotId":"panel-1", "slotRevision":revision, "handoffFrom":from})).unwrap()
 }
 
 #[test]

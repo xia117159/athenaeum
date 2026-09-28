@@ -32,6 +32,7 @@ impl Core {
         let directories = paths.filter_map(|path| {
             let normalized = lookup_path(&scope, path).ok()?;
             if normalized != scope.path && std::path::Path::new(&normalized).parent() != Some(std::path::Path::new(&scope.path)) { return None; }
+            if root.stale.contains(&normalized) { return None; }
             let size = result.directories.get(normalized.as_str()).filter(|size| size.visited())?;
             Some(DirectorySizeRecord { path: path.into(), state: if size.complete { DirectorySizeRecordState::Complete } else { DirectorySizeRecordState::Partial },
                 bytes: Some(size.bytes.saturating_add(self.artifacts.contribution(&normalized).bytes).to_string()), size_fingerprint: size.fingerprint.clone(), cached_at: root.captured_at, created_at: size.created_at })

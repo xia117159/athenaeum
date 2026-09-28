@@ -37,7 +37,7 @@ export const completion = (async () => {
     assert.ok(container.querySelector(".size-share-track"), "historical size has a first-render bar");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
     assert.equal(Boolean(container.querySelector('[role="status"]')), false, "cached display refreshes silently");
-    assert.match(container.querySelector(".size-share-value")!.getAttribute("title")!, /2026.*后台刷新/);
+    assert.match(container.querySelector(".size-share-value")!.getAttribute("title")!, /等待刷新结果.*历史值（计算于 2026/);
     await act(async () => { wire.emit(sizeSnapshot({ consumerId, generation: 2, sequence: 3, phase: "failed", reason: "offline" })); await flushEffects(); });
     assert.equal(container.querySelector(".size-share-label")?.textContent, "60 B");
     assert.ok(container.querySelector(".size-share-track"), "failed refresh keeps the bar with its size");

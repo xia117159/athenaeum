@@ -1,3 +1,4 @@
+import { createAutoDirectorySizeGateway, type AutoDirectorySizeGateway } from "./autoDirectorySizeGateway";
 import {
   createMockWorkspaceBootstrap,
   searchMockCatalog
@@ -104,6 +105,7 @@ import {
 } from "./workspacePropertiesGateway";
 import { createDirectorySizesGateway } from "./directorySizeGateway";
 import type { DirectorySizesGateway } from "./directorySizeTypes";
+import { createWindowActivityGateway, type WindowActivityGateway } from "./windowActivity";
 import type { FileOpenProgress, FileOpenRequest, FileOpenResult, AssociationProgramInfo } from "../../app/fileAssociations";
 import { openWorkspaceFile, cancelWorkspaceFileOpen, inspectAssociationPrograms, chooseAssociationProgram } from "./fileOpeningGateway";
 import { createBatchRenameGateway, type BatchRenameGateway } from "./batchRenameGateway";
@@ -149,7 +151,9 @@ import type {
 export interface WorkspaceGateway {
   batchRename: BatchRenameGateway;
   templates: TemplateGateway;
+  autoDirectorySizes: AutoDirectorySizeGateway;
   directorySizes?: DirectorySizesGateway;
+  windowActivity?: WindowActivityGateway;
   loadBootstrap(): Promise<WorkspaceBootstrap>;
   resolveDirectory(path: string): Promise<DirectorySnapshot>;
   listDriveRoots(): Promise<import("../../app/types").DriveRoot[]>;
@@ -272,7 +276,9 @@ export function createWorkspaceGateway(): WorkspaceGateway {
   return {
     batchRename: createBatchRenameGateway(),
     templates: createTemplateGateway(),
+    autoDirectorySizes: createAutoDirectorySizeGateway(),
     directorySizes: createDirectorySizesGateway(),
+    windowActivity: createWindowActivityGateway(),
     async loadBootstrap() {
       if (!hasTauriRuntime()) {
         return createMockWorkspaceBootstrap("mock");

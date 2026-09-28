@@ -4,7 +4,8 @@ import { getPathComparisonKey, pathsEqual } from "./workspacePathRelations";
 import { currentListingSizeCache } from "./directorySizeCache";
 
 /** 详情视图中可见的大小列；`supportsDirectorySizes` 在此基础上还要求列表已就绪。 */
-function hasVisibleSizeColumn(tab: TabState) {
+/** The tab shows the size column, whether or not its listing is ready. */
+export function hasVisibleSizeColumn(tab: TabState) {
   return tab.kind === "directory" && tab.viewMode === "details" && tab.snapshot.location.kind !== "virtual" &&
     tab.columns.some((column) => column.id === "size" && column.visible);
 }
@@ -124,7 +125,9 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
     return value;
   };
   const rootRecord = sizes?.records[getPathComparisonKey(root)];
-  const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
+  // A stale record keeps its old fingerprint; the rows below it are judged by their own records.
+  const rootAligned = !tab.snapshot.sizeFingerprint || !rootRecord?.sizeFingerprint || rootRecord.state === "stale" ||
+    tab.snapshot.sizeFingerprint === rootRecord.sizeFingerprint;
   const terminal = supported && !!sizes && !!snapshot && !sizes.paused && !sizes.pending && (snapshot.phase === "complete" || snapshot.phase === "partial");
   const denominatorReady = terminal && !!rootRecord && rootAligned && listingSizeIdentityIsReliable(tab, root);
   let denominator: bigint | null = null;
@@ -148,14 +151,14 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
     if (!rootReliable || !parent.reliable) return { ...base, title: "列表路径无法可靠区分条目，目录大小不可用" };
     if (entry.attributes.includes("L")) return { ...base, state: "excluded", title: "链接不参与递归大小统计" };
     if (!supported || !sizes || !snapshot || sizes.paused || sizes.pending) return base;
-    if (snapshot.phase !== "complete" && snapshot.phase !== "partial") {
+    if (snapshot.phase !== "complete" && snapshot.phase !== "partial" && !(snapshot.phase === "stale" && snapshot.staleReadable === true)) {
       return { ...base, state: snapshot.phase === "stale" ? "stale" : "unknown", title: snapshot.reason ?? "目录大小尚未就绪" };
     }
 
     const fingerprint = parent.fingerprint;
     const parentRecord = parent.record;
     if (!parentRecord) return base;
-    if (fingerprint && parentRecord.sizeFingerprint && fingerprint !== parentRecord.sizeFingerprint) {
+    if (fingerprint && parentRecord.sizeFingerprint && parentRecord.state !== "stale" && fingerprint !== parentRecord.sizeFingerprint) {
       return { ...base, state: "stale", title: "列表与大小统计已过期" };
     }
 
@@ -163,6 +166,11 @@ export function createCurrentSizeProjector(tab: TabState, mode: SizeBarMode = "f
     if (entry.kind === "folder" && !recordMatchesEntry(entry, record, local)) return base;
     const bytes = entry.kind === "folder" ? decimalBytes(record?.bytes) : exactSizeBytes(entry);
     if (bytes === null || (entry.kind === "folder" && record?.state === "unknown")) return base;
+    // Changed since the scan (E5): the old value stays readable but proves nothing about the share.
+    // A readable stale phase only offers old values (READY-004).
+    if (record?.state === "stale" || entry.kind === "folder" && snapshot.phase === "stale") return { state: "stale", bytes: String(bytes),
+      share: null, invalidated: true, label: formatDirectoryBytes(bytes), title: `已过期：目录内容已变化，请重新计算；旧值 ${bytes} 字节` };
+    if (snapshot.phase === "stale") return base;
 
     const share = denominator === null ? null : denominator === 0n && bytes > 0n ? 1 : ratioFromBigInt(bytes, denominator);
     const partial = entry.kind === "folder" && record?.state === "partial";
@@ -236,23 +244,27 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
     const hintBytes = decimalBytes(hint?.bytes);
     if (display.bytes === null && hintBytes !== null && hint?.state !== "unknown" && entry.kind === "folder" &&
       !entry.attributes.includes("L") && sizesSupported && rootReliable) {
-      const phase = sizes?.snapshot;
-      const status = sizes?.paused || phase?.phase === "cancelled" ? "已取消刷新"
-        : phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
-        : phase?.phase === "complete" || phase?.phase === "partial" ? "统计已结束，此项暂无新结果"
-        : "后台刷新中";
+      const phase = sizes?.consumerId ? sizes.snapshot?.phase : undefined;
+      const status = sizes?.paused || phase === "cancelled" ? "已取消刷新"
+        : phase === "failed" ? `刷新失败：${sizes?.snapshot?.reason ?? "未知错误"}`
+        : phase === "complete" || phase === "partial" ? "本次统计未包含此项"
+        : phase === "queued" || phase === "scanning" ? "正在重新计算"
+        : "仅供参考";
       const captured = hint?.cachedAt ? new Date(hint.cachedAt).toLocaleString() : "未知时间";
+      // Without a lease nothing will verify a live cache value, so it reads as history too (SPEC-030).
+      const historical = hint?.historical || !sizes?.consumerId && !!hint?.cachedAt;
       display = { state: "stale", bytes: String(hintBytes), share: null, advisory: true,
         label: `${hint?.state === "partial" ? "≥" : ""}${formatDirectoryBytes(hintBytes)}`,
-        title: hint?.historical ? `上次结果（${captured}，${status}）；${hintBytes} 字节` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
+        title: historical ? `历史值（计算于 ${captured}）；${hintBytes} 字节，${status}` : `上次结果（等待目录身份校验）；${hintBytes} 字节` };
     }
     const old = rows?.[entry.path];
-    if (old && (old.total.share !== null ? display.share === null || display.provisional === true && !old.total.advisory : current.bytes === null) && retainedSizeMatches(old, entry) &&
+    if (old && !current.invalidated && (old.total.share !== null ? display.share === null || display.provisional === true && !old.total.advisory : current.bytes === null) && retainedSizeMatches(old, entry) &&
       rootReliable && reliableParent(entry.parentPath)) {
       const saved = mode === "folder-max" ? old.max : old.total;
       const phase = sizes?.snapshot;
       const reason = phase?.phase === "failed" ? `刷新失败：${phase.reason ?? "未知错误"}`
-        : phase?.phase === "cancelled" ? "已取消刷新" : "等待刷新结果";
+        : sizes?.paused || phase?.phase === "cancelled" ? "已取消刷新"
+        : phase?.phase === "queued" || phase?.phase === "scanning" ? "等待刷新结果" : "上次显示结果";
       display = { ...saved, state: "stale", retained: true,
         label: entry.kind === "folder" ? saved.label : entry.sizeLabel,
         title: `上次结果（${reason}）；${saved.title}` };
@@ -281,6 +293,7 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   for (const sibling of tab.snapshot.entries) {
     if (sibling.attributes.includes("L")) continue;
     const display = rawDisplay(sibling);
+    if (display.invalidated) continue;
     const bytes = decimalBytes(display.bytes) ?? (sibling.kind !== "folder" ? exactSizeBytes(sibling) : null);
     if (bytes === null) continue;
     known++;
@@ -289,7 +302,7 @@ export function createEntrySizeProjector(tab: TabState, mode: SizeBarMode = "fol
   const incomplete = known < tab.snapshot.entries.filter((entry) => !entry.attributes.includes("L")).length;
   return (entry: EntryViewModel): EntryViewModel => {
     let display = rawDisplay(entry);
-    if ((canUseAdvisory || display.advisory || display.provisional) && display.bytes !== null && display.share === null) {
+    if ((canUseAdvisory || display.advisory || display.provisional) && !display.invalidated && display.bytes !== null && display.share === null) {
       const bytes = decimalBytes(display.bytes);
       if (bytes !== null) {
         const share = denominator === 0n && bytes > 0n ? 1 : ratioFromBigInt(bytes, denominator);

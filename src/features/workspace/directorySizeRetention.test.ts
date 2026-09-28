@@ -126,7 +126,7 @@ test("history is bounded and excluded from persisted sessions", () => {
     const child = expansionEntry(path, "file.txt", "file", { sizeBytes: 10, sizeLabel: "10 B" });
     h.navigate({ ...expansionSnapshot(path, [child]), sizeFingerprint: "stamp" });
     const payload = { ...h.payload, rootPath: path };
-    h.send({ type: "directorySizeLeaseStarted", payload });
+    h.send({ type: "directorySizeLeaseStarted", payload: { ...payload, mode: "manual" } });
     h.send({ type: "directorySizeSnapshotReceived", payload: { ...payload, snapshot: sizeSnapshot() } });
     h.send({ type: "directorySizeLookupReceived", payload: { ...payload, expectedRoot: h.current.snapshot, expectedExpansion: h.current.folderExpansion, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
       directories: [sizeRecord(path, "10", "stamp")] } } });
@@ -150,7 +150,7 @@ test("deleting a folder invalidates previously visited descendant views", () => 
   const h = retainedFixture();
   h.navigate({ ...expansionSnapshot(h.parent.path, [h.child]), sizeFingerprint: "parent-stamp" });
   const payload = { ...h.payload, rootPath: h.parent.path };
-  h.send({ type: "directorySizeLeaseStarted", payload });
+  h.send({ type: "directorySizeLeaseStarted", payload: { ...payload, mode: "manual" } });
   h.send({ type: "directorySizeSnapshotReceived", payload: { ...payload, snapshot: sizeSnapshot() } });
   h.send({ type: "directorySizeLookupReceived", payload: { ...payload, expectedRoot: h.current.snapshot, expectedExpansion: h.current.folderExpansion, lookup: { consumerId: "size-test", generation: 1, sequence: 2, stale: false,
     directories: [sizeRecord(h.parent.path, "60", "parent-stamp")] } } });

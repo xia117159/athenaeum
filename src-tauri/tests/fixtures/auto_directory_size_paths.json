@@ -1,0 +1,23 @@
+[
+  { "input": " c:/Work//Docs/ ", "normalized": "C:\\Work\\Docs", "volumeRoot": false },
+  { "input": "c:\\", "normalized": "C:\\", "volumeRoot": true },
+  { "input": "Z:/", "normalized": "Z:\\", "volumeRoot": true },
+  { "input": "\\\\?\\d:\\folder\\", "normalized": "D:\\folder", "volumeRoot": false },
+  { "input": "\\\\?\\UNC\\Server\\Share\\Docs", "normalized": "\\\\Server\\Share\\Docs", "volumeRoot": false },
+  { "input": "\\\\server\\share\\", "normalized": "\\\\server\\share", "volumeRoot": true },
+  { "input": "//server/share//Docs/", "normalized": "\\\\server\\share\\Docs", "volumeRoot": false },
+  { "input": "C:\\资料\\😀", "normalized": "C:\\资料\\😀", "volumeRoot": false },
+  { "input": "", "normalized": null, "volumeRoot": false },
+  { "input": "C:", "normalized": null, "volumeRoot": false },
+  { "input": "C:relative", "normalized": null, "volumeRoot": false },
+  { "input": "relative/folder", "normalized": null, "volumeRoot": false },
+  { "input": "\\\\server", "normalized": null, "volumeRoot": false },
+  { "input": "\\\\.\\C:\\folder", "normalized": null, "volumeRoot": false },
+  { "input": "\\\\?\\GLOBALROOT\\Device\\Harddisk0", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\a\\..\\b", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\.\\b", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\a:b", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\a?b", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\a|b", "normalized": null, "volumeRoot": false },
+  { "input": "C:\\a\nb", "normalized": null, "volumeRoot": false }
+]

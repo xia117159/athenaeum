@@ -2,7 +2,9 @@ import { openDirectorySizeSubscription } from "./directorySizeSubscription";
 import type { DirectorySizeSnapshot, DirectorySizesGateway, SubscribeDirectorySizesRequest } from "./directorySizeTypes";
 
 type Subscription = ReturnType<typeof openDirectorySizeSubscription>;
-type Intent = { request: SubscribeDirectorySizesRequest; receive(snapshot: DirectorySizeSnapshot): void; fail(error: unknown): void };
+type Intent = { request: SubscribeDirectorySizesRequest; receive(snapshot: DirectorySizeSnapshot): void; fail(error: unknown): void;
+  /** The backend accepted this consumer; its owner may now commit it as the tab's lease. */
+  accepted?(): void };
 
 /** One serialized handoff lane per visible local panel. Display callbacks retain
  * their own tab/request fence; the lane owns only native subscription lifetime. */
@@ -57,7 +59,8 @@ export class DirectorySizeSlot {
         if (epoch !== this.epoch) { subscription.close(); continue; }
         this.active?.subscription.close();
         this.active = accepted ? { consumer: request.consumerId, subscription } : undefined;
-        if (!accepted && this.desired === intent) { this.desired = undefined; subscription.close(); }
+        if (accepted) intent.accepted?.();
+        else if (this.desired === intent) { this.desired = undefined; subscription.close(); }
       }
     } finally { this.pumping = false; }
   }

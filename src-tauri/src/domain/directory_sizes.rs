@@ -22,7 +22,8 @@ pub struct SubscribeDirectorySizesRequest {
     pub consumer_id: String,
     pub target: DirectorySizeTarget,
     #[serde(default)]
-    pub refresh: bool,
+    pub intent: DirectorySizeIntent,
+    #[serde(default)] pub retry_failed: bool,
     #[serde(flatten)]
     pub handoff: Option<DirectorySizeHandoff>,
 }
@@ -31,6 +32,7 @@ pub struct SubscribeDirectorySizesRequest {
 #[serde(rename_all = "camelCase")]
 struct SubscribeDirectorySizesWire {
     consumer_id: String, target: DirectorySizeTarget, #[serde(default)] refresh: bool,
+    intent: Option<DirectorySizeIntent>, #[serde(default)] retry_failed: bool,
     #[serde(flatten)] extra: std::collections::HashMap<String, serde_json::Value>,
 }
 impl TryFrom<SubscribeDirectorySizesWire> for SubscribeDirectorySizesRequest {
@@ -46,9 +48,15 @@ impl TryFrom<SubscribeDirectorySizesWire> for SubscribeDirectorySizesRequest {
             }),
             _ => return Err("目录统计交接字段不完整".into()),
         };
-        Ok(Self { consumer_id: wire.consumer_id, target: wire.target, refresh: wire.refresh, handoff })
+        Ok(Self { consumer_id: wire.consumer_id, target: wire.target,
+            intent: wire.intent.unwrap_or(if wire.refresh { DirectorySizeIntent::Calculate } else { DirectorySizeIntent::Resume }),
+            retry_failed: wire.retry_failed, handoff })
     }
 }
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DirectorySizeIntent { #[default] Resume, Start, Calculate, Auto }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +78,9 @@ pub enum DirectorySizeFreshness { Monitored, #[default] Snapshot }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DirectorySizeSnapshot {
+    #[serde(default)] pub invalidated: bool,
+    #[serde(default)] pub invalidation_revision: String,
+    #[serde(default)] pub stale_readable: bool,
     pub consumer_id: String,
     pub generation: u64,
     pub sequence: u64,
@@ -93,7 +104,7 @@ pub struct LookupDirectorySizesRequest { pub consumer_id: String, pub generation
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum DirectorySizeRecordState { Complete, Partial, Unknown }
+pub enum DirectorySizeRecordState { Complete, Partial, Unknown, Stale }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

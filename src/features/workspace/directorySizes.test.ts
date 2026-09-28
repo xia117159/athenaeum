@@ -120,7 +120,7 @@ test("expanded branch cache treats an artifact revision change as historical", (
   tab.directorySizes!.records = {};
   tab.directorySizes!.snapshot = sizeSnapshot({ generation: 1, sequence: 3, phase: "complete", artifactRevision: "new-artifact" });
   const row = getFolderListingRows(tab).find(({ entry }) => entry.path === parent.path)?.entry;
-  assert.match(row?.sizeDisplay?.title ?? "", /统计已结束/);
+  assert.match(row?.sizeDisplay?.title ?? "", /历史值（计算于 .*本次统计未包含此项/);
 });
 
 test("expanded historical cache rejects a replaced branch entry", () => {

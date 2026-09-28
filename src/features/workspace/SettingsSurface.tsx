@@ -12,6 +12,7 @@ import { AppearancePage } from "./SettingsAppearancePage";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
 import { ColorRulesPage } from "./ColorRulesPage";
 import { ASSOCIATION_HELP, FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
+import { AUTO_DIRECTORY_SIZE_HELP, AutoDirectorySizePage, type AutoDirectorySizePageProps } from "./AutoDirectorySizePage";
 import { SettingsGeneralPage } from "./SettingsGeneralPage";
 import { SettingsGroupHeader, settingsHint } from "./SettingsPrimitives";
 import { SettingsTooltip } from "./SettingsTooltip";
@@ -44,6 +45,10 @@ export type SettingsSurfaceProps = {
   onChooseTemplateRoot?: () => Promise<string | null>;
   onChooseAssociationProgram: FileAssociationsPageProps["onChooseProgram"];
   onInspectAssociationPrograms: FileAssociationsPageProps["onInspectPrograms"];
+  /** The automatic size list saves through dedicated commands, never through the draft (E7). */
+  onAddAutoDirectorySizePath?: AutoDirectorySizePageProps["onAdd"];
+  onRemoveAutoDirectorySizePath?: AutoDirectorySizePageProps["onRemove"];
+  onChooseAutoDirectorySizeFolder?: AutoDirectorySizePageProps["onChoose"];
   onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
   onOpenColorRulesHelp: () => void;
   onColorRulesValidityChange?: (valid: boolean) => void;
@@ -96,7 +101,8 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
     sections: [
       { id: "general", label: "通用", description: "文件列表、菜单与鼠标和新建项目设置" },
       { id: "shortcuts", label: "快捷键", description: "键盘操作与工作区命令" },
-      { id: "file-associations", label: "自定义文件关联", description: `按文件后缀选择打开程序。${ASSOCIATION_HELP}` }
+      { id: "file-associations", label: "自定义文件关联", description: `按文件后缀选择打开程序。${ASSOCIATION_HELP}` },
+      { id: "auto-directory-sizes", label: "自动计算大小", description: `打开这些文件夹及其子文件夹时自动计算文件夹大小。${AUTO_DIRECTORY_SIZE_HELP}` }
     ]
   },
   {
@@ -196,6 +202,9 @@ export function SettingsSurface({
   onChooseTemplateRoot,
   onChooseAssociationProgram,
   onInspectAssociationPrograms,
+  onAddAutoDirectorySizePath,
+  onRemoveAutoDirectorySizePath,
+  onChooseAutoDirectorySizeFolder,
   onValidateColorRule,
   onOpenColorRulesHelp,
   onColorRulesValidityChange,
@@ -320,6 +329,12 @@ export function SettingsSurface({
             <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
               onChange={onUpdateFileAssociations} onChooseProgram={onChooseAssociationProgram}
               onInspectPrograms={onInspectAssociationPrograms} />
+          ) : settings.section === "auto-directory-sizes" ? (
+            <AutoDirectorySizePage paths={settings.model.autoDirectorySizePaths ?? []}
+              disabled={controlsDisabled || !onAddAutoDirectorySizePath || !onRemoveAutoDirectorySizePath}
+              onAdd={onAddAutoDirectorySizePath ?? (async () => undefined)}
+              onRemove={onRemoveAutoDirectorySizePath ?? (async () => undefined)}
+              onChoose={onChooseAutoDirectorySizeFolder ?? (async () => null)} />
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}

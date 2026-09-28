@@ -23,6 +23,7 @@ pub mod operation_service;
 pub mod remote_service;
 pub mod search_service;
 pub mod settings_store;
+pub mod auto_directory_size_paths;
 pub mod settings_model;
 pub mod webview_recovery;
 pub mod windows_shell;

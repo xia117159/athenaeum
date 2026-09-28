@@ -10,6 +10,7 @@ use crate::domain::models::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStore {
+    #[serde(default)] pub auto_directory_size_paths: Vec<String>,
     #[serde(default)]
     pub template_root: String,
     pub layout: UiLayout,
@@ -46,6 +47,7 @@ pub struct SettingsStore {
 impl Default for SettingsStore {
     fn default() -> Self {
         Self {
+            auto_directory_size_paths: vec![],
             template_root: String::new(),
             layout: UiLayout::fallback(),
             detail_columns: default_detail_columns(),
@@ -93,6 +95,7 @@ impl SettingsStore {
             normalize_metadata_retention_hours(store.metadata_retention_hours);
         store.context_menu = normalize_context_menu(store.context_menu);
         store.theme = normalize_theme(store.theme);
+        store.auto_directory_size_paths = super::auto_directory_size_paths::clean(store.auto_directory_size_paths);
         store.file_path = Some(file_path);
         Ok(store)
     }
@@ -119,6 +122,11 @@ impl SettingsStore {
         }
         fs::rename(&temp_path, file_path).context("failed to commit settings store file")?;
         Ok(())
+    }
+
+    pub(crate) fn persist_atomically(&self) -> Result<()> {
+        let path = self.file_path.as_ref().context("settings store path not initialized")?;
+        super::atomic_file::write_atomically(path, &serde_json::to_vec_pretty(self)?)
     }
 
     pub fn set_layout(&mut self, layout: UiLayout) {

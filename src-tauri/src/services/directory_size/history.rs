@@ -50,6 +50,12 @@ impl History {
         }
     }
     pub fn get(&self, path: &str) -> Option<&HistoricalSize> { self.values.get(path).map(|entry| &entry.size) }
+    pub fn forget(&mut self, fence: &super::forget::ForgetFence) {
+        self.values.retain(|path, entry| {
+            if !fence.blocks(path, entry.size.cached_at.timestamp_micros()) { return true; }
+            self.order.remove(&entry.order); self.bytes -= ENTRY_ACCOUNT_BYTES + path.len(); false
+        });
+    }
     pub fn trim(&mut self, budget: usize) {
         while self.bytes > budget {
             let Some((_, path)) = self.order.pop_last() else { break; };

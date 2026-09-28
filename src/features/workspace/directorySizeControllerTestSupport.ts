@@ -7,12 +7,16 @@ import { createTestGateway, flushEffects } from "./workspaceControllerTestHarnes
 import { expansionInteractions } from "./folderExpansionTestSupport";
 import { sizeFixture, sizeRecord, sizeSnapshot } from "./directorySizeTestSupport";
 import type { DirectorySizeSnapshot, DirectorySizesGateway, LookupDirectorySizesRequest, SubscribeDirectorySizesRequest } from "./directorySizeTypes";
-import type { WorkspaceState } from "./types";
+import type { PanelId, WorkspaceState } from "./types";
+import { nextDirectorySizeRequestOrder } from "./directorySizeState";
+import type { WindowActivityGateway } from "./windowActivity";
 import type { WorkspaceGateway } from "./workspaceGateway";
 
-export function controllerFixture(kind: "local" | "ftp" | "sftp" = "local") {
+/** Local fixtures default to an automatic root so that visible Details views keep calculating as before. */
+export function controllerFixture(kind: "local" | "ftp" | "sftp" = "local", { auto = kind === "local" } = {}) {
   const f = sizeFixture(kind);
   f.tab.directorySizes = undefined;
+  f.state.settings.model = { ...f.state.settings.model, autoDirectorySizePaths: auto ? [f.path] : [] };
   if (kind !== "local") f.state.remoteProfiles = [{ id: "remote-size", name: "Sizes", protocol: kind,
     host: "server", port: kind === "ftp" ? 21 : 22, username: "alice", rootPath: "/home", authKind: "password",
     password: "must-not-be-sent", passiveMode: true, ignoreHostKey: false, connectTimeoutSecs: 15, commandTimeoutSecs: 30 }];
@@ -39,10 +43,12 @@ export function sizeTransport(overrides: Partial<DirectorySizesGateway> = {}) {
 
 export async function mountSizes(initial: WorkspaceState, transport: DirectorySizesGateway, options: {
   enabled?: boolean; resolveDirectory?: WorkspaceGateway["resolveDirectory"]; expansions?: boolean;
+  windowActivity?: WindowActivityGateway;
 } = {}) {
   const interactions = expansionInteractions();
   const gateway = createTestGateway(() => undefined, interactions, { resolveDirectory: options.resolveDirectory });
   gateway.directorySizes = transport;
+  if (options.windowActivity) gateway.windowActivity = options.windowActivity;
   let state = initial; let dispatch!: (action: WorkspaceAction) => void;
   let update!: (updater: (previous: WorkspaceState) => WorkspaceState) => void;
   const container = document.createElement("div"); document.body.appendChild(container);
@@ -63,10 +69,19 @@ export async function mountSizes(initial: WorkspaceState, transport: DirectorySi
     get state() { return state; }, get tab() { return state.panels["panel-1"].tabs[0]; }, gateway, interactions,
     async change(updater: (previous: WorkspaceState) => WorkspaceState) { await act(async () => { update(updater); await flushEffects(); }); },
     async dispatch(action: WorkspaceAction) { await act(async () => { dispatch(action); await flushEffects(); }); },
-    async request(intent: "calculate" | "cancel" | "refresh") {
-      await act(async () => { dispatch({ type: "directorySizeRequested", payload: { panelId: "panel-1", tabId: state.panels["panel-1"].tabs[0].id,
-        rootPath: state.panels["panel-1"].tabs[0].snapshot.location.path, intent } }); await flushEffects(); });
+    async request(intent: "calculate" | "cancel", panelId: PanelId = "panel-1", tabId = state.panels[panelId].tabs[0].id) {
+      const tab = state.panels[panelId].tabs.find((item) => item.id === tabId)!;
+      await act(async () => { dispatch({ type: "directorySizeRequested", payload: { panelId, tabId,
+        rootPath: tab.snapshot.location.path, intent, requestedAt: nextDirectorySizeRequestOrder() } }); await flushEffects(); });
     },
     async close() { await act(async () => { root.unmount(); await flushEffects(); }); container.remove(); }
   };
+}
+
+/** A window whose activity the test switches explicitly. */
+export function windowSwitch() {
+  const listeners = new Set<(active: boolean) => void>();
+  let active = true;
+  const gateway: WindowActivityGateway = { subscribe(listener) { listeners.add(listener); listener(active); return () => { listeners.delete(listener); }; } };
+  return { gateway, set(value: boolean) { active = value; for (const listener of listeners) listener(value); } };
 }

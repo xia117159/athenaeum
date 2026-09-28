@@ -1,5 +1,8 @@
 mod quota;
 mod database;
+mod forgetting;
+#[cfg(test)]
+mod forgetting_tests;
 mod worker;
 mod stream;
 pub(super) mod startup;

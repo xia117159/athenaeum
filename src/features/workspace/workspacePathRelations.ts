@@ -5,12 +5,7 @@ export function isRemotePath(path: string) {
 }
 
 function normalizeOperationPath(path: string) {
-  const normalized = normalizeLocationPath(path);
-  const windowsPath = path.trim().replace(/\//g, "\\");
-  // The legacy location normalizer collapses leading UNC separators. Preserve
-  // that namespace both in comparison keys and in paths sent to file operations.
-  const unc = /^\\\\\?\\UNC\\/i.test(windowsPath) || /^\\\\(?![?.]\\)/.test(windowsPath);
-  return unc ? "\\" + normalized : normalized;
+  return normalizeLocationPath(path);
 }
 
 export function getPathComparisonKey(path: string) {

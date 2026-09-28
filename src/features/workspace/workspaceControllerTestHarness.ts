@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import type { WorkspaceGateway } from "./workspaceGateway";
 import { createTemplateGateway } from "./templateCreationGateway";
+import { createAutoDirectorySizeGateway } from "./autoDirectorySizeGateway";
 
 const { JSDOM } = require("jsdom") as {
   JSDOM: new (
@@ -113,7 +114,10 @@ export function createTestGateway(
 
   return {
     batchRename: createBatchRenameGateway({ runtimeHost: null }),
+    // jsdom reports every document as hidden; tests model a visible window unless they switch it.
+    windowActivity: { subscribe(listener) { listener(true); return () => undefined; } },
     templates: createTemplateGateway({ runtimeHost: null }),
+    autoDirectorySizes: createAutoDirectorySizeGateway({ runtimeHost: null }),
     async loadBootstrap() {
       onLoadBootstrap();
       return overrides.loadBootstrap ? overrides.loadBootstrap() : createMockWorkspaceBootstrap("tauri");

@@ -44,7 +44,7 @@ test("a new tab retains an identified listing hint while a new scan starts, fail
     const tab = f.commit();
     f.f.state.panels["panel-1"].tabs[0] = tab;
     const payload = { panelId: "panel-1" as const, tabId: tab.id, rootPath: f.path, consumerId: "next", requestVersion: 0 };
-    let state = workspaceReducer(f.f.state, { type: "directorySizeLeaseStarted", payload });
+    let state = workspaceReducer(f.f.state, { type: "directorySizeLeaseStarted", payload: { ...payload, mode: "manual" } });
     state = workspaceReducer(state, { type: "directorySizeSnapshotReceived", payload: { ...payload,
       snapshot: sizeSnapshot({ consumerId: "next", generation: 8, sequence: 1, phase, totalBytes: null }) } });
     const next = state.panels["panel-1"].tabs[0];
@@ -92,9 +92,9 @@ test("stale or incompatible generation clears a hint so it cannot return on a la
     const f = fixture(); const tab = f.commit();
     f.f.state.panels["panel-1"].tabs[0] = tab;
     const payload = { panelId: "panel-1" as const, tabId: tab.id, rootPath: f.path, consumerId: snapshot.consumerId, requestVersion: 0 };
-    let state = workspaceReducer(f.f.state, { type: "directorySizeLeaseStarted", payload });
+    let state = workspaceReducer(f.f.state, { type: "directorySizeLeaseStarted", payload: { ...payload, mode: "manual" } });
     state = workspaceReducer(state, { type: "directorySizeSnapshotReceived", payload: { ...payload, snapshot } });
-    state = workspaceReducer(state, { type: "directorySizeLeaseStarted", payload: { ...payload, consumerId: "later" } });
+    state = workspaceReducer(state, { type: "directorySizeLeaseStarted", payload: { ...payload, consumerId: "later", mode: "manual" } });
     const next = state.panels["panel-1"].tabs[0];
     assert.equal(projectEntrySize(next, next.snapshot.entries[0]).sizeLabel, "--");
   }

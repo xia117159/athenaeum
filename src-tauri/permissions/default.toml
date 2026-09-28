@@ -1,6 +1,9 @@
 [default]
 description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
+  "allow-add-auto-directory-size-path",
+  "allow-remove-auto-directory-size-path",
+  "allow-choose-directory-size-folder",
   "allow-list-creation-templates",
   "allow-create-template-items",
   "allow-choose-template-root",
@@ -94,6 +97,21 @@ permissions = [
   "allow-get-git-status",
   "allow-list-drive-roots"
 ]
+
+[[permission]]
+identifier = "allow-add-auto-directory-size-path"
+description = "Adds a folder to automatic directory size calculation."
+commands.allow = ["add_auto_directory_size_path"]
+
+[[permission]]
+identifier = "allow-remove-auto-directory-size-path"
+description = "Removes a folder from automatic directory size calculation."
+commands.allow = ["remove_auto_directory_size_path"]
+
+[[permission]]
+identifier = "allow-choose-directory-size-folder"
+description = "Chooses a folder for automatic directory size calculation."
+commands.allow = ["choose_directory_size_folder"]
 
 [[permission]]
 identifier = "allow-list-creation-templates"

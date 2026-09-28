@@ -168,7 +168,7 @@ export const completion = (async () => {
       assert.equal(container.querySelectorAll(".settings-window__nav-group").length, 3);
       assert.deepEqual(
         navItems.map((item) => item.dataset.sectionId),
-        ["general", "shortcuts", "file-associations", "appearance", "color-rules", "tag-rules", "connections"]
+        ["general", "shortcuts", "file-associations", "auto-directory-sizes", "appearance", "color-rules", "tag-rules", "connections"]
       );
       assert.ok(activeNavItem);
 

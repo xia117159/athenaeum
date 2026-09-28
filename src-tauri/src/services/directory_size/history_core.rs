@@ -8,7 +8,7 @@ impl Core {
         let Some(root) = self.roots.get(key).filter(|root| root.target.profile.is_none()) else { return; };
         let (Some(result), Some(at)) = (&root.result, root.captured_at) else { return; };
         let rank = super::super::history::HistoryRank::Accepted(root.acceptance);
-        for (path, size) in &result.directories { self.history.capture_ranked(path.clone(), size, at, rank, self.artifacts.capture(path), budget); }
+        for (path, size) in &result.directories { if root.stale.contains(path) || self.forgotten.blocks(path, at.timestamp_micros()) { continue; } self.history.capture_ranked(path.clone(), size, at, rank, self.artifacts.capture(path), budget); }
     }
     pub(super) fn retire_result(&mut self, key: &str) {
         self.history.prioritize(self.detail_scopes());
@@ -17,6 +17,7 @@ impl Core {
         if !self.history_enabled || root.target.profile.is_some() { return; }
         let Some(at) = root.captured_at else { return; };
         let rank = super::super::history::HistoryRank::Accepted(root.acceptance);
+        let stale = root.stale.clone();
         // Transfer records incrementally: the unconsumed result still occupies memory.
         let mut remaining = result.accounted_bytes;
         let base = self.live_cache_bytes();
@@ -24,6 +25,7 @@ impl Core {
             remaining = remaining.saturating_sub(super::super::scan::NODE_ACCOUNT_BYTES + path.len());
             let budget = self.limits.cache_bytes.saturating_sub(base).saturating_sub(remaining);
             self.history.trim(budget);
+            if stale.contains(&path) || self.forgotten.blocks(&path, at.timestamp_micros()) { continue; }
             let capture = self.artifacts.capture(&path);
             self.history.capture_ranked(path, &size, at, rank, capture, budget);
         }
@@ -34,7 +36,7 @@ impl Core {
         let budget = self.limits.cache_bytes.saturating_sub(self.live_cache_bytes());
         let mut changed = false;
         for hit in hits {
-            if hit.source != 1 { continue; }
+            if hit.source != 1 || self.forgotten.blocks(&hit.record.path, hit.captured_at.timestamp_micros()) { continue; }
             let previous = self.history.get(&hit.record.path).map(|size| (size.bytes, size.created_at, size.cached_at));
             self.history.capture_ranked(Arc::from(hit.record.path.as_str()), &hit.record.size, hit.captured_at,
                 super::super::history::HistoryRank::Stored(hit.source, hit.publication), hit.record.artifact_capture.clone(), budget);

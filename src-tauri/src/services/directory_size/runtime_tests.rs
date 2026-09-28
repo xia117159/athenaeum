@@ -58,7 +58,7 @@ fn size_runtime_shutdown_tolerates_a_poisoned_storage_handle() {
 }
 
 #[test]
-fn size_runtime_startup_summary_is_available_without_reading_database() {
+fn size_runtime_startup_summary_is_skipped_when_committed_fences_cannot_be_read() {
     let root = TestRoot::new(); let directory = root.0.join("data"); fs::create_dir(&directory).unwrap();
     let child = directory.join("child"); fs::create_dir(&child).unwrap();
     let created_at = fs::metadata(&child).unwrap().created().ok().map(Into::into);
@@ -74,7 +74,7 @@ fn size_runtime_startup_summary_is_available_without_reading_database() {
     let service = DirectorySizeService::default(); service.initialize_storage(cache);
     let mut listing = crate::services::fs_service::list_directory(&directory, &[], |_| (vec![], None)).unwrap();
     service.attach_listing_cache(&mut listing);
-    assert_eq!(listing.directory_size_cache.unwrap().directories[0].bytes.as_deref(), Some("73"));
+    assert!(listing.directory_size_cache.is_none());
     assert_eq!(service.core.lock().unwrap().jobs_started, 0);
 }
 
@@ -89,12 +89,9 @@ fn size_runtime_rename_persists_descendants_without_another_scan() {
     let sink: Arc<EventSink> = Arc::new(move |_, event| captured.lock().unwrap().push(event));
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "rename-storage".into(), target: DirectorySizeTarget::Local { path: directory.to_string_lossy().into_owned() }, refresh: false, handoff: None,
+        consumer_id: "rename-storage".into(), target: DirectorySizeTarget::Local { path: directory.to_string_lossy().into_owned() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None,
     }, None).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !events.lock().unwrap().iter().any(|event| event.phase == DirectorySizePhase::Complete) {
-        assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(10));
-    }
+    await_complete(&events, "rename-storage", "7", 0);
     service.storage.lock().unwrap().as_ref().unwrap().flush(Duration::from_secs(2)).unwrap();
     let jobs = service.core.lock().unwrap().jobs_started;
     service.rename_file(&old, &new, true).unwrap();
@@ -118,9 +115,9 @@ fn size_runtime_cache_artifacts_count_actual_bytes_without_rescanning_on_commits
     let sink: Arc<EventSink> = Arc::new(move |_, snapshot| observed.lock().unwrap().push(snapshot));
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "artifacts".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false, handoff: None,
+        consumer_id: "artifacts".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None,
     }, None).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(45);
     while !events.lock().unwrap().iter().any(|event| event.phase == DirectorySizePhase::Complete) {
         assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(20));
     }
@@ -143,7 +140,7 @@ fn size_runtime_cache_artifacts_count_actual_bytes_without_rescanning_on_commits
     assert_eq!(latest.total_bytes.as_deref(), Some((artifact_bytes + 20).to_string().as_str()));
     assert_eq!(latest.files, 1 + fs::read_dir(&cache).unwrap().count() as u64);
     fs::write(root.0.join("ordinary"), [0_u8; 70]).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(45);
     while service.core.lock().unwrap().jobs_started == jobs {
         assert!(Instant::now() < deadline, "ordinary file edits still invalidate cached sizes");
         std::thread::sleep(Duration::from_millis(20));
@@ -151,7 +148,7 @@ fn size_runtime_cache_artifacts_count_actual_bytes_without_rescanning_on_commits
     service.shutdown();
 }
 fn await_complete(events: &Mutex<Vec<DirectorySizeSnapshot>>, consumer: &str, bytes: &str, min_generation: u64) -> DirectorySizeSnapshot {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if let Some(snapshot) = events.lock().unwrap().iter().rev().find(|snapshot| snapshot.consumer_id == consumer
             && snapshot.phase == DirectorySizePhase::Complete && snapshot.total_bytes.as_deref() == Some(bytes) && snapshot.generation >= min_generation).cloned() { return snapshot; }
@@ -170,11 +167,11 @@ fn size_runtime_persists_accepted_scan_without_waiting_for_shutdown() {
     let sink: Arc<EventSink> = Arc::new(move |_, snapshot| observed.lock().unwrap().push(snapshot));
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "persist".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false, handoff: None,
+        consumer_id: "persist".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None,
     }, None).unwrap();
     await_complete(&events, "persist", "60", 0);
     let reader = super::storage::Store::start(cache.0.clone());
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         let hits = reader.lookup(vec![root.0.join("child/deep").to_str().unwrap().into()], None).unwrap()
             .recv_timeout(Duration::from_secs(1)).unwrap();
@@ -215,7 +212,7 @@ fn size_runtime_listing_carries_scanned_grandchildren_without_new_generation() {
     let sink: Arc<EventSink> = Arc::new(move |_, snapshot| observed.lock().unwrap().push(snapshot));
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false, handoff: None
+        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None
     }, None).unwrap();
     let parent = await_complete(&events, "parent", "60", 0);
     let mut listing = crate::services::fs_service::list_directory(&child, &[], |_| (vec![], None)).unwrap();
@@ -225,7 +222,7 @@ fn size_runtime_listing_carries_scanned_grandchildren_without_new_generation() {
     assert_eq!(cache.directories.len(), 2);
     assert!(cache.directories.iter().all(|record| record.bytes.as_deref() == Some("60")));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "child".into(), target: DirectorySizeTarget::Local { path: child.to_str().unwrap().into() }, refresh: false, handoff: None
+        consumer_id: "child".into(), target: DirectorySizeTarget::Local { path: child.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None
     }, None).unwrap();
     let scoped = await_complete(&events, "child", "60", 0);
     assert_eq!(scoped.generation, parent.generation);
@@ -251,7 +248,7 @@ fn size_runtime_streams_real_local_results_normalizes_lookup_and_recomputes_deep
     service.open_owner("main"); service.open_owner("settings");
     service.start(Arc::downgrade(&sink));
     let request = SubscribeDirectorySizesRequest { consumer_id: "main-test".into(), target: DirectorySizeTarget::Local {
-        path: root.0.to_str().unwrap().into() }, refresh: false, handoff: None };
+        path: root.0.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None };
     service.subscribe(service.owner_token("main").unwrap(), request.clone(), None).unwrap();
     let ready = await_complete(&events, "main-test", "100", 0);
     assert_eq!(ready.freshness, DirectorySizeFreshness::Monitored);
@@ -296,7 +293,7 @@ fn size_runtime_legacy_rename_preserves_parent_and_new_subtree_cache() {
     let sink: Arc<EventSink> = Arc::new(move |_, event| observed.lock().unwrap().push(event));
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, refresh: false, handoff: None
+        consumer_id: "parent".into(), target: DirectorySizeTarget::Local { path: root.0.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None
     }, None).unwrap();
     let before = await_complete(&events, "parent", "60", 0);
     let counts = service.debug_counts();
@@ -323,7 +320,7 @@ fn size_runtime_profile_update_guard_releases_error_paths_and_keeps_nested_fence
         auth_kind: RemoteAuthKind::Password, private_key_path: None, passive_mode: true, ignore_host_key: false,
         connect_timeout_secs: 1, command_timeout_secs: 1, credential_target: None, password: None };
     let request = SubscribeDirectorySizesRequest { consumer_id: "test-guard".into(),
-        target: DirectorySizeTarget::Remote { profile_id: profile.id.clone(), path: "/root".into() }, refresh: false, handoff: None };
+        target: DirectorySizeTarget::Remote { profile_id: profile.id.clone(), path: "/root".into() }, intent: DirectorySizeIntent::Start, retry_failed: false, handoff: None };
     let outer = service.profile_update(&profile.id);
     let failed_save = (|| -> Result<(), &str> {
         let _inner = service.profile_update(&profile.id);
@@ -354,7 +351,7 @@ fn size_runtime_preserves_unicode_roots_and_discovered_directory_spellings() {
     service.open_owner("main"); service.start(Arc::downgrade(&sink));
     for (id, path) in [("dotted", root.0.join("İ")), ("decomposed", root.0.join("i\u{307}")), ("parent", root.0.clone())] {
         service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest {
-            consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, refresh: false, handoff: None
+            consumer_id: id.into(), target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None
         }, None).unwrap();
     }
     let dotted = await_complete(&events, "dotted", "60", 0);

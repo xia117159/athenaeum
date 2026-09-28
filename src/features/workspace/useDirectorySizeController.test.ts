@@ -21,23 +21,34 @@ export const completion = (async () => {
       try {
         assert.equal(wire.subscribed.length, 1);
         assert.deepEqual(wire.subscribed[0].target, { kind: "local", path: f.path });
-        assert.equal(wire.subscribed[0].refresh, false);
+        assert.equal(wire.subscribed[0].intent, "auto");
         assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
         assert.equal(wire.lookedUp.flatMap((request) => request.paths).some((path) => path.endsWith(".txt")), false);
         await h.change((state) => withQuickFilterText(changeTab(state, { sort: { columnId: "size", direction: "desc" } }), "child"));
         await h.change((state) => changeTab(state, { folderExpansion: undefined }));
         assert.equal(wire.subscribed.length, 1);
         assert.deepEqual(h.interactions.resolvedPaths, []);
+      } finally { await h.close(); }
+      assert.equal(wire.listeners.size, 0);
+      assert.equal(wire.released.length, 1);
+    });
+
+    await assertTest("a manual calculation can be cancelled and recalculated; view changes never resume it on their own", async () => {
+      const f = controllerFixture("local", { auto: false }); const wire = sizeTransport();
+      const h = await mountSizes(f.state, wire.gateway);
+      try {
+        assert.equal(wire.subscribed.length, 0);
+        await h.request("calculate");
+        assert.equal(wire.subscribed[0].intent, "calculate");
         await h.request("cancel");
         assert.equal(wire.released.length, 1);
         assert.equal(h.tab.directorySizes?.paused, true);
-        await h.change((state) => withQuickFilterText(state, ""));
+        await h.change((state) => withQuickFilterText(state, "child"));
         assert.equal(wire.subscribed.length, 1);
         await h.request("calculate");
         assert.equal(wire.subscribed.length, 2);
-        assert.equal(wire.subscribed[1].refresh, true);
+        assert.equal(wire.subscribed[1].intent, "calculate");
       } finally { await h.close(); }
-      assert.equal(wire.listeners.size, 0);
       assert.equal(wire.released.length, 2);
     });
 
@@ -96,7 +107,6 @@ export const completion = (async () => {
       const h = await mountSizes(f.state, wire.gateway);
       try {
         assert.equal(wire.subscribed.length, 0);
-        await h.request("refresh"); assert.equal(wire.subscribed.length, 0);
         await h.request("calculate"); assert.equal(wire.subscribed.length, 1);
         assert.deepEqual(wire.subscribed[0].target, { kind: "remote", profileId: "remote-size", path: "/home" });
         assert.equal(JSON.stringify(wire.subscribed).includes("must-not-be-sent"), false);
@@ -105,14 +115,17 @@ export const completion = (async () => {
         await h.change((state) => changeTab(state, { viewMode: "list" }));
         assert.equal(wire.released.length, 1);
         await h.change((state) => changeTab(state, { viewMode: "details" }));
-        assert.equal(wire.subscribed.length, 1);
-        await h.request("refresh"); assert.equal(wire.subscribed.length, 2);
-        await act(async () => { wire.emit(sizeSnapshot({ consumerId: wire.subscribed[1].consumerId, generation: 2, sequence: 3, phase: "stale", totalBytes: null })); await flushEffects(); });
         assert.equal(wire.subscribed.length, 2);
+        assert.equal(wire.subscribed[1].intent, "resume", "a kept request reattaches without another traversal");
+        await h.request("calculate"); assert.equal(wire.subscribed.length, 3);
+        assert.equal(wire.subscribed[2].intent, "calculate");
+        await act(async () => { wire.emit(sizeSnapshot({ consumerId: wire.subscribed[2].consumerId, generation: 2, sequence: 3, phase: "stale", totalBytes: null })); await flushEffects(); });
+        assert.equal(wire.subscribed.length, 3);
         assert.equal(h.tab.directorySizes?.snapshot?.phase, "stale");
         await h.change((state) => ({ ...state, remoteProfiles: state.remoteProfiles.map((profile) => ({ ...profile, commandTimeoutSecs: 45 })) }));
-        assert.equal(wire.subscribed.length, 2, "profile replacement must await manual intent");
-        assert.equal(wire.released.length, 2);
+        assert.equal(wire.subscribed.length, 4);
+        assert.equal(wire.subscribed[3].intent, "resume", "profile replacement never starts remote recursion by itself");
+        assert.equal(wire.released.length, 3);
       } finally { await h.close(); }
     });
 
@@ -186,7 +199,7 @@ export const completion = (async () => {
       try {
         await h.dispatch({ type: "tabActivated", payload: { panelId: "panel-1", tabId: inactive.id } });
         await h.dispatch({ type: "tabActivated", payload: { panelId: "panel-1", tabId: f.tab.id } });
-        assert.equal(h.tab.directorySizes?.pending, true);
+        assert.equal(h.tab.directorySizes?.consumerId, undefined, "the new lease commits only once it is accepted");
         assert.equal(getFolderListingRows(h.tab)[0].entry.sizeLabel, "60 B");
         assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, .6);
       } finally {
@@ -197,6 +210,7 @@ export const completion = (async () => {
 
     await assertTest("navigation hands off a slow subscription and its late result cannot populate the new root", async () => {
       const f = controllerFixture();
+      f.state.settings.model.autoDirectorySizePaths = ["C:\\"];
       const requests: SubscribeDirectorySizesRequest[] = [];
       let finishOld!: (snapshot: DirectorySizeSnapshot) => void;
       const wire = sizeTransport({ subscribe: async (request) => {

@@ -15,7 +15,8 @@ export const completion = (async () => {
   const dom = installDomEnvironment();
   const container = document.createElement("div"); document.body.appendChild(container);
   const root = ReactDOM.createRoot(container);
-  const f = controllerFixture(); const wire = sizeTransport();
+  // A manual calculation, since cancelling is only offered outside automatic roots (D2).
+  const f = controllerFixture("local", { auto: false }); const wire = sizeTransport();
   const gateway = createTestGateway(() => undefined, expansionInteractions()); gateway.directorySizes = wire.gateway;
   const originalLookup = wire.gateway.lookup;
   let hold = false;
@@ -33,6 +34,7 @@ export const completion = (async () => {
   try {
     await assertTest("live controller refresh keeps size bar DOM nodes and replaces values only when the complete batch arrives", async () => {
       await run(() => root.render(<Harness />));
+      await run(() => dispatch({ type: "directorySizeRequested", payload: { panelId: "panel-1", tabId: f.tab.id, rootPath: f.path, intent: "calculate" } }));
       assert.equal(row("parent").textContent, "60 B");
       const parentBar = row("parent").querySelector<HTMLElement>(".size-share-bar")!;
       const fileBar = row("a.txt").querySelector<HTMLElement>(".size-share-bar")!;

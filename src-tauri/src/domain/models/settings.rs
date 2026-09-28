@@ -43,6 +43,7 @@ impl Default for FileVisibilitySettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
+    #[serde(default)] pub auto_directory_size_paths: Vec<String>,
     #[serde(default)]
     pub template_root: String,
     #[serde(default)]

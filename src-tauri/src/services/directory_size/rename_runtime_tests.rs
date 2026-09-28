@@ -8,8 +8,23 @@ fn start(service: &DirectorySizeService) -> (Arc<Mutex<Vec<DirectorySizeSnapshot
     service.open_owner("main"); service.start(Arc::downgrade(&sink)); (events, sink)
 }
 fn subscribe_path(service: &DirectorySizeService, id: &str, path: &std::path::Path, refresh: bool) {
-    service.subscribe(service.owner_token("main").unwrap(), SubscribeDirectorySizesRequest { consumer_id: id.into(),
-        target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, refresh, handoff: None }, None).unwrap();
+    let request = SubscribeDirectorySizesRequest { consumer_id: id.into(),
+        target: DirectorySizeTarget::Local { path: path.to_str().unwrap().into() }, intent: if refresh { DirectorySizeIntent::Calculate } else { DirectorySizeIntent::Auto }, retry_failed: false, handoff: None };
+    service.subscribe(service.owner_token("main").unwrap(), request.clone(), None).unwrap();
+    if !refresh { return; }
+    // Delayed Windows directory notifications from fixture creation can make
+    // the first result stale. Request a fresh manual result before measuring
+    // rename reuse or I/O; production code never retries manual work itself.
+    let deadline = Instant::now() + Duration::from_secs(10); let mut retries = 0;
+    loop {
+        let snapshot = service.core.lock().unwrap().snapshot(id).unwrap();
+        if snapshot.phase == DirectorySizePhase::Complete {
+            if !snapshot.invalidated || retries == 2 { return; }
+            retries += 1; service.subscribe(service.owner_token("main").unwrap(), request.clone(), None).unwrap();
+        }
+        assert!(Instant::now() < deadline, "manual fixture calculation did not settle");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 fn cache(service: &DirectorySizeService, path: &std::path::Path) -> Option<DirectorySizeCache> {
     let mut listing = crate::services::fs_service::list_directory(path, &[], |_| (vec![], None)).unwrap();

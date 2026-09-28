@@ -16,7 +16,7 @@ export const completion = (async () => {
     const props = settingsSurfaceProps("general" as SettingsSection);
     await act(async () => root.render(<SettingsSurface {...props} dirtySections={new Set(["templates"])} />));
     assert.deepEqual([...document.querySelectorAll<HTMLElement>("[data-section-id]")].map(e => e.dataset.sectionId),
-      ["general", "shortcuts", "file-associations", "appearance", "color-rules", "tag-rules", "connections"]);
+      ["general", "shortcuts", "file-associations", "auto-directory-sizes", "appearance", "color-rules", "tag-rules", "connections"]);
     assert.equal(document.querySelector("[aria-current=page]")?.getAttribute("data-section-id"), "general");
     assert.ok(document.querySelector('[data-section-id="general"] .settings-window__nav-dirty'));
     assert.deepEqual([...document.querySelectorAll(".settings-group__header strong")].map(e => e.textContent),

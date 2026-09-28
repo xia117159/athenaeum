@@ -23,6 +23,7 @@ export type SettingsSection =
   | "file-list"
   | "menu-mouse"
   | "file-associations"
+  | "auto-directory-sizes"
   | "appearance"
   | "color-rules"
   | "tag-rules"
@@ -322,6 +323,8 @@ export interface SettingsModel {
   folderExpansionEnabled?: boolean;
   folderExpansionOnRowClick?: boolean;
   notificationsEnabled?: boolean;
+  /** Persisted by dedicated backend commands, never through the settings draft (E7). */
+  autoDirectorySizePaths?: string[];
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilityState;

@@ -5,7 +5,12 @@ impl Core {
     pub fn invalidate_local_paths(&mut self, paths: &[String], now: u64) {
         let keys: Vec<_> = self.roots.iter().filter(|(_, root)| root.target.profile.is_none()
             && paths.iter().any(|path| proof::overlaps(path, &root.target.path))).map(|(key, _)| key.clone()).collect();
-        for key in keys { self.invalidate(&key, now, true, true, 500, "文件操作已改变目录内容，等待刷新统计"); }
+        for key in keys {
+            let root_path = self.roots[&key].target.path.clone();
+            if paths.iter().any(|path| proof::contains(path, &root_path)) { self.invalidate(&key, now, true, true, 500, "文件操作已改变目录内容，统计已失效"); }
+            else { self.apply_changes(&key, super::super::watch::WatchChanges { events: paths.iter().filter(|path| proof::contains(&root_path, path))
+                .map(|path| super::super::watch::WatchEvent { path: path.clone(), kind: super::super::watch::ChangeKind::Removed }).collect(), ..Default::default() }, now); }
+        }
     }
     pub fn storage_operation(&mut self, paths: Vec<RenamePath>) -> Option<Operation> {
         if self.storage.is_none() || self.quiescing || paths.is_empty() { return None; }

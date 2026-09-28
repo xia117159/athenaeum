@@ -62,6 +62,7 @@ import { formatDriveSize } from "./workspaceDirectoryGateway";
 import { getFileColorRowAttributes, getFileColorLabelAttributes } from "./fileColorStyle";
 import { renderEntryNameText } from "./entryNameHighlight";
 import type { QuickFilterProgram } from "./quickFilterTypes";
+import type { DirectorySizeMenuAction } from "./directorySizeMenu";
 
 type DropOperation = "copy" | "move";
 
@@ -285,6 +286,7 @@ export function FileListingShell({
   folderRows,
   folderExpansionOnRowClick = false,
   sizeHeaderAccessory,
+  directorySizeAction,
   onToggleFolderExpansion,
   onRetryFolderExpansion,
   columns,
@@ -338,6 +340,8 @@ export function FileListingShell({
   folderRows?: FolderListingRow[];
   folderExpansionOnRowClick?: boolean;
   sizeHeaderAccessory?: ReactNode;
+  /** Directory tabs only; navigation lists never pass it. */
+  directorySizeAction?: DirectorySizeMenuAction;
   onToggleFolderExpansion?: (path: string) => void;
   onRetryFolderExpansion?: (path: string) => void;
   columns: ColumnDefinition[];
@@ -1532,6 +1536,7 @@ export function FileListingShell({
             getColumnMinWidth={headerMinWidth}
             getColumnPixelWidth={headerPixelWidth}
             renderHeaderAccessory={(column) => column.id === "size" ? sizeHeaderAccessory : null}
+            columnMenuAction={directorySizeAction}
             onSort={onSort}
             onResizeColumn={onResizeColumn}
             onMoveColumn={onMoveColumn}

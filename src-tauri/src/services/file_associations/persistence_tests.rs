@@ -28,6 +28,7 @@ fn file_associations_persisted_legacy_shape_survives_round_trip_and_snapshot() {
         settings.context_menu,
         settings.theme,
         settings.template_root,
+        settings.auto_directory_size_paths,
     );
     assert_eq!(
         serde_json::to_value(snapshot).unwrap()["fileAssociations"],

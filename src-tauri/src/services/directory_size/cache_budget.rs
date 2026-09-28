@@ -22,7 +22,7 @@ mod tests {
     fn size_memory_recently_queried_deep_detail_survives_cold_shallow_admission() {
         let mut core = Core::default(); core.open_owner("main");
         core.subscribe(core.owner_token("main").unwrap(), SubscribeDirectorySizesRequest { consumer_id: "main-view".into(),
-            target: DirectorySizeTarget::Local { path: "C:\\root".into() }, refresh: false, handoff: None }, None, 0).unwrap();
+            target: DirectorySizeTarget::Local { path: "C:\\root".into() }, intent: DirectorySizeIntent::Auto, retry_failed: false, handoff: None }, None, 0).unwrap();
         let job = core.take_jobs(0).remove(0); let scope = job.target.clone();
         let hot = format!("{}\\deep\\view\\hot", scope.path);
         core.finished(&job, result(&[scope.path.clone(), format!("{}\\cold\\detail", scope.path), hot.clone()]), None, 1);

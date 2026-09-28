@@ -41,3 +41,16 @@
 .file-association-hint { color: #626262; }
 .file-association-warning { color: #805900; }
 .file-association-error { color: #b42318; }
+.auto-directory-sizes-page__covered {
+  flex: none;
+  color: #626262;
+  font-size: 12px;
+}
+.auto-directory-sizes-page__add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid #e3e3e3;
+  padding: 6px 10px;
+}
+.auto-directory-sizes-page__add .color-rules-expression-input { flex: 1; min-width: 0; }

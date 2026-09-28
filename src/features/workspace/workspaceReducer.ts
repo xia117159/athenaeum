@@ -240,6 +240,7 @@ export type WorkspaceAction =
   | { type: "themeDropHighlightBorderSet"; payload: { color: string } }
   | { type: "themeTabMinWidthSet"; payload: { value: number } }
   | { type: "settingsModelApplied"; payload: { model: SettingsModel; section?: SettingsSection } }
+  | { type: "autoDirectorySizePathsSynced"; payload: string[] } // Saved list returned by its dedicated commands (E7).
   | {
       type: "settingsSnapshotSynced";
       payload: Pick<WorkspaceState, "bookmarks" | "hotlist" | "remoteProfiles"> & {
@@ -1857,6 +1858,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
     case "directorySizeRequested":
     case "directorySizeCacheReceived":
     case "directorySizeLeaseStarted":
+    case "directorySizeLeaseFailed": case "directorySizeAutoRetried":
     case "directorySizeReleased":
     case "directorySizeSnapshotReceived":
     case "directorySizeLookupReceived":
@@ -2704,12 +2706,13 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         tabMinWidth: normalizeTabMinWidth(action.payload.value)
       }));
 
+    case "autoDirectorySizePathsSynced": return hasSameJsonShape(state.settings.model.autoDirectorySizePaths ?? [], action.payload) ? state
+      : { ...state, settings: { ...state.settings, model: { ...state.settings.model, autoDirectorySizePaths: [...action.payload] } } };
+
     case "settingsModelApplied":
       {
-        const model = withAcceptedColorFilterModel(
-          state.settings.model,
-          normalizeSettingsModel(action.payload.model)
-        );
+        const model = withAcceptedColorFilterModel(state.settings.model, // A draft never edits the automatic size list (E7).
+          normalizeSettingsModel({ ...action.payload.model, autoDirectorySizePaths: state.settings.model.autoDirectorySizePaths }));
         const notifications = model.notificationsEnabled === true || state.notifications.length === 0
           ? state.notifications : [];
         if (

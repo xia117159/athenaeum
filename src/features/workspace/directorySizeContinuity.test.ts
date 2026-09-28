@@ -16,6 +16,10 @@ function fixture() {
   const payload = { panelId: "panel-1" as const, tabId: f.tab.id, rootPath: f.path, consumerId: "size-test", requestVersion: 0 };
   return { ...f, payload, get current() { return state.panels["panel-1"].tabs[0]; },
     send(action: Parameters<typeof workspaceReducer>[1]) { state = workspaceReducer(state, action); },
+    /** Typed so a removed intent fails to compile (F5 no longer requests sizes, D10). */
+    request(intent: "calculate" | "cancel") {
+      state = workspaceReducer(state, { type: "directorySizeRequested", payload: { panelId: "panel-1", tabId: f.tab.id, rootPath: f.path, intent } });
+    },
     size(type: DirectorySizeAction["type"], extra: object = {}) {
       const tab = state.panels["panel-1"].tabs[0];
       const listing = type === "directorySizeLookupReceived" ? { expectedRoot: tab.snapshot, expectedExpansion: tab.folderExpansion } : {};
@@ -27,9 +31,9 @@ function fixture() {
   };
 }
 
-for (const identity of [undefined, null, ""] as const) for (const refresh of [false, true]) test(`unknown creation identity (${String(identity)}, refresh: ${refresh}) cannot cross a new listing`, () => {
+for (const identity of [undefined, null, ""] as const) for (const calculate of [false, true]) test(`unknown creation identity (${String(identity)}, calculate: ${calculate}) cannot cross a new listing`, () => {
   const h = fixture(); h.parent.sizeCreatedAt = identity as string | undefined; // Rust Option is null on the wire.
-  if (refresh) h.size("directorySizeRequested", { intent: "refresh" });
+  if (calculate) h.request("calculate");
   assert.equal(h.display().label, "60 B"); assert.equal(h.display().share, .6);
   const replacement = { ...h.parent };
   h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
@@ -96,7 +100,7 @@ test("known folder values and all bars survive release, resubscribe and split ca
 test("filesystem invalidation, cancel and failures retain known values and both bar modes", () => {
   for (const reason of ["cancel", "failed", "stale", "scanning"] as const) {
     const h = fixture();
-    if (reason === "cancel") h.size("directorySizeRequested", { intent: "cancel" });
+    if (reason === "cancel") h.request("cancel");
     else if (reason === "failed") h.size("directorySizeFailed", { message: "permission denied" });
     else h.size("directorySizeSnapshotReceived", { snapshot: sizeSnapshot({ generation: 2, phase: reason }) });
     assert.equal(h.display().label, "60 B", reason);
@@ -109,15 +113,18 @@ test("filesystem invalidation, cancel and failures retain known values and both 
   }
 });
 
-test("refresh listings with advisory cache hints preserve the displayed size and both bar modes", () => {
+test("an F5 listing with advisory cache hints requests nothing and preserves the displayed size and both bar modes (D10)", () => {
   const h = fixture();
   const createdAt = "2026-09-20T00:00:00Z";
   h.parent.sizeCreatedAt = createdAt;
-  h.size("directorySizeRequested", { intent: "refresh" });
+  const before = { ...h.current.directorySizes! };
+  // F5 only commits a new listing; it never dispatches `directorySizeRequested`.
   h.send({ type: "tabSnapshotCommitted", payload: { panelId: "panel-1", tabId: h.tab.id, pushHistory: false,
     snapshot: { ...h.tab.snapshot, directorySizeCache: { generation: 0, sequence: 0, historical: true, directories: [
       { ...sizeRecord(h.parent.path, "65", "parent-stamp"), createdAt, cachedAt: "2026-09-24T00:00:00Z" }
     ] } } } });
+  assert.equal(h.current.directorySizes?.requestVersion, before.requestVersion);
+  assert.equal(h.current.directorySizes?.forceRefresh, before.forceRefresh, "the listing does not turn into a recalculation");
   assert.equal(h.display().label, "60 B", "a scalar-only hint must not replace a complete display pair");
   assert.equal(h.display().share, .6);
   assert.equal(h.display(h.parent, "folder-max").share, 1);

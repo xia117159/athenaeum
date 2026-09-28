@@ -3,6 +3,8 @@ pub(crate) mod scan;
 pub(crate) mod local;
 mod local_scan;
 mod history;
+mod forget;
+mod stale;
 mod storage;
 pub(crate) mod watch;
 mod core;

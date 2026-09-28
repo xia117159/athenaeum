@@ -187,6 +187,7 @@ export function normalizeSettingsSection(value?: string | null): SettingsSection
     case "file-list":
     case "menu-mouse":
     case "file-associations":
+    case "auto-directory-sizes":
     case "appearance":
     case "color-rules":
     case "tag-rules":
@@ -219,6 +220,16 @@ export function labelFromPath(path: string) {
 
 function buildLocalBreadcrumbs(path: string) {
   const normalized = normalizeLocationPath(path);
+  if (normalized.startsWith("\\\\")) {
+    const [server, share, ...parts] = normalized.slice(2).split("\\");
+    let currentPath = "\\\\" + server + "\\" + share;
+    const breadcrumbs = [{ id: currentPath, label: currentPath, path: currentPath }];
+    for (const part of parts) {
+      currentPath += "\\" + part;
+      breadcrumbs.push({ id: currentPath, label: part, path: currentPath });
+    }
+    return breadcrumbs;
+  }
   if (/^[A-Za-z]:\\$/.test(normalized)) {
     return [
       {
@@ -574,6 +585,7 @@ export function mapSettingsModel(settings: BackendSettingsSnapshot): SettingsMod
     folderExpansionEnabled: settings.folderExpansionEnabled === true,
     folderExpansionOnRowClick: settings.folderExpansionOnRowClick === true,
     notificationsEnabled: settings.notificationsEnabled === true,
+    autoDirectorySizePaths: [...(settings.autoDirectorySizePaths ?? [])],
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settings.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settings.metadataRetentionHours),
     fileVisibility: normalizeFileVisibility(settings.fileVisibility),
@@ -612,6 +624,7 @@ export function normalizeSettingsModel(settingsModel: SettingsModel): SettingsMo
     folderExpansionEnabled: settingsModel.folderExpansionEnabled === true,
     folderExpansionOnRowClick: settingsModel.folderExpansionOnRowClick === true,
     notificationsEnabled: settingsModel.notificationsEnabled === true,
+    autoDirectorySizePaths: [...(settingsModel.autoDirectorySizePaths ?? [])],
     tooltipHoverDelayMs: normalizeTooltipHoverDelayMs(settingsModel.tooltipHoverDelayMs),
     metadataRetentionHours: normalizeMetadataRetentionHours(settingsModel.metadataRetentionHours),
     fileVisibility: normalizeFileVisibility(settingsModel.fileVisibility),

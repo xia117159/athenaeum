@@ -31,7 +31,7 @@ impl Operation {
         self.id == other.id && self.session == other.session && self.generation == other.generation
             && self.paths == other.paths && self.scans == other.scans
     }
-    fn rewritten(&self, path: &str) -> String {
+    pub(super) fn rewritten(&self, path: &str) -> String {
         // Pairs describe final disjoint moves; intermediate batch names are fenced separately.
         self.paths.iter().find(|pair| contains(&pair.from, path)).map_or_else(|| path.to_string(), |pair| rewrite(path, &pair.from, &pair.to))
     }
@@ -85,6 +85,14 @@ impl Database {
     }
     pub fn authorize_operation(&mut self, operation: &Operation) -> Result<()> {
         let json = operation.checked_json()?; self.admit()?;
+        let before = self.forget_cache.borrow().1.clone(); let mut inherited = before.clone();
+        for pair in &operation.paths {
+            let entries: Vec<_> = inherited.entries().map(|(path, recursive, cutoff)| (path.to_owned(), recursive, cutoff)).collect();
+            for (path, recursive, cutoff) in entries {
+                let item = if recursive { super::super::forget::ForgetItem::Prefix(path) } else { super::super::forget::ForgetItem::Exact(path) };
+                if let Some(item) = super::super::forget::rewritten(&item, &pair.from, &pair.to) { inherited.insert(&[item], cutoff); }
+            }
+        }
         let tx = self.connection.transaction()?;
         let (state, saved): (u32, String) = tx.query_row("SELECT state,spec FROM cache_operations WHERE id=?1", [&operation.id], |row| Ok((row.get(0)?,row.get(1)?)))?;
         let prepared: Operation = serde_json::from_str(&saved)?;
@@ -93,16 +101,17 @@ impl Database {
             ensure!(operation.patches == prepared.patches, "conflicting cache authorization replay"); return Ok(());
         }
         ensure!(state == 0, "cache operation is no longer prepared");
+        super::forgetting::persist_fence(&tx, &before, &inherited)?;
         let sequence: u64 = tx.query_row("UPDATE metadata SET sequence=sequence+1 WHERE id=1 AND sequence<9223372036854775807 RETURNING sequence", [], |row| row.get(0))?;
         // Reserve acceptance order now; delayed copying cannot outrank a later scan.
         tx.execute("UPDATE cache_operations SET state=1,spec=?2,publication=?3 WHERE id=?1", params![operation.id,json,sequence])?;
         for scan in &operation.scans {
             let root: String = tx.query_row("SELECT root_path FROM scans WHERE id=?1 AND state=1", [scan], |row| row.get(0))?;
-            tx.execute("INSERT INTO scans(id,session,root_path,generation,source,state,ticket,publication,captured_at,policy_version)
-                SELECT ?1,?2,?3,?4,source,0,NULL,?5,captured_at,policy_version FROM scans WHERE id=?6",
+            tx.execute("INSERT INTO scans(id,session,root_path,generation,source,state,ticket,publication,captured_at,policy_version,captured_micros)
+                SELECT ?1,?2,?3,?4,source,0,NULL,?5,captured_at,policy_version,captured_micros FROM scans WHERE id=?6",
                 params![operation.shadow(scan),operation.session,operation.rewritten(&root),(operation.generation + 1).to_string(),sequence,scan])?;
         }
-        tx.commit()?; Ok(())
+        tx.commit()?; self.forget_cache.borrow_mut().1 = inherited; Ok(())
     }
     pub fn abort_operation(&mut self, id: &str) -> Result<()> {
         self.admit()?; let tx = self.connection.transaction()?;
@@ -121,6 +130,8 @@ impl Database {
         let copy: Option<(String,String,String)> = self.connection.query_row("SELECT old_scan,shadow_scan,cursor FROM operation_copies WHERE operation_id=?1 AND done=0 ORDER BY old_scan LIMIT 1",
             [&operation.id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
         if let Some((old, shadow, cursor)) = copy {
+            let captured: i64 = self.connection.query_row("SELECT captured_micros FROM scans WHERE id=?1", [&old], |row| row.get(0))?;
+            let fences = self.forget_cache.borrow();
             let mut query = self.connection.prepare_cached("SELECT path,payload FROM records WHERE scan_id=?1 AND path>?2 ORDER BY path LIMIT 64")?;
             let mut rows = query.query(params![old,cursor])?; let mut page = vec![]; let mut bytes = 0;
             while let Some(row) = rows.next()? {
@@ -132,7 +143,9 @@ impl Database {
             let tx = self.connection.transaction()?;
             for (_, payload) in &page {
                 let mut record: StoredDirectory = serde_json::from_str(payload)?;
+                if fences.1.blocks(&record.path, captured) { continue; }
                 record.path = operation.rewritten(&record.path);
+                if fences.1.blocks(&record.path, captured) { continue; }
                 if let Some((_, fingerprint)) = operation.patches.iter().find(|(path, _)| path == &record.path) { record.size.fingerprint = fingerprint.clone(); }
                 let parent = Path::new(&record.path).parent().and_then(Path::to_str).unwrap_or(&record.path);
                 tx.execute("INSERT INTO records(path,scan_id,parent_path,created_at,payload) VALUES(?1,?2,?3,?4,?5)",

@@ -70,6 +70,7 @@ pub async fn initialize_workspace(state: State<'_, Arc<AppState>>) -> Result<Wor
                 settings.context_menu,
                 settings.theme,
                 settings.template_root,
+        settings.auto_directory_size_paths,
             ),
         };
         bootstrap.settings.remote_profiles =

@@ -9,6 +9,7 @@ import { openAboutWindow } from "./aboutWindow";
 import { openSettingsWindow } from "./settingsWindow";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { getShortcutBinding } from "./workspaceShortcuts";
+import { directorySizeMenuAction, directorySizeMenuState } from "./directorySizeMenu";
 import type { TabState, WorkspaceState } from "./types";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
@@ -19,6 +20,7 @@ type MenuActionItemDefinition = {
   disabled?: boolean;
   checked?: boolean;
   shortcut?: string;
+  title?: string;
   onSelect: () => void;
 };
 
@@ -132,13 +134,18 @@ export function WorkspaceMenuBar({
     }
     return (
       <button key={item.label} type="button" role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={item.checked}
-        className="app-menu__item menu-dropdown__item" disabled={item.disabled} onClick={() => handleMenuAction(item.onSelect)}>
+        className="app-menu__item menu-dropdown__item" disabled={item.disabled} title={item.title} onClick={() => handleMenuAction(item.onSelect)}>
         <span className="menu-dropdown__check">{item.checked ? "√" : ""}</span>
         <span className="menu-dropdown__item-label">{item.label}</span>
         <span className="menu-dropdown__shortcut">{item.shortcut ?? ""}</span>
       </button>
     );
   };
+
+  const sizeAction = directorySizeMenuAction(directorySizeMenuState(activeTab, state.settings.model.autoDirectorySizePaths ?? []), {
+    calculate: () => actions.requestDirectorySizes(state.activePanelId, activeTab.id, "calculate"),
+    retry: () => actions.retryAutoDirectorySizes(state.activePanelId, activeTab.id)
+  });
 
   const menuDefinitions: MenuDefinition[] = [
     {
@@ -204,6 +211,7 @@ export function WorkspaceMenuBar({
         { label: "显示目录树", checked: state.treeVisible, onSelect: () => actions.setTreeVisible(!state.treeVisible) },
         { kind: "separator", id: "view-refresh-separator" },
         { label: "刷新", shortcut: getShortcutBinding(state.settings.model.shortcuts, "refresh"), onSelect: () => actions.refreshPanel(state.activePanelId) },
+        ...(sizeAction ? [sizeAction] : []),
         { kind: "separator", id: "view-items-separator" },
         {
           kind: "submenu",

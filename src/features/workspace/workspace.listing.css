@@ -512,6 +512,19 @@ body.is-column-pointer-dragging * {
 .directory-size-control > button:focus-visible { outline: 1px solid #0f6cbd; outline-offset: -1px; }
 .directory-size-control.is-loading { color: #0f6cbd; }
 .directory-size-control.is-error { color: #b42318; }
+.directory-size-control__auto {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--accent, #0f6cbd);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: default;
+}
+.directory-size-control.is-error > .directory-size-control__auto { background: #b42318; }
 .directory-size-control__status {
   position: absolute;
   width: 1px;

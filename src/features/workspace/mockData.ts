@@ -676,21 +676,19 @@ export function normalizeLocationPath(input: string): string {
     const protocol = protocolMatch[0];
     const withoutProtocol = trimmed.slice(protocol.length).replace(/\\/g, "/");
     const normalizedRemote = `${protocol}${withoutProtocol.replace(/\/{2,}/g, "/")}`;
-    if (DIRECTORY_CATALOG[normalizedRemote]) {
-      return normalizedRemote;
-    }
-    if (normalizedRemote.endsWith("/")) {
-      return normalizedRemote;
-    }
     return normalizedRemote;
   }
 
   const withoutVerbatimPrefix = trimmed
+    .replace(/\//g, "\\")
     .replace(/^\\\\\?\\UNC\\/i, "\\\\")
     .replace(/^\\\\\?\\/, "")
     .replace(/^\\\?\\/, "")
     .replace(/^\\\\\.\\/, "");
-  const normalized = withoutVerbatimPrefix.replace(/\//g, "\\").replace(/\\{2,}/g, "\\");
+  // Keep the UNC namespace; collapse separators only after its two leading slashes.
+  const normalized = withoutVerbatimPrefix.startsWith("\\\\")
+    ? "\\\\" + withoutVerbatimPrefix.slice(2).replace(/\\+/g, "\\").replace(/^\\/, "")
+    : withoutVerbatimPrefix.replace(/\\{2,}/g, "\\");
   if (/^[A-Za-z]:\\?$/.test(normalized)) {
     return normalized.endsWith("\\") ? normalized : `${normalized}\\`;
   }
@@ -720,7 +718,7 @@ export function getParentLocationPath(path: string): string | null {
     return `${rootPrefix}${remainder.slice(0, -1).join("/")}`;
   }
 
-  if (/^[A-Za-z]:\\$/.test(normalized)) {
+  if (/^[A-Za-z]:\\$/.test(normalized) || /^\\\\[^\\]+\\[^\\]+$/.test(normalized)) {
     return null;
   }
 

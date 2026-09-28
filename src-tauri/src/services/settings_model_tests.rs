@@ -3,6 +3,25 @@ use crate::domain::models::FileAssociationRule;
 use std::fs;
 
 #[test]
+fn auto_size_paths_are_preserved_by_model_commit_and_cleaned_when_loading() {
+    let root = std::env::temp_dir().join(format!("sfm-auto-size-model-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default(); metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json"); let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    super::super::auto_directory_size_paths::update(&mut settings, "C:\\A", true).unwrap();
+    let mut model = serde_json::to_value(update(&settings, None)).unwrap();
+    model["autoDirectorySizePaths"] = serde_json::json!(["C:\\obsolete-draft"]);
+    commit_model(&mut metadata, &mut settings, serde_json::from_value(model).unwrap()).unwrap();
+    assert_eq!(settings.auto_directory_size_paths, ["C:\\A"]);
+    assert!(serde_json::to_value(update(&settings, None)).unwrap().get("autoDirectorySizePaths").is_none());
+    let mut raw = serde_json::to_value(&settings).unwrap();
+    raw["autoDirectorySizePaths"] = serde_json::json!([" c:/A/ ", "C:\\a", "invalid"]);
+    fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    assert_eq!(SettingsStore::load_from(path).unwrap().auto_directory_size_paths, ["C:\\A"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn folder_row_click_defaults_and_settings_round_trip() {
     let root = std::env::temp_dir().join(format!("sfm-row-click-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&root).unwrap();
