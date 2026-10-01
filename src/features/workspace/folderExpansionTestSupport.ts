@@ -1,5 +1,21 @@
 import { createMockWorkspaceBootstrap } from "./mockData";
+import { compileQuickFilter } from "./quickFilterMatcher";
+import type { QuickFilterMode, QuickFilterProgram, QuickFilterSyntax } from "./quickFilterTypes";
 import type { DirectorySnapshot, EntryViewModel, WorkspaceState } from "./types";
+
+/**
+ * 构造测试用的快速过滤程序。
+ * 默认 `include` 模式，因为绝大多数既有测试的原意是「只留下命中行及其祖先链」，
+ * 而 `highlight` 模式按 D7 不改变行集。
+ */
+export function quickFilterProgram(
+  text: string,
+  mode: QuickFilterMode = "include",
+  syntax: QuickFilterSyntax = "substring"
+): QuickFilterProgram | null {
+  const result = compileQuickFilter(text, syntax, mode);
+  return result.ok ? result.program : null;
+}
 
 export function expansionEntry(parentPath: string, name: string, kind: EntryViewModel["kind"] = "folder", extra: Partial<EntryViewModel> = {}): EntryViewModel {
   const separator = parentPath.includes("://") ? "/" : "\\";

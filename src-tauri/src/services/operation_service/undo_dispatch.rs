@@ -17,7 +17,7 @@ pub(crate) fn execute_workspace_undo(
         batch::execute_batch(state, payload, emit)?;
         return Ok(());
     }
-    let result = execute_undo_task(execution);
+    let result = execute_undo_task_with_sizes(execution, Some(&state.directory_sizes));
     let finished = state
         .operations
         .lock()

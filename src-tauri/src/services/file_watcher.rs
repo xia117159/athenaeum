@@ -120,8 +120,6 @@ impl FileWatchService {
 fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<AtomicU64>) {
     let mut regular_watches = Vec::<NativeDirectoryWatch>::new();
     let mut git_watches = Vec::<NativeDirectoryWatch>::new();
-    let mut watched_regular_roots = BTreeSet::<String>::new();
-    let mut watched_git_roots = BTreeSet::<String>::new();
 
     loop {
         let (active_regular, active_git) = {
@@ -132,23 +130,20 @@ fn run_watch_loop(app: AppHandle, state: Arc<Mutex<WatchState>>, sequence: Arc<A
             )
         };
 
-        if active_regular != watched_regular_roots {
-            regular_watches = create_native_directory_watches(&active_regular);
-            watched_regular_roots = active_regular;
-        }
-        if active_git != watched_git_roots {
-            git_watches = create_native_git_sentinel_watches(&active_git);
-            watched_git_roots = active_git;
-        }
+        let mut regular_changed = reconcile_native_watches(&mut regular_watches, &active_regular, create_native_directory_watch);
+        let mut git_changed = reconcile_native_watches(&mut git_watches, &active_git, create_native_git_sentinel_watch);
 
         if regular_watches.is_empty() && git_watches.is_empty() {
+            let event = event_for_changed_roots(&state.lock().unwrap(), regular_changed, git_changed, &sequence);
+            if let Some(event) = event { emit_workspace_fs_changed(&app, event); }
             thread::sleep(NATIVE_WATCH_RELOAD_INTERVAL);
             continue;
         }
 
         let regular_len = regular_watches.len();
         let mut combined: Vec<&mut NativeDirectoryWatch> = regular_watches.iter_mut().chain(git_watches.iter_mut()).collect();
-        let (regular_changed, git_changed) = wait_for_classified_changes(&mut combined, regular_len);
+        let (ordinary, git) = wait_for_classified_changes(&mut combined, regular_len);
+        regular_changed.extend(ordinary); git_changed.extend(git);
 
         if regular_changed.is_empty() && git_changed.is_empty() {
             continue;
@@ -416,6 +411,7 @@ fn system_time_millis(value: SystemTime) -> Option<u128> {
 struct NativeDirectoryWatch {
     root: String,
     handle: windows::Win32::Foundation::HANDLE,
+    registration: crate::services::watch_registry::WatchRegistration,
 }
 
 #[cfg(windows)]
@@ -427,7 +423,7 @@ impl Drop for NativeDirectoryWatch {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn create_native_directory_watches(roots: &BTreeSet<String>) -> Vec<NativeDirectoryWatch> {
     roots
         .iter()
@@ -449,10 +445,14 @@ fn create_native_directory_watch(root: &str) -> Option<NativeDirectoryWatch> {
         | FILE_NOTIFY_CHANGE_LAST_WRITE
         | FILE_NOTIFY_CHANGE_CREATION;
     let path = HSTRING::from(root);
+    let registration = crate::services::watch_registry::WatchRegistration::reserve(root,
+        crate::services::watch_registry::WatchClass::Listing, None)?;
     let handle = unsafe { FindFirstChangeNotificationW(&path, false, filter) }.ok()?;
+    registration.mark_armed();
     Some(NativeDirectoryWatch {
         root: root.to_string(),
         handle,
+        registration,
     })
 }
 
@@ -484,11 +484,19 @@ fn wait_for_native_directory_changes(watches: &mut [NativeDirectoryWatch]) -> BT
 }
 
 #[cfg(windows)]
-fn create_native_git_sentinel_watches(roots: &BTreeSet<String>) -> Vec<NativeDirectoryWatch> {
-    roots
-        .iter()
-        .filter_map(|root| create_native_git_sentinel_watch(root))
-        .collect()
+fn reconcile_native_watches(watches: &mut Vec<NativeDirectoryWatch>, roots: &BTreeSet<String>,
+    open: fn(&str) -> Option<NativeDirectoryWatch>) -> BTreeSet<String> {
+    let mut changed = BTreeSet::new();
+    watches.retain(|watch| {
+        if watch.registration.retired() { changed.insert(watch.root.clone()); return false; }
+        roots.contains(&watch.root)
+    });
+    for root in roots {
+        if !watches.iter().any(|watch| &watch.root == root) {
+            if let Some(watch) = open(root) { watches.push(watch); }
+        }
+    }
+    changed
 }
 
 #[cfg(windows)]
@@ -501,10 +509,14 @@ fn create_native_git_sentinel_watch(repo_root: &str) -> Option<NativeDirectoryWa
     let git_dir = format!("{repo_root}\\.git");
     let filter = FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
     let path = HSTRING::from(&git_dir);
+    let registration = crate::services::watch_registry::WatchRegistration::reserve(&git_dir,
+        crate::services::watch_registry::WatchClass::Listing, None)?;
     let handle = unsafe { FindFirstChangeNotificationW(&path, true, filter) }.ok()?;
+    registration.mark_armed();
     Some(NativeDirectoryWatch {
         root: repo_root.to_string(),
         handle,
+        registration,
     })
 }
 
@@ -554,6 +566,46 @@ fn wait_for_classified_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn native_listing_and_git_watches_participate_in_rename_retirement() {
+        use crate::services::watch_registry::RenameBarrier;
+        let temp = std::env::temp_dir().join(format!("sfm-watch-rename-{}", uuid::Uuid::new_v4()));
+        let old = temp.join("old"); let new = temp.join("new");
+        fs::create_dir_all(old.join("deep/.git")).unwrap();
+        let ordinary = create_native_directory_watch(old.join("deep").to_str().unwrap()).unwrap();
+        let git = create_native_git_sentinel_watch(old.join("deep").to_str().unwrap()).unwrap();
+        let barrier = RenameBarrier::new(&[(old.clone(), new.clone())]).unwrap();
+        let closing = barrier.retire_descendants();
+        assert_eq!(closing.len(), 2, "the listing and git notification handles are both registered");
+        assert!(closing.iter().all(|watch| watch.retired() && !watch.closed()));
+        drop(ordinary); drop(git);
+        assert!(closing.iter().all(|watch| watch.closed()));
+        fs::rename(&old, &new).unwrap(); drop(barrier);
+        fs::remove_dir_all(&temp).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_listing_watch_releases_on_its_loop_and_rebinds_unchanged_subscription() {
+        use crate::services::watch_registry::RenameBarrier;
+        let temp = std::env::temp_dir().join(format!("sfm-watch-rebind-{}", uuid::Uuid::new_v4()));
+        let old = temp.join("old"); fs::create_dir_all(old.join("deep")).unwrap();
+        let root = old.join("deep").to_str().unwrap().to_owned(); let roots = BTreeSet::from([root.clone()]);
+        let mut watches = create_native_directory_watches(&roots);
+        let barrier = RenameBarrier::new(&[(old.clone(), temp.join("new"))]).unwrap();
+        let closing = barrier.retire_descendants();
+        let changed = reconcile_native_watches(&mut watches, &roots, create_native_directory_watch);
+        assert_eq!(changed, roots); assert!(watches.is_empty()); assert!(closing[0].closed());
+        drop(barrier);
+        assert!(reconcile_native_watches(&mut watches, &roots, create_native_directory_watch).is_empty());
+        assert_eq!(watches.len(), 1);
+        fs::write(old.join("deep/data"), b"new notification").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !wait_for_native_directory_changes(&mut watches).contains(&root) { assert!(std::time::Instant::now() < deadline); }
+        drop(watches); fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn normalize_roots_dedupes_local_paths_and_skips_remote_urls() {

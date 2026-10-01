@@ -46,7 +46,7 @@ for (const kind of ["ftp", "sftp"] as const) for (const partial of [false, true]
       assert.match(display.title, /路径/);
     }
     for (const expansion of [false, true]) {
-      assert.ok(getFolderListingRows(f.tab, undefined, "", expansion).every(({ entry }) => entry.sizeDisplay?.bytes == null));
+      assert.ok(getFolderListingRows(f.tab, undefined, null, expansion).every(({ entry }) => entry.sizeDisplay?.bytes == null));
     }
     assert.deepEqual(directorySizeLookupPaths(f.state, "panel-1", f.tab), [], "no wrong-target aggregate lookup");
   });
@@ -75,6 +75,6 @@ test("raw hidden and filtered folders remain directory-size lookup targets", () 
   const hidden = expansionEntry(f.tab.snapshot.location.path, "hidden-folder", "folder", { isHidden: true });
   f.tab.snapshot.entries = [...f.tab.snapshot.entries, hidden];
   f.state.fileVisibility = { ...f.state.fileVisibility, showHidden: false };
-  f.state.search.filterText = "visible-name-that-cannot-match";
+  // 过滤不再参与目录大小查找路径的推导：可见性/隐藏状态才是唯一来源。
   assert.ok(directorySizeLookupPaths(f.state, "panel-1", f.tab).includes(hidden.path));
 });

@@ -35,6 +35,7 @@ export const navigationControllerTests = (async () => {
       navigationResolves: [] as string[][]
     };
     const bootstrap = createMockWorkspaceBootstrap("tauri");
+    bootstrap.settingsModel.notificationsEnabled = true;
     bootstrap.navigationItems = [
       {
         id: "nav-report",

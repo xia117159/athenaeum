@@ -7,6 +7,8 @@ import { WorkspaceSortMenuItems, WorkspaceViewMenuItems } from "./WorkspaceShare
 import type { ClipboardState, ContextMenuState, EntryViewModel, PanelId, PanelLayoutMode, TabState, TabViewMode } from "./types";
 import { getTabEntries } from "./folderExpansion";
 import type { useWorkspaceController } from "./useWorkspaceController";
+import { autoDirectorySizeToggle } from "./directorySizeMenu";
+import { confirmAutoDirectorySizeRoot } from "./AutoDirectorySizePage";
 
 type WorkspaceActions = ReturnType<typeof useWorkspaceController>["actions"];
 const MENU_Z_INDEX = 10000;
@@ -21,6 +23,7 @@ export function WorkspaceContextMenuPopover({
   layoutMode,
   panelIds,
   templateMenuOpen = false,
+  autoDirectorySizePaths = [],
   onClose
 }: {
   contextMenu: ContextMenuState;
@@ -32,6 +35,7 @@ export function WorkspaceContextMenuPopover({
   layoutMode: PanelLayoutMode;
   panelIds: PanelId[];
   templateMenuOpen?: boolean;
+  autoDirectorySizePaths?: string[];
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -192,6 +196,7 @@ export function WorkspaceContextMenuPopover({
     ));
   };
 
+  const autoSize = contextMenu.scope === "tab" && tab ? autoDirectorySizeToggle(tab, autoDirectorySizePaths) : null;
   const renderTabMenu = () => (
     <>
       <button type="button" className="app-menu__item context-menu__item" onClick={() => handleAction(() => actions.toggleTabLock(contextMenu.panelId, contextMenu.tabId))}>
@@ -235,6 +240,21 @@ export function WorkspaceContextMenuPopover({
         <span className="context-menu__check" />
         <span>复制到新标签页</span>
       </button>
+      {autoSize ? (
+        <>
+          <div className="app-menu__separator context-menu__separator" />
+          <button type="button" className="app-menu__item context-menu__item" role="menuitemcheckbox" data-menu-id="auto-directory-size"
+            aria-checked={autoSize.checked} disabled={autoSize.inheritedFrom !== null}
+            onClick={() => handleAction(() => {
+              // Inherited coverage can only be removed from the settings page (D1); roots ask first (E4).
+              if (!autoSize.checked && !confirmAutoDirectorySizeRoot(autoSize.path)) return;
+              void actions.setAutoDirectorySize(autoSize.path, !autoSize.checked);
+            })}>
+            <span className="context-menu__check">{autoSize.checked ? "✓" : ""}</span>
+            <span>自动计算文件夹大小{autoSize.inheritedFrom !== null ? `（继承自 ${autoSize.inheritedFrom}）` : ""}</span>
+          </button>
+        </>
+      ) : null}
     </>
   );
 

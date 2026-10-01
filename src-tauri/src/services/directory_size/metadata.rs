@@ -23,6 +23,29 @@ pub(crate) struct ListingFingerprint {
 }
 
 impl ListingFingerprint {
+    /// Replace one proven name fact without rereading a directory. None remains
+    /// None at the caller; malformed or empty fingerprints are never certified.
+    pub(crate) fn renamed(value: &str, old: &str, new: &str, kind: MetadataKind) -> Option<String> {
+        let (count, hex) = value.strip_prefix("v1:")?.split_once(':')?;
+        let count: u64 = count.parse().ok()?;
+        if count == 0 || hex.len() != 64 { return None; }
+        let mut current = Self { count, ..Default::default() };
+        for (index, byte) in current.sum.iter_mut().enumerate() { *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?; }
+        let mut removed = Self::default(); removed.add(old, kind);
+        let mut added = Self::default(); added.add(new, kind);
+        if removed.invalid || added.invalid { return None; }
+        let mut borrow = 0_i16;
+        for (byte, delta) in current.sum.iter_mut().zip(removed.sum) {
+            let value = i16::from(*byte) - i16::from(delta) - borrow;
+            *byte = value as u8; borrow = i16::from(value < 0);
+        }
+        let mut carry = 0_u16;
+        for (byte, delta) in current.sum.iter_mut().zip(added.sum) {
+            let value = u16::from(*byte) + u16::from(delta) + carry;
+            *byte = value as u8; carry = value >> 8;
+        }
+        current.finish()
+    }
     pub fn add(&mut self, name: &str, kind: MetadataKind) {
         use sha2::{Digest, Sha256};
         if name.is_empty() || kind == MetadataKind::Unknown {

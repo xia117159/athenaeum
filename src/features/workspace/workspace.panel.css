@@ -6,7 +6,9 @@
   height: 100%;
   padding: 0;
   overflow: hidden;
-  border-width: 0;
+  /* 面板框线来自 workspace.layout.css 的分组规则（border: 1px solid #cfcfcf）。
+     这里只保证边框计入 100% 高度，否则面板会溢出 2px 被父级裁掉。 */
+  box-sizing: border-box;
 }
 
 .panel-surface.is-focused {

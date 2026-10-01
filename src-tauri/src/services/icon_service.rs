@@ -1,8 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use base64::engine::general_purpose::STANDARD;
 
 use crate::domain::models::{
-    FileSystemIconKind, SystemIconBitmap, SystemIconImageList, SystemIconRequest,
+    FileSystemIconKind, SystemIconBitmap, SystemIconImageList, SystemIconKeyResult,
+    SystemIconKeysRequest, SystemIconRequest,
 };
 
 fn normalize_extension(extension: Option<&str>) -> String {
@@ -44,6 +45,60 @@ fn image_list_cache_segment(image_list: SystemIconImageList) -> &'static str {
         SystemIconImageList::ExtraLarge => "extra-large",
         SystemIconImageList::Jumbo => "jumbo",
     }
+}
+
+fn parse_image_list(segment: &str) -> Result<SystemIconImageList> {
+    match segment {
+        "sys-small" => Ok(SystemIconImageList::SysSmall),
+        "small" => Ok(SystemIconImageList::Small),
+        "large" => Ok(SystemIconImageList::Large),
+        "extra-large" => Ok(SystemIconImageList::ExtraLarge),
+        "jumbo" => Ok(SystemIconImageList::Jumbo),
+        _ => bail!("invalid system icon image list"),
+    }
+}
+
+fn parse_index_key(key: &str) -> Result<(i32, u32, SystemIconImageList)> {
+    let mut parts = key.split(':');
+    if parts.next() != Some("idx") {
+        bail!("invalid system icon index key");
+    }
+    let index = parts.next().ok_or_else(|| anyhow!("missing icon index"))?.parse::<i32>()?;
+    let mask = parts.next().ok_or_else(|| anyhow!("missing icon overlay"))?.parse::<u32>()?;
+    let image_list = parse_image_list(parts.next().ok_or_else(|| anyhow!("missing image list"))?)?;
+    if parts.next().is_some() || index < 0 || mask & !0x0000ff00 != 0 {
+        bail!("invalid system icon index key");
+    }
+    Ok((index, mask, image_list))
+}
+
+fn encode_rgba_png(size: u32, rgba: &[u8]) -> Result<Vec<u8>> {
+    if size == 0 || rgba.len() != (size as usize).checked_mul(size as usize).and_then(|pixels| pixels.checked_mul(4)).ok_or_else(|| anyhow!("icon dimensions overflow"))? {
+        bail!("invalid RGBA icon dimensions");
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, size, size);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(rgba)?;
+    }
+    Ok(bytes)
+}
+
+pub fn resolve_system_icon_keys(request: &SystemIconKeysRequest) -> Result<Vec<SystemIconKeyResult>> {
+    if request.size == 0 || request.items.len() > 256 {
+        bail!("icon batch must contain at most 256 items and a nonzero size");
+    }
+    platform::resolve_system_icon_keys(request)
+}
+
+pub fn resolve_system_icon_bitmap(key: &str) -> Result<Vec<u8>> {
+    if key.len() > 4096 {
+        bail!("system icon key is too long");
+    }
+    platform::resolve_system_icon_bitmap(key)
 }
 
 /// Returns true when the path looks like a local Windows filesystem path
@@ -155,7 +210,8 @@ mod platform {
     };
 
     use crate::domain::models::{
-        FileSystemIconKind, SystemIconBitmap, SystemIconImageList, SystemIconRequest,
+        FileSystemIconKind, SystemIconBitmap, SystemIconImageList, SystemIconKeyResult,
+        SystemIconKeysRequest, SystemIconRequest,
     };
 
     struct IconLookup {
@@ -172,7 +228,9 @@ mod platform {
     /// RAII guard that initializes COM on the current thread and uninitializes
     /// it when dropped.  Shell overlay handlers are COM objects, so COM must be
     /// initialized before `SHGetFileInfoW` with `SHGFI_OVERLAYINDEX`.
-    struct ComGuard;
+    struct ComGuard {
+        initialized: bool,
+    }
     impl ComGuard {
         fn new() -> Self {
             // COINIT_APARTMENTTHREADED (STA) is required by most shell
@@ -180,13 +238,15 @@ mod platform {
             // call returns S_FALSE (harmless).  If it was initialized as MTA
             // the call returns RPC_E_CHANGED_MODE – we ignore that and proceed;
             // the overlay lookup may still work in some cases.
-            let _hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-            ComGuard
+            let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            ComGuard { initialized: hr.is_ok() }
         }
     }
     impl Drop for ComGuard {
         fn drop(&mut self) {
-            unsafe { CoUninitialize() };
+            if self.initialized {
+                unsafe { CoUninitialize() };
+            }
         }
     }
 
@@ -764,6 +824,74 @@ mod platform {
         result
     }
 
+    pub fn resolve_system_icon_keys(request: &SystemIconKeysRequest) -> Result<Vec<SystemIconKeyResult>> {
+        let image_list = request.image_list.unwrap_or_else(|| super::infer_image_list_from_size(request.size));
+        let image_list_name = super::image_list_cache_segment(image_list);
+        let _com = request.items.iter().any(|item| super::is_local_path(Some(&item.path)))
+            .then(ComGuard::new);
+        request.items.iter().map(|item| {
+            let generic = SystemIconRequest {
+                kind: item.kind.clone(), path: Some(item.path.clone()), extension: item.extension.clone(),
+                size: request.size, image_list: Some(image_list), include_overlays: false,
+            };
+            if !super::is_local_path(Some(&item.path)) {
+                return Ok(SystemIconKeyResult { key: super::cache_key_for_request(&generic) });
+            }
+            let attributes = match item.kind { FileSystemIconKind::File => FILE_ATTRIBUTE_NORMAL, _ => FILE_ATTRIBUTE_DIRECTORY };
+            let wide_path = to_wide(&item.path);
+            let info = call_shgetfileinfo(&wide_path, attributes, SHGFI_SYSICONINDEX | SHGFI_OVERLAYINDEX)
+                .or_else(|_| call_shgetfileinfo(&wide_path, attributes, SHGFI_SYSICONINDEX | SHGFI_OVERLAYINDEX | SHGFI_USEFILEATTRIBUTES))
+                .or_else(|_| call_shgetfileinfo(&wide_path, attributes, SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES));
+            let key = match info {
+                Ok(info) => { let (index, mask) = split_icon_and_overlay(info.iIcon); format!("idx:{index}:{mask}:{image_list_name}") },
+                Err(_) => super::cache_key_for_request(&generic),
+            };
+            Ok(SystemIconKeyResult { key })
+        }).collect()
+    }
+
+    pub fn resolve_system_icon_bitmap(key: &str) -> Result<Vec<u8>> {
+        if key.starts_with("idx:") {
+            let (index, mask, image_list) = super::parse_index_key(key)?;
+            let _com = ComGuard::new();
+            let list = unsafe { SHGetImageList::<IImageList>(image_list_kind_for_variant(image_list)) }
+                .map_err(|error| anyhow!("failed to access Windows system image list: {error}"))?;
+            let size = image_list_icon_size(&list)?;
+            let rgba = if mask != 0 {
+                render_icon_with_overlay_draw(&list, index, mask, size).or_else(|_| {
+                    let hicon = unsafe { list.GetIcon(index, ILD_TRANSPARENT.0 | mask) }?;
+                    if hicon.is_invalid() { bail!("Windows system icon image list returned an invalid icon"); }
+                    let rgba = render_hicon_to_rgba(hicon, size);
+                    unsafe { let _ = DestroyIcon(hicon); }
+                    rgba
+                })?
+            } else {
+                let hicon = unsafe { list.GetIcon(index, ILD_TRANSPARENT.0) }?;
+                if hicon.is_invalid() { bail!("Windows system icon image list returned an invalid icon"); }
+                let rgba = render_hicon_to_rgba(hicon, size);
+                unsafe { let _ = DestroyIcon(hicon); }
+                rgba?
+            };
+            return super::encode_rgba_png(size, &rgba);
+        }
+        let (identity, image_list_name) = key.rsplit_once(':').ok_or_else(|| anyhow!("invalid fallback icon key"))?;
+        let image_list = super::parse_image_list(image_list_name)?;
+        let (kind, path, extension) = if let Some(extension) = identity.strip_prefix("file:") {
+            (FileSystemIconKind::File, None, (extension != "__default__").then(|| extension.to_string()))
+        } else if identity == "folder" {
+            (FileSystemIconKind::Folder, None, None)
+        } else if identity == "remote-root" {
+            (FileSystemIconKind::RemoteRoot, None, None)
+        } else if let Some(path) = identity.strip_prefix("drive:") {
+            (FileSystemIconKind::Drive, Some(path.to_string()), None)
+        } else { bail!("invalid fallback icon key"); };
+        let bitmap = resolve_system_icon(&SystemIconRequest {
+            kind, path, extension, size: 16, image_list: Some(image_list), include_overlays: false,
+        })?;
+        let rgba = super::STANDARD.decode(bitmap.rgba_base64)?;
+        super::encode_rgba_png(bitmap.width, &rgba)
+    }
+
     pub fn resolve_system_icon(request: &SystemIconRequest) -> Result<SystemIconBitmap> {
         let render_result = load_icon_render_result(request)?;
 
@@ -790,7 +918,18 @@ mod platform {
 mod platform {
     use anyhow::{bail, Result};
 
-    use crate::domain::models::{SystemIconBitmap, SystemIconRequest};
+    use crate::domain::models::{SystemIconBitmap, SystemIconKeyResult, SystemIconKeysRequest, SystemIconRequest};
+
+    pub fn resolve_system_icon_keys(request: &SystemIconKeysRequest) -> Result<Vec<SystemIconKeyResult>> {
+        Ok(request.items.iter().map(|item| SystemIconKeyResult { key: super::cache_key_for_request(&SystemIconRequest {
+            kind: item.kind.clone(), path: Some(item.path.clone()), extension: item.extension.clone(),
+            size: request.size, image_list: request.image_list, include_overlays: false,
+        }) }).collect())
+    }
+
+    pub fn resolve_system_icon_bitmap(_key: &str) -> Result<Vec<u8>> {
+        bail!("Windows shell icons are only available on Windows")
+    }
 
     pub fn resolve_system_icon(_request: &SystemIconRequest) -> Result<SystemIconBitmap> {
         bail!("Windows shell icons are only available on Windows")
@@ -808,7 +947,67 @@ pub fn resolve_system_icon(request: &SystemIconRequest) -> Result<SystemIconBitm
 #[cfg(test)]
 mod tests {
     use super::{cache_key_for_request, resolve_system_icon};
-    use crate::domain::models::{FileSystemIconKind, SystemIconImageList, SystemIconRequest};
+    use crate::domain::models::{FileSystemIconKind, SystemIconImageList, SystemIconRequest, SystemIconKeysRequest, SystemIconKeyItem};
+
+    #[test]
+    fn icon_key_request_keeps_one_result_per_item_and_remote_fallback() {
+        let request = SystemIconKeysRequest {
+            items: vec![
+                SystemIconKeyItem { path: "sftp://host/a.txt".into(), kind: FileSystemIconKind::File, extension: Some("TXT".into()) },
+                SystemIconKeyItem { path: "sftp://host/folder".into(), kind: FileSystemIconKind::Folder, extension: None },
+            ],
+            size: 16,
+            image_list: Some(SystemIconImageList::Small),
+        };
+        let keys = super::resolve_system_icon_keys(&request).expect("resolve keys");
+        assert_eq!(keys.iter().map(|item| item.key.as_str()).collect::<Vec<_>>(), vec!["file:.txt:small", "folder:small"]);
+    }
+
+    #[test]
+    fn bitmap_key_parser_rejects_invalid_indices_and_overlay_masks() {
+        assert!(super::parse_index_key("idx:9:256:small").is_ok());
+        assert!(super::parse_index_key("idx:-1:0:small").is_err());
+        assert!(super::parse_index_key("idx:9:1:small").is_err());
+        assert!(super::parse_index_key("idx:9:0:unknown").is_err());
+    }
+
+    #[test]
+    fn rgba_encoder_returns_png_signature_and_dimensions() {
+        let encoded = super::encode_rgba_png(1, &[255, 0, 0, 255]).expect("encode png");
+        assert_eq!(&encoded[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(&encoded[16..24], &[0, 0, 0, 1, 0, 0, 0, 1]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_file_key_renders_valid_png() {
+        let root = std::env::temp_dir().join(format!("athenaeum-icon-key-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create fixture directory");
+        let file = root.join("note.txt");
+        std::fs::write(&file, "note").expect("write fixture file");
+        let request = SystemIconKeysRequest {
+            items: vec![SystemIconKeyItem {
+                path: file.to_string_lossy().into_owned(),
+                kind: FileSystemIconKind::File,
+                extension: Some(".txt".into()),
+            }],
+            size: 16,
+            image_list: Some(SystemIconImageList::Small),
+        };
+        let keys = super::resolve_system_icon_keys(&request).expect("resolve local key");
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].key.starts_with("idx:") || keys[0].key == "file:.txt:small", "{}", keys[0].key);
+        let png = super::resolve_system_icon_bitmap(&keys[0].key).expect("render local bitmap");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        std::fs::remove_dir_all(root).expect("remove fixture directory");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn generic_file_key_renders_valid_png_after_shell_index_fallback() {
+        let png = super::resolve_system_icon_bitmap("file:.txt:small").expect("render fallback bitmap");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
 
     #[test]
     fn cache_key_normalizes_file_extensions_and_sizes() {

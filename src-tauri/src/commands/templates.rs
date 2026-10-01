@@ -35,7 +35,7 @@ pub async fn choose_template_root(window: WebviewWindow) -> Result<Option<String
         0
     };
     tauri::async_runtime::spawn_blocking(move || {
-        templates::picker::choose(owner).map_err(|error| format!("{error:#}"))
+        templates::picker::choose(owner, "选择模板文件夹").map_err(|error| format!("{error:#}"))
     })
     .await
     .map_err(|error| format!("文件夹选择框异常：{error}"))?

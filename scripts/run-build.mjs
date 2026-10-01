@@ -135,6 +135,30 @@ export async function copyStaticAssets({
   );
 }
 
+export function onBuildWarning(warning, defaultHandler) {
+  // This bundle runs entirely in the browser; dependency RSC boundaries do not apply.
+  if (warning.code === "MODULE_LEVEL_DIRECTIVE"
+    && /(?:^|[\\/])node_modules[\\/]/.test(warning.id ?? "")
+    && warning.message.includes('Module level directives cause errors when bundled, "use client" in ')) {
+    return;
+  }
+  defaultHandler(warning);
+}
+
+export async function buildQuickFilterWorker(input, output, sourcePlugins = []) {
+  const bundle = await rollup({
+    input,
+    onwarn: onBuildWarning,
+    plugins: [...sourcePlugins, nodeResolve({ browser: true, extensions: [".js", ".ts"] }), commonjs(),
+      replace({ "process.env.NODE_ENV": JSON.stringify("production"), preventAssignment: true })]
+  });
+  try {
+    await bundle.write({ file: output, format: "esm" });
+  } finally {
+    await bundle.close();
+  }
+}
+
 export default async function runBuild() {
   await ensureCleanDir(tempDir);
   await ensureCleanDir(distDir);
@@ -145,6 +169,7 @@ export default async function runBuild() {
   const collectedCss = new Set();
   const bundle = await rollup({
     input: path.join(tempDir, "main.js"),
+    onwarn: onBuildWarning,
     plugins: [
       createCssPlugin(collectedCss),
       nodeResolve({
@@ -164,6 +189,8 @@ export default async function runBuild() {
     format: "esm"
   });
   await bundle.close();
+  await buildQuickFilterWorker(path.join(tempDir, "features", "workspace", "quickFilter.worker.js"),
+    path.join(assetsDir, "quickFilter.worker.js"));
   await copyStaticAssets();
   await writeCssBundle(collectedCss);
   await writeHtml();

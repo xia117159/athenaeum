@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reduceDirectorySizes } from "./directorySizeState";
+import { manualSubscribeIntent, reduceDirectorySizes } from "./directorySizeState";
 import { sizeFixture, sizeRecord, sizeSnapshot } from "./directorySizeTestSupport";
 import { expansionEntry } from "./folderExpansionTestSupport";
 import { getPathComparisonKey } from "./workspacePathRelations";
@@ -10,7 +10,7 @@ import type { DirectorySizeLookup } from "./directorySizeTypes";
 function target() {
   const fixture = sizeFixture();
   return { ...fixture, payload: { panelId: "panel-1" as const, tabId: fixture.tab.id, rootPath: fixture.path,
-    consumerId: "size-test", requestVersion: 0 } };
+    consumerId: "size-test", requestVersion: 0, expectedRoot: fixture.tab.snapshot, expectedExpansion: fixture.tab.folderExpansion } };
 }
 
 test("first remote calculate joins shared work while recalculate forces a new generation", () => {
@@ -19,10 +19,12 @@ test("first remote calculate joins shared work while recalculate forces a new ge
   const payload = { panelId: "panel-1" as const, tabId: tab.id, rootPath: fixture.path, intent: "calculate" as const };
   const first = reduceDirectorySizes(tab, { type: "directorySizeRequested", payload });
   assert.equal(first.directorySizes?.requested, true);
-  assert.equal(first.directorySizes?.forceRefresh, false);
-  assert.equal(first.directorySizes?.manualStarted, true);
-  const again = reduceDirectorySizes(first, { type: "directorySizeRequested", payload });
+  assert.equal(manualSubscribeIntent(first.directorySizes!, true), "start");
+  const started = reduceDirectorySizes(first, { type: "directorySizeLeaseStarted", payload: { ...payload, consumerId: "c", requestVersion: 1, mode: "manual" } });
+  assert.equal(started.directorySizes?.manualStarted, true);
+  const again = reduceDirectorySizes(started, { type: "directorySizeRequested", payload });
   assert.equal(again.directorySizes?.forceRefresh, true);
+  assert.equal(manualSubscribeIntent(again.directorySizes!, true), "calculate");
 });
 
 test("size cancel clears exact data and pauses until a new explicit request", () => {
@@ -70,23 +72,20 @@ test("lookups only populate matching terminal generation and sequence, stale is 
   assert.deepEqual(stale.directorySizes?.records, {});
 });
 
-test("release is fenced, remote visibility does not grant another recursive scan, F5 is explicit", () => {
+test("release is fenced and keeps the request so a returning view resumes; F5 no longer requests", () => {
   const { tab, payload } = target();
   const local = reduceDirectorySizes(tab, { type: "directorySizeReleased", payload });
   assert.equal(local.directorySizes?.consumerId, undefined);
-  assert.equal(local.directorySizes?.requested, false);
+  assert.equal(local.directorySizes?.requested, true);
   assert.equal(local.directorySizes?.paused, false);
+  assert.equal(local.directorySizes?.snapshot?.phase, "stale");
   assert.deepEqual(local.directorySizes?.records, {});
   const remote = sizeFixture("sftp").tab;
   const remotePayload = { ...payload, rootPath: remote.snapshot.location.path, tabId: remote.id };
   const released = reduceDirectorySizes(remote, { type: "directorySizeReleased", payload: remotePayload });
   assert.equal(released.directorySizes?.manualStarted, true);
-  assert.equal(released.directorySizes?.requested, false);
-  const refreshed = reduceDirectorySizes(released, { type: "directorySizeRequested", payload: { ...remotePayload, intent: "refresh" } });
-  assert.equal(refreshed.directorySizes?.requested, true);
-  assert.equal(reduceDirectorySizes(refreshed, { type: "directorySizeReleased", payload: remotePayload }), refreshed);
-  const untouched = { ...remote, directorySizes: undefined };
-  assert.equal(reduceDirectorySizes(untouched, { type: "directorySizeRequested", payload: { ...remotePayload, intent: "refresh" } }), untouched);
+  assert.equal(manualSubscribeIntent(released.directorySizes!, true), "resume", "a returning remote view never rescans");
+  assert.equal(reduceDirectorySizes(released, { type: "directorySizeReleased", payload: remotePayload }), released);
 });
 
 test("failed listeners and commands expose a terminal reason without an automatic retry loop", () => {

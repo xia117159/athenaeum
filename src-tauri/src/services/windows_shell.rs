@@ -1,5 +1,33 @@
 mod navigation;
 
+pub(crate) type NativeCommandHandler = Box<dyn Fn(Option<&str>, &mut dyn FnMut() -> anyhow::Result<()>) -> anyhow::Result<()> + Send>;
+
+pub(crate) fn invoke_with_size_cache(
+    sizes: &crate::services::directory_size::DirectorySizeService,
+    paths: &[std::path::PathBuf],
+    verb: Option<&str>,
+    invoke: &mut dyn FnMut() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let verb = verb.unwrap_or_default().to_ascii_lowercase();
+    if !matches!(verb.as_str(), "delete" | "rename" | "paste" | "pastelink") { return invoke(); }
+    let mut changed = paths.to_vec();
+    if verb == "rename" {
+        changed.extend(paths.iter().filter_map(|path| path.parent().map(std::path::Path::to_path_buf)));
+    }
+    if verb == "paste" {
+        if let Ok(Some(clipboard)) = read_system_file_clipboard() {
+            if clipboard.mode == crate::domain::models::SystemFileClipboardMode::Cut {
+                changed.extend(clipboard.paths.into_iter().map(std::path::PathBuf::from));
+            }
+        }
+    }
+    // Fence known namespaces at invocation. Shell extensions and operations
+    // that continue in another process still use the external watch boundary;
+    // returning from InvokeCommand is not a proof of their completion.
+    let _size_change = sizes.namespace_change(&changed);
+    invoke()
+}
+
 #[cfg(windows)]
 mod context_menu;
 #[cfg(not(windows))]
@@ -1438,6 +1466,7 @@ mod imp {
         x: i32,
         y: i32,
         options: NativeBackgroundContextMenuOptions,
+        handler: &super::NativeCommandHandler,
     ) -> Result<NativeBackgroundContextMenuResult> {
         let popup = PopupMenu::create()?;
         append_background_custom_menu_items(popup.handle(), options)?;
@@ -1496,7 +1525,8 @@ mod imp {
             });
         }
 
-        let _ = invoke_command(context_menu, hwnd, command_id, BACKGROUND_SHELL_CMD_FIRST);
+        let verb = selection_menu::command_verb(context_menu, command_id, BACKGROUND_SHELL_CMD_FIRST);
+        let _ = handler(verb.as_deref(), &mut || invoke_command(context_menu, hwnd, command_id, BACKGROUND_SHELL_CMD_FIRST));
         Ok(NativeBackgroundContextMenuResult {
             opened: true,
             action: None,
@@ -1509,6 +1539,7 @@ mod imp {
         y: i32,
         shortcuts: NativeSelectionContextMenuShortcuts,
         hwnd_raw: isize,
+        handler: super::NativeCommandHandler,
     ) -> Result<NativeSelectionContextMenuResult> {
         let _com = ComGuard::init()?;
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
@@ -1521,7 +1552,7 @@ mod imp {
                 .context("failed to bind shell selection to context menu")?
         };
 
-        show_context_menu(&context_menu, hwnd, x, y, validated_paths.len(), &shortcuts)
+        show_context_menu(&context_menu, hwnd, x, y, validated_paths.len(), &shortcuts, &handler)
     }
 
     fn start_system_file_drag_inner(
@@ -1571,6 +1602,7 @@ mod imp {
         y: i32,
         options: NativeBackgroundContextMenuOptions,
         hwnd_raw: isize,
+        handler: super::NativeCommandHandler,
     ) -> Result<NativeBackgroundContextMenuResult> {
         let _com = ComGuard::init()?;
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
@@ -1599,7 +1631,7 @@ mod imp {
                 .context("failed to bind shell folder background to context menu")?
         };
 
-        show_background_context_menu(&context_menu, hwnd, x, y, options)
+        show_background_context_menu(&context_menu, hwnd, x, y, options, &handler)
     }
 
     pub async fn show_native_context_menu<R: Runtime>(
@@ -1608,6 +1640,7 @@ mod imp {
         y: i32,
         shortcuts: NativeSelectionContextMenuShortcuts,
         window: &Window<R>,
+        handler: super::NativeCommandHandler,
     ) -> Result<NativeSelectionContextMenuResult> {
         let hwnd = window
             .hwnd()
@@ -1617,7 +1650,7 @@ mod imp {
 
         window
             .run_on_main_thread(move || {
-                let _ = sender.send(show_native_context_menu_inner(paths, x, y, shortcuts, hwnd_raw));
+                let _ = sender.send(show_native_context_menu_inner(paths, x, y, shortcuts, hwnd_raw, handler));
             })
             .context("failed to schedule native context menu on the Tauri main thread")?;
 
@@ -1677,6 +1710,7 @@ mod imp {
         y: i32,
         options: NativeBackgroundContextMenuOptions,
         window: &Window<R>,
+        handler: super::NativeCommandHandler,
     ) -> Result<NativeBackgroundContextMenuResult> {
         let hwnd = window
             .hwnd()
@@ -1692,6 +1726,7 @@ mod imp {
                     y,
                     options,
                     hwnd_raw,
+                    handler,
                 ));
             })
             .context(
@@ -2162,6 +2197,7 @@ pub async fn show_native_context_menu<R: tauri::Runtime>(
     _y: i32,
     _shortcuts: crate::domain::models::NativeSelectionContextMenuShortcuts,
     _window: &tauri::Window<R>,
+    _handler: NativeCommandHandler,
 ) -> anyhow::Result<crate::domain::models::NativeSelectionContextMenuResult> {
     anyhow::bail!("native context menu is only supported on Windows")
 }
@@ -2173,6 +2209,7 @@ pub async fn show_native_background_context_menu<R: tauri::Runtime>(
     _y: i32,
     _options: crate::domain::models::NativeBackgroundContextMenuOptions,
     _window: &tauri::Window<R>,
+    _handler: NativeCommandHandler,
 ) -> anyhow::Result<crate::domain::models::NativeBackgroundContextMenuResult> {
     anyhow::bail!("native background context menu is only supported on Windows")
 }

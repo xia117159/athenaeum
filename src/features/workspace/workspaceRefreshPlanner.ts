@@ -28,7 +28,8 @@ export function getVisibleWatchRoots(state: WorkspaceState) {
       const path = normalizeLocationPath(activeTab.snapshot.location.path);
       directoryPaths.set(getPathComparisonKey(path), path);
       if (state.settings.model.folderExpansionEnabled) {
-        expandedPaths.push(...getFolderListingRows(activeTab, state.fileVisibility, state.activePanelId === panelId ? state.search.filterText : "")
+        // D21：watch 根使用**未过滤**投影，与快速过滤彻底解耦；否则过滤会改变监视根集合。
+        expandedPaths.push(...getFolderListingRows(activeTab, state.fileVisibility, null)
           .filter((row) => row.expansion).map((row) => row.entry.path));
       }
     }

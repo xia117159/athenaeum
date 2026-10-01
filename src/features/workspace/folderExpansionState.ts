@@ -1,6 +1,7 @@
 import { getExpandedFolderPaths, getFolderBranch, getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./folderExpansion";
 import { getPathComparisonKey, isSameOrDescendantPath, pathsEqual } from "./workspacePathRelations";
 import { restorePendingFolderSelection } from "./folderSelectionRestore";
+import type { QuickFilterProgram } from "./quickFilterTypes";
 import type { DirectorySnapshot, FileVisibilityState, FolderExpansionBranch, PanelId, PanelState, SelectionPathReplacement, TabState } from "./types";
 
 type BranchTarget = { panelId: PanelId; tabId: string; path: string };
@@ -88,6 +89,7 @@ export function alignFolderListing(tab: TabState, snapshot: DirectorySnapshot, e
     next = { ...tab, folderExpansion: { ...tab.folderExpansion, [getPathComparisonKey(path)]: {
       path, status: "ready", sizeFingerprint: snapshot.sizeFingerprint,
       sizeIdentityReliable: snapshot.sizeIdentityReliable,
+      directorySizeCache: snapshot.directorySizeCache,
       entries: snapshot.entries.filter((entry) => pathsEqual(entry.parentPath, path) &&
         !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path))
     } } };
@@ -97,7 +99,8 @@ export function alignFolderListing(tab: TabState, snapshot: DirectorySnapshot, e
 }
 
 export function reduceFolderExpansion(
-  tab: TabState, action: FolderExpansionAction, enabled: boolean, visibility: FileVisibilityState, filterText: string
+  tab: TabState, action: FolderExpansionAction, enabled: boolean, visibility: FileVisibilityState,
+  quickFilter: QuickFilterProgram | null
 ): TabState {
   if (!supportsFolderExpansion(tab, enabled)) return tab;
   if (action.type === "folderExpansionRefreshFailed") {
@@ -121,7 +124,7 @@ export function reduceFolderExpansion(
     const focusedId = tab.selectionCursorId && tab.selectedEntryIds.includes(tab.selectionCursorId)
       ? tab.selectionCursorId : tab.selectedEntryIds[tab.selectedEntryIds.length - 1];
     if (focusedId && !next.selectedEntryIds.includes(focusedId) &&
-      getFolderListingRows(tab, visibility, filterText).some((row) => row.entry.id === focusedId)) {
+      getFolderListingRows(tab, visibility, quickFilter).some((row) => row.entry.id === focusedId)) {
       return { ...next, selectedEntryIds: [...next.selectedEntryIds.filter((id) => id !== entry.id), entry.id] };
     }
     return next;
@@ -143,7 +146,9 @@ export function reduceFolderExpansion(
   const updatedBranch: FolderExpansionBranch = action.type === "folderExpansionLoadFailed"
     ? { path: branch.path, entries: [], status: "error", errorMessage: action.payload.errorMessage }
     : { path: branch.path, status: "ready", sizeFingerprint: action.payload.snapshot.sizeFingerprint,
-      sizeIdentityReliable: action.payload.snapshot.sizeIdentityReliable, entries: action.payload.snapshot.entries.filter((entry) =>
+      sizeIdentityReliable: action.payload.snapshot.sizeIdentityReliable,
+      directorySizeCache: action.payload.snapshot.directorySizeCache,
+      entries: action.payload.snapshot.entries.filter((entry) =>
         pathsEqual(entry.parentPath, path) && !pathsEqual(entry.path, path) && isSameOrDescendantPath(path, entry.path)) };
   let next: TabState = { ...tab, folderExpansion: { ...tab.folderExpansion, [key]: updatedBranch } };
   next = { ...next, folderExpansion: pruneBranches(next) };

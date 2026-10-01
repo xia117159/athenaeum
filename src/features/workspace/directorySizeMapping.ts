@@ -35,3 +35,20 @@ export function directoryListingIdentityIsReliable(listing: BackendListing, root
   }
   return true;
 }
+
+export function mapDirectorySizeCache(listing: BackendListing, root: string, entries: EntryViewModel[], reliable: boolean) {
+  const cache = listing.directorySizeCache;
+  if (!reliable || listing.location.kind !== "local" || !cache || !cache.historical && !listing.sizeFingerprint) return undefined;
+  const identity = (path: string) => sizingPathIdentity(path, true);
+  const rootRecord = cache.directories.find((record) => identity(record.path) === identity(root));
+  if (!cache.historical && rootRecord?.sizeFingerprint !== listing.sizeFingerprint) return undefined;
+  const creation = new Map(entries.filter((entry) => entry.kind === "folder").map((entry) => [identity(entry.path), entry.sizeCreatedAt]));
+  const paths = new Map([[identity(root), root], ...entries.filter((entry) => entry.kind === "folder" && !entry.attributes.includes("L"))
+    .map((entry): [string, string] => [identity(entry.path), entry.path])]);
+  const directories = cache.directories.flatMap((record) => {
+    const path = paths.get(identity(record.path));
+    if (cache.historical && (!record.createdAt || record.createdAt !== creation.get(identity(record.path)))) return [];
+    return path && isSizingPathRepresentable(record.path, true) ? [{ ...record, path }] : [];
+  });
+  return { ...cache, directories };
+}

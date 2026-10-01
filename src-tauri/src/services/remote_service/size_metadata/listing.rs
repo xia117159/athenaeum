@@ -7,7 +7,7 @@ use super::super::{remote_parent_path, normalize_remote_path, listing::parse_sft
 fn wrapper(profile: &RemoteProfile, path: &str, entries: Vec<EntryViewModel>, size_fingerprint: Option<String>) -> DirectoryListing {
     let parent = (normalize_remote_path(path) != normalize_remote_path(&profile.root_path)).then(|| remote_parent_path(path)).flatten();
     DirectoryListing { location: LocationDescriptor { kind: profile.protocol.clone(), path: path.into(), connection_id: Some(profile.id.clone()) },
-        entries, can_go_up: parent.is_some(), parent, size_fingerprint }
+        entries, can_go_up: parent.is_some(), parent, size_fingerprint, directory_size_cache: None }
 }
 
 pub(crate) fn sftp_listing(profile: &RemoteProfile, path: &str, entries: Vec<(PathBuf, ssh2::FileStat)>) -> DirectoryListing {

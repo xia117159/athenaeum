@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
 import { expansionEntry, expansionSnapshot } from "./folderExpansionTestSupport";
+import { withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { assertTest, flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
@@ -62,7 +63,7 @@ export const completion = (async () => {
               assert.deepEqual(getFolderListingRows(h.state.panels[panelId].tabs[0]).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
             }
             assert.equal(h.state.panels[matchedPanel].tabs[0].snapshot, matchedRoot);
-            await h.change((state) => ({ ...state, search: { ...state.search, filterText: "child" } }));
+            await h.change((state) => withQuickFilterText(state, "child"));
             assert.equal(t.listings.length, 2); assert.equal(t.wire.subscribed.length, 2);
           } finally { await h.close(); }
         });
@@ -77,8 +78,14 @@ export const completion = (async () => {
         assert.deepEqual(t.listings.map(({ path }) => path), [f.path, f.parent.path]);
         await t.replyListing(f.parent.path);
         assert.equal(h.tab.directorySizes?.snapshot?.phase, failed ? "failed" : "complete");
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, failed ? null : .6);
+        if (failed) {
+          assert.notEqual(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
+          assert.notEqual(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null,
+            "failed refresh keeps advisory bars");
+        } else {
+          assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
+          assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null);
+        }
         const matched = h.state.panels["panel-2"].tabs[0];
         assert.equal(matched.snapshot, t.other.snapshot);
         assert.equal(matched.directorySizes?.snapshot?.phase, "complete");
@@ -99,7 +106,7 @@ export const completion = (async () => {
         assert.equal(h.tab.snapshot, newer); assert.equal(h.tab.folderExpansion, undefined);
         assert.deepEqual(h.tab.selectedEntryIds, [file.id]);
         assert.equal(h.tab.directorySizes?.snapshot?.phase, "complete");
-        assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, null);
+          assert.equal(getFolderListingRows(h.tab)[0].entry.sizeDisplay?.share, null);
         assert.deepEqual(getFolderListingRows(h.state.panels["panel-2"].tabs[0]).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
         assert.equal(t.listings.length, 2); assert.equal(t.wire.subscribed.length, 2);
       } finally { await h.close(); }
@@ -115,7 +122,8 @@ export const completion = (async () => {
         await t.replyListing(f.path); await t.replyListing(f.parent.path);
         assert.equal(h.tab.snapshot, late.snapshot);
         assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
-        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, .6);
+        assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.child.id)?.entry.sizeDisplay?.share, null,
+          "a late consumer cannot use an unaligned root as a fresh denominator");
         assert.deepEqual(getFolderListingRows(h.state.panels["panel-2"].tabs[0]).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
         assert.equal(t.listings.length, 2); assert.equal(t.wire.subscribed.length, 3);
       } finally { await h.close(); }

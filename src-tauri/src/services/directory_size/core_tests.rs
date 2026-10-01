@@ -1,6 +1,23 @@
 use super::{core::*, scan::{DirectorySize, ScanOutcome, ScanResult, ScanStats}, target::normalize_local_path, watch::{RootIdentity, WatchPoll}};
 use crate::domain::{directory_sizes::*, models::{RemoteProfile, RemoteAuthKind, LocationKind}};
 use std::{collections::HashMap, sync::{Arc, atomic::{AtomicU8, Ordering}}};
+#[path = "rename_core_tests.rs"]
+mod rename_tests;
+#[path = "cache_budget_tests.rs"]
+mod cache_budget_tests;
+#[path = "diagnostics_tests.rs"]
+mod diagnostics_tests;
+#[path = "lease_handoff_tests.rs"]
+mod lease_handoff_tests;
+#[path = "on_demand_tests.rs"]
+mod on_demand_tests;
+#[path = "stale_core_tests.rs"]
+mod stale_core_tests;
+#[path = "auto_schedule_tests.rs"]
+mod auto_schedule_tests;
+#[cfg(windows)]
+#[path = "rename_service_tests.rs"]
+mod rename_service_tests;
 
 fn profile() -> RemoteProfile {
     RemoteProfile { id: "remote".into(), name: "Remote".into(), protocol: LocationKind::Sftp, host: "example.invalid".into(),
@@ -11,14 +28,15 @@ fn profile() -> RemoteProfile {
 fn request(id: &str, path: &str) -> SubscribeDirectorySizesRequest {
     SubscribeDirectorySizesRequest { consumer_id: id.into(), target: if path.starts_with('/') {
         DirectorySizeTarget::Remote { profile_id: "remote".into(), path: path.into() }
-    } else { DirectorySizeTarget::Local { path: path.into() } }, refresh: false }
+    } else { DirectorySizeTarget::Local { path: path.into() } }, intent: if path.starts_with('/') { DirectorySizeIntent::Start } else { DirectorySizeIntent::Auto }, retry_failed: false, handoff: None }
 }
 fn core() -> Core { let mut core = Core::default(); core.open_owner("main"); core.open_owner("settings"); core }
 fn subscribe(core: &mut Core, id: &str, path: &str, now: u64) -> DirectorySizeSnapshot {
     core.subscribe(core.owner_token("main").unwrap(), request(id, path), path.starts_with('/').then(profile), now).unwrap()
 }
 fn result(job: &ScanJob, bytes: u64) -> ScanResult {
-    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()) })]),
+    ScanResult { directories: HashMap::from([(Arc::from(job.target.path.as_str()), DirectorySize { bytes, complete: true, fingerprint: Some("stamp".into()), created_at: None,
+        stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() } })]),
         stats: ScanStats { known_bytes: bytes, files: 1, directories: 1, ..Default::default() },
         outcome: ScanOutcome::Complete, accounted_bytes: 1024, message: None }
 }
@@ -32,6 +50,106 @@ fn monitored(core: &mut Core, job: &ScanJob) -> Arc<AtomicU8> {
     flag
 }
 fn finish(core: &mut Core, job: &ScanJob, now: u64) { core.finished(job, result(job, 100), Some(RootIdentity([1, 2, 3, 4])), now); }
+
+#[test]
+fn size_artifact_core_rejects_out_of_order_snapshot_delivery() {
+    let mut core = core();
+    let mut old = super::artifacts::Snapshot::default(); old.policy = "same-registry".into(); old.revision = 1;
+    let mut new = old.clone(); new.revision = 2;
+    core.set_artifacts(Arc::new(new), 1);
+    let revision = core.cache_revision;
+    core.set_artifacts(Arc::new(old), 2);
+    assert_eq!(core.artifacts.revision, 2, "completed samplers may acquire Core in reverse order");
+    assert_eq!(core.cache_revision, revision, "rejected snapshots cannot notify consumers");
+}
+
+#[test]
+fn size_service_entering_scanned_child_reuses_ancestor_without_a_job() {
+    let mut core = core();
+    subscribe(&mut core, "parent", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0);
+    let changed = monitored(&mut core, &job);
+    let mut scanned = result(&job, 100);
+    let mut child = scanned.directories[&*job.target.path].clone();
+    child.bytes = 40;
+    child.stats.known_bytes = 40;
+    scanned.directories.insert(normalize_local_path("C:\\root\\child").unwrap().into(), child);
+    core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+    let pending = subscribe(&mut core, "child", "C:\\root\\child", 2);
+    assert_eq!(core.root_count(), 1, "navigation must share the monitored tree");
+    assert!(core.take_jobs(2).is_empty(), "navigation must not traverse again");
+    assert_eq!(pending.phase, DirectorySizePhase::Queued);
+    let verify = core.take_identity_job(2).unwrap();
+    core.identity_finished(&verify, Ok(RootIdentity([1, 2, 3, 4])), 3);
+    let snapshot = core.snapshot("child").unwrap();
+    assert_eq!(snapshot.total_bytes.as_deref(), Some("40"));
+    assert!(core.lookup("main", LookupDirectorySizesRequest { consumer_id: "child".into(), generation: snapshot.generation,
+        paths: vec!["C:\\root\\sibling".into()] }, 3).is_err());
+    core.release("main", "parent", 4).unwrap();
+    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Complete);
+    changed.store(1, Ordering::Relaxed);
+    core.tick(5);
+    assert_eq!(core.snapshot("child").unwrap().phase, DirectorySizePhase::Complete);
+    assert!(!core.snapshot("child").unwrap().invalidated, "a modification of the parent itself does not expire the child");
+}
+
+#[test]
+fn size_service_complete_child_of_partial_tree_is_scoped_and_refresh_is_independent() {
+    let mut core = core();
+    subscribe(&mut core, "parent", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0);
+    monitored(&mut core, &job);
+    let mut scanned = result(&job, 40);
+    let child = scanned.directories[&*job.target.path].clone();
+    let parent = scanned.directories.get_mut(&*job.target.path).unwrap();
+    parent.complete = false;
+    parent.stats.errors = 2;
+    scanned.stats.errors = 2;
+    scanned.outcome = ScanOutcome::Partial;
+    scanned.directories.insert(normalize_local_path("C:\\root\\child").unwrap().into(), child.clone());
+    let mut unvisited = child;
+    unvisited.stats = ScanStats::default(); unvisited.complete = false;
+    scanned.directories.insert(normalize_local_path("C:\\root\\unvisited").unwrap().into(), unvisited);
+    core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+    subscribe(&mut core, "child", "C:\\root\\child", 2);
+    let verify = core.take_identity_job(2).unwrap();
+    core.identity_finished(&verify, Ok(RootIdentity([1, 2, 3, 4])), 3);
+    let child = core.snapshot("child").unwrap();
+    assert_eq!(child.phase, DirectorySizePhase::Complete);
+    assert_eq!((child.files, child.directories, child.errors), (1, 1, 0));
+    assert_eq!(child.known_bytes, "40");
+    assert_eq!(core.snapshot("parent").unwrap().phase, DirectorySizePhase::Partial);
+    let unknown = core.lookup("main", LookupDirectorySizesRequest { consumer_id: "parent".into(), generation: child.generation,
+        paths: vec!["C:\\root\\unvisited".into()] }, 3).unwrap();
+    assert_eq!(unknown.directories[0].state, DirectorySizeRecordState::Unknown);
+    assert_eq!(unknown.directories[0].bytes, None);
+    core.release("main", "child", 4).unwrap();
+    let mut refresh = request("fresh-child", "C:\\root\\child"); refresh.intent = DirectorySizeIntent::Calculate;
+    let fresh = core.subscribe(core.owner_token("main").unwrap(), refresh, None, 4).unwrap();
+    assert!(fresh.generation > child.generation);
+    assert_eq!(core.snapshot("parent").unwrap().generation, child.generation);
+    let jobs = core.take_jobs(4);
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].target.path, normalize_local_path("C:\\root\\child").unwrap());
+}
+
+#[test]
+fn size_service_remote_navigation_and_component_prefixes_do_not_share_ancestors() {
+    for (parent, child) in [("/root", "/root/child"), ("C:\\root", "C:\\root-other")] {
+        let mut core = core();
+        subscribe(&mut core, "parent", parent, 0);
+        let job = core.take_jobs(0).remove(0);
+        monitored(&mut core, &job);
+        let mut scanned = result(&job, 1);
+        let child_record = scanned.directories[&*job.target.path].clone();
+        let path = if child.starts_with('/') { child.into() } else { normalize_local_path(child).unwrap() };
+        scanned.directories.insert(Arc::from(path), child_record);
+        core.finished(&job, scanned, Some(RootIdentity([1, 2, 3, 4])), 1);
+        subscribe(&mut core, "child", child, 2);
+        assert_eq!(core.root_count(), 2);
+        assert_eq!(core.take_jobs(2).len(), 1);
+    }
+}
 
 #[test]
 fn size_service_single_flight_independent_leases_and_last_release_fence() {
@@ -68,22 +186,16 @@ fn size_service_late_worker_messages_cannot_change_a_finished_result() {
 }
 
 #[test]
-fn size_service_new_consumer_explicit_refresh_replaces_shared_running_generation() {
+fn size_service_new_consumer_explicit_calculation_shares_running_generation() {
     let mut core = core();
     let first = subscribe(&mut core, "a", "/root", 0);
     let old_job = core.take_jobs(0).remove(0);
-    let mut refresh = request("b", "/root");
-    refresh.refresh = true;
+    let mut refresh = request("b", "/root"); refresh.intent = DirectorySizeIntent::Calculate;
     let next = core.subscribe(core.owner_token("main").unwrap(), refresh, Some(profile()), 100).unwrap();
-    assert!(next.generation > first.generation);
-    assert_eq!(core.snapshot("a").unwrap().generation, next.generation);
-    assert!(old_job.cancelled.load(Ordering::Relaxed));
-    assert!(core.take_jobs(2000).is_empty(), "the cancelled traversal still owns its worker slot");
+    assert_eq!(next.generation, first.generation);
+    assert!(!old_job.cancelled.load(Ordering::Relaxed));
+    assert!(core.take_jobs(2000).is_empty());
     finish(&mut core, &old_job, 2001);
-    assert!(core.snapshot("a").unwrap().total_bytes.is_none());
-    let replacement = core.take_jobs(2001).remove(0);
-    assert_eq!(replacement.generation, next.generation);
-    finish(&mut core, &replacement, 2002);
     assert_eq!(core.snapshot("a").unwrap().total_bytes.as_deref(), Some("100"));
     assert_eq!(core.snapshot("b").unwrap().total_bytes.as_deref(), Some("100"));
 }
@@ -128,19 +240,16 @@ fn size_service_window_epochs_reject_late_subscribe_and_close_only_owner_leases(
 }
 
 #[test]
-fn size_service_deep_change_during_scan_invalidates_and_coalesces_without_late_resurrection() {
-    let mut core = core();
-    let first = subscribe(&mut core, "a", "C:\\root", 0);
-    let job = core.take_jobs(0).remove(0);
-    let change = monitored(&mut core, &job);
-    change.store(1, Ordering::Relaxed);
-    core.tick(100);
-    assert!(job.cancelled.load(Ordering::Relaxed));
-    assert!(core.snapshot("a").unwrap().generation > first.generation);
+fn size_service_change_during_scan_finishes_stale_and_auto_coalesces_after_cooldown() {
+    let mut core = core(); let first = subscribe(&mut core, "a", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0); let change = monitored(&mut core, &job);
+    change.store(1, Ordering::Relaxed); core.tick(100);
+    assert!(!job.cancelled.load(Ordering::Relaxed));
+    assert_eq!(core.snapshot("a").unwrap().generation, first.generation);
     finish(&mut core, &job, 101);
-    assert_eq!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Stale);
-    assert!(core.take_jobs(600).is_empty());
-    assert_eq!(core.take_jobs(2000).len(), 1);
+    assert!(core.snapshot("a").unwrap().invalidated);
+    assert!(core.take_jobs(30_100).is_empty());
+    core.tick(30_101); assert_eq!(core.take_jobs(30_101).len(), 1);
 }
 
 #[test]
@@ -180,10 +289,12 @@ fn size_service_root_replacement_monitor_loss_and_late_identity_never_restore_ol
     flag.store(2, Ordering::Relaxed);
     core.tick(2011);
     core.identity_finished(&identity, Ok(RootIdentity([1, 2, 3, 4])), 2012);
-    assert_eq!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Stale);
-    let replacement = core.take_jobs(2511).remove(0);
+    assert!(core.snapshot("a").unwrap().invalidated);
+    assert!(core.take_jobs(30_009).is_empty());
+    core.tick(30_010);
+    let replacement = core.take_jobs(30_010).remove(0);
     monitored(&mut core, &replacement);
-    core.finished(&replacement, result(&replacement, 999), Some(RootIdentity([9, 2, 3, 4])), 2520);
+    core.finished(&replacement, result(&replacement, 999), Some(RootIdentity([9, 2, 3, 4])), 30_020);
     assert_ne!(core.snapshot("a").unwrap().phase, DirectorySizePhase::Complete);
     assert!(core.snapshot("a").unwrap().total_bytes.is_none());
 }
@@ -225,6 +336,57 @@ fn size_service_unmonitored_snapshot_is_not_reused_after_final_release_and_cache
     finish(&mut core, &next, 4);
     assert!(core.cache_bytes() <= 512);
     assert_ne!(core.snapshot("b").unwrap().phase, DirectorySizePhase::Complete);
+}
+
+#[test]
+fn local_completed_totals_survive_full_leased_cache_by_shedding_details() {
+    let mut core = core(); core.limits.cache_bytes = 2500;
+    let mut jobs = Vec::new();
+    for (id, path) in [("a", "C:\\one"), ("b", "C:\\two"), ("c", "C:\\three")] {
+        subscribe(&mut core, id, path, 0);
+        let job = core.take_jobs(0).remove(0); monitored(&mut core, &job);
+        let completed = cache_budget_tests::chain(&job, 2);
+        core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+        jobs.push(job);
+    }
+    assert!(core.cache_bytes() <= 2500);
+    for id in ["a", "b", "c"] { assert_eq!(core.snapshot(id).unwrap().total_bytes.as_deref(), Some("100")); }
+}
+
+#[test]
+fn history_only_accepts_current_local_completions_and_shares_global_budget() {
+    let mut core = core(); core.history_enabled = true; core.limits.cache_bytes = 2500;
+    subscribe(&mut core, "a", "C:\\root", 0);
+    let job = core.take_jobs(0).remove(0); let changed = monitored(&mut core, &job);
+    let mut completed = result(&job, 100);
+    completed.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&job, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+    assert!(core.history.get(&job.target.path).is_some());
+    assert!(core.cache_bytes() <= 2500);
+    changed.store(1, Ordering::Relaxed); core.tick(2);
+    assert!(core.history.get(&job.target.path).is_none());
+    let mut obsolete = result(&job, 999);
+    obsolete.directories.get_mut(job.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&job, obsolete, Some(RootIdentity([1, 2, 3, 4])), 3);
+    assert!(core.history.get(&job.target.path).is_none());
+    core.shutdown(); assert!(core.history.get(&job.target.path).is_none());
+}
+
+#[test]
+fn remote_result_admission_reclaims_history_created_by_local_eviction() {
+    let mut core = core(); core.history_enabled = true; core.limits.cache_bytes = 1600;
+    subscribe(&mut core, "local", "C:\\root", 0);
+    let local = core.take_jobs(0).remove(0); monitored(&mut core, &local);
+    let mut completed = result(&local, 100);
+    completed.directories.get_mut(local.target.path.as_str()).unwrap().created_at = Some(chrono::DateTime::UNIX_EPOCH);
+    core.finished(&local, completed, Some(RootIdentity([1, 2, 3, 4])), 1);
+    core.release("main", "local", 2).unwrap();
+    subscribe(&mut core, "remote", "/root", 3);
+    let remote = core.take_jobs(3).remove(0);
+    let mut completed = result(&remote, 200); completed.accounted_bytes = 1400;
+    core.finished(&remote, completed, None, 4);
+    assert_eq!(core.snapshot("remote").unwrap().total_bytes.as_deref(), Some("200"));
+    assert!(core.cache_bytes() <= 1600);
 }
 
 #[test]
@@ -293,7 +455,8 @@ fn size_service_remote_lookup_keeps_legal_trailing_spaces_distinct() {
     let job = core.take_jobs(0).remove(0);
     let mut result = result(&job, 100);
     for (path, bytes) in [("/root/folder", 10), ("/root/folder ", 90)] {
-        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()) });
+        result.directories.insert(Arc::from(path), DirectorySize { bytes, complete: true, fingerprint: Some("child".into()), created_at: None,
+            stats: ScanStats { known_bytes: bytes, directories: 1, ..Default::default() } });
     }
     core.finished(&job, result, None, 1);
     let lookup = core.lookup("main", LookupDirectorySizesRequest { consumer_id: "a".into(), generation: job.generation,
@@ -306,22 +469,23 @@ fn size_service_successful_rescan_clears_obsolete_reasons_but_preserves_current_
     let mut core = core(); subscribe(&mut core, "a", "C:\\root", 0);
     let first = core.take_jobs(0).remove(0); let flag = monitored(&mut core, &first); finish(&mut core, &first, 10);
     flag.store(1, Ordering::Relaxed); core.tick(20);
-    assert!(core.snapshot("a").unwrap().reason.unwrap().contains("失效"));
-    let second = core.take_jobs(2000).remove(0); monitored(&mut core, &second); finish(&mut core, &second, 2001);
+    assert!(core.snapshot("a").unwrap().reason.unwrap().contains("过期"));
+    core.tick(30_010);
+    let second = core.take_jobs(30_010).remove(0); monitored(&mut core, &second); finish(&mut core, &second, 30_011);
     assert_eq!(core.snapshot("a").unwrap().reason, None);
 
-    let mut refresh = request("a", "C:\\root"); refresh.refresh = true;
-    core.subscribe(core.owner_token("main").unwrap(), refresh, None, 4000).unwrap();
-    let third = core.take_jobs(4000).remove(0); core.prepared(&third, None, None, 4000);
-    core.finished(&third, result(&third, 100), None, 4001);
+    let mut refresh = request("a", "C:\\root"); refresh.intent = DirectorySizeIntent::Calculate;
+    core.subscribe(core.owner_token("main").unwrap(), refresh, None, 32_010).unwrap();
+    let third = core.take_jobs(32_010).remove(0); core.prepared(&third, None, None, 32_010);
+    core.finished(&third, result(&third, 100), None, 32_011);
     assert!(core.snapshot("a").unwrap().reason.unwrap().contains("快照"));
 }
 
 #[test]
 fn size_service_refresh_event_and_return_agree_when_cancelled_work_still_blocks_the_queue() {
     let mut core = core(); subscribe(&mut core, "a", "/root", 0);
-    let old = core.take_jobs(0).remove(0); core.drain_events();
-    let mut refresh = request("b", "/root"); refresh.refresh = true;
+    let old = core.take_jobs(0).remove(0); core.release("main", "a", 1).unwrap(); core.drain_events();
+    let mut refresh = request("b", "/root"); refresh.intent = DirectorySizeIntent::Calculate;
     let returned = core.subscribe(core.owner_token("main").unwrap(), refresh, Some(profile()), 1).unwrap();
     assert!(old.cancelled.load(Ordering::Relaxed)); assert!(core.take_jobs(2000).is_empty());
     let event = core.drain_events().into_iter().find(|(_, event)| event.consumer_id == "b").unwrap().1;

@@ -46,8 +46,15 @@ assertTest("workspace chrome uses a flat high-density split-pane layout", () => 
   assertDeclaration(getCssBlock(".workspace-main"), "padding", "0");
   assertDeclaration(getCssBlock(".tree-pane"), "border-radius", "0");
   assertDeclaration(getCssBlock(".panel-surface"), "border-radius", "0");
+  // 面板框线由 workspace.layout.css 的分组规则提供，panel.css 不得再清零宽度，
+  // 且必须让边框计入 100% 高度，否则面板会溢出 2px。
+  assertDeclaration(getCssBlock(".panel-surface"), "box-sizing", "border-box");
+  assertNoDeclaration(getCssBlock(".panel-surface"), "border-width");
   assertDeclaration(getCssBlock(".file-listing"), "border-radius", "0");
-  assertDeclaration(getCssBlock(".split-pane__handle"), "flex", "0 0 var\\(--split-handle-size, 4px\\)");
+  assertDeclaration(getCssBlock(".split-group--horizontal > .split-group__handle"), "width", "var\\(--split-handle-size, 4px\\)");
+  // 整条分隔条都是拖拽热区。叠加装饰中线会把色带切成“空隙-线-空隙”的观感，
+  // 让人误以为面板和分隔条之间存在间距。
+  assert.doesNotMatch(cssWithoutComments, /\.split-group__handle::before/, "分隔条不应渲染装饰中线");
 });
 
 assertTest("workspace tabs and breadcrumbs match the compact Windows target chrome", () => {
@@ -137,7 +144,8 @@ assertTest("workspace top chrome separates command and address rows without the 
   assertDeclaration(getCssBlock(".workspace-toolbar__actions"), "justify-content", "flex-start");
   assert.equal(workspaceViewSource.includes("workspace-toolbar__history"), false);
   assert.equal(workspaceViewSource.includes("OperationSummaryButton"), false);
-  assertDeclaration(getCssBlock(".information-panel__summary"), "grid-template-columns", "minmax\\(128px, 260px\\) minmax\\(76px, 0\\.7fr\\) minmax\\(64px, 0\\.6fr\\) minmax\\(96px, 0\\.9fr\\) minmax\\(118px, 1fr\\) 26px 26px");
+  // §8:741：第一列承载 QuickFilterControls（固定部分 74px），下限由 128px 提高到 200px。
+  assertDeclaration(getCssBlock(".information-panel__summary"), "grid-template-columns", "minmax\\(200px, 300px\\) minmax\\(76px, 0\\.7fr\\) minmax\\(64px, 0\\.6fr\\) minmax\\(96px, 0\\.9fr\\) minmax\\(118px, 1fr\\) 26px 26px");
   assertDeclaration(getCssBlock(".information-panel.is-expanded"), "min-height", "222px");
   assertDeclaration(getCssBlock(".information-panel__content-shell"), "grid-template-rows", "27px minmax\\(165px, 1fr\\)");
   assertDeclaration(getCssBlock(".information-panel__content"), "min-height", "165px");

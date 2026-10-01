@@ -39,7 +39,10 @@ function cloneSettingsModel(model: SettingsModel): SettingsModel {
     navigationColumns: model.navigationColumns.map((column) => ({ ...column })),
     detailsRowHeight: model.detailsRowHeight,
     sizeBarMode: model.sizeBarMode,
+    treeAutoFollowEnabled: model.treeAutoFollowEnabled === true,
     folderExpansionEnabled: model.folderExpansionEnabled === true,
+    folderExpansionOnRowClick: model.folderExpansionOnRowClick === true,
+    notificationsEnabled: model.notificationsEnabled === true,
     tooltipHoverDelayMs: model.tooltipHoverDelayMs,
     metadataRetentionHours: model.metadataRetentionHours,
     fileVisibility: { ...model.fileVisibility },
@@ -75,7 +78,7 @@ function getSettingsErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function computeDirtySections(
+export function computeDirtySections(
   persisted: WorkspaceState,
   draft: WorkspaceState,
   normalizedPersistedModel: SettingsModel,
@@ -94,13 +97,15 @@ function computeDirtySections(
     !hasSameJsonShape(pm.navigationColumns, dm.navigationColumns) ||
     pm.detailsRowHeight !== dm.detailsRowHeight ||
     pm.sizeBarMode !== dm.sizeBarMode ||
+    pm.treeAutoFollowEnabled !== dm.treeAutoFollowEnabled ||
     pm.folderExpansionEnabled !== dm.folderExpansionEnabled ||
+    pm.folderExpansionOnRowClick !== dm.folderExpansionOnRowClick ||
     pm.tooltipHoverDelayMs !== dm.tooltipHoverDelayMs ||
     pm.metadataRetentionHours !== dm.metadataRetentionHours
   ) {
     sections.add("file-list");
   }
-  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu)) sections.add("menu-mouse");
+  if (!hasSameJsonShape(pm.contextMenu, dm.contextMenu) || pm.notificationsEnabled !== dm.notificationsEnabled) sections.add("menu-mouse");
   if (!hasSameJsonShape(pm.theme, dm.theme)) sections.add("appearance");
   if (hasColorRuleDraftChanges(dm.colorRules, pm.colorRules, colorRulesRawDraftDirty)) {
     sections.add("color-rules");
@@ -137,7 +142,7 @@ export function SettingsWindowView() {
   const settingsReady = state.status === "ready";
   const [draftState, setDraftState] = useState<WorkspaceState>(() => {
     const draft = createDraftState(state);
-    draft.settings.section = requestedSettingsSection(window.location.search, draft.settings.section);
+    draft.settings.section = requestedSettingsSection(window.location.search, "general");
     return draft;
   });
   const [dirty, setDirty] = useState(false);
@@ -151,12 +156,16 @@ export function SettingsWindowView() {
   const [colorRulesValid, setColorRulesValid] = useState(true);
   const [colorRulesRawDraftDirty, setColorRulesRawDraftDirty] = useState(false);
   const [colorRulesResetSequence, setColorRulesResetSequence] = useState(0);
+  const [navigationVersion, setNavigationVersion] = useState(0);
 
   useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
     void listenSettingsNavigation(section => {
-      if (!disposed) setDraftState(current => ({ ...current, settings: { ...current.settings, section } }));
+      if (!disposed) {
+        setDraftState(current => ({ ...current, settings: { ...current.settings, section } }));
+        setNavigationVersion(version => version + 1);
+      }
     }).then(unlisten => {
       if (disposed) unlisten(); else stop = unlisten;
     }).catch(error => {
@@ -208,6 +217,16 @@ export function SettingsWindowView() {
     setColorRulesConflict(false);
     setErrorMessage(null);
   }, [state, settingsReady, dirty, colorRulesRawDraftDirty, applying]);
+
+  // The automatic size list is not editable in the draft (E7), so the latest persisted list always replaces it,
+  // even while other sections hold unsaved changes.
+  const persistedAutoDirectorySizePaths = state.settings.model.autoDirectorySizePaths;
+  useEffect(() => {
+    setDraftState((current) => current.settings.model.autoDirectorySizePaths === persistedAutoDirectorySizePaths ? current : {
+      ...current,
+      settings: { ...current.settings, model: { ...current.settings.model, autoDirectorySizePaths: persistedAutoDirectorySizePaths } }
+    });
+  }, [persistedAutoDirectorySizePaths]);
 
   useEffect(() => {
     if (!settingsReady || applying) return;
@@ -280,6 +299,7 @@ export function SettingsWindowView() {
   };
 
   const updateDraftSection = (section: SettingsSection) => {
+    setNavigationVersion(version => version + 1);
     setDraftState((current) => ({
       ...current,
       settings: {
@@ -542,8 +562,12 @@ export function SettingsWindowView() {
         onChooseTemplateRoot={actions.chooseTemplateRoot}
         onChooseAssociationProgram={actions.chooseAssociationProgram}
         onInspectAssociationPrograms={actions.inspectAssociationPrograms}
+        onAddAutoDirectorySizePath={actions.addAutoDirectorySizePath}
+        onRemoveAutoDirectorySizePath={actions.removeAutoDirectorySizePath}
+        onChooseAutoDirectorySizeFolder={actions.chooseAutoDirectorySizeFolder}
         state={draftState}
         dirtySections={dirtySections}
+        navigationVersion={navigationVersion}
         onSelectSection={updateDraftSection}
         onUpdateShortcut={(id, binding) =>
           updateDraftModel((model) => ({
@@ -628,8 +652,15 @@ export function SettingsWindowView() {
           }))
         }
         onUpdateSizeBarMode={(value) => updateDraftModel((model) => ({ ...model, sizeBarMode: normalizeSizeBarMode(value) }))}
+        onUpdateTreeAutoFollowEnabled={(enabled) => updateDraftModel(model => ({ ...model, treeAutoFollowEnabled: enabled }))}
         onUpdateFolderExpansionEnabled={(enabled) =>
           updateDraftModel((model) => ({ ...model, folderExpansionEnabled: enabled }))
+        }
+        onUpdateFolderExpansionOnRowClick={(enabled) =>
+          updateDraftModel((model) => ({ ...model, folderExpansionOnRowClick: enabled }))
+        }
+        onUpdateNotificationsEnabled={(enabled) =>
+          updateDraftModel((model) => ({ ...model, notificationsEnabled: enabled }))
         }
         onUpdateTooltipHoverDelay={(value) =>
           updateDraftModel((model) => ({

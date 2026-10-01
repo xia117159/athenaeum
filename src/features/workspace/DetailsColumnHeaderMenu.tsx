@@ -1,5 +1,6 @@
 import { MenuSurface } from "./MenuPrimitives";
 import type { RefObject } from "react";
+import type { DirectorySizeMenuAction } from "./directorySizeMenu";
 
 type ColumnMenuColumn<T extends string> = {
   id: T;
@@ -16,7 +17,8 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
   getColumnLabel = (column) => column.label ?? column.id,
   onToggleColumn,
   onShowAll,
-  onAutoFit
+  onAutoFit,
+  directorySizeAction
 }: {
   menuRef: RefObject<HTMLDivElement | null>;
   x: number;
@@ -27,6 +29,7 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
   onToggleColumn: (columnId: T) => void;
   onShowAll: () => void;
   onAutoFit: () => void;
+  directorySizeAction?: DirectorySizeMenuAction;
 }) {
   const isColumnVisible = (column: C) => visibility?.[column.id] ?? column.visible ?? true;
 
@@ -41,6 +44,16 @@ export function DetailsColumnHeaderMenu<T extends string, C extends ColumnMenuCo
         event.stopPropagation();
       }}
     >
+      {directorySizeAction ? (
+        <>
+          <button type="button" className="app-menu__item column-header-menu__item" role="menuitem" data-column-menu-action="directory-size"
+            disabled={directorySizeAction.disabled} title={directorySizeAction.title} onClick={directorySizeAction.onSelect}>
+            <span className="column-header-menu__check" aria-hidden="true" />
+            <span>{directorySizeAction.label}</span>
+          </button>
+          <div className="app-menu__separator column-header-menu__separator" role="separator" />
+        </>
+      ) : null}
       {columns.map((column) => (
         <button
           key={column.id}

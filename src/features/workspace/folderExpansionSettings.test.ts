@@ -5,6 +5,39 @@ import { createBrowserSettingsSnapshot, toBackendSettingsModelUpdate } from "./w
 import { mapSettingsSnapshotToWorkspaceSettings, normalizeSettingsModel } from "./workspaceMappers";
 import { listenWorkspaceSettingsChanged, saveWorkspaceSettingsModel } from "./workspaceSettingsGateway";
 
+test("row-click expansion defaults off for new and legacy settings", () => {
+  const snapshot = createBrowserSettingsSnapshot();
+  assert.equal(Reflect.get(snapshot, "folderExpansionOnRowClick"), false);
+  Reflect.deleteProperty(snapshot, "folderExpansionOnRowClick");
+  const model = mapSettingsSnapshotToWorkspaceSettings(snapshot).settingsModel;
+  assert.equal(Reflect.get(model, "folderExpansionOnRowClick"), false);
+  assert.equal(Reflect.get(createMockWorkspaceBootstrap().settingsModel, "folderExpansionOnRowClick"), false);
+});
+
+test("row-click choice survives normalization, IPC and settings events independently of the master switch", async () => {
+  for (const master of [false, true]) {
+    for (const enabled of [true, false]) {
+      const snapshot = { ...createBrowserSettingsSnapshot(), folderExpansionEnabled: master, folderExpansionOnRowClick: enabled };
+      const model = mapSettingsSnapshotToWorkspaceSettings(snapshot).settingsModel;
+      assert.equal(Reflect.get(normalizeSettingsModel(model), "folderExpansionOnRowClick"), enabled);
+      assert.equal(Reflect.get(toBackendSettingsModelUpdate(model), "folderExpansionOnRowClick"), enabled);
+      await saveWorkspaceSettingsModel(model, {
+        runtimeHost: { __TAURI_INTERNALS__: {} },
+        invoke: async <T>(_command: string, args: Record<string, unknown>) => {
+          assert.equal(Reflect.get(args.model as object, "folderExpansionOnRowClick"), enabled);
+          return snapshot as T;
+        }
+      });
+      let received: unknown;
+      await listenWorkspaceSettingsChanged(value => { received = Reflect.get(value.settingsModel, "folderExpansionOnRowClick"); }, {
+        runtimeHost: { __TAURI_INTERNALS__: {} },
+        listen: async (_name, handler) => { await handler({ payload: snapshot as never }); return () => undefined; }
+      });
+      assert.equal(received, enabled);
+    }
+  }
+});
+
 test("folder expansion is disabled by default, including legacy settings without the field", () => {
   const snapshot = createBrowserSettingsSnapshot();
   Reflect.deleteProperty(snapshot, "folderExpansionEnabled");

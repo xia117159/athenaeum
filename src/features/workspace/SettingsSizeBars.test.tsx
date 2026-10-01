@@ -8,6 +8,7 @@ import type { SettingsModel } from "./types";
 
 export const completion = (async () => {
   const dom = installDomEnvironment(); dom.window.close = () => undefined;
+  dom.window.history.replaceState(null, "", "/?view=settings&section=appearance");
   Object.defineProperty(globalThis, "self", { configurable: true, value: dom.window });
   const controllerModule = require("./useWorkspaceController") as typeof import("./useWorkspaceController");
   const original = controllerModule.useWorkspaceController;
@@ -46,7 +47,7 @@ export const completion = (async () => {
       await input("menu-hover-background-hex", "#ffffff00"); await click(button("取消"));
       assert.equal(saved.length, 0);
       await render("hover-reopen");
-      assert.match(container.querySelector<HTMLButtonElement>('[data-setting-id="menu-hover-background"]')?.title ?? "", /^#e5f1fb/);
+      assert.match(container.querySelector('[data-setting-id="menu-hover-background"] .theme-color-control__value')?.textContent ?? "", /^#e5f1fb/);
     });
     await assertTest("appearance exposes two size-bar endpoints with opacity; Confirm persists the draft only", async () => {
       await render("confirm");
@@ -67,7 +68,7 @@ export const completion = (async () => {
       await click(button("取消"));
       assert.equal(saved.length, 0); assert.equal(state.settings.model.theme.sizeBarLow, "#dceaf7");
       await render("reopen");
-      assert.match(container.querySelector<HTMLButtonElement>('[data-setting-id="size-bar-low"]')?.title ?? "", /^#dceaf7/);
+      assert.match(container.querySelector('[data-setting-id="size-bar-low"] .theme-color-control__value')?.textContent ?? "", /^#dceaf7/);
     });
   } finally { await act(async () => root.unmount()); container.remove(); controllerModule.useWorkspaceController = original; }
 })();

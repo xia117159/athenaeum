@@ -5,8 +5,8 @@ import { getFolderListingRows } from "./folderExpansion";
 import { sortEntries } from "./fileListingSort";
 import { getPathComparisonKey } from "./workspacePathRelations";
 import { DEFAULT_FILE_VISIBILITY } from "./workspaceVisibility";
-import { expansionEntry } from "./folderExpansionTestSupport";
-import { sizeFixture, sizeRecord } from "./directorySizeTestSupport";
+import { expansionEntry, quickFilterProgram } from "./folderExpansionTestSupport";
+import { sizeFixture, sizeRecord, sizeSnapshot } from "./directorySizeTestSupport";
 import { buildThisPcSnapshot } from "./workspaceDirectoryGateway";
 
 test("size shares keep one root denominator for 60/30/10 and expanded descendants", () => {
@@ -17,9 +17,123 @@ test("size shares keep one root denominator for 60/30/10 and expanded descendant
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "60 B");
   assert.equal(projectEntrySize(tab, a).sizeLabel, "30 B");
   assert.deepEqual(getFolderListingRows(tab).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6, .3, .1]);
-  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, "child").map(({ entry }) => entry.sizeDisplay?.share), [.6, .6]);
+  assert.deepEqual(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, quickFilterProgram("child")).map(({ entry }) => entry.sizeDisplay?.share), [.6, .6]);
   tab.folderExpansion = undefined;
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
+});
+
+test("first listing file sizes and cached folder sizes share a known-size denominator before a lease", () => {
+  const { tab, parent, a, b } = sizeFixture();
+  tab.directorySizes = undefined;
+  tab.snapshot.directorySizeCache = { generation: 0, sequence: 0, historical: true, directories: [
+    { ...sizeRecord(parent.path, "60"), createdAt: parent.sizeCreatedAt, cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  const rows = [parent, a, b].map((entry) => projectEntrySize(tab, entry));
+  assert.deepEqual(rows.map((entry) => entry.sizeDisplay?.share), [.6, .3, .1]);
+  assert.ok(rows.every((entry) => entry.sizeDisplay?.title.includes("已知")));
+  assert.equal(projectEntrySize(tab, parent, "folder-max").sizeDisplay?.share, 1);
+  assert.equal(projectEntrySize(tab, a, "folder-max").sizeDisplay?.share, .5);
+});
+
+test("known-size bars survive incomplete siblings and positive expanded rows with a zero root", () => {
+  const { tab, sizes, parent, a, child } = sizeFixture();
+  sizes.records = { [getPathComparisonKey(tab.snapshot.location.path)]: sizeRecord(tab.snapshot.location.path, "100", "root-stamp"),
+    [getPathComparisonKey(parent.path)]: sizeRecord(parent.path, "60", "parent-stamp") };
+  tab.snapshot.entries.push(expansionEntry(tab.snapshot.location.path, "unknown", "folder"));
+  assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .6);
+  assert.match(projectEntrySize(tab, parent).sizeDisplay!.title, /已知/);
+  tab.snapshot.entries = [expansionEntry(tab.snapshot.location.path, "zero", "file", { sizeBytes: 0, sizeLabel: "0 B" })];
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, 1);
+  assert.match(projectEntrySize(tab, child).sizeDisplay!.title, /已知/);
+  assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, 1);
+});
+
+test("details size projection avoids per-file path normalization without file records", () => {
+  const { tab, a } = sizeFixture();
+  let pathReads = 0;
+  tab.snapshot = { ...tab.snapshot, entries: Array.from({ length: 3_000 }, (_, index) => {
+    const entry = { ...a, id: `file-${index}`, name: `file-${index}.txt` };
+    Object.defineProperty(entry, "path", { get() { pathReads++; return `${a.path}-${index}`; } });
+    return entry;
+  }) };
+  assert.equal(getFolderListingRows(tab, DEFAULT_FILE_VISIBILITY, null, false).length, 3_000);
+  assert.equal(pathReads, 3_000, "each file path is read only when copying the projected entry");
+});
+
+test("expanded branch cache immediately supplies descendant folder sizes and bars", () => {
+  const { tab, parent } = sizeFixture();
+  const nested = expansionEntry(parent.path, "nested-folder", "folder", { sizeCreatedAt: "nested-created" });
+  const child = expansionEntry(parent.path, "child.txt", "file", { sizeBytes: 40, sizeLabel: "40 B" });
+  const branch = tab.folderExpansion![getPathComparisonKey(parent.path)];
+  branch.entries = [nested, child];
+  branch.directorySizeCache = { generation: 1, sequence: 2, directories: [
+    { ...sizeRecord(nested.path, "20", "nested-stamp"), createdAt: "nested-created", cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  const row = getFolderListingRows(tab).find(({ entry }) => entry.path === nested.path)?.entry;
+  assert.equal(row?.sizeLabel, "20 B");
+  assert.equal(row?.sizeDisplay?.share, .2);
+  assert.equal(row?.sizeDisplay?.advisory, true);
+  const file = getFolderListingRows(tab).find(({ entry }) => entry.path === child.path)?.entry;
+  assert.equal(file?.sizeLabel, "40 B");
+  assert.equal(file?.sizeDisplay?.share, .4);
+});
+
+test("expanded branch root cache keeps its size and bar while live statistics are scanning", () => {
+  const { tab, parent } = sizeFixture();
+  const branch = tab.folderExpansion![getPathComparisonKey(parent.path)];
+  parent.sizeCreatedAt = "parent-created";
+  branch.directorySizeCache = { generation: 1, sequence: 2, directories: [
+    { ...sizeRecord(parent.path, "60", "parent-stamp"), createdAt: "parent-created", cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  tab.directorySizes!.records = {};
+  for (const phase of ["scanning", "complete", "scanning"] as const) {
+    tab.directorySizes!.snapshot = sizeSnapshot({ generation: 2, sequence: phase === "scanning" ? 3 : 4, phase });
+    const row = getFolderListingRows(tab).find(({ entry }) => entry.path === parent.path)?.entry;
+    assert.equal(row?.sizeLabel, "60 B", phase);
+    assert.equal(row?.sizeDisplay?.share, .6, phase);
+  }
+});
+
+test("expanded branch cache stays visible while the branch listing refreshes", () => {
+  const { tab, parent } = sizeFixture();
+  const nested = expansionEntry(parent.path, "nested-folder", "folder", { sizeCreatedAt: "nested-created" });
+  const branch = tab.folderExpansion![getPathComparisonKey(parent.path)];
+  branch.entries = [nested];
+  branch.directorySizeCache = { generation: 1, sequence: 2, directories: [
+    { ...sizeRecord(nested.path, "20", "nested-stamp"), createdAt: "nested-created", cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  for (const status of ["ready", "loading", "idle", "ready"] as const) {
+    branch.status = status;
+    const row = getFolderListingRows(tab).find(({ entry }) => entry.path === nested.path)?.entry;
+    assert.equal(row?.sizeLabel, "20 B", status);
+    assert.equal(row?.sizeDisplay?.share, .2, status);
+  }
+});
+
+test("expanded branch cache treats an artifact revision change as historical", () => {
+  const { tab, parent } = sizeFixture();
+  const branch = tab.folderExpansion![getPathComparisonKey(parent.path)];
+  parent.sizeCreatedAt = "parent-created";
+  branch.directorySizeCache = { generation: 1, sequence: 2, artifactRevision: "old-artifact", directories: [
+    { ...sizeRecord(parent.path, "60", "parent-stamp"), createdAt: "parent-created", cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  tab.directorySizes!.records = {};
+  tab.directorySizes!.snapshot = sizeSnapshot({ generation: 1, sequence: 3, phase: "complete", artifactRevision: "new-artifact" });
+  const row = getFolderListingRows(tab).find(({ entry }) => entry.path === parent.path)?.entry;
+  assert.match(row?.sizeDisplay?.title ?? "", /历史值（计算于 .*本次统计未包含此项/);
+});
+
+test("expanded historical cache rejects a replaced branch entry", () => {
+  const { tab, parent } = sizeFixture();
+  const branch = tab.folderExpansion![getPathComparisonKey(parent.path)];
+  const nested = expansionEntry(parent.path, "nested-folder", "folder", { sizeCreatedAt: "new-created" });
+  branch.entries = [nested];
+  branch.directorySizeCache = { generation: 0, sequence: 0, historical: true, directories: [
+    { ...sizeRecord(nested.path, "20", "nested-stamp"), createdAt: "old-created", cachedAt: "2026-09-25T00:00:00Z" }
+  ] };
+  const row = getFolderListingRows(tab).find(({ entry }) => entry.path === nested.path)?.entry;
+  assert.equal(row?.sizeLabel, "--");
+  assert.equal(row?.sizeDisplay?.share, null);
 });
 
 test("size-bar modes use the current listing root and exclude links or unknown values", () => {
@@ -43,7 +157,8 @@ test("old listing sizes below the total still need parent fingerprint pairing", 
   tab.snapshot.sizeFingerprint = "old-root";
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.state, "stale");
   assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null);
-  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, .6, "the expanded child keeps the current root denominator");
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, null, "new branch shares also await a consistent root denominator");
+  assert.equal(projectEntrySize(tab, child).sizeDisplay?.label, "60 B", "known branch bytes remain available");
   Object.values(tab.folderExpansion!)[0].sizeFingerprint = "old-parent";
   assert.equal(projectEntrySize(tab, child).sizeDisplay?.share, null);
 });
@@ -56,7 +171,8 @@ test("partial stale cancelled and unknown totals never look like exact shares", 
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.share, .5);
   for (const phase of ["queued", "scanning", "failed", "stale", "cancelled"] as const) {
     sizes.snapshot!.phase = phase;
-    assert.equal(projectEntrySize(tab, a).sizeDisplay?.share, null, phase);
+    assert.equal(projectEntrySize(tab, a).sizeDisplay?.provisional, true, phase);
+    assert.notEqual(projectEntrySize(tab, a).sizeDisplay?.share, null, phase);
   }
   sizes.records = {};
   assert.equal(projectEntrySize(tab, parent).sizeDisplay?.label, "--");

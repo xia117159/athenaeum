@@ -1,4 +1,4 @@
-﻿﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { createMockWorkspaceBootstrap, createTabState, resolveMockDirectory } from "./mockData";
@@ -61,6 +61,7 @@ export const completion = (async () => {
   }, interactions, {
     loadBootstrap: () => ({
       ...createMockWorkspaceBootstrap("tauri"),
+      settingsModel: { ...createMockWorkspaceBootstrap("tauri").settingsModel, notificationsEnabled: true },
       startupDiagnostics: ["Invalid persisted colorRulesRevision was reset to 0"]
     })
   });
@@ -403,10 +404,10 @@ export const completion = (async () => {
           extensionController?.actions.selectMultipleEntries("panel-1", extensionTab.id, ids);
           await flushEffects();
         });
-        await waitFor(
-          () => extensionController?.state.informationPanel.properties.summary?.selectionKey === ids.join("|"),
-          "multi-selection extension summary was not updated"
-        );
+        await waitFor(() => { // B23：selectionKey 跟随可见行顺序（文件夹在前），这里只比较条目集合。
+          const key = extensionController?.state.informationPanel.properties.summary?.selectionKey.split("|") ?? [];
+          return key.length === ids.length && ids.every((id) => key.includes(id));
+        }, "multi-selection extension summary was not updated");
         return extensionController!.state.informationPanel.properties.summary;
       }
 
@@ -4018,6 +4019,7 @@ export const completion = (async () => {
       let hydratedController: ReturnType<typeof useWorkspaceController> | undefined;
 
       const bootstrap = createMockWorkspaceBootstrap("mock");
+      bootstrap.settingsModel.treeAutoFollowEnabled = true;
       const panel = bootstrap.panels["panel-1"];
       const activeTab = panel.tabs[0];
       const loadResponses = new Map<string, DirectoryNode[]>([
@@ -4157,6 +4159,7 @@ export const completion = (async () => {
       };
       let reconnectController: ReturnType<typeof useWorkspaceController> | undefined;
       const bootstrap = createMockWorkspaceBootstrap("tauri");
+      bootstrap.settingsModel.treeAutoFollowEnabled = true;
       const remoteRootPath = "sftp://deploy@edge-01.internal/releases";
       const remoteCurrentPath = `${remoteRootPath}/current`;
       const baseTab = bootstrap.panels["panel-1"].tabs[0];

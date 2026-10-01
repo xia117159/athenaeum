@@ -9,6 +9,7 @@ import type { FileAssociationRule } from "../../app/fileAssociations";
 import type { OpenWithMenuState, PendingFileOpen } from "./fileOpeningState";
 import type { BatchRenameDialogState, RenameTarget } from "./batchRenameState";
 import type { TemplateMenuState, TemplateCreationPending } from "./templateCreationState";
+import type { QuickFilterState } from "./quickFilterTypes";
 
 export type DataSource = "mock" | "tauri";
 
@@ -16,11 +17,13 @@ export const THIS_PC_PATH = "此电脑";
 export type PanelLayoutMode = "single" | "dual" | "triple" | "quad";
 export type PanelId = "panel-1" | "panel-2" | "panel-3" | "panel-4";
 export type SettingsSection =
+  | "general"
   | "templates"
   | "shortcuts"
   | "file-list"
   | "menu-mouse"
   | "file-associations"
+  | "auto-directory-sizes"
   | "appearance"
   | "color-rules"
   | "tag-rules"
@@ -91,6 +94,7 @@ export interface DirectoryNode {
   isProtectedOperatingSystem?: boolean;
   expandable: boolean;
   loaded?: boolean;
+  treeLoadRequestId?: number;
   children: DirectoryNode[];
 }
 
@@ -103,8 +107,12 @@ export interface EntryViewModel {
   sizeBytes?: number | null;
   sizeLabel: string;
   sizeDisplay?: import("./directorySizeTypes").EntrySizeDisplay;
+  /** Raw metadata hint for rejecting a replaced entry's historical size. */
+  sizeCreatedAt?: string | null;
   createdLabel?: string;
   modifiedLabel: string;
+  /** Raw filesystem timestamp used to invalidate a path-specific system icon. */
+  modifiedAt?: string | null;
   accessedLabel?: string;
   extension: string;
   attributes: string[];
@@ -132,6 +140,7 @@ export interface DirectorySnapshot {
   entries: EntryViewModel[];
   sizeFingerprint?: string | null;
   sizeIdentityReliable?: boolean;
+  directorySizeCache?: import("./directorySizeTypes").DirectorySizeCache;
 }
 
 export interface FolderExpansionBranch {
@@ -140,6 +149,8 @@ export interface FolderExpansionBranch {
   status: "idle" | "loading" | "ready" | "error";
   sizeFingerprint?: string | null;
   sizeIdentityReliable?: boolean;
+  /** Cache projection returned with this expanded directory listing. */
+  directorySizeCache?: import("./directorySizeTypes").DirectorySizeCache;
   requestId?: number;
   errorMessage?: string;
   selectionReplacements?: SelectionPathReplacement[];
@@ -308,7 +319,12 @@ export interface SettingsModel {
   navigationColumns: NavigationColumnDefinition[];
   detailsRowHeight: number;
   sizeBarMode: SizeBarMode;
+  treeAutoFollowEnabled?: boolean;
   folderExpansionEnabled?: boolean;
+  folderExpansionOnRowClick?: boolean;
+  notificationsEnabled?: boolean;
+  /** Persisted by dedicated backend commands, never through the settings draft (E7). */
+  autoDirectorySizePaths?: string[];
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilityState;
@@ -566,7 +582,6 @@ export interface RemoteConnectionProfile {
 
 export interface SearchState {
   loading: boolean;
-  filterText: string;
   activeTab: SearchTabId;
   query: SearchQuery;
   results: SearchResult[];
@@ -635,10 +650,12 @@ export interface TabState {
    * 的末项无法推断光标端方向）。
    */
   selectionCursorId?: string | null;
+  /** Per-tab expansion memory used only while automatic tree following is enabled. */
   expandedNodePaths: string[];
   /** Transient details-list branches; independent of the navigation tree and session. */
   folderExpansion?: Record<string, FolderExpansionBranch>;
   directorySizes?: import("./directorySizeTypes").DirectorySizeTabState;
+  directorySizePresentation?: import("./directorySizeTypes").DirectorySizePresentation;
   viewMode: TabViewMode;
   sort: SortState;
   columns: ColumnDefinition[];
@@ -670,7 +687,13 @@ export interface LayoutRatios {
   search: number;
 }
 
+export interface WorkspaceTreeState {
+  activePath: string;
+  expandedNodePaths: string[];
+}
+
 export interface WorkspaceBootstrap {
+  treeState?: WorkspaceTreeState;
   source: DataSource;
   startupDiagnostics: string[];
   layoutMode: PanelLayoutMode;
@@ -688,6 +711,8 @@ export interface WorkspaceBootstrap {
 }
 
 export interface WorkspaceState {
+  directorySizeViewsFrozen?: boolean;
+  treeState: WorkspaceTreeState;
   status: "loading" | "ready";
   source: DataSource;
   layoutMode: PanelLayoutMode;
@@ -704,6 +729,12 @@ export interface WorkspaceState {
   navigation: NavigationState;
   remoteProfiles: RemoteConnectionProfile[];
   search: SearchState;
+  /**
+   * 快速过滤状态（spec 20260920-quick-filter）。
+   * 过滤文本按路径缓存于 `byPath`；`mode`/`syntax` 是会话全局偏好（D4-R，不随路径条目淘汰而重置）。
+   * 纯内存态，不持久化（D11）。
+   */
+  quickFilter: QuickFilterState;
   informationPanel: InformationPanelState;
   settings: SettingsSurfaceState;
   clipboard?: ClipboardState;

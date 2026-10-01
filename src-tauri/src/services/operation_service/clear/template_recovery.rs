@@ -24,6 +24,7 @@ impl OperationStore {
     pub(in crate::services::operation_service) fn cleanup_template_records(
         &self,
         removed: &mut Vec<OperationHistoryRecord>,
+        sizes: Option<&crate::services::directory_size::DirectorySizeService>,
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         removed.retain(|record| {
@@ -34,6 +35,8 @@ impl OperationStore {
             else {
                 return true;
             };
+            let paths: Vec<_> = trees.iter().filter(|tree| tree.recovery_prepared).map(|tree| tree.recovery_path.clone()).collect();
+            let _size_change = sizes.filter(|_| !paths.is_empty()).map(|sizes| sizes.namespace_change(&paths));
             #[cfg(windows)]
             let result = crate::services::templates::owned::purge_recovery(trees);
             #[cfg(not(windows))]

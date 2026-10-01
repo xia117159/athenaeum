@@ -1,6 +1,9 @@
 [default]
 description = "Allows Athenaeum workspace commands required by the main desktop window."
 permissions = [
+  "allow-add-auto-directory-size-path",
+  "allow-remove-auto-directory-size-path",
+  "allow-choose-directory-size-folder",
   "allow-list-creation-templates",
   "allow-create-template-items",
   "allow-choose-template-root",
@@ -15,10 +18,15 @@ permissions = [
   "allow-subscribe-directory-sizes",
   "allow-release-directory-sizes",
   "allow-lookup-directory-sizes",
+  "allow-get-directory-size-diagnostics",
+  "allow-lookup-directory-size-cache",
+  "allow-update-directory-size-views",
   "allow-set-workspace-watch-roots",
   "allow-get-item-properties",
   "allow-get-tree-children",
   "allow-resolve-system-icon",
+  "allow-resolve-system-icon-keys",
+  "allow-resolve-system-icon-bitmap",
   "allow-copy-entries",
   "allow-move-entries",
   "allow-delete-entries",
@@ -89,6 +97,21 @@ permissions = [
   "allow-get-git-status",
   "allow-list-drive-roots"
 ]
+
+[[permission]]
+identifier = "allow-add-auto-directory-size-path"
+description = "Adds a folder to automatic directory size calculation."
+commands.allow = ["add_auto_directory_size_path"]
+
+[[permission]]
+identifier = "allow-remove-auto-directory-size-path"
+description = "Removes a folder from automatic directory size calculation."
+commands.allow = ["remove_auto_directory_size_path"]
+
+[[permission]]
+identifier = "allow-choose-directory-size-folder"
+description = "Chooses a folder for automatic directory size calculation."
+commands.allow = ["choose_directory_size_folder"]
 
 [[permission]]
 identifier = "allow-list-creation-templates"
@@ -186,6 +209,21 @@ description = "Allows bounded generation-fenced directory size lookups."
 commands.allow = ["lookup_directory_sizes"]
 
 [[permission]]
+identifier = "allow-get-directory-size-diagnostics"
+description = "Allows bounded read-only local size cache diagnostics for the invoking window."
+commands.allow = ["get_directory_size_diagnostics"]
+
+[[permission]]
+identifier = "allow-lookup-directory-size-cache"
+description = "Allows bounded directory size display enrichment for the invoking workspace."
+commands.allow = ["lookup_directory_size_cache"]
+
+[[permission]]
+identifier = "allow-update-directory-size-views"
+description = "Allows the workspace to update its owner-bound open-directory manifest."
+commands.allow = ["update_directory_size_views"]
+
+[[permission]]
 identifier = "allow-get-item-properties"
 description = "Allows reading local and remote item properties for the workspace information panel."
 commands.allow = ["get_item_properties"]
@@ -199,6 +237,16 @@ commands.allow = ["get_tree_children"]
 identifier = "allow-resolve-system-icon"
 description = "Allows resolving Windows shell icons for displayed entries."
 commands.allow = ["resolve_system_icon"]
+
+[[permission]]
+identifier = "allow-resolve-system-icon-keys"
+description = "Allows resolving Windows shell icon index keys for displayed entries."
+commands.allow = ["resolve_system_icon_keys"]
+
+[[permission]]
+identifier = "allow-resolve-system-icon-bitmap"
+description = "Allows rendering a Windows shell icon bitmap for a resolved icon key."
+commands.allow = ["resolve_system_icon_bitmap"]
 
 [[permission]]
 identifier = "allow-copy-entries"

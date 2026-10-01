@@ -3,9 +3,11 @@ import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { useWorkspaceController } from "./useWorkspaceController";
 import { getFolderBranch, getTabEntries } from "./folderExpansion";
+import { getPathComparisonKey } from "./workspacePathRelations";
 import { expansionEntry, expansionFixture, expansionInteractions, expansionSnapshot } from "./folderExpansionTestSupport";
 import { assertTest, createTestGateway, flushEffects, installDomEnvironment, waitFor } from "./workspaceControllerTestHarness";
 import type { DirectorySnapshot, WorkspaceBootstrap } from "./types";
+import type { QuickFilterMode } from "./quickFilterTypes";
 import type { WorkspaceGateway } from "./workspaceGateway";
 
 type Controller = ReturnType<typeof useWorkspaceController>;
@@ -34,9 +36,167 @@ async function toggle(harness: Awaited<ReturnType<typeof mount>>, path: string, 
   await act(async () => { action("panel-1", harness.tab.id, path); await flushEffects(); });
 }
 
+/**
+ * 快速过滤取代旧的 `search.filterText` / `updateSearchFilter`：`include` 模式保留命中行
+ * 及其祖先链，等价于旧字符串过滤的语义，因此这些测试的原意保持不变。
+ */
+function setQuickFilter(harness: Awaited<ReturnType<typeof mount>>, text: string) {
+  harness.controller.state.quickFilter = { mode: "include", syntax: "substring",
+    byPath: text ? { [getPathComparisonKey(harness.tab.snapshot.location.path)]: { text, appliedText: text, error: null } } : {} };
+}
+
+/** 与 `setQuickFilter` 相同的直接写入方式，但可指定模式，用于覆盖 B22 的三种模式。 */
+function setQuickFilterMode(harness: Awaited<ReturnType<typeof mount>>, mode: QuickFilterMode, text: string) {
+  harness.controller.state.quickFilter = { mode, syntax: "substring",
+    byPath: text ? { [getPathComparisonKey(harness.tab.snapshot.location.path)]: { text, appliedText: text, error: null } } : {} };
+}
+
 export const completion = (async () => {
   const dom = installDomEnvironment();
   dom.window.confirm = () => true;
+  await assertTest("Space toggles only the selected cursor folder in the active panel and tab", async () => {
+    const f = expansionFixture();
+    const inactiveTab = { ...f.bootstrap.panels["panel-1"].tabs[0], id: "inactive-tab", selectedEntryIds: [f.parent.id] };
+    f.bootstrap.panels["panel-1"].tabs.push(inactiveTab);
+    f.bootstrap.layoutMode = "dual";
+    f.bootstrap.panels["panel-2"].tabs = [{ ...inactiveTab, id: "other-panel-tab" }];
+    f.bootstrap.panels["panel-2"].activeTabId = "other-panel-tab";
+    const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, []) });
+    const pressSpace = async () => act(async () => {
+      window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+      await flushEffects();
+    });
+    try {
+      await act(async () => {
+        harness.controller.actions.selectMultipleEntries("panel-1", f.tabId, [f.parent.id, f.sibling.id]);
+        await flushEffects();
+      });
+      harness.tab.selectionCursorId = f.parent.id;
+      await pressSpace();
+      assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+      assert.equal(getFolderBranch(harness.tab, f.sibling.path), undefined);
+      assert.equal(harness.controller.state.panels["panel-1"].tabs[1].folderExpansion, undefined);
+      assert.equal(harness.controller.state.panels["panel-2"].tabs[0].folderExpansion, undefined);
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.parent.id, f.sibling.id]);
+      await pressSpace();
+      assert.equal(harness.tab.folderExpansion, undefined);
+      await act(async () => { harness.controller.actions.updateShortcutBinding("toggle-folder-expansion", "F8"); await flushEffects(); });
+      await pressSpace();
+      assert.equal(harness.tab.folderExpansion, undefined, "the previous binding stops working after customization");
+    } finally { await harness.close(); }
+  });
+  for (const kind of ["local", "ftp", "sftp"] as const) {
+    await assertTest(`a custom expansion shortcut toggles the selected ${kind} folder without navigation or selection changes`, async () => {
+      const f = expansionFixture(kind);
+      f.bootstrap.settingsModel.folderExpansionOnRowClick = false;
+      f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+        scope: "listing", binding: "F8", description: "" });
+      const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, [f.child]) });
+      const key = async (options: KeyboardEventInit = {}) => {
+        const event = new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true, ...options });
+        await act(async () => { window.dispatchEvent(event); await flushEffects(); });
+        return event;
+      };
+      try {
+        await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false); await flushEffects(); });
+        assert.equal((await key()).defaultPrevented, true);
+        assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+        assert.deepEqual(harness.interactions.resolvedPaths, [f.parent.path]);
+        await key({ repeat: true });
+        await key({ isComposing: true });
+        assert.equal(getFolderBranch(harness.tab, f.parent.path)?.status, "ready");
+        await key();
+        assert.equal(getFolderBranch(harness.tab, f.parent.path), undefined);
+        assert.deepEqual(harness.tab.selectedEntryIds, [f.parent.id]);
+        assert.equal(harness.tab.snapshot.location.path, f.path);
+        assert.deepEqual(harness.interactions.systemOpens, []);
+      } finally { await harness.close(); }
+    });
+  }
+  await assertTest("expansion shortcuts ignore disabled, unavailable, hidden and non-folder targets", async () => {
+    for (const excluded of ["disabled", "icons", "search", "virtual", "loading", "empty-selection", "filtered", "file"] as const) {
+      const f = expansionFixture();
+      const tab = f.bootstrap.panels["panel-1"].tabs[0];
+      if (excluded === "disabled") f.bootstrap.settingsModel.folderExpansionEnabled = false;
+      if (excluded === "icons") tab.viewMode = "list";
+      if (excluded === "search") tab.kind = "search-results";
+      if (excluded === "virtual") tab.snapshot.location.kind = "virtual";
+      if (excluded === "loading") tab.status = "loading";
+      if (excluded === "file") f.parent.kind = "file";
+      f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+        scope: "listing", binding: "F8", description: "" });
+      const harness = await mount(f.bootstrap);
+      try {
+        await act(async () => {
+          harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false);
+          await flushEffects();
+        });
+        if (excluded === "empty-selection") harness.tab.selectedEntryIds = [];
+        if (excluded === "filtered") setQuickFilter(harness, "sibling");
+        await act(async () => {
+          window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true }));
+          await flushEffects();
+        });
+        assert.equal(harness.tab.folderExpansion, undefined, excluded);
+        assert.deepEqual(harness.interactions.resolvedPaths, [], excluded);
+      } finally { await harness.close(); }
+    }
+  });
+  await assertTest("expansion shortcuts do not act through editing, buttons, menus, dialogs or other panes", async () => {
+    const f = expansionFixture();
+    f.bootstrap.settingsModel.shortcuts.push({ id: "toggle-folder-expansion", action: "展开/折叠文件夹",
+      scope: "listing", binding: "F8", description: "" });
+    const harness = await mount(f.bootstrap);
+    const targets = document.createElement("div");
+    targets.innerHTML = '<input /><textarea></textarea><select></select><button><span>button</span></button>' +
+      '<div contenteditable="true"><span>edit</span></div><div role="dialog"><span>dialog</span></div>' +
+      '<div role="menu"><span>menu</span></div><div class="tree-pane"><span>tree</span></div>' +
+      '<div class="information-panel"><span>properties</span></div>';
+    document.body.appendChild(targets);
+    try {
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.parent.id, false); await flushEffects(); });
+      for (const target of targets.querySelectorAll("input, textarea, select, span")) {
+        await act(async () => {
+          target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F8", bubbles: true, cancelable: true }));
+          await flushEffects();
+        });
+        assert.equal(harness.tab.folderExpansion, undefined, target.outerHTML);
+      }
+      assert.deepEqual(harness.interactions.resolvedPaths, []);
+    } finally { targets.remove(); await harness.close(); }
+  });
+  await assertTest("row-click-only settings save once and settings events preserve expansion without echo saves", async () => {
+    const f = expansionFixture();
+    let onSettings!: Parameters<WorkspaceGateway["listenSettingsChanged"]>[0];
+    const harness = await mount(f.bootstrap, { resolveDirectory: async path => expansionSnapshot(path, [f.child]) }, gateway => {
+      gateway.listenSettingsChanged = async listener => { onSettings = listener; return () => undefined; };
+    });
+    try {
+      await toggle(harness, f.parent.path);
+      const branch = getFolderBranch(harness.tab, f.parent.path);
+      harness.interactions.savedSettingsModels.length = 0;
+      await act(async () => {
+        const next = { ...harness.controller.state.settings.model, folderExpansionOnRowClick: true };
+        await harness.controller.actions.applySettingsModel(next);
+        await flushEffects();
+      });
+      assert.equal(harness.interactions.savedSettingsModels.length, 1);
+      assert.equal(Reflect.get(harness.interactions.savedSettingsModels[0], "folderExpansionOnRowClick"), true);
+      assert.equal(getFolderBranch(harness.tab, f.parent.path), branch);
+      for (const enabled of [false, true]) {
+        await act(async () => {
+          const state = harness.controller.state;
+          const settingsModel = { ...state.settings.model, folderExpansionOnRowClick: enabled };
+          onSettings({ settingsModel, bookmarks: state.bookmarks, hotlist: state.hotlist,
+            remoteProfiles: state.remoteProfiles, navigationItems: state.navigation.items });
+          await flushEffects();
+        });
+        assert.equal(Reflect.get(harness.controller.state.settings.model, "folderExpansionOnRowClick"), enabled);
+        assert.equal(getFolderBranch(harness.tab, f.parent.path), branch);
+      }
+      assert.equal(harness.interactions.savedSettingsModels.length, 1);
+    } finally { await harness.close(); }
+  });
   for (const kind of ["local", "ftp", "sftp"] as const) {
     await assertTest(`folder expansion lazily loads ${kind} child entries and keeps the parent location`, async () => {
       const f = expansionFixture(kind);
@@ -405,11 +565,11 @@ export const completion = (async () => {
     try {
       await toggle(harness, f.parent.path);
       await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
-      await act(async () => { harness.controller.actions.updateSearchFilter("sibling"); await flushEffects(); });
+      await act(async () => { setQuickFilter(harness, "sibling"); await flushEffects(); });
       await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
       assert.equal(harness.interactions.deleteCalls.length, 0);
       await act(async () => {
-        harness.controller.actions.updateSearchFilter("");
+        setQuickFilter(harness, "");
         harness.controller.actions.setFileVisibility({ showHidden: false });
         await flushEffects();
       });
@@ -434,6 +594,49 @@ export const completion = (async () => {
       assert.deepEqual(harness.tab.selectedEntryIds, []);
       await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
       assert.equal(harness.interactions.deleteCalls.length, 0);
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 exclude mode keeps an excluded selected descendant out of the delete target set", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.child.id], "precondition: the nested child is selected while visible");
+
+      await act(async () => { setQuickFilterMode(harness, "exclude", f.child.name); await flushEffects(); });
+      assert.deepEqual(harness.tab.selectedEntryIds, [f.child.id], "filtering must not rewrite the selection itself");
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.equal(harness.interactions.deleteCalls.length, 0, "a row hidden by exclude is not a delete target");
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 include mode keeps a non-matching selected descendant out of the delete target set", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      await act(async () => { setQuickFilterMode(harness, "include", "no-such-name-anywhere"); await flushEffects(); });
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.equal(harness.interactions.deleteCalls.length, 0, "a row filtered out by include is not a delete target");
+    } finally { await harness.close(); }
+  });
+
+  await assertTest("B22 highlight mode leaves every selected descendant deletable", async () => {
+    const f = expansionFixture();
+    const harness = await mount(f.bootstrap, { resolveDirectory: async (path) => expansionSnapshot(path, [f.child]) });
+    try {
+      await toggle(harness, f.parent.path);
+      await act(async () => { harness.controller.actions.selectEntry("panel-1", f.tabId, f.child.id, false); await flushEffects(); });
+      // 高亮不改行集（D7）：命中与否都不影响可操作性，因此删除必须真正发生。
+      await act(async () => { setQuickFilterMode(harness, "highlight", f.child.name); await flushEffects(); });
+
+      await act(async () => { harness.controller.actions.deleteSelection("panel-1"); await flushEffects(); });
+      assert.deepEqual(harness.interactions.deleteCalls.at(-1)?.paths, [f.child.path], "highlight keeps the row operable");
     } finally { await harness.close(); }
   });
 })();

@@ -36,7 +36,13 @@
 
 .information-panel__summary {
   display: grid;
-  grid-template-columns: minmax(128px, 260px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;
+  /*
+   * §7:635：第一列现在承载 `QuickFilterControls`，其固定部分已达
+   * 24px(模式) + 24px(语法) + 14px(警示) + 3×4px(gap) = 74px，原 128px 下限
+   * 只给输入框留下约 54px，文字几乎不可见。因此把下限提高到 200px，
+   * 上限同步提高到 300px，保证输入框至少有约 126px 可用宽度。
+   */
+  grid-template-columns: minmax(200px, 300px) minmax(76px, 0.7fr) minmax(64px, 0.6fr) minmax(96px, 0.9fr) minmax(118px, 1fr) 26px 26px;
   align-items: center;
   gap: 6px;
   min-height: 30px;
@@ -48,21 +54,12 @@
   overflow: hidden;
 }
 
-.information-panel__filter,
 .information-panel__summary-item,
 .information-panel__field,
 .information-panel__check {
   min-width: 0;
 }
 
-.information-panel__filter {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 5px;
-}
-
-.information-panel__filter span,
 .information-panel__summary-item span,
 .information-panel__field span {
   color: var(--text-muted);
@@ -70,7 +67,6 @@
   white-space: nowrap;
 }
 
-.information-panel__filter input,
 .information-panel__field input,
 .information-panel__field select,
 .settings-field input,

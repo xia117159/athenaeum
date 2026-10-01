@@ -62,13 +62,17 @@ pub fn get_settings_snapshot(state: State<'_, Arc<AppState>>) -> Result<Settings
         settings.navigation_columns,
         settings.details_row_height,
         settings.size_bar_mode.clone(),
+        settings.tree_auto_follow_enabled,
         settings.folder_expansion_enabled,
+        settings.folder_expansion_on_row_click,
+        settings.notifications_enabled,
         settings.tooltip_hover_delay_ms,
         settings.metadata_retention_hours,
         settings.file_visibility,
         settings.context_menu,
         settings.theme,
         settings.template_root,
+        settings.auto_directory_size_paths,
     ))
 }
 

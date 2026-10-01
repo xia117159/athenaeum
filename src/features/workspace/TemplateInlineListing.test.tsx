@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import React, { act } from "react";
 import { FileListingShell } from "./FileListing";
 import { getFolderListingRows } from "./folderExpansion";
-import { expansionEntry, expansionFixture } from "./folderExpansionTestSupport";
+import { expansionEntry, expansionFixture, quickFilterProgram } from "./folderExpansionTestSupport";
 import { flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 
 export const completion = (async () => {
@@ -13,7 +13,7 @@ export const completion = (async () => {
   const root = ReactDOM.createRoot(document.getElementById("root")!);
   const tick = async (fn: () => void) => act(async () => { fn(); await flushEffects(); });
   const render = () => {
-    const rows = getFolderListingRows(tab, undefined, "no-match");
+    const rows = getFolderListingRows(tab, undefined, quickFilterProgram("no-match"));
     root.render(<FileListingShell panelId="panel-1" tabId={tab.id} columns={tab.columns} sort={tab.sort} currentPath={f.path}
       entries={rows.map(row => row.entry)} folderRows={rows} selectedEntryIds={[entry.id]} viewMode={tab.viewMode} detailsRowHeight={24}
       inlineEdit={tab.inlineEdit} onSort={() => {}} onSelect={() => {}} onOpen={() => {}} onOpenContextMenu={() => {}}
@@ -31,7 +31,7 @@ export const completion = (async () => {
       assert.equal(document.activeElement, input, `${viewMode}: editor must take keyboard focus`);
       await tick(() => input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
       assert.equal(document.querySelector(".inline-edit-input"), null);
-      assert.equal(getFolderListingRows(tab, undefined, "no-match").length, 0);
+      assert.equal(getFolderListingRows(tab, undefined, quickFilterProgram("no-match")).length, 0);
       assert.equal(tab.snapshot.entries[0].path, entry.path, "cancel hides the row again without removing the file");
     }
     console.log("ok - created copies render a focused inline editor through filters in every listing layout");

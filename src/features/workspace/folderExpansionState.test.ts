@@ -42,6 +42,18 @@ function loaded(state: WorkspaceState, path: string, entries: EntryViewModel[], 
   return reduce(state, "folderExpansionLoadSucceeded", { path, requestId, rootSnapshot, snapshot: snapshot(path, entries) });
 }
 
+test("expanded listing keeps its directory-size cache for row projection", () => {
+  const initial = toggle(fixture());
+  const rootSnapshot = tab(initial).snapshot;
+  const cache = { generation: 1, sequence: 2, directories: [] };
+  const expanded = reduce(initial, "folderExpansionLoadStarted", { path: parent.path, requestId: 1, rootSnapshot });
+  const next = workspaceReducer(expanded, { type: "folderExpansionLoadSucceeded", payload: {
+    panelId: "panel-1", tabId: tab(expanded).id, path: parent.path, requestId: 1, rootSnapshot,
+    snapshot: { ...snapshot(parent.path, [nested]), directorySizeCache: cache }
+  } });
+  assert.equal(tab(next).folderExpansion?.[parent.path.toLowerCase()]?.directorySizeCache, cache);
+});
+
 test("expanding a folder creates tab-owned lazy state without changing location or navigation tree", () => {
   const state = fixture();
   const expanded = toggle(state);

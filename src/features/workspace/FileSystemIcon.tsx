@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { resolveSystemIcon, type FileSystemIconKind, type SystemIconImageList } from "./systemIconGateway";
+import { acquireSystemIcon, peekSystemIcon, type FileSystemIconKind, type SystemIconImageList } from "./systemIconGateway";
 import { GitStatusBadge } from "./GitStatusBadge";
 import type { GitFileStatus } from "./types";
 
@@ -8,6 +8,7 @@ export function FileSystemIcon({
   className,
   path,
   extension,
+  modifiedAt,
   size = 16,
   imageList,
   hidden = false,
@@ -17,12 +18,14 @@ export function FileSystemIcon({
   className?: string;
   path?: string;
   extension?: string;
+  modifiedAt?: string | null;
   size?: number;
   imageList?: SystemIconImageList;
   hidden?: boolean;
   gitStatus?: GitFileStatus;
 }) {
-  const [iconSrc, setIconSrc] = useState<string | null>(null);
+  const iconRequest = { kind, path, extension, modifiedAt, size, imageList, includeOverlays: true } as const;
+  const [iconSrc, setIconSrc] = useState<string | null>(() => peekSystemIcon(iconRequest) ?? null);
   const classes = ["entry-icon", `entry-icon--${kind}`];
   if (className) {
     classes.push(className);
@@ -34,9 +37,9 @@ export function FileSystemIcon({
   useEffect(() => {
     let disposed = false;
 
-    setIconSrc(null);
-
-    void resolveSystemIcon({ kind, path, extension, size, imageList, includeOverlays: true }).then((resolvedIcon) => {
+    const lease = acquireSystemIcon(iconRequest);
+    setIconSrc(lease.current);
+    void lease.promise.then((resolvedIcon) => {
       if (!disposed) {
         setIconSrc(resolvedIcon);
       }
@@ -44,8 +47,9 @@ export function FileSystemIcon({
 
     return () => {
       disposed = true;
+      lease.release();
     };
-  }, [extension, imageList, kind, path, size]);
+  }, [extension, imageList, kind, modifiedAt, path, size]);
 
   return (
     <span className={classes.join(" ")} data-kind={kind} data-hidden={hidden ? "true" : undefined} aria-hidden="true">

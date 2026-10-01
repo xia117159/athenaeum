@@ -14,6 +14,7 @@ async function mount(kind: "local" | "sftp", role: "workspace" | "settings" = "w
   const f = controllerFixture(kind); const wire = sizeTransport();
   configure?.(f, wire);
   f.bootstrap.panels = f.state.panels; f.bootstrap.remoteProfiles = f.state.remoteProfiles;
+  f.bootstrap.settingsModel = { ...f.bootstrap.settingsModel, autoDirectorySizePaths: f.state.settings.model.autoDirectorySizePaths };
   let finish: ((snapshot: DirectorySnapshot) => void) | undefined;
   const gateway = createTestGateway(() => undefined, expansionInteractions(), { loadBootstrap: () => f.bootstrap,
     resolveDirectory: () => new Promise((resolve) => { finish = resolve; }) });
@@ -44,25 +45,49 @@ export const completion = (async () => {
       const settings = await mount("local", "settings");
       try { assert.equal(settings.wire.subscribed.length, 0); } finally { await settings.close(); }
     });
-    await assertTest("explicit F5 invalidates local sizes and preserves remote manual refresh through the loading/release race", async () => {
+    await assertTest("F5 reloads the listing without recalculating sizes or replacing the lease (D10)", async () => {
       const local = await mount("local");
       try {
+        const consumer = local.wire.subscribed[0].consumerId;
         await local.refresh(); await local.finishRefresh();
-        assert.equal(local.wire.subscribed.length, 2);
-        assert.equal(local.wire.subscribed[1].refresh, true);
+        assert.equal(local.wire.subscribed.length, 1);
+        assert.deepEqual(local.wire.released, []);
+        assert.equal(local.tab.directorySizes?.consumerId, consumer);
       } finally { await local.close(); }
       const remote = await mount("sftp");
       try {
         await remote.refresh(); await remote.finishRefresh();
         assert.equal(remote.wire.subscribed.length, 0);
         await remote.calculate(); assert.equal(remote.wire.subscribed.length, 1);
+        assert.equal(typeof remote.tab.directorySizes?.requestedAt, "number", "explicit requests record their order");
         await remote.refresh();
         assert.equal(remote.tab.status, "loading");
-        assert.equal(remote.wire.subscribed.length, 1);
+        assert.deepEqual(remote.wire.released, [], "a refreshing listing keeps its lease");
         await remote.finishRefresh();
-        assert.equal(remote.wire.subscribed.length, 2);
-        assert.equal(remote.wire.subscribed[1].refresh, true);
+        assert.equal(remote.wire.subscribed.length, 1);
+        assert.deepEqual(remote.wire.released, []);
       } finally { await remote.close(); }
+    });
+    await assertTest("toggling automatic sizing updates the list and the lease without saving the settings draft", async () => {
+      const h = await mount("local", "workspace", (f) => {
+        f.state.settings.model.autoDirectorySizePaths = [];
+        f.bootstrap.settingsModel = { ...f.bootstrap.settingsModel, notificationsEnabled: true };
+      });
+      try {
+        assert.equal(h.wire.subscribed.length, 0);
+        await act(async () => { await h.current.actions.setAutoDirectorySize(h.f.path, true); await flushEffects(); });
+        assert.deepEqual(h.current.state.settings.model.autoDirectorySizePaths, [h.f.path]);
+        assert.equal(h.wire.subscribed.length, 1);
+        assert.equal(h.wire.subscribed[0].intent, "auto");
+        await act(async () => { h.current.actions.retryAutoDirectorySizes("panel-1", h.f.tab.id); await flushEffects(); });
+        assert.equal(h.wire.subscribed.length, 2, "an explicit retry re-authorizes the automatic lease");
+        assert.equal(h.wire.subscribed[1].retryFailed, true);
+        await act(async () => { await h.current.actions.setAutoDirectorySize(h.f.path, false); await flushEffects(); });
+        assert.deepEqual(h.current.state.settings.model.autoDirectorySizePaths, []);
+        assert.equal(h.wire.released.includes(h.wire.subscribed[1].consumerId), true);
+        await act(async () => { await h.current.actions.setAutoDirectorySize("relative", true); await flushEffects(); });
+        assert.match(h.current.state.notifications.at(-1)?.message ?? "", /有效的本地或网络文件夹绝对路径/);
+      } finally { await h.close(); }
     });
     await assertTest("keyboard selection uses exact folder-size ordering even when inline expansion is disabled", async () => {
       const h = await mount("local", "workspace", (f, wire) => {
@@ -75,7 +100,7 @@ export const completion = (async () => {
           directories: request.paths.map((path) => sizeRecord(path, path === f.path ? "100" : path === f.parent.path ? "20" : "80", "root-stamp")) });
       });
       try {
-        const rows = getFolderListingRows(h.tab, h.current.state.fileVisibility, "", false);
+        const rows = getFolderListingRows(h.tab, h.current.state.fileVisibility, null, false);
         assert.deepEqual(rows.map((row) => row.entry.name), ["parent", "a-large"]);
         await act(async () => { window.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Home", bubbles: true })); await flushEffects(); });
         assert.deepEqual(h.tab.selectedEntryIds, [rows[0].entry.id]);

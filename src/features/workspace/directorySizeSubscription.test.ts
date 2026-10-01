@@ -4,7 +4,7 @@ import { openDirectorySizeSubscription } from "./directorySizeSubscription";
 import { sizeSnapshot } from "./directorySizeTestSupport";
 import type { DirectorySizesGateway, DirectorySizeSnapshot } from "./directorySizeTypes";
 
-const request = { consumerId: "size-test", target: { kind: "local" as const, path: "C:\\files" }, refresh: false };
+const request = { consumerId: "size-test", target: { kind: "local" as const, path: "C:\\files" }, intent: "resume" as const };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 function fakeGateway(overrides: Partial<DirectorySizesGateway> = {}) {
   const calls: string[] = [];
@@ -63,7 +63,7 @@ test("a refresh event before its identical return keeps queued work cancellable"
     subscribe: async () => { listener(queued); return { ...queued }; }
   });
   const received: DirectorySizeSnapshot[] = [];
-  const lease = openDirectorySizeSubscription(gateway, { ...request, refresh: true }, (value) => received.push(value), (error) => assert.fail(String(error)));
+  const lease = openDirectorySizeSubscription(gateway, { ...request, intent: "calculate" as const }, (value) => received.push(value), (error) => assert.fail(String(error)));
   try { await flush(); assert.deepEqual(received, [queued]); }
   finally { lease.close(); await flush(); }
 });

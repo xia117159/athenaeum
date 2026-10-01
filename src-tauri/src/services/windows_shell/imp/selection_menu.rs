@@ -33,7 +33,11 @@ fn shell_verb(
     if !shell_commands.contains(&command) {
         return None;
     }
-    let offset = command.checked_sub(SELECTION_SHELL_CMD_FIRST)?;
+    command_verb(context_menu, command, SELECTION_SHELL_CMD_FIRST)
+}
+
+pub(super) fn command_verb(context_menu: &IContextMenu, command: u32, first: u32) -> Option<String> {
+    let offset = command.checked_sub(first)?;
     let mut text = [0u16; 128];
     unsafe {
         context_menu
@@ -218,6 +222,7 @@ pub(super) fn show_context_menu(
     y: i32,
     selection_count: usize,
     shortcuts: &NativeSelectionContextMenuShortcuts,
+    handler: &super::super::NativeCommandHandler,
 ) -> Result<NativeSelectionContextMenuResult> {
     let (popup, shell_commands) = prepare_context_menu(context_menu, selection_count, shortcuts)?;
     if hwnd.0.is_null() {
@@ -273,7 +278,8 @@ pub(super) fn show_context_menu(
             action: Some(NativeSelectionContextMenuAction::Rename),
         });
     }
-    let _ = invoke_command(context_menu, hwnd, command_id, SELECTION_SHELL_CMD_FIRST);
+    let verb = shell_verb(context_menu, command_id, &shell_commands);
+    let _ = handler(verb.as_deref(), &mut || invoke_command(context_menu, hwnd, command_id, SELECTION_SHELL_CMD_FIRST));
     Ok(NativeSelectionContextMenuResult {
         opened: true,
         action: None,

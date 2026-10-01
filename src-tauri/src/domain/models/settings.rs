@@ -43,6 +43,7 @@ impl Default for FileVisibilitySettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
+    #[serde(default)] pub auto_directory_size_paths: Vec<String>,
     #[serde(default)]
     pub template_root: String,
     #[serde(default)]
@@ -61,7 +62,13 @@ pub struct SettingsSnapshot {
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
     #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
+    #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
+    #[serde(default)]
+    pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]
@@ -87,7 +94,13 @@ pub struct SettingsModelUpdate {
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
     #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
+    #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
+    #[serde(default)]
+    pub notifications_enabled: bool,
     pub tooltip_hover_delay_ms: u32,
     pub metadata_retention_hours: Option<u64>,
     #[serde(default)]

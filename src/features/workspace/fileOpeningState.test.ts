@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { createMockWorkspaceBootstrap } from "./mockData";
 import { createWorkspaceState, getActiveTab } from "./workspaceReducer";
 import { createEntry } from "./workspaceControllerTestHarness";
+import { getPathComparisonKey } from "./workspacePathRelations";
 import { createOpenWithMenu, currentListingEntry, reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
+import type { QuickFilterState } from "./quickFilterTypes";
+
+/** 显式返回类型提供上下文类型，避免字面量在展开对象里被拓宽成 string。 */
+function quickFilterFor(path: string, text: string): QuickFilterState {
+  return { mode: "include", syntax: "substring",
+    byPath: { [getPathComparisonKey(path)]: { text, appliedText: text, error: null } } };
+}
 
 const state = createWorkspaceState(createMockWorkspaceBootstrap("tauri"));
 const tab = getActiveTab(state.panels[state.activePanelId]);
@@ -31,7 +39,8 @@ assert.equal(reconcileOpenWithMenu(state).openWithMenu,undefined);
 tab.selectionCursorId = a.id;
 const changedRules = {...state,settings:{...state.settings,model:{...state.settings.model,fileAssociations:[]}}};
 assert.equal(reconcileOpenWithMenu(changedRules).openWithMenu,undefined);
-const hidden = {...state,search:{...state.search,filterText:"no-such-file"}};
+// 快速过滤取代旧的 search.filterText：include 模式下 a.txt 被过滤掉，菜单必须随之失效。
+const hidden = {...state, quickFilter: quickFilterFor(tab.snapshot.location.path, "no-such-file")};
 assert.equal(reconcileOpenWithMenu(hidden).openWithMenu,undefined);
 const differentPanel = {...state,activePanelId:"panel-2" as const};
 assert.equal(reconcileOpenWithMenu(differentPanel).openWithMenu,undefined);

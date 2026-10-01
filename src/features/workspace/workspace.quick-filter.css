@@ -1,0 +1,105 @@
+/*
+ * 快速过滤：名称局部高亮与底部状态栏控件。
+ *
+ * 设计约束（spec §6.7）：
+ * - 命中标记必须"独立且不继承"地指定前景/背景色，才能压过行选中、悬停与规则着色，
+ *   并在浅色/深色主题下保持同一对比度；因此这里刻意不复用 workspaceTheme.ts 的变量，
+ *   避免把高亮观感耦合到用户主题调整上。
+ * - 不改变字号、字重、内边距与边框：名称宽度一旦变化，详情列的自动适配与整行布局都会抖动。
+ */
+.entry-name__match {
+  background: rgba(255, 208, 64, 0.85);
+  color: #221a00;
+  border-radius: 2px;
+}
+
+/*
+ * 底部状态栏控件（§6.8）：[模式按钮 24px][语法按钮 24px][输入框 flex][警示图标 14px]。
+ * 整行只定义布局与尺寸，配色沿用状态栏既有前景色，避免与主题变量打架。
+ */
+.quick-filter {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quick-filter__button {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.quick-filter__button:hover,
+.quick-filter__button:focus-visible {
+  background: rgba(127, 127, 127, 0.22);
+}
+
+.quick-filter__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+/*
+ * B19：非法正则时输入框加错误样式（红色边框）。用 `[aria-invalid="true"]` 作为选择器，
+ * 使"视觉状态"与"无障碍状态"由同一个真值驱动，不可能出现两者不一致。
+ */
+.quick-filter__input[aria-invalid="true"] {
+  border-color: #d13438;
+}
+
+.quick-filter__input[aria-invalid="true"]:focus-visible {
+  outline: 1px solid #d13438;
+  outline-offset: -1px;
+}
+
+.quick-filter__warning {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  /* 视觉隐藏的错误文本是 absolute，需要本节点作为包含块，
+     否则它会相对更上层的已定位祖先解析，clip-path 的裁剪基准就不再是图标位。 */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #d13438;
+}
+
+/*
+ * 警示节点是 role="status" 的文本容器：具体错误信息必须对读屏器可读，
+ * 但不能撑开 14px 的图标位（§6.8 固定布局），因此视觉隐藏、语义保留。
+ */
+.quick-filter__warning-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.quick-filter__menu {
+  position: fixed;
+  min-width: 120px;
+  /* 与同级应用内菜单一致（.context-menu 10000 / .open-with-menu 10001）。
+     本菜单经 portal 挂到 body，不能依赖祖先恰好未形成层叠上下文。 */
+  z-index: 10001;
+}

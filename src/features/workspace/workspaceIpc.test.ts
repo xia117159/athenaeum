@@ -57,6 +57,8 @@ assertTest("Tauri app ACL exposes required workspace commands to the main window
     "get_item_properties",
     "get_tree_children",
     "resolve_system_icon",
+    "resolve_system_icon_keys",
+    "resolve_system_icon_bitmap",
     "copy_entries",
     "move_entries",
     "delete_entries",

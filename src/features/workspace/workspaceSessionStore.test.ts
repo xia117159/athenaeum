@@ -57,6 +57,7 @@ function createWorkspaceState(): WorkspaceState {
       search: 0.36
     },
     treeVisible: false,
+    treeState: { activePath: "", expandedNodePaths: [] },
     colorFilterTogglePending: false,
     fileVisibility: {
       showHidden: false,
@@ -97,9 +98,9 @@ function createWorkspaceState(): WorkspaceState {
       gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
+    quickFilter: { mode: "highlight", syntax: "substring", byPath: {} },
     search: {
       loading: false,
-      filterText: "",
       query: {
         name: "",
         content: "",

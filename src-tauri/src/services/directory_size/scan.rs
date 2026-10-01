@@ -4,6 +4,15 @@ use super::metadata::{ListingFingerprint, MetadataEntry, MetadataKind};
 pub(crate) trait MetadataSource {
     fn read_directory(&mut self, path: &str, cancelled: &AtomicBool, visit: &mut dyn FnMut(MetadataEntry) -> bool) -> Result<(), String>;
     fn incomplete_reason(&self) -> Option<&str> { None }
+    /// Local cursors permit bounded DFS; remote protocols keep their callback API.
+    fn open_directory(&mut self, _path: &str, _cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> { None }
+    /// Publish a provisional subtree before the bounded detail map may discard it.
+    fn directory_completed(&mut self, _path: &str, _size: &DirectorySize) {}
+}
+
+pub(crate) struct DirectoryCursor {
+    pub entries: Box<dyn Iterator<Item = MetadataEntry>>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -15,12 +24,12 @@ pub(crate) struct ScanLimits {
 }
 impl Default for ScanLimits {
     fn default() -> Self {
-        Self { max_directories: 100_000, max_accounted_bytes: 32 * 1024 * 1024,
+        Self { max_directories: 100_000, max_accounted_bytes: 128 * 1024 * 1024,
             max_elapsed: Duration::from_secs(15 * 60), progress_interval: Duration::from_millis(200) }
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ScanStats {
     pub files: u64,
     pub directories: u64,
@@ -33,11 +42,18 @@ pub(crate) struct ScanStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanOutcome { Complete, Partial, Failed, Cancelled }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DirectorySize {
     pub bytes: u64,
     pub complete: bool,
     pub fingerprint: Option<String>,
+    pub stats: ScanStats,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl DirectorySize {
+    pub fn visited(&self) -> bool { self.stats.directories != 0 }
+    fn unvisited() -> Self { Self { bytes: 0, complete: false, fingerprint: None, stats: ScanStats::default(), created_at: None } }
 }
 
 #[derive(Debug)]
@@ -51,7 +67,7 @@ pub(crate) struct ScanResult {
 
 // Conservative allowance for vector growth, hash buckets, Arc/string headers,
 // fingerprints and the final map conversion peak. No file record is retained.
-const NODE_ACCOUNT_BYTES: usize = 512;
+pub(super) const NODE_ACCOUNT_BYTES: usize = 640;
 
 struct Node {
     path: Arc<str>,
@@ -63,6 +79,9 @@ pub(crate) fn scan_directory(
     root: &str, source: &mut dyn MetadataSource, cancelled: &AtomicBool,
     limits: ScanLimits, mut progress: impl FnMut(&ScanStats),
 ) -> ScanResult {
+    if let Some(cursor) = source.open_directory(root, cancelled) {
+        return super::local_scan::scan(root, source, cursor, cancelled, limits, progress);
+    }
     let started = Instant::now();
     let mut last_progress = started;
     let mut stats = ScanStats::default();
@@ -77,7 +96,7 @@ pub(crate) fn scan_directory(
     }
     let root: Arc<str> = root.into();
     seen.insert(root.clone());
-    nodes.push(Node { path: root, parent: None, size: DirectorySize { bytes: 0, complete: false, fingerprint: None } });
+    nodes.push(Node { path: root, parent: None, size: DirectorySize::unvisited() });
     let mut index = 0;
     let mut root_failed = false;
     while index < nodes.len() && !halted {
@@ -90,6 +109,7 @@ pub(crate) fn scan_directory(
         let mut bytes = 0_u64;
         let mut complete = true;
         let mut fingerprint = ListingFingerprint::default();
+        let before = stats.clone();
         stats.directories += 1;
         let result = source.read_directory(&path, cancelled, &mut |entry| {
             if cancelled.load(Ordering::Relaxed) || started.elapsed() >= limits.max_elapsed {
@@ -123,7 +143,7 @@ pub(crate) fn scan_directory(
                             accounted_bytes += cost;
                             let path: Arc<str> = child.into();
                             seen.insert(path.clone());
-                            nodes.push(Node { path, parent: Some(index), size: DirectorySize { bytes: 0, complete: false, fingerprint: None } });
+                            nodes.push(Node { path, parent: Some(index), size: DirectorySize::unvisited() });
                         }
                     } else { complete = false; stats.errors += 1; }
                 }
@@ -148,7 +168,10 @@ pub(crate) fn scan_directory(
             message.get_or_insert_with(|| reason.chars().take(256).collect());
         }
         if cancelled.load(Ordering::Relaxed) { complete = false; halted = true; }
-        nodes[index].size = DirectorySize { bytes, complete, fingerprint: if complete { fingerprint.finish() } else { None } };
+        nodes[index].size = DirectorySize { bytes, complete, fingerprint: if complete { fingerprint.finish() } else { None }, created_at: None,
+            stats: ScanStats { files: stats.files - before.files, directories: 1, known_bytes: bytes,
+                skipped_links: stats.skipped_links - before.skipped_links, skipped_special: stats.skipped_special - before.skipped_special,
+                errors: stats.errors - before.errors } };
         index += 1;
     }
     // Parents always precede children. Every subtree is merged exactly once,
@@ -156,6 +179,13 @@ pub(crate) fn scan_directory(
     for index in (1..nodes.len()).rev() {
         let parent = nodes[index].parent.expect("non-root parent");
         let child_bytes = nodes[index].size.bytes;
+        let child = nodes[index].size.stats.clone();
+        let parent_stats = &mut nodes[parent].size.stats;
+        parent_stats.files = parent_stats.files.saturating_add(child.files);
+        parent_stats.directories = parent_stats.directories.saturating_add(child.directories);
+        parent_stats.skipped_links = parent_stats.skipped_links.saturating_add(child.skipped_links);
+        parent_stats.skipped_special = parent_stats.skipped_special.saturating_add(child.skipped_special);
+        parent_stats.errors = parent_stats.errors.saturating_add(child.errors);
         nodes[parent].size.complete &= nodes[index].size.complete;
         match nodes[parent].size.bytes.checked_add(child_bytes) {
             Some(bytes) => nodes[parent].size.bytes = bytes,
@@ -163,9 +193,11 @@ pub(crate) fn scan_directory(
                 nodes[parent].size.bytes = u64::MAX;
                 nodes[parent].size.complete = false;
                 stats.errors += 1;
+                nodes[parent].size.stats.errors += 1;
                 message.get_or_insert_with(|| "目录大小超出可表示范围".into());
             }
         }
+        nodes[parent].size.stats.known_bytes = nodes[parent].size.bytes;
     }
     let outcome = if cancelled.load(Ordering::Relaxed) { ScanOutcome::Cancelled }
         else if root_failed { ScanOutcome::Failed }

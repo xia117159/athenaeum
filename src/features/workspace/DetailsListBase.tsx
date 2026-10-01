@@ -1,6 +1,7 @@
 import { type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { DetailsColumnHeader, type DetailsHeaderColumn, type DetailsHeaderSortState } from "./DetailsColumnHeader";
 import { DetailsColumnHeaderMenu } from "./DetailsColumnHeaderMenu";
+import type { DirectorySizeMenuAction } from "./directorySizeMenu";
 import { getDetailsGridMetrics } from "./detailsGridMetrics";
 import { ColumnDragFollowerView, ColumnDropIndicatorView } from "./fileListingColumnDrag";
 import { useDetailsColumnDrag } from "./useDetailsColumnDrag";
@@ -41,6 +42,7 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
   dataAttributeName,
   headerDataAttributes,
   renderHeaderAccessory,
+  columnMenuAction,
   children
 }: {
   columns: C[];
@@ -67,6 +69,8 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
   dataAttributeName?: string;
   headerDataAttributes?: Record<string, string>;
   renderHeaderAccessory?: (column: C) => ReactNode;
+  /** Leading header context-menu entry (the directory size action). */
+  columnMenuAction?: DirectorySizeMenuAction;
   children: (context: DetailsListBaseRenderContext<T, C>) => ReactNode;
 }) {
   const visibleColumns = columns.filter((column) => column.visible ?? true);
@@ -160,6 +164,7 @@ export function DetailsListBase<T extends string, C extends DetailsListColumn<T>
           }}
           onShowAll={() => selectColumnMenuItem(() => onShowAllColumns?.(columns.map((column) => column.id)))}
           onAutoFit={() => selectColumnMenuItem(() => visibleColumns.forEach(onAutoFitColumn))}
+          directorySizeAction={columnMenuAction && { ...columnMenuAction, onSelect: () => selectColumnMenuItem(columnMenuAction.onSelect) }}
         />
       ) : null}
       <DetailsColumnHeader

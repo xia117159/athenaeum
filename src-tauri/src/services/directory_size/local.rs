@@ -1,5 +1,5 @@
 use std::{fs, path::Path, sync::atomic::{AtomicBool, Ordering}};
-use super::{metadata::{MetadataEntry, MetadataKind}, scan::MetadataSource};
+use super::{metadata::{MetadataEntry, MetadataKind}, scan::{MetadataSource, DirectoryCursor}};
 
 pub(crate) fn local_metadata_kind(metadata: &fs::Metadata) -> MetadataKind {
     #[cfg(windows)]
@@ -16,12 +16,16 @@ pub(crate) fn local_metadata_kind(metadata: &fs::Metadata) -> MetadataKind {
 
 pub(crate) struct LocalMetadataSource;
 impl MetadataSource for LocalMetadataSource {
+    fn open_directory(&mut self, path: &str, cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> {
+        Some(open_cursor(path, cancelled))
+    }
     fn read_directory(&mut self, path: &str, cancelled: &AtomicBool, visit: &mut dyn FnMut(MetadataEntry) -> bool) -> Result<(), String> {
         if cancelled.load(Ordering::Relaxed) { return Ok(()); }
         let path = Path::new(path);
         let metadata = fs::symlink_metadata(path).map_err(|_| "无法读取目录元数据".to_owned())?;
         if local_metadata_kind(&metadata) != MetadataKind::Directory { return Err("大小统计不跟随链接，目标必须是普通目录".into()); }
         let entries = fs::read_dir(path).map_err(|_| "无法读取目录（权限不足或目录已移除）".to_owned())?;
+        let policy = super::artifacts::listing_policy(path);
         for entry in entries {
             if cancelled.load(Ordering::Relaxed) { break; }
             let fact = match entry {
@@ -36,8 +40,24 @@ impl MetadataSource for LocalMetadataSource {
                 }
                 Err(_) => MetadataEntry { name: String::new(), kind: MetadataKind::Unknown, directory_path: None },
             };
-            if !visit(fact) { break; }
+            if !policy.excludes(&fact.name, fact.kind) && !visit(fact) { break; }
         }
         Ok(())
     }
+}
+
+fn open_cursor(path: &str, cancelled: &AtomicBool) -> Result<DirectoryCursor, String> {
+    if cancelled.load(Ordering::Relaxed) { return Err("目录统计已取消".into()); }
+    let metadata = fs::symlink_metadata(path).map_err(|_| "无法读取目录元数据".to_owned())?;
+    if local_metadata_kind(&metadata) != MetadataKind::Directory { return Err("大小统计不跟随链接，目标必须是普通目录".into()); }
+    let entries = fs::read_dir(path).map_err(|_| "无法读取目录（权限不足或目录已移除）".to_owned())?;
+    let policy = super::artifacts::listing_policy(Path::new(path));
+    Ok(DirectoryCursor { created_at: metadata.created().ok().map(Into::into), entries: Box::new(entries.map(|entry| {
+        let Ok(entry) = entry else { return MetadataEntry { name: String::new(), kind: MetadataKind::Unknown, directory_path: None }; };
+        let name = entry.file_name().to_str().map(str::to_owned);
+        let mut kind = entry.metadata().map(|value| local_metadata_kind(&value)).unwrap_or(MetadataKind::Unknown);
+        let directory_path = (kind == MetadataKind::Directory).then(|| entry.path().to_str().map(str::to_owned)).flatten();
+        if name.is_none() || kind == MetadataKind::Directory && directory_path.is_none() { kind = MetadataKind::Unknown; }
+        MetadataEntry { name: name.unwrap_or_default(), kind, directory_path }
+    }).filter(move |entry| !policy.excludes(&entry.name, entry.kind))) })
 }

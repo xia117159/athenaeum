@@ -4,9 +4,12 @@ import { createMockWorkspaceBootstrap } from "./mockData";
 import { createWorkspaceState } from "./workspaceReducer";
 import { flushEffects, installDomEnvironment } from "./workspaceControllerTestHarness";
 import type { SettingsModel } from "./types";
+import { defaultSettingsNavigationRuntime } from "./settingsNavigation";
 
 export const completion = (async () => {
   const dom = installDomEnvironment(); dom.window.close = () => {};
+  const scrollTargets: string[] = [];
+  dom.window.HTMLElement.prototype.scrollIntoView = function () { scrollTargets.push(this.id); };
   const ReactDOM = require("react-dom/client") as typeof import("react-dom/client");
   const controller = require("./useWorkspaceController") as typeof import("./useWorkspaceController");
   const original = controller.useWorkspaceController;
@@ -30,14 +33,22 @@ export const completion = (async () => {
   const input = () => { const result = document.querySelector<HTMLInputElement>('[aria-label="模板文件夹"]'); assert.ok(result); return result; };
   try {
     await tick(() => root.render(<SettingsWindowView key="apply" />));
-    assert.ok(document.querySelector('[data-section-id="templates"].is-active'), "settings deep link");
+    assert.ok(document.querySelector('[data-section-id="general"].is-active'), "settings deep link");
+    assert.equal(scrollTargets.at(-1), "settings-group-templates");
+    const initialScrollCount = scrollTargets.length;
+    await tick(() => {
+      defaultSettingsNavigationRuntime.write({ id: "repeat-template-navigation", section: "templates" });
+      dom.window.dispatchEvent(new dom.window.Event("storage"));
+    });
+    assert.equal(scrollTargets.length, initialScrollCount + 1, "a new request for the same section repositions it");
     assert.equal(input().value, "C:\\Templates");
     await tick(() => button("选择文件夹").click());
     assert.equal(input().value, "C:\\Templates", "picker cancellation keeps draft");
     picked = "D:\\我的模板";
     await tick(() => button("选择文件夹").click());
     assert.equal(input().value, picked);
-    assert.ok(document.querySelector('[data-section-id="templates"] .settings-window__nav-dirty'));
+    assert.ok(document.querySelector('[data-section-id="general"] .settings-window__nav-dirty'));
+    assert.equal(scrollTargets.length, initialScrollCount + 1, "editing does not reset scroll");
     assert.equal(state.settings.model.templateRoot, "C:\\Templates", "editing never publishes drafts");
     await tick(() => button("确定").click());
     assert.equal(saved[0].templateRoot, picked);

@@ -95,6 +95,8 @@ function createProps(state: WorkspaceState) {
     onUpdateTabMinWidth: () => undefined,
     onUpdateDetailsRowHeight: () => undefined,
     onUpdateFolderExpansionEnabled: () => undefined,
+    onUpdateFolderExpansionOnRowClick: () => undefined,
+    onUpdateNotificationsEnabled: () => undefined,
     onUpdateTooltipHoverDelay: () => undefined,
     onUpdateMetadataRetentionHours: () => undefined,
     onUpdateContextMenuDefault: () => undefined,
@@ -155,7 +157,7 @@ export const completion = (async () => {
       const nav = container.querySelector(".settings-window__nav");
       const content = container.querySelector(".settings-window__content");
       const navItems = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-section-id]"));
-      const activeNavItem = container.querySelector("[data-section-id='file-list'].is-active");
+      const activeNavItem = container.querySelector("[data-section-id='general'].is-active");
 
       assert.equal(container.querySelector(".settings-modal"), null);
       assert.ok(surface);
@@ -166,7 +168,7 @@ export const completion = (async () => {
       assert.equal(container.querySelectorAll(".settings-window__nav-group").length, 3);
       assert.deepEqual(
         navItems.map((item) => item.dataset.sectionId),
-        ["shortcuts", "file-list", "menu-mouse", "file-associations", "templates", "appearance", "color-rules", "tag-rules", "connections"]
+        ["general", "shortcuts", "file-associations", "auto-directory-sizes", "appearance", "color-rules", "tag-rules", "connections"]
       );
       assert.ok(activeNavItem);
 
@@ -575,6 +577,25 @@ export const completion = (async () => {
       });
       container.querySelector<HTMLButtonElement>("[data-context-menu-value='custom']")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       assert.deepEqual(menuUpdates, ["custom"]);
+
+      // 通知提示开关：模型为隐藏（不勾选）时，点击后把启用变化交给处理器。
+      const notificationsOffState = createSettingsState("menu-mouse");
+      notificationsOffState.settings.model.notificationsEnabled = false;
+      const notificationUpdates: boolean[] = [];
+      await act(async () => {
+        root.render(
+          React.createElement(SettingsSurface, {
+            ...createProps(notificationsOffState),
+            onUpdateNotificationsEnabled: (enabled) => notificationUpdates.push(enabled)
+          })
+        );
+        await flushEffects();
+      });
+      const notificationCheckbox = container.querySelector<HTMLInputElement>("[data-setting-id='notifications-enabled']");
+      assert.ok(notificationCheckbox, "menu-mouse page renders the notifications toggle");
+      assert.equal(notificationCheckbox!.checked, false);
+      notificationCheckbox!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      assert.deepEqual(notificationUpdates, [true]);
 
       await act(async () => {
         root.render(

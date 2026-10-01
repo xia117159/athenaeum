@@ -52,6 +52,7 @@ export interface DirectoryListing {
   parent?: string | null;
   canGoUp: boolean;
   sizeFingerprint?: string | null;
+  directorySizeCache?: import("../features/workspace/directorySizeTypes").DirectorySizeCache | null;
 }
 
 export type ItemPropertyField =
@@ -357,7 +358,12 @@ export interface SettingsSnapshot {
   navigationColumns?: DetailColumnDefinition[];
   detailsRowHeight: number;
   sizeBarMode?: "folder-total" | "folder-max";
+  treeAutoFollowEnabled?: boolean;
   folderExpansionEnabled?: boolean;
+  folderExpansionOnRowClick?: boolean;
+  notificationsEnabled?: boolean;
+  /** Normalized local/UNC roots whose folder sizes are calculated automatically; edited only by dedicated commands. */
+  autoDirectorySizePaths?: string[];
   tooltipHoverDelayMs?: number;
   metadataRetentionHours?: number | null;
   fileVisibility?: FileVisibilitySettings;
@@ -375,7 +381,10 @@ export interface SettingsModelUpdate {
   navigationColumns: DetailColumnDefinition[];
   detailsRowHeight: number;
   sizeBarMode: "folder-total" | "folder-max";
+  treeAutoFollowEnabled: boolean;
   folderExpansionEnabled: boolean;
+  folderExpansionOnRowClick: boolean;
+  notificationsEnabled: boolean;
   tooltipHoverDelayMs: number;
   metadataRetentionHours: number | null;
   fileVisibility: FileVisibilitySettings;

@@ -1,3 +1,5 @@
+mod rename;
+use rename::execute_rename;
 mod clear;
 #[cfg(all(test, windows))]
 mod clear_windows_tests;
@@ -455,7 +457,7 @@ impl OperationStore {
         let (mut result, execution) = self.prepare_conflict_resolution(resolution)?;
         let task_id = execution.task_id.clone();
         let intent = execution.intent.clone();
-        let operation = execute_conflict_resolution(execution, app_data_dir);
+        let operation = execute_conflict_resolution(execution, app_data_dir, None);
         let mut finished = self
             .finish_operation(&task_id, &intent, operation)
             .context("conflict task disappeared before it could finish")?;
@@ -808,6 +810,7 @@ impl OperationStore {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_operation_task(
     task_id: &str,
     intent: &OperationIntent,
@@ -815,12 +818,24 @@ pub(crate) fn execute_operation_task(
     cancellation: Arc<AtomicBool>,
     resolution: Option<OperationConflictResolution>,
 ) -> ExecutionResult {
+    execute_operation_task_with_sizes(task_id, intent, app_data_dir, cancellation, resolution, None)
+}
+
+pub(crate) fn execute_operation_task_with_sizes(
+    task_id: &str,
+    intent: &OperationIntent,
+    app_data_dir: Option<PathBuf>,
+    cancellation: Arc<AtomicBool>,
+    resolution: Option<OperationConflictResolution>,
+    sizes: Option<&crate::services::directory_size::DirectorySizeService>,
+) -> ExecutionResult {
     match execute_local_intent(
         task_id,
         intent,
         app_data_dir,
         &cancellation,
         resolution.as_ref(),
+        sizes,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -858,11 +873,16 @@ pub(crate) fn execute_operation_task(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_undo_task(execution: OperationUndoExecution) -> OperationUndoExecutionResult {
+    execute_undo_task_with_sizes(execution, None)
+}
+
+fn execute_undo_task_with_sizes(execution: OperationUndoExecution, sizes: Option<&crate::services::directory_size::DirectorySizeService>) -> OperationUndoExecutionResult {
     let mut entry_results = Vec::new();
     let mut failed_entries = 0usize;
     for (index, action) in execution.payload.actions.iter().enumerate().rev() {
-        match apply_undo_action(action) {
+        match apply_undo_action(action, sizes) {
             Ok(result) => entry_results.push(result),
             Err(error) => {
                 failed_entries += 1;
@@ -883,12 +903,26 @@ pub(crate) fn execute_undo_task(execution: OperationUndoExecution) -> OperationU
     }
 }
 
+fn size_change_paths(intent: &OperationIntent) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if matches!(intent.kind, OperationIntentKind::Move | OperationIntentKind::Delete) {
+        paths.extend(intent.sources.as_ref().into_iter().flatten().filter_map(|source| match source {
+            OperationPathRef::Local { path } => Some(PathBuf::from(path)), _ => None,
+        }));
+    }
+    if matches!(intent.kind, OperationIntentKind::Move | OperationIntentKind::Copy) {
+        if let Some(OperationPathRef::Local { path }) = &intent.destination { paths.push(PathBuf::from(path)); }
+    }
+    paths
+}
+
 fn execute_local_intent(
     task_id: &str,
     intent: &OperationIntent,
     app_data_dir: Option<PathBuf>,
     cancellation: &AtomicBool,
     resolution: Option<&OperationConflictResolution>,
+    sizes: Option<&crate::services::directory_size::DirectorySizeService>,
 ) -> Result<ExecutionResult> {
     check_cancelled(cancellation)?;
     if intent_has_remote_path(intent) {
@@ -907,6 +941,9 @@ fn execute_local_intent(
             continuation: None,
         });
     }
+
+    let changed_paths = size_change_paths(intent);
+    let _size_change = (!changed_paths.is_empty()).then(|| sizes.map(|sizes| sizes.namespace_change(&changed_paths))).flatten();
 
     match intent.kind {
         OperationIntentKind::Copy => execute_copy_or_move(
@@ -927,7 +964,7 @@ fn execute_local_intent(
         ),
         OperationIntentKind::Delete => execute_delete(task_id, intent, app_data_dir, cancellation),
         OperationIntentKind::Rename => {
-            execute_rename(task_id, intent, app_data_dir, cancellation, resolution)
+            execute_rename(task_id, intent, app_data_dir, cancellation, resolution, sizes)
         }
         OperationIntentKind::CreateDirectory => execute_create(
             task_id,
@@ -1151,7 +1188,12 @@ fn conflict_execution(
 pub(crate) fn execute_conflict_resolution(
     execution: OperationConflictExecution,
     app_data_dir: Option<PathBuf>,
+    sizes: Option<&crate::services::directory_size::DirectorySizeService>,
 ) -> ExecutionResult {
+    // The conflict dialog can outlive a newly accepted scan. Fence again at
+    // the actual continuation; never replay the already completed entries.
+    let paths = size_change_paths(&execution.intent);
+    let _size_change = sizes.filter(|_| !paths.is_empty()).map(|sizes| sizes.namespace_change(&paths));
     execute_pending_conflict(
         &execution.task_id,
         &execution.intent,
@@ -1195,6 +1237,7 @@ fn execute_pending_conflict(
             app_data_dir,
             &cancellation,
             Some(&resolution),
+            None,
         ),
     };
 
@@ -1268,88 +1311,6 @@ fn execute_delete(
     Ok(success_execution(intent, results, undo_actions))
 }
 
-fn execute_rename(
-    task_id: &str,
-    intent: &OperationIntent,
-    app_data_dir: Option<PathBuf>,
-    cancellation: &AtomicBool,
-    resolution: Option<&OperationConflictResolution>,
-) -> Result<ExecutionResult> {
-    check_cancelled(cancellation)?;
-    let source_ref = intent
-        .source_path
-        .as_ref()
-        .context("sourcePath is required for rename")?;
-    let source = PathBuf::from(local_path(Some(source_ref), "sourcePath")?);
-    let new_name = intent
-        .new_name
-        .as_deref()
-        .context("newName is required for rename")?;
-    let parent = source.parent().context("cannot rename a root path")?;
-    let destination = parent.join(new_name);
-
-    if destination.exists() && resolution.is_none() {
-        bail!("destination already exists: {}", destination.display());
-    }
-
-    let decision = resolve_destination(&destination, resolution)?;
-    if decision.skip {
-        return Ok(success_execution(
-            intent,
-            vec![OperationEntryResult {
-                entry_result_id: format!("{task_id}-0"),
-                source: Some(source_ref.clone()),
-                destination: Some(OperationPathRef::Local {
-                    path: destination.to_string_lossy().into_owned(),
-                }),
-                kind: OperationEntryResultKind::Skipped,
-                error: None,
-            }],
-            Vec::new(),
-        ));
-    }
-
-    let mut undo_actions = Vec::new();
-    let mut restore_backup = None;
-    if decision.replace && decision.destination.exists() {
-        let backup = trash_destination(task_id, app_data_dir.as_ref(), &decision.destination)?;
-        let backup = move_entry_exact(&decision.destination, &backup, cancellation)?;
-        restore_backup = Some((backup, decision.destination.clone()));
-    }
-
-    check_cancelled(cancellation)?;
-    fs::rename(&source, &decision.destination).with_context(|| {
-        format!(
-            "failed to rename {} to {}",
-            source.display(),
-            decision.destination.display()
-        )
-    })?;
-    undo_actions.push(UndoAction::MoveBack {
-        from: decision.destination.clone(),
-        to: source.clone(),
-    });
-    if let Some((trash_path, original_path)) = restore_backup {
-        undo_actions.push(UndoAction::RestoreTrash {
-            trash_path,
-            original_path,
-        });
-    }
-
-    Ok(success_execution(
-        intent,
-        vec![OperationEntryResult {
-            entry_result_id: format!("{task_id}-0"),
-            source: Some(source_ref.clone()),
-            destination: Some(OperationPathRef::Local {
-                path: decision.destination.to_string_lossy().into_owned(),
-            }),
-            kind: OperationEntryResultKind::Renamed,
-            error: None,
-        }],
-        undo_actions,
-    ))
-}
 
 fn execute_create(
     task_id: &str,

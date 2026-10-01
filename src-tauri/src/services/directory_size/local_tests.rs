@@ -12,6 +12,31 @@ impl TestRoot {
 impl Drop for TestRoot { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
 
 #[test]
+fn local_size_streams_completed_subtrees_even_when_memory_retains_only_the_root() {
+    use super::scan::{DirectoryCursor, DirectorySize, MetadataSource};
+    struct RecordingSource { records: Vec<(String, u64)> }
+    impl MetadataSource for RecordingSource {
+        fn read_directory(&mut self, _: &str, _: &AtomicBool, _: &mut dyn FnMut(super::metadata::MetadataEntry) -> bool) -> Result<(), String> { unreachable!() }
+        fn open_directory(&mut self, path: &str, cancelled: &AtomicBool) -> Option<Result<DirectoryCursor, String>> {
+            LocalMetadataSource.open_directory(path, cancelled)
+        }
+        fn directory_completed(&mut self, path: &str, size: &DirectorySize) {
+            self.records.push((path.into(), size.bytes));
+        }
+    }
+    let root = TestRoot::new(); fs::create_dir_all(root.0.join("child/deep")).unwrap();
+    fs::write(root.0.join("child/deep/payload"), [0_u8; 60]).unwrap();
+    let mut source = RecordingSource { records: vec![] };
+    let result = scan_directory(root.0.to_str().unwrap(), &mut source, &AtomicBool::new(false),
+        ScanLimits { max_directories: 1, ..Default::default() }, |_| {});
+    assert_eq!(result.outcome, ScanOutcome::Complete);
+    assert_eq!(result.directories.len(), 1);
+    assert_eq!(source.records.len(), 3);
+    assert!(source.records.iter().all(|(_, bytes)| *bytes == 60));
+    assert_eq!(source.records.last().unwrap().0, root.0.to_str().unwrap());
+}
+
+#[test]
 fn local_size_scan_matches_raw_listing_fingerprint_and_includes_hidden_and_empty() {
     let root = TestRoot::new();
     fs::create_dir(root.0.join("folder")).unwrap();
@@ -87,4 +112,37 @@ fn local_size_scan_excludes_directory_junctions_and_rejects_a_link_root() {
     assert!(listing.entries[0].is_symlink);
     fs::remove_dir(&junction).unwrap();
     assert!(outside.0.join("not-counted").exists());
+}
+#[cfg(windows)]
+#[test]
+fn local_size_watch_reports_actual_rename_names_and_keeps_watching_the_same_tree() {
+    use super::watch::{ChangeKind, RecursiveWatch};
+    use std::time::{Duration, Instant};
+    let path = std::env::temp_dir().join(format!("athenaeum-size-events-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(path.join("old").join("deep")).unwrap();
+    let mut watch = RecursiveWatch::open(path.to_str().unwrap()).unwrap();
+    std::fs::rename(path.join("old"), path.join("new")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut events = vec![];
+    while Instant::now() < deadline {
+        let changes = watch.take_changes();
+        assert!(!changes.lost, "ordinary rename must retain detailed monitoring");
+        events.extend(changes.events);
+        if events.iter().any(|event| event.kind == ChangeKind::RenameNew) { break; }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(events.iter().any(|event| event.kind == ChangeKind::RenameOld && event.path == "old"));
+    assert!(events.iter().any(|event| event.kind == ChangeKind::RenameNew && event.path == "new"));
+    std::fs::write(path.join("new/deep/payload"), b"new bytes").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut saw_payload = false;
+    while Instant::now() < deadline {
+        let changes = watch.take_changes();
+        assert!(!changes.lost);
+        if changes.events.iter().any(|event| event.path.ends_with("payload")) { saw_payload = true; break; }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(saw_payload);
+    drop(watch);
+    std::fs::remove_dir_all(path).unwrap();
 }

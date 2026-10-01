@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -65,6 +66,12 @@ pub struct MetadataStore {
     color_rules_migration_dirty: bool,
     #[serde(skip)]
     color_filter_recovery_diagnostics: Vec<String>,
+    #[serde(skip)]
+    entry_tag_index: HashMap<String, usize>,
+    #[serde(skip)]
+    entry_comment_index: HashMap<String, usize>,
+    #[serde(skip)]
+    tag_definition_index: HashMap<String, usize>,
 }
 
 fn default_color_filter_enabled() -> bool {
@@ -99,6 +106,9 @@ impl Default for MetadataStore {
             file_path: None,
             color_rules_migration_dirty: false,
             color_filter_recovery_diagnostics: Vec::new(),
+            entry_tag_index: HashMap::new(),
+            entry_comment_index: HashMap::new(),
+            tag_definition_index: HashMap::new(),
         }
     }
 }
@@ -146,6 +156,7 @@ impl MetadataStore {
         store.color_filter_recovery_diagnostics = revision_diagnostics;
         store.cleanup_expired_entry_metadata(Utc::now);
         store.file_path = Some(file_path);
+        store.rebuild_lookup_indexes();
         Ok(store)
     }
 
@@ -159,6 +170,7 @@ impl MetadataStore {
             snapshot.increment_color_revisions(true)?;
         }
         snapshot.cleanup_expired_entry_metadata(Utc::now);
+        snapshot.rebuild_lookup_indexes();
         snapshot.color_rule_schema_version = default_color_rule_schema_version();
         color_migration::canonicalize_rules(&mut snapshot.color_rules);
         snapshot.color_rules_migration_dirty = false;
@@ -215,19 +227,24 @@ impl MetadataStore {
         navigation_columns: Vec<DetailColumnDefinition>,
         details_row_height: u16,
         size_bar_mode: String,
+        tree_auto_follow_enabled: bool,
         folder_expansion_enabled: bool,
+        folder_expansion_on_row_click: bool,
+        notifications_enabled: bool,
         tooltip_hover_delay_ms: u32,
         metadata_retention_hours: Option<u64>,
         file_visibility: FileVisibilitySettings,
         context_menu: ContextMenuSettings,
         theme: UiTheme,
         template_root: String,
+        auto_directory_size_paths: Vec<String>,
     ) -> SettingsSnapshot {
         // Hydrate passwords from credential store BEFORE redacting credential_target
         let hydrated_profiles =
             crate::commands::remote::hydrate_remote_profiles(self.remote_profiles.clone());
 
         SettingsSnapshot {
+            auto_directory_size_paths,
             template_root,
             file_associations: self.file_associations.clone(),
             bookmarks: self.bookmarks.clone(),
@@ -246,7 +263,10 @@ impl MetadataStore {
             navigation_columns,
             details_row_height,
             size_bar_mode,
+            tree_auto_follow_enabled,
             folder_expansion_enabled,
+            folder_expansion_on_row_click,
+            notifications_enabled,
             tooltip_hover_delay_ms,
             metadata_retention_hours,
             file_visibility,
@@ -437,6 +457,7 @@ impl MetadataStore {
         upsert_by_id(&mut self.tag_definitions, definition, |item| &item.id);
         self.tag_definitions
             .sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        self.rebuild_lookup_indexes();
     }
 
     pub fn delete_tag_definition(&mut self, id: &str) {
@@ -445,6 +466,7 @@ impl MetadataStore {
             entry.tag_ids.retain(|tag_id| tag_id != id);
         }
         self.entry_tags.retain(|entry| !entry.tag_ids.is_empty());
+        self.rebuild_lookup_indexes();
     }
 
     pub fn set_shortcuts(&mut self, shortcuts: Vec<ShortcutBinding>) {
@@ -467,9 +489,9 @@ impl MetadataStore {
     pub fn tags_for_path(&self, path: &str) -> Vec<String> {
         let normalized_path = metadata_path_key(path);
         let Some(entry) = self
-            .entry_tags
-            .iter()
-            .find(|entry| metadata_path_key(&entry.path) == normalized_path)
+            .entry_tag_index
+            .get(&normalized_path)
+            .and_then(|index| self.entry_tags.get(*index))
         else {
             return Vec::new();
         };
@@ -478,9 +500,9 @@ impl MetadataStore {
             .tag_ids
             .iter()
             .filter_map(|tag_id| {
-                self.tag_definitions
-                    .iter()
-                    .find(|definition| definition.id == *tag_id)
+                self.tag_definition_index
+                    .get(tag_id)
+                    .and_then(|index| self.tag_definitions.get(*index))
             })
             .map(|definition| definition.name.clone())
             .collect()
@@ -488,9 +510,9 @@ impl MetadataStore {
 
     pub fn comment_for_path(&self, path: &str) -> Option<String> {
         let normalized_path = metadata_path_key(path);
-        self.entry_comments
-            .iter()
-            .find(|entry| metadata_path_key(&entry.path) == normalized_path)
+        self.entry_comment_index
+            .get(&normalized_path)
+            .and_then(|index| self.entry_comments.get(*index))
             .map(|entry| entry.comment.clone())
     }
 
@@ -519,6 +541,7 @@ impl MetadataStore {
             updated_at: now(),
             expires_at: None,
         });
+        self.rebuild_lookup_indexes();
     }
 
     pub fn remove_entry_comment(&mut self, path: &str) -> bool {
@@ -526,7 +549,11 @@ impl MetadataStore {
         let before = self.entry_comments.len();
         self.entry_comments
             .retain(|entry| metadata_path_key(&entry.path) != normalized_path);
-        before != self.entry_comments.len()
+        let removed = before != self.entry_comments.len();
+        if removed {
+            self.rebuild_lookup_indexes();
+        }
+        removed
     }
 
     pub fn mark_entry_metadata_deleted(
@@ -549,6 +576,7 @@ impl MetadataStore {
                 .retain(|entry| !path_keys.contains(&metadata_path_key(&entry.path)));
             self.entry_tags
                 .retain(|entry| !path_keys.contains(&metadata_path_key(&entry.path)));
+            self.rebuild_lookup_indexes();
             return;
         }
 
@@ -567,6 +595,8 @@ impl MetadataStore {
 
     pub fn cleanup_expired_entry_metadata(&mut self, now: impl Fn() -> DateTime<Utc>) {
         let timestamp = now();
+        let previous_comments = self.entry_comments.len();
+        let previous_tags = self.entry_tags.len();
         self.entry_comments.retain(|entry| {
             entry
                 .expires_at
@@ -579,6 +609,35 @@ impl MetadataStore {
                 .map(|expiry| expiry > timestamp)
                 .unwrap_or(true)
         });
+        if previous_comments != self.entry_comments.len() || previous_tags != self.entry_tags.len() {
+            self.rebuild_lookup_indexes();
+        }
+    }
+
+    pub fn has_expired_entry_metadata(&self, now: DateTime<Utc>) -> bool {
+        self.entry_comments.iter().any(|entry| entry.expires_at.is_some_and(|expiry| expiry <= now))
+            || self.entry_tags.iter().any(|entry| entry.expires_at.is_some_and(|expiry| expiry <= now))
+    }
+
+    fn rebuild_lookup_indexes(&mut self) {
+        self.entry_tag_index.clear();
+        self.entry_comment_index.clear();
+        self.tag_definition_index.clear();
+        for (index, entry) in self.entry_tags.iter().enumerate() {
+            self.entry_tag_index
+                .entry(metadata_path_key(&entry.path))
+                .or_insert(index);
+        }
+        for (index, entry) in self.entry_comments.iter().enumerate() {
+            self.entry_comment_index
+                .entry(metadata_path_key(&entry.path))
+                .or_insert(index);
+        }
+        for (index, definition) in self.tag_definitions.iter().enumerate() {
+            self.tag_definition_index
+                .entry(definition.id.clone())
+                .or_insert(index);
+        }
     }
 }
 
@@ -667,7 +726,7 @@ mod tests {
 
     use chrono::{DateTime, Utc};
 
-    use super::MetadataStore;
+    use super::{EntryComment, MetadataStore};
     use crate::domain::models::{
         Bookmark, ContextMenuSettings, EntryTag, FileVisibilitySettings, LocationKind,
         NavigationItemUpsertRequest, NavigationTargetKind, NavigationTargetStatus, RemoteAuthKind,
@@ -734,12 +793,16 @@ mod tests {
             36,
             "folder-total".into(),
             false,
+            false,
+            false,
+            false,
             200,
             Some(720),
             FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
             String::new(),
+            vec![],
         );
         assert_eq!(snapshot.bookmarks.len(), 1);
         assert_eq!(snapshot.bookmarks[0].name, "Docs");
@@ -771,12 +834,16 @@ mod tests {
             36,
             "folder-total".into(),
             false,
+            false,
+            false,
+            false,
             200,
             Some(720),
             FileVisibilitySettings::default(),
             ContextMenuSettings::default(),
             UiTheme::default(),
             String::new(),
+            vec![],
         );
 
         assert!(reloaded.navigation_items.is_empty());
@@ -970,7 +1037,7 @@ mod tests {
     #[test]
     fn tags_for_path_returns_tag_names() {
         let path = "C:\\Data\\notes.txt".to_string();
-        let store = MetadataStore {
+        let mut store = MetadataStore {
             tag_definitions: vec![TagDefinition {
                 id: "tag-1".into(),
                 name: "Pinned".into(),
@@ -983,7 +1050,39 @@ mod tests {
             }],
             ..MetadataStore::default()
         };
+        store.rebuild_lookup_indexes();
 
+        assert_eq!(store.tags_for_path(&path), vec!["Pinned".to_string()]);
+    }
+
+    #[test]
+    fn metadata_lookup_indexes_are_rebuilt_for_loaded_entries() {
+        let path = "C:\\Data\\indexed.txt".to_string();
+        let mut store = MetadataStore {
+            tag_definitions: vec![TagDefinition {
+                id: "tag-1".into(),
+                name: "Pinned".into(),
+                color_hex: "#00ff99".into(),
+            }],
+            entry_tags: vec![EntryTag {
+                path: path.clone(),
+                tag_ids: vec!["tag-1".into()],
+                expires_at: None,
+            }],
+            entry_comments: vec![EntryComment {
+                path: path.clone(),
+                comment: "Indexed".into(),
+                updated_at: Utc::now(),
+                expires_at: None,
+            }],
+            ..MetadataStore::default()
+        };
+        store.rebuild_lookup_indexes();
+
+        assert_eq!(store.entry_tag_index.len(), 1);
+        assert_eq!(store.entry_comment_index.len(), 1);
+        assert_eq!(store.tag_definition_index.len(), 1);
+        assert_eq!(store.comment_for_path(&path), Some("Indexed".into()));
         assert_eq!(store.tags_for_path(&path), vec!["Pinned".to_string()]);
     }
 

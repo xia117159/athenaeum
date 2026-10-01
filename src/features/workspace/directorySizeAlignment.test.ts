@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { controllerFixture, mountSizes, sizeTransport } from "./directorySizeControllerTestSupport";
-import { sizeRecord, sizeSnapshot } from "./directorySizeTestSupport";
+import { sizeRecord, sizeSnapshot, withQuickFilterText } from "./directorySizeTestSupport";
 import { getFolderListingRows } from "./folderExpansion";
 import { expansionEntry, expansionSnapshot } from "./folderExpansionTestSupport";
 import { getPathComparisonKey } from "./workspacePathRelations";
@@ -39,7 +39,7 @@ export const completion = (async () => {
         assert.deepEqual(h.interactions.resolvedPaths, [f.path]);
         assert.equal(getFolderListingRows(h.tab).find(({ entry }) => entry.id === f.a.id)?.entry.sizeDisplay?.share, null);
         await act(async () => { wire.emit(sizeSnapshot({ consumerId: wire.subscribed[0].consumerId, sequence: 3 })); await flushEffects(); });
-        await h.change((state) => ({ ...state, search: { ...state.search, filterText: "a" } }));
+        await h.change((state) => withQuickFilterText(state, "a"));
         assert.deepEqual(h.interactions.resolvedPaths, [f.path]);
         assert.equal(wire.subscribed.length, 1);
       } finally { await h.close(); }

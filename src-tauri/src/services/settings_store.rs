@@ -10,6 +10,7 @@ use crate::domain::models::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStore {
+    #[serde(default)] pub auto_directory_size_paths: Vec<String>,
     #[serde(default)]
     pub template_root: String,
     pub layout: UiLayout,
@@ -22,7 +23,13 @@ pub struct SettingsStore {
     #[serde(default = "default_size_bar_mode")]
     pub size_bar_mode: String,
     #[serde(default)]
+    pub tree_auto_follow_enabled: bool,
+    #[serde(default)]
     pub folder_expansion_enabled: bool,
+    #[serde(default)]
+    pub folder_expansion_on_row_click: bool,
+    #[serde(default)]
+    pub notifications_enabled: bool,
     #[serde(default = "default_tooltip_hover_delay_ms")]
     pub tooltip_hover_delay_ms: u32,
     #[serde(default = "default_metadata_retention_hours")]
@@ -40,13 +47,17 @@ pub struct SettingsStore {
 impl Default for SettingsStore {
     fn default() -> Self {
         Self {
+            auto_directory_size_paths: vec![],
             template_root: String::new(),
             layout: UiLayout::fallback(),
             detail_columns: default_detail_columns(),
             navigation_columns: default_navigation_columns(),
             details_row_height: default_details_row_height(),
             size_bar_mode: default_size_bar_mode(),
+            tree_auto_follow_enabled: false,
             folder_expansion_enabled: false,
+            folder_expansion_on_row_click: false,
+            notifications_enabled: false,
             tooltip_hover_delay_ms: default_tooltip_hover_delay_ms(),
             metadata_retention_hours: default_metadata_retention_hours(),
             file_visibility: FileVisibilitySettings::default(),
@@ -84,6 +95,7 @@ impl SettingsStore {
             normalize_metadata_retention_hours(store.metadata_retention_hours);
         store.context_menu = normalize_context_menu(store.context_menu);
         store.theme = normalize_theme(store.theme);
+        store.auto_directory_size_paths = super::auto_directory_size_paths::clean(store.auto_directory_size_paths);
         store.file_path = Some(file_path);
         Ok(store)
     }
@@ -112,6 +124,11 @@ impl SettingsStore {
         Ok(())
     }
 
+    pub(crate) fn persist_atomically(&self) -> Result<()> {
+        let path = self.file_path.as_ref().context("settings store path not initialized")?;
+        super::atomic_file::write_atomically(path, &serde_json::to_vec_pretty(self)?)
+    }
+
     pub fn set_layout(&mut self, layout: UiLayout) {
         self.layout = normalize_layout(layout);
     }
@@ -134,6 +151,10 @@ impl SettingsStore {
 
     pub fn set_folder_expansion_enabled(&mut self, enabled: bool) {
         self.folder_expansion_enabled = enabled;
+    }
+
+    pub fn set_notifications_enabled(&mut self, enabled: bool) {
+        self.notifications_enabled = enabled;
     }
 
     pub fn set_tooltip_hover_delay_ms(&mut self, value: u32) {
@@ -560,6 +581,34 @@ mod tests {
                 serde_json::to_value(loaded).unwrap()["folderExpansionEnabled"],
                 enabled
             );
+        }
+    }
+
+    #[test]
+    fn notifications_setting_defaults_hidden_and_persists_round_trip() {
+        let temp = TestDir::new("notifications");
+        let file_path = temp.path.join("settings.json");
+        let defaulted: SettingsStore = serde_json::from_value(
+            serde_json::to_value(SettingsStore::default()).unwrap(),
+        )
+        .unwrap();
+        // 默认关闭（隐藏通知）：无论全新默认还是旧设置缺字段，都反序列化为 false。
+        assert_eq!(defaulted.notifications_enabled, false);
+        let mut legacy = serde_json::to_value(SettingsStore::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("notificationsEnabled");
+        let without_field: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(without_field.notifications_enabled, false);
+
+        for enabled in [true, false] {
+            legacy["notificationsEnabled"] = serde_json::json!(enabled);
+            let mut store: SettingsStore = serde_json::from_value(legacy.clone()).unwrap();
+            store.attach_path(file_path.clone());
+            store.persist().unwrap();
+            let loaded = SettingsStore::load_from(file_path.clone()).unwrap();
+            assert_eq!(loaded.notifications_enabled, enabled);
         }
     }
 

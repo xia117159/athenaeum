@@ -12,6 +12,7 @@ export const completion = (async () => {
   for (const scenario of ["single", "multiple", "navigate", "intermediate-edit", "early-event", "pending-navigation-copy-first", "pending-navigation-reply-first",
     "ready-navigation-single", "ready-navigation-multiple", "ready-selection-single", "ready-selection-multiple"] as const) {
     const f = expansionFixture(); f.bootstrap.settingsModel.templateRoot = "C:\\Templates";
+    f.bootstrap.settingsModel.notificationsEnabled = true;
     const original = f.bootstrap.panels["panel-1"].tabs.find(tab => tab.id === f.tabId)!;
     const created = [expansionEntry(f.path, "Result (1).txt", "file"), expansionEntry(f.path, "Project")];
     const templates: CreationTemplateEntry[] = [{ name: "Template.txt", path: "C:\\Templates\\Word\\Template.txt", relativePath: "Word/Template.txt", kind: "file" },

@@ -116,6 +116,8 @@ pub struct DirectoryListing {
     pub can_go_up: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_size_cache: Option<super::directory_sizes::DirectorySizeCache>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -289,6 +291,28 @@ pub struct SystemIconBitmap {
     pub width: u32,
     pub height: u32,
     pub rgba_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeyItem {
+    pub path: String,
+    pub kind: FileSystemIconKind,
+    pub extension: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeysRequest {
+    pub items: Vec<SystemIconKeyItem>,
+    pub size: u32,
+    pub image_list: Option<SystemIconImageList>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemIconKeyResult {
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

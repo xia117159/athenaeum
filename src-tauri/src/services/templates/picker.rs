@@ -1,19 +1,20 @@
 use anyhow::{Context, Result};
 
-pub fn choose(owner: isize) -> Result<Option<String>> {
+pub fn choose(owner: isize, title: &str) -> Result<Option<String>> {
+    let title = title.to_owned();
     #[cfg(windows)]
-    return crate::services::windows_sta::run(move || choose_windows(owner));
+    return crate::services::windows_sta::run(move || choose_windows(owner, &title));
     #[cfg(not(windows))]
     {
-        let _ = owner;
+        let _ = (owner, title);
         anyhow::bail!("文件夹选择框仅支持 Windows")
     }
 }
 
 #[cfg(windows)]
-fn choose_windows(owner: isize) -> Result<Option<String>> {
+fn choose_windows(owner: isize, title: &str) -> Result<Option<String>> {
     use windows::{
-        core::{w, HRESULT},
+        core::{HSTRING, HRESULT},
         Win32::{
             Foundation::{ERROR_CANCELLED, HWND},
             System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER},
@@ -26,7 +27,7 @@ fn choose_windows(owner: isize) -> Result<Option<String>> {
     unsafe {
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
             .context("无法创建文件夹选择框")?;
-        dialog.SetTitle(w!("选择模板文件夹"))?;
+        dialog.SetTitle(&HSTRING::from(title))?;
         dialog.SetOptions(
             dialog.GetOptions()? | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM,
         )?;

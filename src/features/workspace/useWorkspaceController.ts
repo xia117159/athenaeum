@@ -4,7 +4,7 @@ import { createWorkspaceGateway, type WorkspaceGateway } from "./workspaceGatewa
 import { openCommentWindow } from "./commentWindow";
 import { openOperationHistoryWindow } from "./operationHistoryWindow";
 import { createWorkspaceState, getActiveTab, getVisiblePanelIds, workspaceReducer } from "./workspaceReducer";
-import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, shortcutMatches } from "./workspaceShortcuts";
+import { eventToShortcutBinding, getShortcutBinding, getShortcutBindingMap, isSingleKeyShortcutBinding, shortcutMatches } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { migrateLegacySearchHistory, readSearchHistory, writeSearchHistory } from "./workspaceSearchHistoryStore";
 import { createDefaultSearchId } from "./workspaceSearch";
@@ -12,7 +12,12 @@ import { moveColumn, setColumnVisibility } from "./workspaceReducerColumns";
 import { beginAppOriginSystemDrag, endAppOriginSystemDrag } from "./systemDragDrop";
 import { devLog, devWarn } from "./devLog";
 import { disposeQuietly } from "./workspaceIpc";
-import { getFolderListingRows, getTabEntries } from "./folderExpansion";
+import { getFolderListingRows, getTabEntries, supportsFolderExpansion } from "./folderExpansion";
+import { resolveActiveQuickFilterProgram } from "./quickFilterState";
+import { type QuickFilterMode, type QuickFilterSyntax } from "./quickFilterTypes";
+import { useQuickFilterCompilationScheduler } from "./useQuickFilterCompilationScheduler";
+import { decideQuickFilterTypeahead, useQuickFilterTypeaheadClock, type QuickFilterTypeaheadTarget } from "./useQuickFilterTypeahead";
+import { useWorkspaceTreeController } from "./useWorkspaceTreeController";
 import { useFolderExpansionController } from "./useFolderExpansionController";
 import { useDirectorySizeController } from "./useDirectorySizeController";
 import { useFileOpeningController } from "./useFileOpeningController";
@@ -21,7 +26,7 @@ import { useTemplateCreationController } from "./useTemplateCreationController";
 import { captureRenameTarget } from "./renameTarget";
 import { captureTemplateTarget } from "./templateCreationState";
 import { currentListingEntry } from "./fileOpeningState";
-import { supportsDirectorySizes } from "./directorySizes";
+import { createDirectorySizeActions } from "./directorySizeActions";
 import { getTopLevelPaths } from "./workspacePathRelations";
 import { subscribeOperationEvents } from "./operationSubscriptions";
 import { useColorFilterController } from "./useColorFilterController";
@@ -43,7 +48,6 @@ import {
   findDirectoryTabForNavigationFolder,
   findEntryByPath,
   findTab,
-  findTreeNode,
   getActiveDirectoryTab,
   getEntryNameFromPath,
   getErrorMessage,
@@ -108,7 +112,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }));
   useFolderExpansionController({ state, dispatch, workspaceGateway });
   useDirectorySizeController({ state, dispatch, workspaceGateway, enabled: options.role !== "settings" });
-  const hydratingTreePathsRef = useRef<Set<string>>(new Set());
   const navigationRequestsRef = useRef<Map<string, number>>(new Map());
   const userNavigationRequestsRef = useRef<Map<string, number>>(new Map());
   // Retained per-tab id of the most recently initiated navigation. Unlike
@@ -117,6 +120,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   // still tell whether they belong to the tab's current directory.
   const latestNavigationIdRef = useRef<Map<string, number>>(new Map());
   const nextNavigationRequestIdRef = useRef(0);
+  // A navigation-target refresh is shared by multiple panels and can overlap
+  // with a live refresh. Only the latest response may update the navigation
+  // status or target records.
+  const nextNavigationTargetsRefreshIdRef = useRef(0);
   const nextSearchRequestIdRef = useRef(0);
   const nextPropertiesRequestIdRef = useRef(0);
   const activeSearchRef = useRef<{ requestId: number; searchId: string } | null>(null);
@@ -149,6 +156,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   // WatchRootsManager - 独立管理文件监视，完全解耦 React 生命周期
   const watchRootsManagerRef = useRef<WatchRootsManager | null>(null);
+  /** 键盘直输聚合状态（B15/B16）：`target` 是「面板:标签页:路径」身份键，变化即视为新聚合。 */
+  const quickFilterTypeaheadRef = useQuickFilterTypeaheadClock(state);
 
   const skipNextSettingsPersistenceRef = useRef({
     shortcuts: false,
@@ -162,6 +171,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   const pushNotification = useEffectEvent((intent: WorkspaceState["notifications"][number]["intent"], message: string) => {
     dispatch({ type: "notificationAdded", payload: createNotification(intent, message) });
   });
+  const loadTreeChildren = useWorkspaceTreeController({ state, dispatch, workspaceGateway,
+    notify: message => pushNotification("danger", message), enabled: options.role !== "settings" });
   const fileOpening = useFileOpeningController({ state, dispatch, gateway: workspaceGateway,
     enabled: options.role !== "settings", notify: pushNotification });
 
@@ -346,10 +357,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       contextMenu: !hasSameJsonShape(current.contextMenu, next.contextMenu),
       fileListModel:
         current.templateRoot !== next.templateRoot ||
+        !hasSameJsonShape(current.fileAssociations, next.fileAssociations) ||
         !hasSameJsonShape(current.columns, next.columns) ||
         !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
         !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+        current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
         current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+        current.folderExpansionOnRowClick !== next.folderExpansionOnRowClick ||
+        current.notificationsEnabled !== next.notificationsEnabled ||
         current.sizeBarMode !== next.sizeBarMode ||
         current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
         current.metadataRetentionHours !== next.metadataRetentionHours
@@ -358,6 +373,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
 
   const persistedSettingsChanged = (current: SettingsModel, next: SettingsModel) =>
     current.templateRoot !== next.templateRoot ||
+    !hasSameJsonShape(current.fileAssociations, next.fileAssociations) ||
     !hasSameJsonShape(current.shortcuts, next.shortcuts) ||
     !hasSameJsonShape(current.colorRules, next.colorRules) ||
     current.detailsRowHeight !== next.detailsRowHeight ||
@@ -366,13 +382,22 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     !hasSameJsonShape(current.columns, next.columns) ||
     !hasSameJsonShape(current.navigationColumns, next.navigationColumns) ||
     !hasSameJsonShape(current.fileVisibility, next.fileVisibility) ||
+    current.treeAutoFollowEnabled !== next.treeAutoFollowEnabled ||
     current.folderExpansionEnabled !== next.folderExpansionEnabled ||
+    current.folderExpansionOnRowClick !== next.folderExpansionOnRowClick ||
+    current.notificationsEnabled !== next.notificationsEnabled ||
     current.tooltipHoverDelayMs !== next.tooltipHoverDelayMs ||
     current.metadataRetentionHours !== next.metadataRetentionHours;
 
   const propertiesPanel = state.panels[state.activePanelId];
   const propertiesWorkspaceTab = getActiveTab(propertiesPanel);
-  const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab)
+  // S-7：这里曾对每次渲染**无条件**整趟重投影（2 万条目实测约 0.72s/趟），而结果只是一个
+  // 用于 effect 依赖的比较键。改为只在信息面板真的展开在属性页时才计算 —— 那个 effect
+  // 在其余情形下都会提前 return，因此提前返回时键值取空串不改变任何行为。
+  //
+  // 选择更新时 `getTabSelectedEntries` 复用已投影行的 ID 索引，不再逐项映射全目录。
+  const propertiesSelectedIds = isDirectoryTab(propertiesWorkspaceTab) &&
+    state.informationPanel.expanded && state.informationPanel.activeTab === "properties"
     ? getSelectedEntries(state, state.activePanelId).map((entry) => entry.id).join("|")
     : "";
   const propertiesEffectKey = [
@@ -511,8 +536,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     if (state.status !== "ready" || state.source !== "tauri") {
       return;
     }
-    void workspaceGateway.saveSession(state);
-  }, [state, workspaceGateway]);
+    if (options.role !== "settings") void workspaceGateway.saveSession(state);
+  }, [state, workspaceGateway, options.role]);
 
   useEffect(() => {
     if (state.source !== "tauri") {
@@ -577,9 +602,12 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   }, [
     state.settings.model.columns,
     state.settings.model.templateRoot,
+    state.settings.model.fileAssociations,
     state.settings.model.navigationColumns,
     state.settings.model.fileVisibility,
+    state.settings.model.treeAutoFollowEnabled,
     state.settings.model.folderExpansionEnabled,
+    state.settings.model.folderExpansionOnRowClick,
     state.settings.model.sizeBarMode,
     state.settings.model.contextMenu,
     state.settings.model.tooltipHoverDelayMs,
@@ -594,55 +622,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     writeSearchHistory("content", state.search.histories.content);
     writeSearchHistory("name", state.search.histories.name);
   }, [state.search.histories.content, state.search.histories.name]);
-
-  useEffect(() => {
-    if (state.status !== "ready") {
-      hydratingTreePathsRef.current.clear();
-      return;
-    }
-
-    const activeTab = getActiveTab(state.panels[state.activePanelId]);
-    if (isNavigationTab(activeTab) || activeTab.status !== "ready") {
-      return;
-    }
-
-    const pendingPaths = Array.from(new Set(activeTab.expandedNodePaths.map((path) => normalizeLocationPath(path)))).filter(
-      (path) => {
-        if (!path || hydratingTreePathsRef.current.has(path)) {
-          return false;
-        }
-
-        const node = findTreeNode(state.directoryTree, path);
-        return Boolean(node && node.expandable && !node.loaded && node.connectionState !== "error");
-      }
-    );
-
-    if (pendingPaths.length === 0) {
-      return;
-    }
-
-    for (const path of pendingPaths) {
-      hydratingTreePathsRef.current.add(path);
-
-      void workspaceGateway
-        .loadTreeChildren(path)
-        .then((children) => {
-          dispatch({ type: "treeChildrenLoaded", payload: { path, children } });
-        })
-        .catch((error) => {
-          if (isRemotePath(path)) {
-            dispatch({
-              type: "treeNodeConnectionFailed",
-              payload: { path, message: getErrorMessage(error, `无法展开 ${path}`) }
-            });
-          }
-          pushNotification("danger", getErrorMessage(error, `无法展开 ${path}`));
-        })
-        .finally(() => {
-          hydratingTreePathsRef.current.delete(path);
-        });
-    }
-  }, [state.status, state.activePanelId, state.panels, state.directoryTree, workspaceGateway]);
 
   useEffect(() => {
     if (state.status !== "ready" || state.source !== "tauri") {
@@ -920,11 +899,14 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   );
 
   const refreshNavigationTargets = useEffectEvent(async () => {
+    const refreshId = ++nextNavigationTargetsRefreshIdRef.current;
     dispatch({ type: "navigationStatusSet", payload: "checking" });
     try {
       const infos = await workspaceGateway.resolveNavigationTargets(state.navigation.items.map((item) => item.path));
+      if (refreshId !== nextNavigationTargetsRefreshIdRef.current) return;
       dispatch({ type: "navigationTargetStatusUpdated", payload: infos });
     } catch (error) {
+      if (refreshId !== nextNavigationTargetsRefreshIdRef.current) return;
       dispatch({ type: "navigationStatusSet", payload: "idle" });
       pushNotification("danger", getErrorMessage(error, "无法刷新导航项目标状态。"));
     }
@@ -936,9 +918,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       await refreshNavigationTargets();
       return;
     }
-    if (supportsDirectorySizes(activeTab)) dispatch({ type: "directorySizeRequested", payload: {
-      panelId, tabId: activeTab.id, rootPath: activeTab.snapshot.location.path, intent: "refresh"
-    } });
+    // F5 reloads the listing only; sizes follow their own lease and change tracking (D10).
     await commitNavigation(panelId, activeTab.snapshot.location.path, false, {
       tabId: activeTab.id,
       activatePanel: false,
@@ -1134,9 +1114,16 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
   }, [
     state.status, state.panels, state.layoutMode, state.activePanelId,
-    state.navigation.items, state.fileVisibility, state.search.filterText,
+    state.navigation.items, state.fileVisibility,
+    // G-16：原先还依赖 `state.quickFilter`，但 `getVisibleWatchRoots` 明确按 D21
+    // 使用**未过滤**投影（`workspaceRefreshPlanner.ts:32` 传 `null`），
+    // 因此过滤文本变化不影响监视根；保留该依赖只会让每次输入都多跑一次根集合更新。
     state.settings.model.folderExpansionEnabled
   ]);
+
+  // §6.6 编译调度的唯一规则见 `useQuickFilterCompilationScheduler`：作用域是**全部**面板的
+  // 目录类标签页路径，而不只是激活面板的路径（D24 ②：过滤结果不得由谁持有焦点决定）。
+  useQuickFilterCompilationScheduler({ state, dispatch, enabled: options.role !== "settings" });
 
   useEffect(() => {
     let disposed = false;
@@ -1421,6 +1408,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         }
 
         const settingsModelChanged = persistedSettingsChanged(state.settings.model, payload.settingsModel);
+        // Saved by dedicated commands: only the list is replaced, so no settings save is echoed (E7).
+        if (!hasSameJsonShape(state.settings.model.autoDirectorySizePaths ?? [], payload.settingsModel.autoDirectorySizePaths ?? [])) {
+          dispatch({ type: "autoDirectorySizePathsSynced", payload: payload.settingsModel.autoDirectorySizePaths ?? [] });
+        }
         const navigationItemsChanged = !hasSameJsonShape(state.navigation.items, payload.navigationItems);
         const changed =
           navigationItemsChanged ||
@@ -1659,6 +1650,7 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
   });
 
   const openTreeNode = useEffectEvent((panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => {
+    dispatch({ type: "treeNodeSelected", payload: { path } });
     const activeTab = getActiveTab(state.panels[panelId]);
     if (isNavigationTab(activeTab)) {
       void handleOpenNewTab(panelId, path);
@@ -1670,41 +1662,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
     }
 
     void commitNavigation(panelId, path);
-  });
-
-  const loadTreeChildren = useEffectEvent(async (panelId: PanelId, tabId: string, path: string, expand: boolean) => {
-    if (isNavigationTab(findTab(state, panelId, tabId))) {
-      return;
-    }
-    dispatch({ type: "treeNodeExpansionSet", payload: { panelId, tabId, path, expanded: expand } });
-
-    if (!expand) {
-      return;
-    }
-
-    const node = findTreeNode(state.directoryTree, path);
-
-    if (node?.loaded || node?.expandable === false) {
-      return;
-    }
-
-    try {
-      if (isRemotePath(path)) {
-        dispatch({ type: "treeNodeConnectionStarted", payload: { path } });
-      }
-      const children = await workspaceGateway.loadTreeChildren(path);
-      dispatch({ type: "treeChildrenLoaded", payload: { path, children } });
-    } catch (error) {
-      if (isRemotePath(path)) {
-        dispatch({
-          type: "treeNodeConnectionFailed",
-          payload: { path, message: getErrorMessage(error, `无法展开 ${path}`) }
-        });
-      } else {
-        dispatch({ type: "treeNodeExpansionSet", payload: { panelId, tabId, path, expanded: false } });
-      }
-      pushNotification("danger", getErrorMessage(error, `无法展开 ${path}`));
-    }
   });
 
   const reconnectTab = useEffectEvent((panelId: PanelId, tabId: string) => {
@@ -2760,6 +2717,28 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       );
     };
 
+    function handleQuickFilterTypeaheadEvent(event: KeyboardEvent): boolean {
+      if (state.status !== "ready") return false;
+      const tab = getActiveTab(state.panels[state.activePanelId]);
+      const path = tab?.snapshot.location.path;
+      if (!path) return false;
+      const identity = `${state.activePanelId}\u0000${tab.id}\u0000${path}`;
+      const tracked = quickFilterTypeaheadRef.current;
+      const lastAt = tracked.target === identity ? tracked.lastAt : 0;
+      const decision = decideQuickFilterTypeahead({ key: event.key,
+        target: event.target as QuickFilterTypeaheadTarget | null, ctrlKey: event.ctrlKey,
+        altKey: event.altKey, metaKey: event.metaKey, isComposing: event.isComposing,
+        repeat: event.repeat, state, activePath: path, now: Date.now(), lastAt });
+      quickFilterTypeaheadRef.current = { target: identity,
+        lastAt: decision.kind === "type" ? decision.resetAt : decision.kind === "clearFilter" ? 0 : lastAt };
+      if (decision.kind === "ignore") return false;
+      event.preventDefault();
+      dispatch(decision.kind === "type"
+        ? { type: "quickFilterTypeaheadAppended", payload: { path, text: decision.text } }
+        : { type: "quickFilterCleared", payload: { path } });
+      return true;
+    }
+
     const handleWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || options.role === "settings") {
         return;
@@ -2770,6 +2749,24 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       const editable = isEditableTarget(event.target);
       const eventBinding = eventToShortcutBinding(event);
       const shortcuts = getShortcutBindingMap(state.settings.model.shortcuts);
+      // B25：已配置的单键快捷键优先于直输；Esc/空格等非可打印单字符仍先走直输（B17）。
+      // 判定必含 !editable：聚焦底部过滤输入框（editable）时该键按 D25 ④ 仍由输入框接收。
+      const singleKeyShortcutOwns = !editable && isSingleKeyShortcutBinding(shortcuts, eventBinding);
+      if (!editable && !singleKeyShortcutOwns && handleQuickFilterTypeaheadEvent(event)) return;
+      if (shortcutMatches(shortcuts, "toggle-folder-expansion", eventBinding) && !editable && !event.isComposing) {
+        if (event.target instanceof HTMLElement && event.target.closest(
+          '[contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], button, .tree-pane, .information-panel'
+        )) return;
+        const panel = state.panels[state.activePanelId];
+        const tab = getActiveTab(panel);
+        if (state.status !== "ready" || tab.status !== "ready" || tab.inlineEdit ||
+          !supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)) return;
+        const entry = currentListingEntry(state);
+        if (!entry || entry.kind !== "folder" || entry.driveInfo || !tab.selectedEntryIds.includes(entry.id)) return;
+        event.preventDefault();
+        if (!event.repeat) dispatch({ type: "folderExpansionToggled", payload: { panelId: panel.id, tabId: tab.id, path: entry.path } });
+        return;
+      }
       if (shortcutMatches(shortcuts, "batch-rename", eventBinding) && !editable && !event.isComposing) {
         if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"], [role="menu"], button, .tree-pane, .information-panel')) return;
         event.preventDefault();
@@ -2927,8 +2924,10 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         if (isNavigationTab(activeTab)) {
           return;
         }
-        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
-          state.settings.model.folderExpansionEnabled === true).map((row) => row.entry);
+        // G-15：这里原先漏传第 5 个参数 `sizeBarMode`，于是键盘上下选择使用的行序
+        // 与 `WorkspaceView` 实际渲染的行序在按"大小"排序时可能不一致（行集相同、顺序不同）。
+        const visibleEntries = getFolderListingRows(activeTab, state.fileVisibility, resolveActiveQuickFilterProgram(state),
+          state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
         const orderedEntryIds = visibleEntries.map((entry) => entry.id);
 
         if (matchedListShortcut === "select-all") {
@@ -3045,6 +3044,8 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
       ...batchRename.actions,
       ...templateCreation.actions,
       chooseTemplateRoot: () => workspaceGateway.templates.chooseRoot(),
+      ...createDirectorySizeActions({ gateway: workspaceGateway.autoDirectorySizes, dispatch, findTab: (panelId, tabId) => findTab(state, panelId, tabId),
+        notifyError: (error, fallback) => pushNotification("danger", getErrorMessage(error, fallback)) }),
       setLayoutMode: (layoutMode: WorkspaceState["layoutMode"]) =>
         {
           const currentVisiblePanelIds = new Set(getVisiblePanelIds(state.layoutMode));
@@ -3115,10 +3116,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "folderExpansionToggled", payload: { panelId, tabId, path } }),
       retryFolderExpansion: (panelId: PanelId, tabId: string, path: string) =>
         dispatch({ type: "folderExpansionRetryRequested", payload: { panelId, tabId, path } }),
-      requestDirectorySizes: (panelId: PanelId, tabId: string, intent: "calculate" | "cancel") => {
-        const tab = findTab(state, panelId, tabId);
-        if (tab && supportsDirectorySizes(tab)) dispatch({ type: "directorySizeRequested", payload: { panelId, tabId, rootPath: tab.snapshot.location.path, intent } });
-      },
       openTreeNode: (panelId: PanelId, path: string, kind: DirectoryNode["kind"]) => openTreeNode(panelId, path, kind),
       selectEntry: (panelId: PanelId, tabId: string, entryId: string, multi: boolean) =>
         dispatch({ type: "entrySelectionChanged", payload: { panelId, tabId, entryId, multi } }),
@@ -3144,6 +3141,15 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "tabSortSet", payload: { panelId, tabId, sort } }),
       setTabViewMode: (panelId: PanelId, tabId: string, viewMode: TabViewMode) =>
         dispatch({ type: "tabViewModeSet", payload: { panelId, tabId, viewMode } }),
+      /** B19/B18 写入路径：文本按路径写入；模式与语法是会话全局偏好（D4-R）。 */
+      updateQuickFilterText: (path: string, text: string) =>
+        dispatch({ type: "quickFilterTextChanged", payload: { path, text } }),
+      changeQuickFilterMode: (mode: QuickFilterMode) =>
+        dispatch({ type: "quickFilterModeChanged", payload: { mode } }),
+      changeQuickFilterSyntax: (syntax: QuickFilterSyntax) =>
+        dispatch({ type: "quickFilterSyntaxChanged", payload: { syntax } }),
+      clearQuickFilter: (path: string) =>
+        dispatch({ type: "quickFilterCleared", payload: { path } }),
       openEntry: (panelId: PanelId, entry: EntryViewModel) => {
         if (isNavigationTab(getActiveTab(state.panels[panelId]))) {
           return;
@@ -3217,7 +3223,6 @@ export function useWorkspaceController(workspaceGateway: WorkspaceGateway = defa
         dispatch({ type: "searchTabChanged", payload: tab }),
       updateSearchQuery: (payload: Partial<WorkspaceState["search"]["query"]>) =>
         dispatch({ type: "searchQueryChanged", payload }),
-      updateSearchFilter: (value: string) => dispatch({ type: "searchFilterChanged", payload: value }),
       selectSearchHistory: (index: number) => dispatch({ type: "searchHistorySelected", payload: { index } }),
       deleteSearchHistory: (index: number) => dispatch({ type: "searchHistoryDeleted", payload: { index } }),
       runSearch: () => void runSearch(),

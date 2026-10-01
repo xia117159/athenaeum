@@ -3,6 +3,80 @@ use crate::domain::models::FileAssociationRule;
 use std::fs;
 
 #[test]
+fn auto_size_paths_are_preserved_by_model_commit_and_cleaned_when_loading() {
+    let root = std::env::temp_dir().join(format!("sfm-auto-size-model-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default(); metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json"); let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    super::super::auto_directory_size_paths::update(&mut settings, "C:\\A", true).unwrap();
+    let mut model = serde_json::to_value(update(&settings, None)).unwrap();
+    model["autoDirectorySizePaths"] = serde_json::json!(["C:\\obsolete-draft"]);
+    commit_model(&mut metadata, &mut settings, serde_json::from_value(model).unwrap()).unwrap();
+    assert_eq!(settings.auto_directory_size_paths, ["C:\\A"]);
+    assert!(serde_json::to_value(update(&settings, None)).unwrap().get("autoDirectorySizePaths").is_none());
+    let mut raw = serde_json::to_value(&settings).unwrap();
+    raw["autoDirectorySizePaths"] = serde_json::json!([" c:/A/ ", "C:\\a", "invalid"]);
+    fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    assert_eq!(SettingsStore::load_from(path).unwrap().auto_directory_size_paths, ["C:\\A"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn folder_row_click_defaults_and_settings_round_trip() {
+    let root = std::env::temp_dir().join(format!("sfm-row-click-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default();
+    metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json");
+    let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    let mut legacy = serde_json::to_value(&settings).unwrap();
+    legacy.as_object_mut().unwrap().remove("folderExpansionOnRowClick");
+    let defaulted: SettingsStore = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["folderExpansionOnRowClick"], false);
+    let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+    request.as_object_mut().unwrap().remove("folderExpansionOnRowClick");
+    let defaulted: SettingsModelUpdate = serde_json::from_value(request).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["folderExpansionOnRowClick"], false);
+    for master in [false, true] {
+        for enabled in [true, false] {
+            let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+            request["folderExpansionEnabled"] = serde_json::json!(master);
+            request["folderExpansionOnRowClick"] = serde_json::json!(enabled);
+            commit_model(&mut metadata, &mut settings, serde_json::from_value(request).unwrap()).unwrap();
+            let reloaded = SettingsStore::load_from(path.clone()).unwrap();
+            assert_eq!(serde_json::to_value(reloaded).unwrap()["folderExpansionOnRowClick"], enabled);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_auto_follow_defaults_and_settings_round_trip() {
+    let root = std::env::temp_dir().join(format!("sfm-tree-follow-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut metadata = MetadataStore::default();
+    metadata.attach_path(root.join("metadata.json"));
+    let path = root.join("settings.json");
+    let mut settings = SettingsStore::load_from(path.clone()).unwrap();
+    let mut legacy = serde_json::to_value(&settings).unwrap();
+    legacy.as_object_mut().unwrap().remove("treeAutoFollowEnabled");
+    let defaulted: SettingsStore = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["treeAutoFollowEnabled"], false);
+    let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+    request.as_object_mut().unwrap().remove("treeAutoFollowEnabled");
+    let defaulted: SettingsModelUpdate = serde_json::from_value(request).unwrap();
+    assert_eq!(serde_json::to_value(defaulted).unwrap()["treeAutoFollowEnabled"], false);
+    for enabled in [true, false] {
+        let mut request = serde_json::to_value(update(&settings, None)).unwrap();
+        request["treeAutoFollowEnabled"] = serde_json::json!(enabled);
+        commit_model(&mut metadata, &mut settings, serde_json::from_value(request).unwrap()).unwrap();
+        let reloaded = SettingsStore::load_from(path.clone()).unwrap();
+        assert_eq!(serde_json::to_value(reloaded).unwrap()["treeAutoFollowEnabled"], enabled);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn template_root_settings_round_trip() {
     let root = std::env::temp_dir().join(format!("sfm-template-settings-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&root).unwrap();
@@ -29,7 +103,10 @@ fn update(
         navigation_columns: settings.navigation_columns.clone(),
         details_row_height: 30,
         size_bar_mode: settings.size_bar_mode.clone(),
+        tree_auto_follow_enabled: settings.tree_auto_follow_enabled,
         folder_expansion_enabled: true,
+        folder_expansion_on_row_click: settings.folder_expansion_on_row_click,
+        notifications_enabled: true,
         tooltip_hover_delay_ms: settings.tooltip_hover_delay_ms,
         metadata_retention_hours: settings.metadata_retention_hours,
         file_visibility: settings.file_visibility.clone(),

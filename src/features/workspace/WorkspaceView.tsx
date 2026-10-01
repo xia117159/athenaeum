@@ -1,6 +1,6 @@
-import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent as ReactDragEvent, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, FilePlus, FolderPlus, Palette, PanelLeftClose, PanelLeftOpen, PanelTopOpen, RefreshCw, Scissors, Search, TextCursorInput, Trash2 } from "lucide-react";
-import { ResizableSplit } from "./ResizableSplit";
+import { SplitPane } from "./SplitPane";
 import { FileListingShell as WorkspaceFileListingShell } from "./FileListing";
 import { NavigationTabView } from "./NavigationTabView";
 import { WorkspaceContextMenuPopover } from "./WorkspaceContextMenuPopover";
@@ -21,8 +21,11 @@ import { getActiveTab, getVisiblePanelIds } from "./workspaceReducer";
 import { getShortcutBinding } from "./workspaceShortcuts";
 import { isDirectoryTab, isNavigationTab } from "./workspaceTabs";
 import { filterDirectoryNodesByFileVisibility } from "./workspaceVisibility";
-import { getFolderListingRows, supportsFolderExpansion } from "./folderExpansion";
+import { getFolderListingEntries, getFolderListingRows, getSelectedEntriesFromRows, getTabSelectedEntries, supportsFolderExpansion, type FolderListingRow } from "./folderExpansion";
+import { resolveActiveQuickFilterProgram, resolvePanelQuickFilter, resolveQuickFilterInput, resolveTabQuickFilter } from "./quickFilterState";
+import type { QuickFilterProgram } from "./quickFilterTypes";
 import { currentDirectorySizes, supportsDirectorySizes } from "./directorySizes";
+import { directorySizeAutoBadge, directorySizeMenuAction, directorySizeMenuState } from "./directorySizeMenu";
 import { DirectorySizeControl } from "./DirectorySizeControl";
 import { ReconnectPanel } from "./ReconnectPanel";
 import type {
@@ -61,14 +64,7 @@ function getUniqueRecentPaths(history: string[], currentPath: string) {
   return result;
 }
 
-function getSelectedEntriesForTab(entries: EntryViewModel[], selectedEntryIds: string[]) {
-  if (selectedEntryIds.length === 0) {
-    return [];
-  }
-
-  const selectedIds = new Set(selectedEntryIds);
-  return entries.filter((entry) => selectedIds.has(entry.id));
-}
+const NO_AUTO_DIRECTORY_SIZE_PATHS: string[] = [];
 
 export function WorkspaceView() {
   const { state, actions } = useWorkspaceController();
@@ -76,11 +72,34 @@ export function WorkspaceView() {
   const activePanel = state.panels[state.activePanelId];
   const activeTab = getActiveTab(activePanel);
   const isActiveNavigationTab = isNavigationTab(activeTab);
-  const filteredActiveEntries = getFolderListingRows(activeTab, state.fileVisibility, state.search.filterText,
-    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry);
-  const selectedEntries = getSelectedEntriesForTab(filteredActiveEntries, activeTab.selectedEntryIds);
+  const folderExpansionEnabled = state.settings.model.folderExpansionEnabled === true;
+  const sizeBarMode = state.settings.model.sizeBarMode;
+  const activeQuickFilter = useMemo(
+    () => resolveActiveQuickFilterProgram(state),
+    [state.quickFilter, activeTab.snapshot.location.path, state.activePanelId, activeTab.id]
+  );
+  const filteredActiveRows = useMemo(
+    () => getFolderListingRows(activeTab, state.fileVisibility, activeQuickFilter,
+      folderExpansionEnabled, sizeBarMode),
+    [activeTab, state.fileVisibility, activeQuickFilter, folderExpansionEnabled, sizeBarMode]
+  );
+  const filteredActiveEntries = getFolderListingEntries(filteredActiveRows);
+  const selectedEntries = getSelectedEntriesFromRows(filteredActiveRows, activeTab.selectedEntryIds);
   const contextTab = state.contextMenu
     ? state.panels[state.contextMenu.panelId].tabs.find((tab) => tab.id === state.contextMenu?.tabId) : undefined;
+  const contextQuickFilter = useMemo(
+    () => state.contextMenu && contextTab
+      ? resolveTabQuickFilter(state, state.contextMenu.panelId, contextTab.id)
+      : null,
+    [state.quickFilter, state.contextMenu, contextTab]
+  );
+  const contextVisibleEntries = useMemo(
+    () => contextTab
+      ? getFolderListingEntries(getFolderListingRows(contextTab, state.fileVisibility, contextQuickFilter,
+        folderExpansionEnabled, sizeBarMode))
+      : [],
+    [contextTab, state.fileVisibility, contextQuickFilter, folderExpansionEnabled, sizeBarMode]
+  );
   const [addressHistoryOpen, setAddressHistoryOpen] = useState(false);
   const addressBarRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -378,24 +397,20 @@ export function WorkspaceView() {
       <section className="workspace-main">
         <div className={`workspace-main__content${state.treeVisible ? "" : " workspace-main__content--tree-hidden"}`}>
           {state.treeVisible ? (
-            <ResizableSplit
+            <SplitPane
               direction="horizontal"
               ratio={state.layoutRatios.tree}
               min={0.12}
               max={0.36}
               minSizePx={160}
-              handleSize={8}
               onRatioChange={(value) => actions.setSplitRatio("tree", value)}
             >
               <ExplorerTreePane
                 nodes={filterDirectoryNodesByFileVisibility(state.directoryTree, state.fileVisibility)}
-                activePath={isActiveNavigationTab ? "" : activeTab.snapshot.location.path}
-                expandedNodePaths={isActiveNavigationTab ? [] : activeTab.expandedNodePaths}
+                activePath={state.treeState.activePath}
+                expandedNodePaths={state.treeState.expandedNodePaths}
                 onToggle={(path) => {
-                  if (isActiveNavigationTab) {
-                    return;
-                  }
-                  const isExpanded = activeTab.expandedNodePaths.includes(path);
+                  const isExpanded = state.treeState.expandedNodePaths.includes(path);
                   actions.toggleTreeNode(state.activePanelId, activeTab.id, path, !isExpanded);
                 }}
                 onNavigate={(node) => actions.openTreeNode(state.activePanelId, node.path, node.kind)}
@@ -403,16 +418,14 @@ export function WorkspaceView() {
               <WorkspaceRightContent
                 state={state}
                 actions={actions}
-                activeFilterText={state.search.filterText}
                 activeEntries={filteredActiveEntries}
                 selectedEntries={selectedEntries}
               />
-            </ResizableSplit>
+            </SplitPane>
           ) : (
             <WorkspaceRightContent
               state={state}
               actions={actions}
-              activeFilterText={state.search.filterText}
               activeEntries={filteredActiveEntries}
               selectedEntries={selectedEntries}
             />
@@ -428,14 +441,13 @@ export function WorkspaceView() {
             getActiveTab(state.panels[state.contextMenu.panelId]).viewMode
           }
           tab={contextTab}
-          visibleEntries={contextTab ? getFolderListingRows(contextTab, state.fileVisibility,
-            state.contextMenu.panelId === state.activePanelId ? state.search.filterText : "",
-            state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map((row) => row.entry) : []}
+          visibleEntries={contextVisibleEntries}
           clipboard={state.clipboard}
           actions={actions}
           layoutMode={state.layoutMode}
           panelIds={getVisiblePanelIds(state.layoutMode)}
           templateMenuOpen={Boolean(state.templateMenu && !state.templateMenu.rootHidden)}
+          autoDirectorySizePaths={state.settings.model.autoDirectorySizePaths}
           onClose={() => actions.closeContextMenu()}
         />
       ) : null}
@@ -497,17 +509,19 @@ function ExplorerTreePane({
 function WorkspaceRightContent({
   state,
   actions,
-  activeFilterText,
   activeEntries,
   selectedEntries
 }: {
   state: WorkspaceState;
   actions: WorkspaceActions;
-  activeFilterText: string;
   activeEntries: EntryViewModel[];
   selectedEntries: EntryViewModel[];
 }) {
-  const panels = <PanelLayout state={state} actions={actions} activeFilterText={activeFilterText} />;
+  const panels = <PanelLayout state={state} actions={actions} />;
+
+  // 快速过滤输入框绑定激活面板激活标签页的路径：文本按路径缓存（D4）。
+  const quickFilterPath = getActiveTab(state.panels[state.activePanelId])?.snapshot.location.path ?? "";
+  const quickFilterInput = resolveQuickFilterInput(state, quickFilterPath);
 
   const informationPanel = (
     <WorkspaceInformationPanel
@@ -523,7 +537,11 @@ function WorkspaceRightContent({
       onStopSearch={() => actions.stopSearch()}
       onSelectSearchTab={(tab) => actions.selectSearchTab(tab)}
       onUpdateQuery={(payload) => actions.updateSearchQuery(payload)}
-      onUpdateFilter={(value) => actions.updateSearchFilter(value)}
+      quickFilter={quickFilterInput}
+      onUpdateQuickFilterText={(value) => actions.updateQuickFilterText(quickFilterPath, value)}
+      onChangeQuickFilterMode={actions.changeQuickFilterMode}
+      onChangeQuickFilterSyntax={actions.changeQuickFilterSyntax}
+      onClearQuickFilter={() => actions.clearQuickFilter(quickFilterPath)}
       onSelectHistory={(index) => actions.selectSearchHistory(index)}
       onDeleteHistory={(index) => actions.deleteSearchHistory(index)}
     />
@@ -540,32 +558,29 @@ function WorkspaceRightContent({
 
   return (
     <div className="workspace-main__right workspace-main__right--with-info">
-      <ResizableSplit
+      <SplitPane
         direction="vertical"
         ratio={1 - state.layoutRatios.search}
         min={0.5}
         max={0.82}
         minSizePx={240}
         secondMinSizePx={222}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("search", 1 - value)}
         className="workspace-main__right-split"
       >
         {panels}
         {informationPanel}
-      </ResizableSplit>
+      </SplitPane>
     </div>
   );
 }
 
 function PanelLayout({
   state,
-  actions,
-  activeFilterText
+  actions
 }: {
   state: WorkspaceState;
   actions: WorkspaceActions;
-  activeFilterText: string;
 }) {
   const handleSyncScroll = useCallback(
     (sourcePanelId: PanelId, deltaX: number, deltaY: number) => {
@@ -592,7 +607,7 @@ function PanelLayout({
       key={panelId}
       panel={state.panels[panelId]}
       isFocused={state.activePanelId === panelId}
-      filterText={activeFilterText}
+      quickFilter={resolvePanelQuickFilter(state, panelId)}
       columns={state.settings.model.columns}
       navigationColumns={state.settings.model.navigationColumns}
       clipboard={state.clipboard}
@@ -606,12 +621,14 @@ function PanelLayout({
       dropHighlightFill={state.settings.model.theme.dropHighlightFill}
       dropHighlightBorder={state.settings.model.theme.dropHighlightBorder}
       sizeBarMode={state.settings.model.sizeBarMode}
+      autoDirectorySizePaths={state.settings.model.autoDirectorySizePaths ?? NO_AUTO_DIRECTORY_SIZE_PATHS}
       sizeBarLow={state.settings.model.theme.sizeBarLow}
       sizeBarHigh={state.settings.model.theme.sizeBarHigh}
       tabMinWidth={state.settings.model.theme.tabMinWidth}
       fileVisibility={state.fileVisibility}
       colorFilterEnabled={state.settings.model.colorFilterEnabled ?? true}
       folderExpansionEnabled={state.settings.model.folderExpansionEnabled === true}
+      folderExpansionOnRowClick={state.settings.model.folderExpansionOnRowClick === true}
       syncScrollEnabled={state.syncScroll}
       navigation={state.navigation}
       keyboardNavToken={state.keyboardNavToken}
@@ -626,97 +643,91 @@ function PanelLayout({
 
   if (state.layoutMode === "dual") {
     return (
-      <ResizableSplit
+      <SplitPane
         direction="horizontal"
         ratio={state.layoutRatios.primary}
         min={0}
         max={1}
         minSizePx={280}
         secondMinSizePx={280}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("primary", value)}
       >
         {renderPanel("panel-1")}
         {renderPanel("panel-2")}
-      </ResizableSplit>
+      </SplitPane>
     );
   }
 
   if (state.layoutMode === "triple") {
     return (
-      <ResizableSplit
+      <SplitPane
         direction="horizontal"
         ratio={state.layoutRatios.primary}
         min={0}
         max={1}
         minSizePx={280}
         secondMinSizePx={280}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("primary", value)}
       >
         {renderPanel("panel-1")}
-        <ResizableSplit
+        <SplitPane
           direction="vertical"
           ratio={state.layoutRatios.tripleSecondary}
           min={0}
           max={1}
           minSizePx={180}
           secondMinSizePx={180}
-          handleSize={8}
           onRatioChange={(value) => actions.setSplitRatio("tripleSecondary", value)}
         >
           {renderPanel("panel-2")}
           {renderPanel("panel-3")}
-        </ResizableSplit>
-      </ResizableSplit>
+        </SplitPane>
+      </SplitPane>
     );
   }
 
   return (
-    <ResizableSplit
+    <SplitPane
       direction="horizontal"
       ratio={state.layoutRatios.primary}
       min={0}
       max={1}
       minSizePx={280}
       secondMinSizePx={280}
-      handleSize={8}
       onRatioChange={(value) => actions.setSplitRatio("primary", value)}
     >
-      <ResizableSplit
+      <SplitPane
         direction="vertical"
         ratio={state.layoutRatios.quadLeftSecondary}
         min={0}
         max={1}
         minSizePx={180}
         secondMinSizePx={180}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("quadLeftSecondary", value)}
       >
         {renderPanel("panel-1")}
         {renderPanel("panel-3")}
-      </ResizableSplit>
-      <ResizableSplit
+      </SplitPane>
+      <SplitPane
         direction="vertical"
         ratio={state.layoutRatios.quadRightSecondary}
         min={0}
         max={1}
         minSizePx={180}
         secondMinSizePx={180}
-        handleSize={8}
         onRatioChange={(value) => actions.setSplitRatio("quadRightSecondary", value)}
       >
         {renderPanel("panel-2")}
         {renderPanel("panel-4")}
-      </ResizableSplit>
-    </ResizableSplit>
+      </SplitPane>
+    </SplitPane>
   );
 }
 
 function PanelSurface({
   panel,
   isFocused,
-  filterText,
+  quickFilter,
   columns,
   navigationColumns,
   clipboard,
@@ -730,12 +741,14 @@ function PanelSurface({
   dropHighlightFill,
   dropHighlightBorder,
   sizeBarMode,
+  autoDirectorySizePaths,
   sizeBarLow,
   sizeBarHigh,
   tabMinWidth,
   fileVisibility,
   colorFilterEnabled,
   folderExpansionEnabled,
+  folderExpansionOnRowClick,
   syncScrollEnabled,
   navigation,
   keyboardNavToken,
@@ -744,7 +757,7 @@ function PanelSurface({
 }: {
   panel: PanelState;
   isFocused: boolean;
-  filterText: string;
+  quickFilter: QuickFilterProgram | null;
   columns: ColumnDefinition[];
   navigationColumns: WorkspaceState["settings"]["model"]["navigationColumns"];
   clipboard: WorkspaceState["clipboard"];
@@ -758,12 +771,14 @@ function PanelSurface({
   dropHighlightFill: string;
   dropHighlightBorder: string;
   sizeBarMode: WorkspaceState["settings"]["model"]["sizeBarMode"];
+  autoDirectorySizePaths: string[];
   sizeBarLow: string;
   sizeBarHigh: string;
   tabMinWidth: number;
   fileVisibility: WorkspaceState["fileVisibility"];
   colorFilterEnabled: boolean;
   folderExpansionEnabled: boolean;
+  folderExpansionOnRowClick: boolean;
   syncScrollEnabled: boolean;
   navigation: WorkspaceState["navigation"];
   keyboardNavToken?: symbol;
@@ -772,11 +787,25 @@ function PanelSurface({
 }) {
   const activeTab = getActiveTab(panel);
   const directoryContextTab = panel.tabs.find(isDirectoryTab);
-  const directoryContextEntries = directoryContextTab
-    ? getSelectedEntriesForTab(getFolderListingRows(directoryContextTab, fileVisibility, "", folderExpansionEnabled, sizeBarMode).map((row) => row.entry), directoryContextTab.selectedEntryIds)
-    : [];
-  const rows = getFolderListingRows(activeTab, fileVisibility, isFocused ? filterText : "", folderExpansionEnabled, sizeBarMode);
-  const entries = rows.map((row) => row.entry);
+  const directoryContextEntries = useMemo(
+    () => directoryContextTab
+      ? getTabSelectedEntries(directoryContextTab, fileVisibility, null, folderExpansionEnabled, sizeBarMode)
+      : [],
+    [directoryContextTab, fileVisibility, folderExpansionEnabled, sizeBarMode]
+  );
+  const rows = useMemo(
+    () => getFolderListingRows(activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode),
+    [activeTab, fileVisibility, quickFilter, folderExpansionEnabled, sizeBarMode]
+  );
+  const entries = getFolderListingEntries(rows);
+  const listingScrollPositions = useRef(new Map<string, number>());
+  const listingScrollKey = `${activeTab.id}:${activeTab.snapshot.location.path}:${activeTab.viewMode}`;
+  const rememberListingScroll = useCallback((top: number) => {
+    const positions = listingScrollPositions.current;
+    positions.delete(listingScrollKey);
+    positions.set(listingScrollKey, top);
+    if (positions.size > 128) positions.delete(positions.keys().next().value!);
+  }, [listingScrollKey]);
   const isNavigationActive = activeTab.kind === "navigation";
   const isReconnectRequired = activeTab.status === "reconnect-required";
   // Memoize selection callbacks to prevent useEffect re-registration in FileListing
@@ -865,14 +894,23 @@ function PanelSurface({
           />
         ) : (
           <WorkspaceFileListingShell
+            key={listingScrollKey}
             colorFilterEnabled={colorFilterEnabled}
             panelId={panel.id}
             tabId={activeTab.id}
             entries={entries}
+            entriesAreProjected
+            quickFilter={quickFilter}
             folderRows={supportsFolderExpansion(activeTab, folderExpansionEnabled) ? rows : undefined}
+            folderExpansionOnRowClick={folderExpansionOnRowClick}
             sizeHeaderAccessory={supportsDirectorySizes(activeTab) ? <DirectorySizeControl key={`${activeTab.id}:${activeTab.snapshot.location.path}`}
-              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind}
-              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)} /> : undefined}
+              statistics={currentDirectorySizes(activeTab)} locationKind={activeTab.snapshot.location.kind} background={activeTab.snapshot.directorySizeCache?.historical === true}
+              onAction={(intent) => actions.requestDirectorySizes(panel.id, activeTab.id, intent)}
+              auto={directorySizeAutoBadge(activeTab, autoDirectorySizePaths)} /> : undefined}
+            directorySizeAction={directorySizeMenuAction(directorySizeMenuState(activeTab, autoDirectorySizePaths), {
+              calculate: () => actions.requestDirectorySizes(panel.id, activeTab.id, "calculate"),
+              retry: () => actions.retryAutoDirectorySizes(panel.id, activeTab.id)
+            })}
             onToggleFolderExpansion={(path) => actions.toggleFolderExpansion(panel.id, activeTab.id, path)}
             onRetryFolderExpansion={(path) => actions.retryFolderExpansion(panel.id, activeTab.id, path)}
             columns={activeTab.columns ?? columns}
@@ -880,6 +918,8 @@ function PanelSurface({
             currentPath={activeTab.snapshot.location.path}
             selectedEntryIds={activeTab.selectedEntryIds}
             viewMode={activeTab.viewMode}
+            initialScrollTop={listingScrollPositions.current.get(listingScrollKey) ?? 0}
+            onScrollTopChange={rememberListingScroll}
             inlineEdit={activeTab.inlineEdit}
             clipboard={clipboard}
             gitStatus={activeTab.gitStatus}

@@ -18,6 +18,7 @@ export const completion = (async () => {
     await assertTest("changing to a Unicode-casefold-colliding root releases the old lease and subscribes the actual new path", async () => {
       const f = controllerFixture(); const wire = sizeTransport();
       const first = "C:\\data\\İ"; const second = "C:\\data\\i\u0307";
+      f.state.settings.model.autoDirectorySizePaths = ["C:\\data"];
       f.tab.snapshot = { ...f.tab.snapshot, location: { ...f.tab.snapshot.location, path: first }, entries: [] };
       f.tab.folderExpansion = undefined;
       const h = await mountSizes(f.state, wire.gateway);

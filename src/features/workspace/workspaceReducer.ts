@@ -45,6 +45,7 @@ import {
   normalizeThemeAccentColor
 } from "./workspaceMappers";
 import { devLog } from "./devLog";
+import { reconcileDirectorySizePresentation } from "./directorySizePresentation";
 import {
   createNavigationTab,
   isDirectoryLikeTab,
@@ -62,9 +63,22 @@ import type { OperationClearOutcome } from "../../app/types";
 import type { ColorFilterConfigSnapshot } from "./colorFilterTypes";
 import { compareRevisionTokens } from "./colorFilterEditorModel";
 import { getFolderListingRows, getTabEntries, getTabSelectedEntries, supportsFolderExpansion } from "./folderExpansion";
+import { DEFAULT_QUICK_FILTER_STATE } from "./quickFilterTypes";
+import type { QuickFilterMode, QuickFilterState, QuickFilterSyntax } from "./quickFilterTypes";
+import { applyQuickFilterEvaluation, type QuickFilterEvaluationCommit } from "./quickFilterEvaluationState";
+import {
+  applyQuickFilterCleared,
+  applyQuickFilterMode,
+  applyQuickFilterSyntax,
+  applyQuickFilterText,
+  pruneQuickFilterCache,
+  resolveTabQuickFilter
+} from "./quickFilterState";
+import { emptyTreeState, normalizeTreeState, treeStateFromTab, reduceWorkspaceTree, reconcileWorkspaceTree } from "./workspaceTreeState";
 import { clearFolderExpansion, clearPanelFolderExpansions, reduceFolderExpansion, refreshFolderExpansion, type FolderExpansionAction } from "./folderExpansionState";
 import { pathsEqual } from "./workspacePathRelations";
 import { reduceDirectorySizes, type DirectorySizeAction } from "./directorySizeState";
+import { reconcileListingSizeCache } from "./directorySizeCache";
 import { reconcileOpenWithMenu, reduceFileOpening, type FileOpeningAction } from "./fileOpeningState";
 import { reduceBatchRename, type BatchRenameAction } from "./batchRenameState";
 import { prepareSelectionInteraction } from "./folderSelectionRestore";
@@ -74,6 +88,7 @@ import { reduceWorkspaceMenus, reconcileWorkspaceMenus, type WorkspaceMenuAction
 export { createNavigationTab, isDirectoryLikeTab, isNavigationTab, NAVIGATION_VIRTUAL_PATH } from "./workspaceTabs";
 
 export type WorkspaceAction =
+  | { type: "directorySizeViewsFrozen" }
   | WorkspaceMenuAction
   | TemplateCreationAction
   | BatchRenameAction
@@ -84,6 +99,7 @@ export type WorkspaceAction =
   | { type: "bootstrapFailed" }
   | { type: "layoutModeSet"; payload: PanelLayoutMode }
   | { type: "splitRatioSet"; payload: { key: keyof WorkspaceState["layoutRatios"]; value: number } }
+  | { type: "treeNodeSelected"; payload: { path: string } }
   | { type: "treeVisibilitySet"; payload: boolean }
   | { type: "colorFilterTogglePendingSet"; payload: boolean }
   | { type: "colorFilterSnapshotReceived"; payload: ColorFilterConfigSnapshot }
@@ -116,10 +132,10 @@ export type WorkspaceAction =
     }
   | { type: "tabGitStatusUpdated"; payload: { panelId: PanelId; tabId: string; gitStatus: Record<string, GitFileStatus> | undefined } }
   | { type: "addressDraftChanged"; payload: { panelId: PanelId; tabId: string; value: string } }
-  | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[] } }
-  | { type: "treeNodeConnectionStarted"; payload: { path: string } }
+  | { type: "treeChildrenLoaded"; payload: { path: string; children: DirectoryNode[]; requestId?: number } }
+  | { type: "treeNodeConnectionStarted"; payload: { path: string; requestId?: number } }
   | { type: "treeNodeConnectionSucceeded"; payload: { path: string } }
-  | { type: "treeNodeConnectionFailed"; payload: { path: string; message?: string } }
+  | { type: "treeNodeConnectionFailed"; payload: { path: string; message?: string; requestId?: number } }
   | { type: "treeNodeExpansionSet"; payload: { panelId: PanelId; tabId: string; path: string; expanded: boolean } }
   | { type: "tabReconnectRequired"; payload: { panelId: PanelId; tabId: string; path: string; profileId?: string; message?: string } }
   | { type: "tabReconnectStarted"; payload: { panelId: PanelId; tabId: string } }
@@ -170,7 +186,12 @@ export type WorkspaceAction =
   | { type: "searchTabChanged"; payload: SearchTabId }
   | { type: "searchStarted"; payload?: { searchId?: string } }
   | { type: "searchQueryChanged"; payload: Partial<SearchQuery> }
-  | { type: "searchFilterChanged"; payload: string }
+  | { type: "quickFilterTextChanged"; payload: { path: string; text: string } }
+  | { type: "quickFilterEvaluationCommitted"; payload: QuickFilterEvaluationCommit }
+  | { type: "quickFilterModeChanged"; payload: { mode: QuickFilterMode } }
+  | { type: "quickFilterSyntaxChanged"; payload: { syntax: QuickFilterSyntax } }
+  | { type: "quickFilterCleared"; payload: { path: string } }
+  | { type: "quickFilterTypeaheadAppended"; payload: { path: string; text: string } }
   | { type: "searchHistoryLoaded"; payload: { tab: SearchTabId; history: string[] } }
   | { type: "searchHistorySelected"; payload: { index: number } }
   | { type: "searchHistoryDeleted"; payload: { index: number } }
@@ -219,6 +240,7 @@ export type WorkspaceAction =
   | { type: "themeDropHighlightBorderSet"; payload: { color: string } }
   | { type: "themeTabMinWidthSet"; payload: { value: number } }
   | { type: "settingsModelApplied"; payload: { model: SettingsModel; section?: SettingsSection } }
+  | { type: "autoDirectorySizePathsSynced"; payload: string[] } // Saved list returned by its dedicated commands (E7).
   | {
       type: "settingsSnapshotSynced";
       payload: Pick<WorkspaceState, "bookmarks" | "hotlist" | "remoteProfiles"> & {
@@ -341,6 +363,21 @@ function createFallbackDirectoryTabForPanel(state: WorkspaceState, panelId: Pane
   return fallbackTab ? cloneRecoveredTab(fallbackTab, panelId) : undefined;
 }
 
+/** 仅在快速过滤状态真正变化时重建 state 对象，保住引用相等以免下游 memo 失效。 */
+function withQuickFilter(state: WorkspaceState, next: QuickFilterState): WorkspaceState {
+  return next === state.quickFilter ? state : { ...state, quickFilter: next };
+}
+
+/**
+ * 集中式淘汰（spec §5.8）：任何状态变更后立即删除已无标签页停留的路径条目。
+ * 面板/标签页结构未变时路径键集合不可能变化，因此跳过遍历（评审 G1 的性能守卫）。
+ */
+function pruneQuickFilterForAction(previous: WorkspaceState, next: WorkspaceState): WorkspaceState {
+  if (next === previous || next.panels === previous.panels) return next;
+  const quickFilter = pruneQuickFilterCache(next);
+  return quickFilter === next.quickFilter ? next : { ...next, quickFilter };
+}
+
 export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceState {
   const visiblePanelIds = getVisiblePanelIds(bootstrap.layoutMode);
   const fallbackTab = PANEL_ORDER.flatMap((panelId) => bootstrap.panels[panelId].tabs)[0];
@@ -366,6 +403,8 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     bootstrap.activePanelId,
     bootstrap.panels[bootstrap.activePanelId]?.activeTabId
   );
+  const activePanelId = visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0];
+  const activeTab = getActiveTab(normalizedPanels[activePanelId]);
 
   return {
     status: "ready",
@@ -373,11 +412,14 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
     layoutMode: bootstrap.layoutMode,
     layoutRatios: bootstrap.layoutRatios,
     treeVisible: bootstrap.treeVisible,
+    treeState: bootstrap.settingsModel.treeAutoFollowEnabled && !isNavigationTab(activeTab)
+      ? treeStateFromTab(activeTab)
+      : normalizeTreeState(bootstrap.treeState) ?? emptyTreeState(),
     colorFilterTogglePending: false,
     fileVisibility: { ...bootstrap.settingsModel.fileVisibility },
     syncScroll: false,
     panels: normalizedPanels,
-    activePanelId: visiblePanelIds.includes(bootstrap.activePanelId) ? bootstrap.activePanelId : visiblePanelIds[0],
+    activePanelId,
     directoryTree: bootstrap.directoryTree,
     bookmarks: bootstrap.bookmarks,
     hotlist: bootstrap.hotlist,
@@ -390,9 +432,9 @@ export function createWorkspaceState(bootstrap: WorkspaceBootstrap): WorkspaceSt
       gitStatusLoadingDirs: []
     },
     remoteProfiles: bootstrap.remoteProfiles,
+    quickFilter: { ...DEFAULT_QUICK_FILTER_STATE, byPath: {} },
     search: {
       loading: false,
-      filterText: "",
       query: {
         name: "",
         content: "",
@@ -811,14 +853,6 @@ function createSearchHistoryState(
   };
 }
 
-function setExpandedPath(expandedNodePaths: string[], path: string, expanded: boolean) {
-  const normalizedPath = normalizeLocationPath(path);
-  if (expanded) {
-    return expandedNodePaths.includes(normalizedPath) ? expandedNodePaths : [...expandedNodePaths, normalizedPath];
-  }
-  return expandedNodePaths.filter((nodePath) => nodePath !== normalizedPath);
-}
-
 function normalizeDirectoryNode(node: DirectoryNode): DirectoryNode {
   const normalizedPath = normalizeLocationPath(node.path);
 
@@ -828,6 +862,15 @@ function normalizeDirectoryNode(node: DirectoryNode): DirectoryNode {
     path: normalizedPath,
     children: node.children.map(normalizeDirectoryNode)
   };
+}
+
+function findTreeNodeForRequest(nodes: DirectoryNode[], path: string): DirectoryNode | undefined {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    const child = findTreeNodeForRequest(node.children, path);
+    if (child) return child;
+  }
+  return undefined;
 }
 
 function updateTreeNode(nodes: DirectoryNode[], targetPath: string, updater: (node: DirectoryNode) => DirectoryNode): DirectoryNode[] {
@@ -1132,7 +1175,9 @@ function getCurrentPropertiesTargetKey(state: WorkspaceState): string | undefine
   if (!isDirectoryTab(tab)) {
     return undefined;
   }
-  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility, state.search.filterText, state.settings.model.folderExpansionEnabled === true);
+  const selectedEntries = getTabSelectedEntries(tab, state.fileVisibility,
+    resolveTabQuickFilter(state, state.activePanelId, tab.id), state.settings.model.folderExpansionEnabled === true,
+    state.settings.model.sizeBarMode);
   if (selectedEntries.length > 1) {
     return `multi:${selectedEntries.map((entry) => entry.id).join("|")}`;
   }
@@ -1245,11 +1290,15 @@ function updateColumnsForSettingsAndTab(
   );
 }
 
-export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
-  state = prepareSelectionInteraction(state, action);
-  return reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceMenus(state, action)
+export function workspaceReducer(initialState: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+  if (action.type === "directorySizeViewsFrozen") return { ...initialState, directorySizeViewsFrozen: true };
+  if (initialState.directorySizeViewsFrozen) return initialState;
+  const state = prepareSelectionInteraction(initialState, action);
+  const next = reconcileWorkspaceMenus(reconcileTemplates(reconcileOpenWithMenu(reduceWorkspaceTree(state, action) ?? reduceWorkspaceMenus(state, action)
     ?? reduceTemplates(state, action) ?? reduceBatchRename(state, action)
     ?? reduceFileOpening(state, action) ?? reduceWorkspace(state, action)), action), action);
+  const settled = reconcileDirectorySizePresentation(state, reconcileWorkspaceTree(state, next, action));
+  return pruneQuickFilterForAction(initialState, settled);
 }
 
 function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -1638,11 +1687,11 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
                       : Math.max(0, nextHistory.findIndex((historyPath) => historyPath === nextPath)));
 
             const breadcrumbPaths = action.payload.snapshot.breadcrumbs.map((breadcrumb) => breadcrumb.path);
-            const nextExpandedNodePaths = breadcrumbPaths.reduce<string[]>(
+            const nextExpandedNodePaths = state.settings.model.treeAutoFollowEnabled ? breadcrumbPaths.reduce<string[]>(
               (paths, breadcrumbPath) =>
                 paths.includes(breadcrumbPath) ? paths : [...paths, breadcrumbPath],
               tab.expandedNodePaths
-            );
+            ) : tab.expandedNodePaths;
 
             const anchorEntry = pathChanged
               ? (action.payload.previousPath
@@ -1659,7 +1708,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
               title: pathChanged ? action.payload.snapshot.location.label : tab.titleOverride ?? action.payload.snapshot.location.label,
               titleOverride: pathChanged ? undefined : tab.titleOverride,
               kind: "directory",
-              snapshot: action.payload.snapshot,
+              snapshot: reconcileListingSizeCache(action.payload.snapshot, pathChanged ? undefined : tab.directorySizes),
               directorySizes: pathChanged ? undefined : tab.directorySizes,
               addressDraft: action.payload.snapshot.location.path,
               history: nextHistory,
@@ -1709,6 +1758,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       );
 
     case "treeChildrenLoaded":
+      if (action.payload.requestId !== undefined &&
+        findTreeNodeForRequest(state.directoryTree, action.payload.path)?.treeLoadRequestId !== action.payload.requestId) return state;
       return {
         ...state,
         directoryTree: updateTreeNode(
@@ -1729,6 +1780,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         ...state,
         directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) => ({
           ...node,
+          treeLoadRequestId: action.payload.requestId,
           connectionState: "connecting",
           errorMessage: undefined
         }))
@@ -1745,6 +1797,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       };
 
     case "treeNodeConnectionFailed":
+      if (action.payload.requestId !== undefined &&
+        findTreeNodeForRequest(state.directoryTree, action.payload.path)?.treeLoadRequestId !== action.payload.requestId) return state;
       return {
         ...state,
         directoryTree: updateTreeNode(state.directoryTree, action.payload.path, (node) =>
@@ -1753,16 +1807,6 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
             : { ...node, connectionState: "error", errorMessage: action.payload.message }
         )
       };
-
-    case "treeNodeExpansionSet":
-      return updatePanel(state, action.payload.panelId, (panel) =>
-        updateTab(panel, action.payload.tabId, (tab) => ({
-          ...tab,
-          expandedNodePaths: isNavigationTab(tab)
-            ? tab.expandedNodePaths
-            : setExpandedPath(tab.expandedNodePaths, action.payload.path, action.payload.expanded)
-        }))
-      );
 
     case "tabReconnectRequired":
       return updatePanel(state, action.payload.panelId, (panel) =>
@@ -1812,7 +1856,9 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       );
 
     case "directorySizeRequested":
+    case "directorySizeCacheReceived":
     case "directorySizeLeaseStarted":
+    case "directorySizeLeaseFailed": case "directorySizeAutoRetried":
     case "directorySizeReleased":
     case "directorySizeSnapshotReceived":
     case "directorySizeLookupReceived":
@@ -1833,7 +1879,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         action.payload.panelId, (panel) =>
         updateTab(panel, action.payload.tabId, (tab) => reduceFolderExpansion(
           tab, action, state.settings.model.folderExpansionEnabled === true, state.fileVisibility,
-          state.activePanelId === action.payload.panelId ? state.search.filterText : ""
+          resolveTabQuickFilter(state, action.payload.panelId, action.payload.tabId)
         ))
       ));
 
@@ -1912,9 +1958,11 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
               ? tab
               : {
                   ...tab,
-                  selectedEntryIds: (supportsFolderExpansion(tab, state.settings.model.folderExpansionEnabled === true)
-                    ? getFolderListingRows(tab, state.fileVisibility, state.activePanelId === action.payload.panelId ? state.search.filterText : "").map(({ entry }) => entry)
-                    : tab.snapshot.entries).map((entry) => entry.id),
+                  // B23：全选的目标集恒等于可见行集，不再按文件夹展开是否生效分叉到未过滤的
+                  // snapshot.entries —— 否则保留/排除过滤藏起来的行仍会被全选并随之被删除/复制。
+                  selectedEntryIds: getFolderListingRows(tab, state.fileVisibility,
+                    resolveTabQuickFilter(state, action.payload.panelId, action.payload.tabId),
+                    state.settings.model.folderExpansionEnabled === true, state.settings.model.sizeBarMode).map(({ entry }) => entry.id),
                   selectionAnchorId: null,
                   selectionCursorId: null
                 }
@@ -2238,18 +2286,22 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         }
       };
 
-    case "searchFilterChanged":
-      return {
-        ...state,
-        informationPanel: {
-          ...state.informationPanel,
-          activeTab: "search"
-        },
-        search: {
-          ...state.search,
-          filterText: action.payload
-        }
-      };
+    case "quickFilterTextChanged":
+    case "quickFilterTypeaheadAppended":
+      // §5.7：两条路径共用同一内部函数，避免键盘直输与输入框写入的语义漂移。
+      return withQuickFilter(state, applyQuickFilterText(state.quickFilter, action.payload.path, action.payload.text));
+
+    case "quickFilterEvaluationCommitted":
+      return applyQuickFilterEvaluation(state, action.payload);
+
+    case "quickFilterModeChanged":
+      return withQuickFilter(state, applyQuickFilterMode(state.quickFilter, action.payload.mode));
+
+    case "quickFilterSyntaxChanged":
+      return withQuickFilter(state, applyQuickFilterSyntax(state.quickFilter, action.payload.syntax));
+
+    case "quickFilterCleared":
+      return withQuickFilter(state, applyQuickFilterCleared(state.quickFilter, action.payload.path));
 
     case "searchHistoryLoaded":
       {
@@ -2654,20 +2706,25 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         tabMinWidth: normalizeTabMinWidth(action.payload.value)
       }));
 
+    case "autoDirectorySizePathsSynced": return hasSameJsonShape(state.settings.model.autoDirectorySizePaths ?? [], action.payload) ? state
+      : { ...state, settings: { ...state.settings, model: { ...state.settings.model, autoDirectorySizePaths: [...action.payload] } } };
+
     case "settingsModelApplied":
       {
-        const model = withAcceptedColorFilterModel(
-          state.settings.model,
-          normalizeSettingsModel(action.payload.model)
-        );
+        const model = withAcceptedColorFilterModel(state.settings.model, // A draft never edits the automatic size list (E7).
+          normalizeSettingsModel({ ...action.payload.model, autoDirectorySizePaths: state.settings.model.autoDirectorySizePaths }));
+        const notifications = model.notificationsEnabled === true || state.notifications.length === 0
+          ? state.notifications : [];
         if (
           hasSameJsonShape(state.settings.model, model) &&
+          notifications === state.notifications &&
           (action.payload.section === undefined || action.payload.section === state.settings.section)
         ) {
           return state;
         }
         return invalidatePropertiesIfTargetChanged({
           ...state,
+          notifications,
           fileVisibility: model.fileVisibility,
           panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           settings: {
@@ -2683,10 +2740,13 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
           ...action.payload.settingsModel,
           tagRules: state.settings.model.tagRules
         }));
+        const notifications = model.notificationsEnabled === true || state.notifications.length === 0
+          ? state.notifications : [];
         const navigationItems = sortNavigationItems(action.payload.navigationItems);
         const itemIds = new Set(navigationItems.map((item) => item.id));
         if (
           hasSameJsonShape(state.settings.model, model) &&
+          notifications === state.notifications &&
           hasSameJsonShape(state.bookmarks, action.payload.bookmarks) &&
           hasSameJsonShape(state.hotlist, action.payload.hotlist) &&
           hasSameJsonShape(state.remoteProfiles, action.payload.remoteProfiles) &&
@@ -2696,6 +2756,7 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
         }
         return invalidatePropertiesIfTargetChanged({
           ...state,
+          notifications,
           fileVisibility: model.fileVisibility,
           panels: model.folderExpansionEnabled ? state.panels : clearPanelFolderExpansions(state.panels),
           bookmarks: action.payload.bookmarks,
@@ -2737,6 +2798,8 @@ function reduceWorkspace(state: WorkspaceState, action: WorkspaceAction): Worksp
       return updateOperations(state, { type: "recordsCleared", payload: action.payload });
 
     case "notificationAdded":
+      // Apply the setting after any preceding settings/bootstrap action in the same batch.
+      if (state.settings.model.notificationsEnabled !== true) return state;
       return {
         ...state,
         notifications: [...state.notifications, action.payload]

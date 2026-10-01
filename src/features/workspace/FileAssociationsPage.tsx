@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, FolderOpen, Pencil, Plus, Trash2 } f
 import type { AssociationProgramInfo, FileAssociationRule } from "../../app/fileAssociations";
 import { formatAssociationExpression, normalizeAssociationRule, parseAssociationExpression, validateAssociationRule } from "./fileAssociations";
 import { AssociationProgramIcon } from "./AssociationProgramIcon";
+import { settingsHint } from "./SettingsPrimitives";
 import "./color-rules.css";
 import "./file-associations.css";
 
@@ -15,6 +16,8 @@ export interface FileAssociationsPageProps {
 }
 
 type Editing = { id: string; raw: string; original: Pick<FileAssociationRule, "patterns" | "executablePath" | "argumentsTemplate"> };
+
+export const ASSOCIATION_HELP = '后缀用分号分隔，双击或 F2 编辑。含空格的程序路径需加双引号；参数可省略，未写 {file} 时自动追加文件路径。';
 
 export function FileAssociationsPage({rules, disabled = false, onChange, onChooseProgram, onInspectPrograms}: FileAssociationsPageProps) {
   const [selectedId, setSelectedId] = useState<string | null>(rules[0]?.id ?? null);
@@ -197,7 +200,7 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
                         }
                       }} />
                   ) : (
-                    <span className="file-association-expression" title={formatAssociationExpression(rule)}>
+                    <span className="file-association-expression" {...settingsHint(`${formatAssociationExpression(rule)}\n${ASSOCIATION_HELP}`)}>
                       {!rule.patterns && !rule.executablePath ? "（空关联）" : formatAssociationExpression(rule)}
                     </span>
                   )}
@@ -212,7 +215,7 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
           <p className="color-rules-operations__status">{selected ? "第 " + (index + 1) + " 条，共 " + rules.length + " 条" : "请选择或新建关联"}</p>
           <div className="color-rules-operations__commands">
             <button ref={newButtonRef} type="button" className="toolbar-button" data-action="association-add" disabled={disabled} onClick={addRule}><Plus size={15} />新建</button>
-            <button type="button" className="toolbar-button" data-action="association-edit" disabled={disabled || !selected || !!editing} onClick={() => selected && startEditing(selected.id)}><Pencil size={15} />编辑</button>
+            <button type="button" className="toolbar-button" data-action="association-edit" {...settingsHint(ASSOCIATION_HELP)} disabled={disabled || !selected || !!editing} onClick={() => selected && startEditing(selected.id)}><Pencil size={15} />编辑</button>
             <button type="button" className="toolbar-button" data-action="association-choose-program" disabled={disabled || !selected || picking} onClick={() => void chooseProgram()}>
               <FolderOpen size={15} />{picking ? "正在选择…" : "选择程序…"}
             </button>
@@ -232,7 +235,6 @@ export function FileAssociationsPage({rules, disabled = false, onChange, onChoos
           {inspectionError ? <p className="file-association-hint" role="status">无法检查程序：{inspectionError}</p> : null}
         </div>
       ) : null}
-      <p className="file-association-help">{'后缀用分号分隔，双击或 F2 编辑。含空格的程序路径需加双引号；参数可省略，未写 {file} 时自动追加文件路径。'}</p>
     </section>
   );
 }

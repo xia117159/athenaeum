@@ -59,6 +59,7 @@ export const completion = (async () => {
   const widths: string[] = [];
   const drops: Array<{ paths: string[]; destination: string; operation: string }> = [];
   const props = {
+    folderExpansionOnRowClick: undefined as boolean | undefined,
     panelId: "panel-1" as const, tabId: tab.id, columns: tab.columns,
     sort: tab.sort, currentPath: f.path, selectedEntryIds: [] as string[], viewMode: "details" as const, detailsRowHeight: 24,
     onSort: () => undefined, onSelect: (entry: EntryViewModel) => selections.push(entry.path),
@@ -119,7 +120,30 @@ export const completion = (async () => {
       assert.deepEqual(selections, [f.child.path]);
       assert.deepEqual(opens, [f.child.path]);
     });
-    await assertTest("a single click on an expandable folder row toggles the branch", async () => {
+    await assertTest("default and disabled row expansion select on click and open on double-click without toggling", async () => {
+      for (const enabled of [undefined, false]) {
+        props.folderExpansionOnRowClick = enabled;
+        await render();
+        const before = toggles.length;
+        const beforeOpens = opens.length;
+        for (const detail of [1, 2]) {
+          await act(async () => {
+            rowFor(f.parent.path).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, detail }));
+            await flushEffects();
+          });
+          assert.equal(toggles.length, before, "neither click preceding a double-click may expand or collapse");
+          assert.equal(selections.at(-1), f.parent.path);
+        }
+        await act(async () => {
+          rowFor(f.parent.path).dispatchEvent(new dom.window.MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+          await flushEffects();
+        });
+        assert.equal(toggles.length, before);
+        assert.deepEqual(opens.slice(beforeOpens), [f.parent.path]);
+      }
+    });
+    await assertTest("opting into row expansion toggles immediately without affecting modifier selection", async () => {
+      props.folderExpansionOnRowClick = true;
       await render();
       const before = toggles.length;
       await act(async () => {
@@ -128,11 +152,14 @@ export const completion = (async () => {
       });
       assert.equal(toggles.length, before + 1);
       assert.equal(toggles.at(-1), f.parent.path);
-      await act(async () => {
-        rowFor(f.parent.path).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
-        await flushEffects();
-      });
+      for (const modifier of ["ctrlKey", "metaKey", "shiftKey"]) {
+        await act(async () => {
+          rowFor(f.parent.path).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, [modifier]: true }));
+          await flushEffects();
+        });
+      }
       assert.equal(toggles.length, before + 1);
+      props.folderExpansionOnRowClick = false;
     });
     await assertTest("focused folder controls forward ordinary list shortcuts to the workspace", async () => {
       await render();

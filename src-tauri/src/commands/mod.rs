@@ -5,6 +5,7 @@ pub mod operations;
 pub mod remote;
 pub mod search;
 pub mod settings;
+pub mod auto_directory_sizes;
 pub mod templates;
 pub mod workspace;
 pub mod batch_rename;

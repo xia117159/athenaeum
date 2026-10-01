@@ -1,6 +1,9 @@
 import type { ColumnId, EntryViewModel, SortState } from "./types";
 import { exactSizeBytes } from "./directorySizes";
 
+const NUMERIC_COLLATOR = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+const TEXT_COLLATOR = new Intl.Collator("zh-CN", { sensitivity: "base" });
+
 export function getEntryTypeLabel(entry: EntryViewModel) {
   return entry.kind === "folder" ? "文件夹" : entry.extension.replace(".", "").toUpperCase() || "文件";
 }
@@ -31,16 +34,16 @@ function parseModifiedLabel(label: string) {
 
 function compareEntryByColumn(left: EntryViewModel, right: EntryViewModel, columnId: ColumnId, currentPath: string) {
   switch (columnId) {
-    case "name": return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
-    case "type": return getEntryTypeLabel(left).localeCompare(getEntryTypeLabel(right), "zh-CN", { numeric: true, sensitivity: "base" });
-    case "extension": return left.extension.localeCompare(right.extension, "zh-CN", { numeric: true, sensitivity: "base" });
+    case "name": return NUMERIC_COLLATOR.compare(left.name, right.name);
+    case "type": return NUMERIC_COLLATOR.compare(getEntryTypeLabel(left), getEntryTypeLabel(right));
+    case "extension": return NUMERIC_COLLATOR.compare(left.extension, right.extension);
     case "size": return 0; // Exact sizes and unknown-last ordering are handled below.
     case "created": return parseModifiedLabel(left.createdLabel ?? "") - parseModifiedLabel(right.createdLabel ?? "");
     case "modified": return parseModifiedLabel(left.modifiedLabel) - parseModifiedLabel(right.modifiedLabel);
     case "accessed": return parseModifiedLabel(left.accessedLabel ?? "") - parseModifiedLabel(right.accessedLabel ?? "");
-    case "tags": return left.tags.join(",").localeCompare(right.tags.join(","), "zh-CN", { sensitivity: "base" });
-    case "comment": return (left.comment ?? "").localeCompare(right.comment ?? "", "zh-CN", { numeric: true, sensitivity: "base" });
-    case "location": return getLocationLabel(left, currentPath).localeCompare(getLocationLabel(right, currentPath), "zh-CN", { numeric: true, sensitivity: "base" });
+    case "tags": return TEXT_COLLATOR.compare(left.tags.join(","), right.tags.join(","));
+    case "comment": return NUMERIC_COLLATOR.compare(left.comment ?? "", right.comment ?? "");
+    case "location": return NUMERIC_COLLATOR.compare(getLocationLabel(left, currentPath), getLocationLabel(right, currentPath));
     default: return 0;
   }
 }
@@ -56,6 +59,6 @@ export function sortEntries(entries: EntryViewModel[], sort: SortState, currentP
     }
     const columnResult = compareEntryByColumn(left, right, sort.columnId, currentPath);
     if (columnResult !== 0) return columnResult * direction;
-    return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
+    return NUMERIC_COLLATOR.compare(left.name, right.name);
   });
 }

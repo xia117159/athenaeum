@@ -11,9 +11,11 @@ import {
 import { AppearancePage } from "./SettingsAppearancePage";
 import { Eye, EyeOff, Plug, Plus, Trash2 } from "lucide-react";
 import { ColorRulesPage } from "./ColorRulesPage";
-import { FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
-import { SettingsFileListPage } from "./SettingsFileListPage";
-import { TemplateSettingsPage } from "./TemplateSettingsPage";
+import { ASSOCIATION_HELP, FileAssociationsPage, type FileAssociationsPageProps } from "./FileAssociationsPage";
+import { AUTO_DIRECTORY_SIZE_HELP, AutoDirectorySizePage, type AutoDirectorySizePageProps } from "./AutoDirectorySizePage";
+import { SettingsGeneralPage } from "./SettingsGeneralPage";
+import { SettingsGroupHeader, settingsHint } from "./SettingsPrimitives";
+import { SettingsTooltip } from "./SettingsTooltip";
 import type { ColorFilterRule, ColorFilterValidationResult } from "./colorFilterTypes";
 import type { RemoteTestResult } from "../../app/types";
 import type {
@@ -34,6 +36,7 @@ import {
 export type SettingsSurfaceProps = {
   state: WorkspaceState;
   dirtySections?: ReadonlySet<SettingsSection>;
+  navigationVersion?: number;
   onSelectSection: (section: WorkspaceState["settings"]["section"]) => void;
   onUpdateShortcut: (id: string, binding: string) => void;
   onUpdateColorRules: (rules: ColorFilterRule[]) => void;
@@ -42,6 +45,10 @@ export type SettingsSurfaceProps = {
   onChooseTemplateRoot?: () => Promise<string | null>;
   onChooseAssociationProgram: FileAssociationsPageProps["onChooseProgram"];
   onInspectAssociationPrograms: FileAssociationsPageProps["onInspectPrograms"];
+  /** The automatic size list saves through dedicated commands, never through the draft (E7). */
+  onAddAutoDirectorySizePath?: AutoDirectorySizePageProps["onAdd"];
+  onRemoveAutoDirectorySizePath?: AutoDirectorySizePageProps["onRemove"];
+  onChooseAutoDirectorySizeFolder?: AutoDirectorySizePageProps["onChoose"];
   onValidateColorRule: (expression: string) => Promise<ColorFilterValidationResult>;
   onOpenColorRulesHelp: () => void;
   onColorRulesValidityChange?: (valid: boolean) => void;
@@ -60,7 +67,10 @@ export type SettingsSurfaceProps = {
   onUpdateTabMinWidth: (value: number) => void;
   onUpdateDetailsRowHeight: (value: number) => void;
   onUpdateSizeBarMode?: (value: SettingsModel["sizeBarMode"]) => void;
+  onUpdateTreeAutoFollowEnabled?: (enabled: boolean) => void;
   onUpdateFolderExpansionEnabled: (enabled: boolean) => void;
+  onUpdateFolderExpansionOnRowClick: (enabled: boolean) => void;
+  onUpdateNotificationsEnabled: (enabled: boolean) => void;
   onUpdateTooltipHoverDelay: (value: number) => void;
   onUpdateMetadataRetentionHours: (value: number | null) => void;
   onUpdateContextMenuDefault: (value: WorkspaceState["settings"]["model"]["contextMenu"]["defaultMenu"]) => void;
@@ -89,11 +99,10 @@ const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
   {
     label: "常规",
     sections: [
+      { id: "general", label: "通用", description: "文件列表、菜单与鼠标和新建项目设置" },
       { id: "shortcuts", label: "快捷键", description: "键盘操作与工作区命令" },
-      { id: "file-list", label: "文件列表", description: "详细信息视图与显示列" },
-      { id: "menu-mouse", label: "菜单与鼠标", description: "右键菜单默认行为" },
-      { id: "file-associations", label: "自定义文件关联", description: "按文件后缀选择打开程序" },
-      { id: "templates", label: "新建项目", description: "用于创建副本的模板文件夹" }
+      { id: "file-associations", label: "自定义文件关联", description: `按文件后缀选择打开程序。${ASSOCIATION_HELP}` },
+      { id: "auto-directory-sizes", label: "自动计算大小", description: `打开这些文件夹及其子文件夹时自动计算文件夹大小。${AUTO_DIRECTORY_SIZE_HELP}` }
     ]
   },
   {
@@ -184,6 +193,7 @@ function getShortcutConflictMessage(shortcuts: SettingsModel["shortcuts"], confl
 export function SettingsSurface({
   state,
   dirtySections = new Set(),
+  navigationVersion = 0,
   onSelectSection,
   onUpdateShortcut,
   onUpdateColorRules,
@@ -192,6 +202,9 @@ export function SettingsSurface({
   onChooseTemplateRoot,
   onChooseAssociationProgram,
   onInspectAssociationPrograms,
+  onAddAutoDirectorySizePath,
+  onRemoveAutoDirectorySizePath,
+  onChooseAutoDirectorySizeFolder,
   onValidateColorRule,
   onOpenColorRulesHelp,
   onColorRulesValidityChange,
@@ -210,7 +223,10 @@ export function SettingsSurface({
   onUpdateTabMinWidth,
   onUpdateDetailsRowHeight,
   onUpdateSizeBarMode = () => undefined,
+  onUpdateTreeAutoFollowEnabled = () => undefined,
   onUpdateFolderExpansionEnabled,
+  onUpdateFolderExpansionOnRowClick,
+  onUpdateNotificationsEnabled,
   onUpdateTooltipHoverDelay,
   onUpdateMetadataRetentionHours,
   onUpdateContextMenuDefault,
@@ -224,7 +240,17 @@ export function SettingsSurface({
   errorMessage = null
 }: SettingsSurfaceProps) {
   const { settings } = state;
-  const selectedSection = SETTINGS_SECTIONS.find((section) => section.id === settings.section) ?? SETTINGS_SECTIONS[0];
+  const surfaceRef = useRef<HTMLElement>(null);
+  const isGeneralSection = ["general", "file-list", "menu-mouse", "templates"].includes(settings.section);
+  const selectedSection = SETTINGS_SECTIONS.find((section) => section.id === (isGeneralSection ? "general" : settings.section)) ?? SETTINGS_SECTIONS[0];
+  const generalDirty = ["general", "file-list", "menu-mouse", "templates"].some(section => dirtySections.has(section as SettingsSection));
+  useEffect(() => {
+    if (["file-list", "menu-mouse", "templates"].includes(settings.section)) {
+      surfaceRef.current?.querySelector(`#settings-group-${settings.section}`)?.scrollIntoView?.({ block: "start" });
+    } else {
+      surfaceRef.current?.querySelector(".settings-page")?.scrollTo?.({ top: 0 });
+    }
+  }, [settings.section, navigationVersion]);
   const controlsDisabled = disabled || applying;
   const shortcutConflictIds = useMemo(() => getShortcutConflictIds(settings.model.shortcuts), [settings.model.shortcuts]);
   const shortcutConflictMessage = getShortcutConflictMessage(settings.model.shortcuts, shortcutConflictIds);
@@ -245,7 +271,7 @@ export function SettingsSurface({
   const confirmDisabled = controlsDisabled || Boolean(shortcutConflictMessage) || !colorRulesValid;
 
   return (
-    <section className="settings-window" aria-labelledby="settings-window-title" aria-busy={controlsDisabled ? true : undefined}>
+    <section ref={surfaceRef} className="settings-window" aria-labelledby="settings-window-title" aria-busy={controlsDisabled ? true : undefined}>
       <div className="settings-window__body">
         <nav className="settings-window__nav" aria-label="设置分类">
           {SETTINGS_SECTION_GROUPS.map((group) => (
@@ -255,14 +281,14 @@ export function SettingsSurface({
                 <button
                   key={section.id}
                   type="button"
-                  className={`settings-window__nav-item${settings.section === section.id ? " is-active" : ""}`}
-                  aria-current={settings.section === section.id ? "page" : undefined}
+                  className={`settings-window__nav-item${selectedSection.id === section.id ? " is-active" : ""}`}
+                  aria-current={selectedSection.id === section.id ? "page" : undefined}
                   data-section-id={section.id}
                   onClick={() => handleSelectSection(section.id)}
                   disabled={controlsDisabled}
                 >
                   <span>{section.label}</span>
-                  {dirtySections.has(section.id) ? (
+                  {(section.id === "general" ? generalDirty : dirtySections.has(section.id)) ? (
                     <span className="settings-window__nav-dirty" aria-label="已修改" />
                   ) : null}
                 </button>
@@ -272,9 +298,8 @@ export function SettingsSurface({
         </nav>
 
         <main className="settings-window__content" aria-labelledby="settings-window-title">
-          <header className="settings-page__header">
-            <h2 id="settings-window-title">{selectedSection.label}</h2>
-            <p>{selectedSection.description}</p>
+          <header className="settings-page__header" {...settingsHint(selectedSection.description)}>
+            <h2 id="settings-window-title" tabIndex={0}>{selectedSection.label}</h2>
           </header>
 
           {settings.section === "shortcuts" ? (
@@ -284,33 +309,32 @@ export function SettingsSurface({
               disabled={controlsDisabled}
               onUpdateShortcut={onUpdateShortcut}
             />
-          ) : settings.section === "file-list" ? (
-            <SettingsFileListPage
-              detailsRowHeight={settings.model.detailsRowHeight}
-              sizeBarMode={settings.model.sizeBarMode}
+          ) : isGeneralSection ? (
+            <SettingsGeneralPage
+              state={state}
               onUpdateSizeBarMode={onUpdateSizeBarMode}
-              folderExpansionEnabled={settings.model.folderExpansionEnabled === true}
+              onUpdateTreeAutoFollowEnabled={onUpdateTreeAutoFollowEnabled}
               onUpdateFolderExpansionEnabled={onUpdateFolderExpansionEnabled}
-              tooltipHoverDelayMs={settings.model.tooltipHoverDelayMs}
-              metadataRetentionHours={settings.model.metadataRetentionHours}
+              onUpdateFolderExpansionOnRowClick={onUpdateFolderExpansionOnRowClick}
               disabled={controlsDisabled}
               onUpdateDetailsRowHeight={onUpdateDetailsRowHeight}
               onUpdateTooltipHoverDelay={onUpdateTooltipHoverDelay}
               onUpdateMetadataRetentionHours={onUpdateMetadataRetentionHours}
-            />
-          ) : settings.section === "menu-mouse" ? (
-            <MenuMousePage
-              defaultMenu={settings.model.contextMenu.defaultMenu}
-              disabled={controlsDisabled}
               onUpdateContextMenuDefault={onUpdateContextMenuDefault}
+              onUpdateNotificationsEnabled={onUpdateNotificationsEnabled}
+              onUpdateTemplateRoot={onUpdateTemplateRoot}
+              onChooseTemplateRoot={onChooseTemplateRoot}
             />
           ) : settings.section === "file-associations" ? (
             <FileAssociationsPage rules={settings.model.fileAssociations ?? []} disabled={controlsDisabled}
               onChange={onUpdateFileAssociations} onChooseProgram={onChooseAssociationProgram}
               onInspectPrograms={onInspectAssociationPrograms} />
-          ) : settings.section === "templates" ? (
-            <TemplateSettingsPage path={settings.model.templateRoot ?? ""} disabled={controlsDisabled}
-              onChange={onUpdateTemplateRoot ?? (() => {})} onChoose={onChooseTemplateRoot ?? (async () => null)} />
+          ) : settings.section === "auto-directory-sizes" ? (
+            <AutoDirectorySizePage paths={settings.model.autoDirectorySizePaths ?? []}
+              disabled={controlsDisabled || !onAddAutoDirectorySizePath || !onRemoveAutoDirectorySizePath}
+              onAdd={onAddAutoDirectorySizePath ?? (async () => undefined)}
+              onRemove={onRemoveAutoDirectorySizePath ?? (async () => undefined)}
+              onChoose={onChooseAutoDirectorySizeFolder ?? (async () => null)} />
           ) : settings.section === "appearance" ? (
             <AppearancePage
               panelFocusAccent={settings.model.theme.panelFocusAccent}
@@ -373,6 +397,7 @@ export function SettingsSurface({
           {applying ? "正在应用" : "确定"}
         </button>
       </footer>
+      <SettingsTooltip scope={surfaceRef} navigationKey={`${settings.section}:${navigationVersion}`} />
     </section>
   );
 }
@@ -398,12 +423,7 @@ function ShortcutsPage({
 
         return (
           <section key={scope} className="settings-group settings-group--table">
-            <header className="settings-group__header">
-              <div>
-                <strong>{getShortcutScopeLabel(scope)}</strong>
-                <span>配置该范围内的键盘操作。</span>
-              </div>
-            </header>
+            <SettingsGroupHeader title={getShortcutScopeLabel(scope)} description="配置该范围内的键盘操作。" />
             <div className="settings-table-scroll">
               <table className="settings-table settings-table--shortcuts">
                 <thead>
@@ -418,10 +438,9 @@ function ShortcutsPage({
                   {scopedShortcuts.map((shortcut) => {
                     const hasConflict = conflictIds.has(shortcut.id);
                     return (
-                      <tr key={shortcut.id} className={hasConflict ? "has-conflict" : undefined}>
+                      <tr key={shortcut.id} className={hasConflict ? "has-conflict" : undefined} {...settingsHint(shortcut.description)}>
                         <td>
                           <strong>{getLocalizedShortcutAction(shortcut)}</strong>
-                          <span>{shortcut.description}</span>
                         </td>
                         <td>{getShortcutScopeLabel(shortcut.scope)}</td>
                         <td>
@@ -669,65 +688,11 @@ function ShortcutCaptureInput({
 }
 
 
-function MenuMousePage({
-  defaultMenu,
-  disabled,
-  onUpdateContextMenuDefault
-}: {
-  defaultMenu: SettingsModel["contextMenu"]["defaultMenu"];
-  disabled: boolean;
-  onUpdateContextMenuDefault: (value: SettingsModel["contextMenu"]["defaultMenu"]) => void;
-}) {
-  return (
-    <div className="settings-page">
-      <section className="settings-group">
-        <header className="settings-group__header">
-          <div>
-            <strong>右键菜单</strong>
-            <span>选择普通右键优先打开的菜单类型。</span>
-          </div>
-        </header>
-        <div className="settings-row">
-          <div>
-            <strong>默认右键菜单</strong>
-            <span>Ctrl/Shift 组合行为仍按文件列表快捷键设置判断。</span>
-          </div>
-          <div className="settings-segmented" role="group" aria-label="默认右键菜单">
-            <button
-              type="button"
-              className={defaultMenu === "native" ? "is-active" : undefined}
-              data-context-menu-value="native"
-              onClick={() => onUpdateContextMenuDefault("native")}
-              disabled={disabled}
-            >
-              Windows 系统
-            </button>
-            <button
-              type="button"
-              className={defaultMenu === "custom" ? "is-active" : undefined}
-              data-context-menu-value="custom"
-              onClick={() => onUpdateContextMenuDefault("custom")}
-              disabled={disabled}
-            >
-              软件自定义
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function TagRulesPage({ tagRules }: { tagRules: SettingsModel["tagRules"] }) {
   return (
     <div className="settings-page">
       <section className="settings-group settings-group--table">
-        <header className="settings-group__header">
-          <div>
-            <strong>规则列表</strong>
-            <span>用于快速定位带标签的文件和文件夹。</span>
-          </div>
-        </header>
+        <SettingsGroupHeader title="规则列表" description="用于快速定位带标签的文件和文件夹。" />
         <div className="settings-table-scroll">
           <table className="settings-table settings-table--rules">
             <thead>
@@ -957,12 +922,7 @@ function ConnectionsEditor({
   return (
     <div className="settings-page settings-page--connections">
       <section className="settings-group settings-group--connections">
-        <header className="settings-group__header">
-          <div>
-            <strong>远程连接</strong>
-            <span>创建、测试并管理 FTP/SFTP 连接配置。</span>
-          </div>
-        </header>
+        <SettingsGroupHeader title="远程连接" description="创建、测试并管理 FTP/SFTP 连接配置。" />
 
         <div className="connections-editor">
           <div className="connections-editor__list" aria-label="远程连接配置列表">

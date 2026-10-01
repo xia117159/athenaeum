@@ -103,16 +103,17 @@ fn groups(payload: &BatchPayload) -> Vec<Vec<usize>> {
     groups
 }
 
-struct Runner {
+struct Runner<'a, 'b> {
     payload: BatchPayload,
     log: RecoveryLog,
     steps: Vec<Step>,
     unsettled: Option<LogEvent>,
     unknown_pending: bool,
     touched_parents: HashSet<PathBuf>,
+    sizes: Option<&'a mut crate::services::directory_size::RenameSession<'b>>,
 }
 
-impl Runner {
+impl Runner<'_, '_> {
     fn settle(&mut self, event: LogEvent) -> Result<()> {
         self.unsettled = Some(event);
         self.log.append(self.unsettled.as_ref().unwrap())?;
@@ -146,7 +147,11 @@ impl Runner {
             self.settle(LogEvent::Skipped)?;
             return Err(error);
         }
-        if let Err(error) = handle.rename_to(group, name) {
+        let renamed = match self.sizes.as_deref_mut() {
+            Some(sizes) => sizes.step(&from, &to, || handle.rename_to(group, name)),
+            None => handle.rename_to(group, name),
+        };
+        if let Err(error) = renamed {
             self.settle(LogEvent::Skipped)?;
             return Err(error);
         }
@@ -217,6 +222,7 @@ impl Runner {
         Ok(())
     }
     fn rollback(&mut self, observer: &mut Observer<'_>) -> Result<()> {
+        if let Some(sizes) = self.sizes.as_deref_mut() { sizes.abandon(); }
         observer(Checkpoint::BeforeRollback, &self.payload)?;
         if self.unknown_pending {
             bail!("最后一步身份未知，已停止自动恢复");
@@ -266,6 +272,7 @@ pub(super) fn run(
     cancelled: &AtomicBool,
     commit: &mut dyn FnMut(&BatchPayload) -> Result<()>,
     observer: &mut Observer<'_>,
+    sizes: Option<&mut crate::services::directory_size::RenameSession<'_>>,
 ) -> BatchRunOutcome {
     let failure = |payload, error: anyhow::Error| BatchRunOutcome {
         payload,
@@ -295,6 +302,7 @@ pub(super) fn run(
         unsettled: None,
         unknown_pending: false,
         touched_parents: HashSet::new(),
+        sizes,
     };
     let execution = runner.execute(cancelled, observer).and_then(|_| {
         observer(Checkpoint::BeforeCommit, &runner.payload)?;

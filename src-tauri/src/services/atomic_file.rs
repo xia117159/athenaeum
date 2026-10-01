@@ -17,7 +17,7 @@ enum AtomicWriteFault {
 }
 
 #[cfg(windows)]
-fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::{
         core::PCWSTR,
@@ -47,7 +47,7 @@ fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn replace_file(temp_path: &Path, destination: &Path) -> Result<()> {
     fs::rename(temp_path, destination).context("failed to atomically replace file")
 }
 
@@ -78,6 +78,10 @@ fn write_atomically_impl(
     bytes: &[u8],
     fault: Option<AtomicWriteFault>,
 ) -> Result<()> {
+    write_stream_impl(destination, |file| file.write_all(bytes).context("failed to write persistence temp file"), fault)
+}
+
+fn write_stream_impl(destination: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>, fault: Option<AtomicWriteFault>) -> Result<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).context("failed to create persistence directory")?;
     }
@@ -89,8 +93,7 @@ fn write_atomically_impl(
             .open(&temp_path)
             .context("failed to create persistence temp file")?;
         inject_fault(fault, AtomicWriteFault::AfterTempCreate)?;
-        file.write_all(bytes)
-            .context("failed to write persistence temp file")?;
+        write(&mut file)?;
         inject_fault(fault, AtomicWriteFault::AfterWrite)?;
         file.flush()
             .context("failed to flush persistence temp file")?;

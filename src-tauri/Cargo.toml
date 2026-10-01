@@ -25,6 +25,7 @@ regex = "1.12.3"
 regex-automata = "0.4.14"
 pest = "2.8.3"
 pest_derive = "2.8.3"
+png = "0.17.16"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
@@ -53,6 +54,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Threading"
 ] }
 gix = { version = "0.85.0", features = ["status"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"
